@@ -10,6 +10,9 @@ interface ConfigState {
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
+  // Self-host opt-in: login page collects username + password instead of
+  // an email verification code. Absent/false keeps the official email flow.
+  passwordAuth: boolean;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -51,6 +54,7 @@ interface ConfigState {
     googleClientId?: string;
     workspaceCreationDisabled?: boolean;
     vcsIntegrationAvailable?: boolean;
+    passwordAuth?: boolean;
   }) => void;
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
@@ -70,6 +74,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
+  passwordAuth: false,
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
@@ -87,7 +92,8 @@ export const configStore = createStore<ConfigState>((set) => ({
     googleClientId = "",
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
-  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable }),
+    passwordAuth = false,
+  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable, passwordAuth }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),

@@ -28,6 +28,10 @@ type AppConfig struct {
 	// toggle signup or wire Google OAuth.
 	AllowSignup    bool   `json:"allow_signup"`
 	GoogleClientID string `json:"google_client_id,omitempty"`
+	// PasswordAuth tells the login page to collect username + password
+	// instead of an email verification code. Omitted when false so official
+	// cloud and default self-host responses keep their previous shape.
+	PasswordAuth bool `json:"password_auth,omitempty"`
 	// WorkspaceCreationDisabled mirrors the server-side
 	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
 	// "Create workspace" affordance on self-hosted instances. Omitted
@@ -120,6 +124,9 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+	}
+	if _, ok := passwordAuthConfigured(); ok {
+		config.PasswordAuth = true
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

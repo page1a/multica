@@ -29,14 +29,17 @@ function renderWithI18n(ui: ReactElement) {
 
 const mockSendCode = vi.hoisted(() => vi.fn());
 const mockVerifyCode = vi.hoisted(() => vi.fn());
+const mockLoginWithPassword = vi.hoisted(() => vi.fn());
 const mockApiListWorkspaces = vi.hoisted(() => vi.fn());
 const mockApiVerifyCode = vi.hoisted(() => vi.fn());
+const mockApiLoginWithPassword = vi.hoisted(() => vi.fn());
 const mockApiSetToken = vi.hoisted(() => vi.fn());
 const mockApiGetMe = vi.hoisted(() => vi.fn());
 const mockApiIssueCliToken = vi.hoisted(() => vi.fn());
 const mockSetQueryData = vi.hoisted(() => vi.fn());
 // Mutable slice of auth state the component subscribes to.
 const mockAuthState = vi.hoisted(() => ({ expired: false }));
+const mockConfigState = vi.hoisted(() => ({ passwordAuth: false }));
 
 vi.mock("@tanstack/react-query", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
@@ -52,6 +55,7 @@ vi.mock("@multica/core/auth", () => ({
       const state = {
         sendCode: mockSendCode,
         verifyCode: mockVerifyCode,
+        loginWithPassword: mockLoginWithPassword,
         expired: mockAuthState.expired,
       };
       return selector ? selector(state) : state;
@@ -60,6 +64,7 @@ vi.mock("@multica/core/auth", () => ({
       getState: () => ({
         sendCode: mockSendCode,
         verifyCode: mockVerifyCode,
+        loginWithPassword: mockLoginWithPassword,
       }),
     },
   ),
@@ -69,9 +74,17 @@ vi.mock("@multica/core/api", () => ({
   api: {
     listWorkspaces: mockApiListWorkspaces,
     verifyCode: mockApiVerifyCode,
+    loginWithPassword: mockApiLoginWithPassword,
     setToken: mockApiSetToken,
     getMe: mockApiGetMe,
     issueCliToken: mockApiIssueCliToken,
+  },
+}));
+
+vi.mock("@multica/core/config", () => ({
+  useConfigStore: (selector?: (s: { passwordAuth: boolean }) => unknown) => {
+    const state = { passwordAuth: mockConfigState.passwordAuth };
+    return selector ? selector(state) : state;
   },
 }));
 
@@ -103,6 +116,7 @@ describe("LoginPage", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.clearAllMocks();
     mockAuthState.expired = false;
+    mockConfigState.passwordAuth = false;
     // Default: no existing session (getMe rejects when no auth)
     mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
     localStorage.clear();
@@ -725,6 +739,61 @@ describe("LoginPage", () => {
     expect(
       screen.getByText(/sign in to multica/i),
     ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Password login (self-host opt-in)
+  // -------------------------------------------------------------------------
+
+  it("renders username and password fields when password auth is enabled", () => {
+    mockConfigState.passwordAuth = true;
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+    expect(
+      screen.getByText(/enter your username and password/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^sign in$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls loginWithPassword and onSuccess for a valid password login", async () => {
+    mockConfigState.passwordAuth = true;
+    mockLoginWithPassword.mockResolvedValueOnce(undefined);
+    mockApiListWorkspaces.mockResolvedValueOnce([{ id: "ws-1" }]);
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/username/i), "kun");
+    await user.type(screen.getByLabelText(/^password$/i), "s3cret");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    await waitFor(() => {
+      expect(mockLoginWithPassword).toHaveBeenCalledWith("kun", "s3cret");
+      expect(onSuccess).toHaveBeenCalled();
+    });
+  });
+
+  it("shows an error when password login is rejected", async () => {
+    mockConfigState.passwordAuth = true;
+    mockLoginWithPassword.mockRejectedValueOnce(
+      new Error("invalid username or password"),
+    );
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/username/i), "kun");
+    await user.type(screen.getByLabelText(/^password$/i), "nope");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/invalid username or password/i),
+      ).toBeInTheDocument();
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
   });
 
 });

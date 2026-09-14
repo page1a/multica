@@ -57,6 +57,25 @@ STARTTLS is used automatically when advertised by the server. Port 465 (SMTPS / 
 
 > **Note:** If neither Resend nor SMTP is configured, generated verification codes are printed to backend logs — copy them from there to log in. A fixed local testing code (e.g. `888888`) is **opt-in only**: set `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env` and keep `APP_ENV` non-production. The Docker self-host stack pins `APP_ENV=production`, so the shortcut is ignored there. **Never enable a fixed code on a publicly reachable instance.**
 
+### Password login (Optional)
+
+Opt-in username + password login for private self-hosted instances. Default remains email verification codes. Do **not** use `MULTICA_DEV_VERIFICATION_CODE` or `APP_ENV=development` on a publicly reachable host.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MULTICA_PASSWORD_AUTH` | Set to `true` / `1` / `yes` / `on` to enable | empty (off) |
+| `MULTICA_PASSWORD_AUTH_USERNAME` | Login username (trimmed, case-sensitive) | empty |
+| `MULTICA_PASSWORD_AUTH_PASSWORD` | Login password | empty |
+| `MULTICA_PASSWORD_AUTH_EMAIL` | Email stored on the user record (find-or-create). Use an existing user's email to keep that account. | empty |
+
+All four must be set or the switch stays off and email login keeps working. When it is on:
+
+- `/api/config` reports `password_auth: true` so the web login page shows username + password.
+- `POST /auth/login` issues the same JWT and `multica_auth` cookie as email verification.
+- `POST /auth/send-code` and `POST /auth/verify-code` return 403.
+
+Wrong username or password returns 401 with a generic error. Existing sessions keep using the same JWT TTL.
+
 ### Google OAuth (Optional)
 
 | Variable | Description |

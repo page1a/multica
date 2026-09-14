@@ -98,6 +98,7 @@ Once ready:
 
 Open http://localhost:3000 in your browser. The Docker self-host stack defaults to `APP_ENV=production` (set in `docker-compose.selfhost.yml`), and there is no fixed verification code by default. Pick one of the following to log in:
 
+- **Username and password (private self-host, opt-in):** set `MULTICA_PASSWORD_AUTH=true` plus `MULTICA_PASSWORD_AUTH_USERNAME`, `MULTICA_PASSWORD_AUTH_PASSWORD`, and `MULTICA_PASSWORD_AUTH_EMAIL` in `.env`, then restart the backend. The login page switches to username/password, email verification codes are disabled, and `APP_ENV` can stay `production`. See [Advanced Configuration → Password login](SELF_HOSTING_ADVANCED.md#password-login-optional).
 - **Recommended (production):** configure `RESEND_API_KEY` in `.env`, then restart the backend. Real verification codes will be sent to the email address you enter. See [Advanced Configuration → Email](SELF_HOSTING_ADVANCED.md#email-required-for-authentication).
 - **Without email configured:** the verification code is generated server-side and printed to the backend container logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing on a single machine.
 - **Deterministic local/private testing:** set `APP_ENV=development` and `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env`, then restart the backend. This fixed code is ignored when `APP_ENV=production`.
@@ -282,7 +283,9 @@ Then open http://multica.dev.lan in your browser.
 
 ### Step 5 — Log In
 
-The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.config.appEnv`), and there is no fixed verification code by default. Pick one of the following to log in — the same three options as the Docker setup:
+The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.config.appEnv`), and there is no fixed verification code by default. Pick one of the following to log in — the same options as the Docker setup:
+
+- **Username and password (private self-host, opt-in):** put `MULTICA_PASSWORD_AUTH=true`, `MULTICA_PASSWORD_AUTH_USERNAME`, `MULTICA_PASSWORD_AUTH_PASSWORD`, and `MULTICA_PASSWORD_AUTH_EMAIL` in the Secret (the chart `envFrom`s it). Restart the backend. See [Advanced Configuration → Password login](SELF_HOSTING_ADVANCED.md#password-login-optional).
 
 - **Recommended (production):** patch the Secret with a real Resend key, then restart the backend:
 
