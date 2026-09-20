@@ -49,6 +49,8 @@ import {
   ListPropertiesResponseSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
   RuntimeModelListRequestSchema,
+  MALFORMED_RUNTIME_PROVIDER_PRESET_REQUEST,
+  RuntimeProviderPresetRequestSchema,
   SearchProjectsResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -2004,6 +2006,127 @@ describe("RuntimeModelListRequestSchema", () => {
       { ...completed, future_field: "keep me" },
       RuntimeModelListRequestSchema,
       MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe(
+      "keep me",
+    );
+  });
+});
+
+describe("RuntimeProviderPresetRequestSchema", () => {
+  const completed = {
+    id: "req-1",
+    runtime_id: "rt-1",
+    provider: "dsh",
+    action: "models",
+    status: "completed",
+    created_at: "2026-09-20T00:00:00Z",
+    updated_at: "2026-09-20T00:00:01Z",
+  };
+
+  // The `models` action's catalog and the failure classification are additive
+  // fields on an existing record (DENE-681). `.loose()` would have passed both
+  // through without typing them, which is exactly how the selector ended up
+  // unable to read the list it exists to render.
+  it("parses the catalog the models action answers with", () => {
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        models: [
+          {
+            id: "deepseek/deepseek-v4.1-flash",
+            name: "DeepSeek V4.1 Flash",
+            context_window: 1000000,
+          },
+          // The other spelling a gateway may answer with. The daemon normally
+          // normalises it; accepting both keeps a catalog usable either way.
+          { id: "claude-sonnet-5", context_length: 200000 },
+        ],
+      },
+      RuntimeProviderPresetRequestSchema,
+      MALFORMED_RUNTIME_PROVIDER_PRESET_REQUEST,
+      { endpoint: "test" },
+    );
+    expect(parsed.models?.map((model) => model.id)).toEqual([
+      "deepseek/deepseek-v4.1-flash",
+      "claude-sonnet-5",
+    ]);
+    expect(parsed.models?.[0]?.context_window).toBe(1000000);
+    expect(parsed.models?.[1]?.context_length).toBe(200000);
+  });
+
+  it("parses the failure kind and its parameters", () => {
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        action: "upsert",
+        status: "failed",
+        error: "The provider quota is used up",
+        error_kind: "rate_limited",
+        error_params: {
+          status: "429",
+          reset_at_local: "2026-09-21 08:00",
+          action: "regenerate_key",
+        },
+      },
+      RuntimeProviderPresetRequestSchema,
+      MALFORMED_RUNTIME_PROVIDER_PRESET_REQUEST,
+      { endpoint: "test" },
+    );
+    expect(parsed.error_kind).toBe("rate_limited");
+    expect(parsed.error_params).toEqual({
+      status: "429",
+      reset_at_local: "2026-09-21 08:00",
+      action: "regenerate_key",
+    });
+  });
+
+  it("drops a non-string parameter instead of failing the whole record", () => {
+    // Losing one parameter degrades a localized sentence. Rejecting the record
+    // would hide the failure the user needs to read.
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        status: "failed",
+        error_kind: "provider_error",
+        error_params: { status: 500, detail: "boom" },
+      },
+      RuntimeProviderPresetRequestSchema,
+      MALFORMED_RUNTIME_PROVIDER_PRESET_REQUEST,
+      { endpoint: "test" },
+    );
+    expect(parsed.status).toBe("failed");
+    expect(parsed.error_params).toEqual({ detail: "boom" });
+  });
+
+  it("falls back on a malformed response rather than inventing an empty preset list", () => {
+    for (const malformed of [
+      null,
+      "nope",
+      [],
+      { ...completed, status: 7 },
+      { ...completed, models: "nope" },
+      { ...completed, models: [{ name: "no id" }] },
+      { ...completed, error_kind: { nested: true } },
+    ]) {
+      const parsed = parseWithFallback(
+        malformed,
+        RuntimeProviderPresetRequestSchema,
+        MALFORMED_RUNTIME_PROVIDER_PRESET_REQUEST,
+        { endpoint: "test" },
+      );
+      expect(parsed.status).toBe("failed");
+      expect(parsed.error).toBe("invalid provider preset response");
+      expect(parsed.providers).toBeUndefined();
+    }
+  });
+
+  it("keeps unknown server fields instead of stripping them", () => {
+    const parsed = parseWithFallback(
+      { ...completed, future_field: "keep me" },
+      RuntimeProviderPresetRequestSchema,
+      MALFORMED_RUNTIME_PROVIDER_PRESET_REQUEST,
       { endpoint: "test" },
     );
     expect((parsed as unknown as { future_field?: string }).future_field).toBe(

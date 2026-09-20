@@ -153,6 +153,15 @@ type routingHealthResponse struct {
 	// the section can disable the key field up front instead of letting
 	// somebody type a credential into a form that will refuse it.
 	WorkspaceKeyStorable bool `json:"workspace_key_storable"`
+	// GatewayProtocol names the wire format the endpoint speaks: "systemone"
+	// for a TypeSafe System One endpoint (Jev), "openai" for everything else.
+	//
+	// It is derived from the endpoint, never stored, and it exists because the
+	// host alone does not answer the question a reader actually has. A
+	// workspace that configured Jev and saw only a model id had no way to tell
+	// whether its tickets were being judged by a System One model or by a chat
+	// model being asked to imitate one.
+	GatewayProtocol string `json:"gateway_protocol"`
 }
 
 // Gateway scope values. Named because the client switches on them.
@@ -183,12 +192,30 @@ func (h *Handler) routingHealthPayload(rep routing.HealthReport) routingHealthRe
 		resp.GatewayHost = gatewayHost(rep.BaseURL)
 		resp.GatewayScope = gatewayScopeWorkspace
 		resp.GatewayConfigured = true
+		resp.GatewayProtocol = gatewayProtocol(rep.BaseURL)
 		return resp
 	}
 	resp.GatewayHost = gatewayHost(h.cfg.LLMBaseURL)
 	resp.GatewayScope = gatewayScopeDeployment
 	resp.GatewayConfigured = deploymentConfigured
+	// The deployment gateway is an OpenAI-compatible contract by definition
+	// (MULTICA_LLM_*), so it is never reported as System One even if somebody
+	// pointed it at a host that looks like one.
+	resp.GatewayProtocol = gatewayProtocolOpenAI
 	return resp
+}
+
+// Gateway protocol values. Named because the client switches on them.
+const (
+	gatewayProtocolOpenAI    = "openai"
+	gatewayProtocolSystemOne = "systemone"
+)
+
+func gatewayProtocol(baseURL string) string {
+	if routing.IsSystemOneEndpoint(baseURL) {
+		return gatewayProtocolSystemOne
+	}
+	return gatewayProtocolOpenAI
 }
 
 // gatewayHost reduces MULTICA_LLM_BASE_URL to the host a reader recognises.
@@ -290,11 +317,21 @@ func (h *Handler) ListRoutingModels(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), routingModelListTimeout)
 	defer cancel()
-	models, err := llm.New(llm.Config{
-		APIKey:     target.APIKey,
-		BaseURL:    target.BaseURL,
-		MaxRetries: h.cfg.LLMMaxRetries,
-	}).ListModels(ctx)
+	// Two list formats, because there are two protocols. A System One endpoint
+	// answers `{"models":[{"name":...}]}` rather than the OpenAI
+	// `{"data":[{"id":...}]}` pkg/llm parses, and a workspace pointed at
+	// TypeSafe used to get an empty list here with no way to tell that the
+	// model it wanted was one field name away.
+	var models []string
+	if target.SystemOne() {
+		models, err = routing.ListSystemOneModels(ctx, nil, target.BaseURL, target.APIKey)
+	} else {
+		models, err = llm.New(llm.Config{
+			APIKey:     target.APIKey,
+			BaseURL:    target.BaseURL,
+			MaxRetries: h.cfg.LLMMaxRetries,
+		}).ListModels(ctx)
+	}
 	if err != nil {
 		slog.Warn("routing model discovery failed",
 			append(logger.RequestAttrs(r), "workspace_id", workspaceID, "error", err)...)

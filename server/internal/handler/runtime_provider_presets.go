@@ -59,8 +59,8 @@ const (
 // Provider preset actions. Mirrors the daemon's own action names.
 const (
 	ProviderPresetActionList     = "list"
+	ProviderPresetActionModels   = "models"
 	ProviderPresetActionUpsert   = "upsert"
-	ProviderPresetActionRefresh  = "refresh"
 	ProviderPresetActionDelete   = "delete"
 	ProviderPresetActionActivate = "activate"
 )
@@ -111,10 +111,17 @@ type ProviderPresetRequest struct {
 	Active    *ProviderPresetActive `json:"active,omitempty"`
 	// ClearedActive marks a delete that also emptied the active-model setting,
 	// which the UI has to say out loud — the user just lost their default model.
-	ClearedActive bool      `json:"cleared_active,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ClearedActive bool `json:"cleared_active,omitempty"`
+	// Models is the endpoint's own catalog, filled only by the models action.
+	Models []ProviderPresetModel `json:"models,omitempty"`
+	Error  string                `json:"error,omitempty"`
+	// ErrorKind is the machine-readable classification of Error. A surface
+	// renders localized copy from the kind and its parameters; Error is the
+	// fallback for one it does not recognize.
+	ErrorKind   string            `json:"error_kind,omitempty"`
+	ErrorParams map[string]string `json:"error_params,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 	// RunStartedAt is server-side bookkeeping, kept out of the HTTP response
 	// the same way ModelListRequest does.
 	RunStartedAt *time.Time `json:"-"`
@@ -139,10 +146,17 @@ func providerPresetTerminal(status ProviderPresetStatus) bool {
 // masks and model ids, which is the same capability discovery the local-skill
 // and model-list inventories expose to any member of a public runtime.
 //
-// The other three are not reads. `upsert` writes a key into the owner's
-// .credentials.yaml and can point an existing apiKeyEnv at a new baseURL —
-// which sends the owner's real key to whatever endpoint the caller named — and
-// `activate` decides which provider every agent run on that machine then uses.
+// `models` is not a read despite writing nothing. It takes a baseURL from the
+// caller and makes the owner's daemon send a request — with the owner's stored
+// credential attached when the caller names a preset instead of typing a key —
+// so a member who could call it could point the owner's key at a host of their
+// choosing. Reading a key mask is discovery; spending an owner's key is not.
+//
+// The other three edit the owner's files outright. `upsert` writes a key into
+// the owner's .credentials.yaml and can point an existing apiKeyEnv at a new
+// baseURL — which sends the owner's real key to whatever endpoint the caller
+// named — and `activate` decides which provider every agent run on that
+// machine then uses.
 // This repository already draws that line: local-skill *import* stays
 // owner-only even for workspace owners and admins because it touches the
 // owner's files, and a private machine has no admin override at all
@@ -161,8 +175,9 @@ func ownsRuntime(member db.Member, rt db.AgentRuntime) bool {
 
 func validProviderPresetAction(action string) bool {
 	switch action {
-	case ProviderPresetActionList, ProviderPresetActionUpsert,
-		ProviderPresetActionRefresh, ProviderPresetActionDelete, ProviderPresetActionActivate:
+	case ProviderPresetActionList, ProviderPresetActionModels,
+		ProviderPresetActionUpsert, ProviderPresetActionDelete,
+		ProviderPresetActionActivate:
 		return true
 	default:
 		return false
@@ -226,6 +241,23 @@ func redactedProviderPresetCopy(req *ProviderPresetRequest) *ProviderPresetReque
 	return &clone
 }
 
+// ProviderPresetResult is what a successful action reports back.
+type ProviderPresetResult struct {
+	Providers     []ProviderPresetEntry `json:"providers,omitempty"`
+	Active        *ProviderPresetActive `json:"active,omitempty"`
+	ClearedActive bool                  `json:"cleared_active,omitempty"`
+	Models        []ProviderPresetModel `json:"models,omitempty"`
+}
+
+// ProviderPresetFailure is what a failed action reports back: a stable kind
+// the UI switches on, the parameters its copy interpolates, and a
+// human-readable message for everything else.
+type ProviderPresetFailure struct {
+	Kind    string            `json:"kind,omitempty"`
+	Message string            `json:"message,omitempty"`
+	Params  map[string]string `json:"params,omitempty"`
+}
+
 // ProviderPresetStore is the contract every backend must satisfy.
 type ProviderPresetStore interface {
 	Create(ctx context.Context, runtimeID, provider, action string, payload json.RawMessage) (*ProviderPresetRequest, error)
@@ -236,8 +268,8 @@ type ProviderPresetStore interface {
 	// its payload, which is what the heartbeat delivers to the daemon. The
 	// persisted copy is redacted.
 	PopPending(ctx context.Context, runtimeID string) (*ProviderPresetRequest, error)
-	Complete(ctx context.Context, id string, providers []ProviderPresetEntry, active *ProviderPresetActive, clearedActive bool) error
-	Fail(ctx context.Context, id string, errMsg string) error
+	Complete(ctx context.Context, id string, result ProviderPresetResult) error
+	Fail(ctx context.Context, id string, failure ProviderPresetFailure) error
 }
 
 // InMemoryProviderPresetStore is the single-node implementation used by
@@ -329,28 +361,31 @@ func (s *InMemoryProviderPresetStore) PopPending(_ context.Context, runtimeID st
 	return &delivery, nil
 }
 
-func (s *InMemoryProviderPresetStore) Complete(_ context.Context, id string, providers []ProviderPresetEntry, active *ProviderPresetActive, clearedActive bool) error {
+func (s *InMemoryProviderPresetStore) Complete(_ context.Context, id string, result ProviderPresetResult) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
 		req.Status = ProviderPresetCompleted
-		req.Providers = providers
-		req.Active = active
-		req.ClearedActive = clearedActive
+		req.Providers = result.Providers
+		req.Active = result.Active
+		req.ClearedActive = result.ClearedActive
+		req.Models = result.Models
 		req.Payload = redactProviderPresetPayload(req.Payload)
 		req.UpdatedAt = time.Now()
 	}
 	return nil
 }
 
-func (s *InMemoryProviderPresetStore) Fail(_ context.Context, id string, errMsg string) error {
+func (s *InMemoryProviderPresetStore) Fail(_ context.Context, id string, failure ProviderPresetFailure) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
 		req.Status = ProviderPresetFailed
-		req.Error = errMsg
+		req.Error = failure.Message
+		req.ErrorKind = failure.Kind
+		req.ErrorParams = failure.Params
 		req.Payload = redactProviderPresetPayload(req.Payload)
 		req.UpdatedAt = time.Now()
 	}
@@ -465,7 +500,10 @@ func (h *Handler) ReportProviderPresetResult(w http.ResponseWriter, r *http.Requ
 		Providers     []ProviderPresetEntry `json:"providers"`
 		Active        *ProviderPresetActive `json:"active"`
 		ClearedActive bool                  `json:"cleared_active"`
+		Models        []ProviderPresetModel `json:"models"`
 		Error         string                `json:"error"`
+		ErrorKind     string                `json:"error_kind"`
+		ErrorParams   map[string]string     `json:"error_params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -473,7 +511,13 @@ func (h *Handler) ReportProviderPresetResult(w http.ResponseWriter, r *http.Requ
 	}
 
 	if body.Status == "completed" {
-		if err := h.ProviderPresetStore.Complete(r.Context(), requestID, body.Providers, body.Active, body.ClearedActive); err != nil {
+		result := ProviderPresetResult{
+			Providers:     body.Providers,
+			Active:        body.Active,
+			ClearedActive: body.ClearedActive,
+			Models:        body.Models,
+		}
+		if err := h.ProviderPresetStore.Complete(r.Context(), requestID, result); err != nil {
 			// 5xx so the daemon retries; a swallowed store failure would leave
 			// the request in "running" until the server-side timeout.
 			slog.Error("ProviderPresetStore Complete failed", "error", err, "request_id", requestID)
@@ -481,7 +525,12 @@ func (h *Handler) ReportProviderPresetResult(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	} else {
-		if err := h.ProviderPresetStore.Fail(r.Context(), requestID, body.Error); err != nil {
+		failure := ProviderPresetFailure{
+			Kind:    body.ErrorKind,
+			Message: body.Error,
+			Params:  body.ErrorParams,
+		}
+		if err := h.ProviderPresetStore.Fail(r.Context(), requestID, failure); err != nil {
 			slog.Error("ProviderPresetStore Fail failed", "error", err, "request_id", requestID)
 			writeError(w, http.StatusInternalServerError, "failed to persist failure")
 			return
@@ -490,6 +539,7 @@ func (h *Handler) ReportProviderPresetResult(w http.ResponseWriter, r *http.Requ
 
 	slog.Debug("provider preset report",
 		"runtime_id", runtimeID, "request_id", requestID,
-		"status", body.Status, "providers", len(body.Providers))
+		"status", body.Status, "providers", len(body.Providers),
+		"models", len(body.Models), "error_kind", body.ErrorKind)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

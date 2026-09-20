@@ -7,15 +7,28 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeProviderPreset } from "@multica/core/types";
 import {
+  IDLE_PROVIDER_PRESET_SAVE,
+  canFetchProviderPresetModels,
   canManageProviderPresets,
   deletingActivePreset,
   emptyProviderPresetForm,
+  filterProviderPresetModels,
+  isKnownProviderPresetFailure,
+  parseProviderSeatModelString,
+  providerConsoleUrl,
+  providerPresetContextWindow,
+  providerPresetFailureFrom,
   providerPresetFormFrom,
   providerPresetKeyState,
+  providerPresetModelLabel,
   providerPresetModels,
+  providerPresetNeedsKeyRegeneration,
   providerPresetSummaryLine,
   providerPresetUpsertInput,
   providerPresetsViewState,
+  providerSeatModelDisplay,
+  providerSeatModelString,
+  reduceProviderPresetSave,
   supportsProviderPresets,
   validateProviderPresetForm,
 } from "./provider-presets-model";
@@ -163,10 +176,16 @@ describe("validateProviderPresetForm", () => {
     );
   });
 
-  it("allows an empty model list so the daemon can discover models from the endpoint", () => {
+  it("requires at least one model, because saving verifies one against the endpoint", () => {
     expect(
       validateProviderPresetForm({ ...valid(), models: [{ id: "  ", name: "x" }] }),
-    ).toEqual([]);
+    ).toContain("models_required");
+    expect(validateProviderPresetForm({ ...valid(), models: [] })).toContain(
+      "models_required",
+    );
+    expect(
+      validateProviderPresetForm({ ...valid(), models: [{ id: "m1", name: "" }] }),
+    ).not.toContain("models_required");
   });
 });
 
@@ -255,5 +274,214 @@ describe("presentation helpers", () => {
   it("flags a delete that would leave the machine with no default model", () => {
     expect(deletingActivePreset(preset({ active: true }))).toBe(true);
     expect(deletingActivePreset(preset())).toBe(false);
+  });
+});
+
+describe("the fetched catalog", () => {
+  const catalog = [
+    { id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", context_window: 1_000_000 },
+    { id: "claude-sonnet-5", context_length: 200_000 },
+    { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+  ];
+
+  it("filters on both the real id and the display name", () => {
+    // 70+ rows is the normal case, so both fields have to be searchable.
+    expect(filterProviderPresetModels(catalog, "deepseek").map((m) => m.id)).toEqual([
+      "deepseek/deepseek-v4.1-flash",
+    ]);
+    expect(filterProviderPresetModels(catalog, "SONNET").map((m) => m.id)).toEqual([
+      "claude-sonnet-5",
+    ]);
+    expect(filterProviderPresetModels(catalog, "  ")).toHaveLength(3);
+    expect(filterProviderPresetModels(catalog, "nothing")).toEqual([]);
+  });
+
+  it("reads either spelling of the context window, and rejects a non-size", () => {
+    expect(providerPresetContextWindow(catalog[0]!)).toBe(1_000_000);
+    expect(providerPresetContextWindow(catalog[1]!)).toBe(200_000);
+    expect(providerPresetContextWindow(catalog[2]!)).toBeNull();
+    expect(providerPresetContextWindow({ id: "m", context_window: 0 })).toBeNull();
+  });
+
+  it("labels a row by name and falls back to the id", () => {
+    expect(providerPresetModelLabel(catalog[0]!)).toBe("DeepSeek V4.1 Flash");
+    expect(providerPresetModelLabel(catalog[1]!)).toBe("claude-sonnet-5");
+  });
+
+  it("offers the fetch only with an endpoint and a usable credential", () => {
+    const base = {
+      ...emptyProviderPresetForm(),
+      baseUrl: "https://api.example.test/v1",
+    };
+    expect(canFetchProviderPresetModels(base)).toBe(false);
+    expect(canFetchProviderPresetModels({ ...base, apiKey: "sk-1" })).toBe(true);
+    // Editing reuses the stored key: making the user retype it would be a second
+    // dead end on top of the one the selector removes.
+    expect(
+      canFetchProviderPresetModels({
+        ...base,
+        editingId: "command-code",
+        hasKey: true,
+      }),
+    ).toBe(true);
+    expect(canFetchProviderPresetModels({ ...base, apiKey: " " })).toBe(false);
+    expect(canFetchProviderPresetModels({ ...base, baseUrl: "" })).toBe(false);
+  });
+});
+
+describe("seat model strings", () => {
+  const rawId = "deepseek/deepseek-v4.1-flash";
+  const presetId = "command-code2";
+  const encoded = "command-code2/deepseek%2Fdeepseek-v4.1-flash";
+
+  it("generates, parses and regenerates the same string for a slash-bearing id", () => {
+    const generated = providerSeatModelString(presetId, rawId);
+    expect(generated).toBe(encoded);
+
+    const parsed = parseProviderSeatModelString(generated);
+    expect(parsed).toEqual({ providerId: presetId, modelId: rawId });
+
+    // 回填: writing the parsed pair back out reproduces the same seat string, so
+    // what the user selected and what the seat runs are the same thing.
+    expect(providerSeatModelString(parsed!.providerId, parsed!.modelId)).toBe(
+      generated,
+    );
+  });
+
+  it("leaves an id without a slash readable, and encodes only what it must", () => {
+    expect(providerSeatModelString("command-code2", "claude-sonnet-5")).toBe(
+      "command-code2/claude-sonnet-5",
+    );
+    expect(providerSeatModelString("command-code2", "a b/c")).toBe(
+      "command-code2/a%20b%2Fc",
+    );
+    expect(providerSeatModelString("", rawId)).toBe("");
+    expect(providerSeatModelString(presetId, "  ")).toBe("");
+  });
+
+  it("refuses a value that cannot be a seat pair", () => {
+    for (const bad of ["", "no-slash", "/model", "provider/", "   "]) {
+      expect(parseProviderSeatModelString(bad)).toBeNull();
+    }
+  });
+
+  it("shows provider and model name, never the escape", () => {
+    const display = providerSeatModelDisplay(encoded, [
+      preset({ id: presetId, models: [{ id: rawId, name: "DeepSeek V4.1 Flash" }] }),
+    ]);
+    expect(display).toBe("command-code2 · DeepSeek V4.1 Flash");
+    // The regression this rule exists for: rendering `%2F` invites a hand-edit
+    // that drops the prefix.
+    expect(display).not.toContain("%2F");
+  });
+
+  it("falls back to the parsed pieces when the preset is not in hand", () => {
+    expect(providerSeatModelDisplay(encoded, [])).toBe(
+      `command-code2 · ${rawId}`,
+    );
+    expect(providerSeatModelDisplay("plain-model", [])).toBe("plain-model");
+  });
+});
+
+describe("failure translation", () => {
+  it("carries the daemon's kind and parameters onto the failure", () => {
+    const error = Object.assign(new Error("quota"), {
+      kind: "rate_limited",
+      params: { status: "429", action: "regenerate_key" },
+    });
+    const failure = providerPresetFailureFrom(error, "fallback");
+    expect(failure.kind).toBe("rate_limited");
+    expect(failure.params.action).toBe("regenerate_key");
+    expect(providerPresetNeedsKeyRegeneration(failure)).toBe(true);
+  });
+
+  it("uses the caller's fallback when the error carries no classification", () => {
+    expect(providerPresetFailureFrom(new Error(""), "Could not save.")).toEqual({
+      kind: "",
+      params: {},
+      message: "Could not save.",
+    });
+    expect(providerPresetFailureFrom(undefined, "Could not save.").message).toBe(
+      "Could not save.",
+    );
+    // A kind that is not a string (or params with a non-string value) must not
+    // reach the copy switch as if it were one.
+    const weird = Object.assign(new Error("boom"), {
+      kind: 7,
+      params: { reset_at_local: 3 },
+    });
+    expect(providerPresetFailureFrom(weird, "fallback")).toEqual({
+      kind: "",
+      params: {},
+      message: "boom",
+    });
+  });
+
+  it("knows the kinds this build has copy for", () => {
+    expect(isKnownProviderPresetFailure("rate_limited")).toBe(true);
+    expect(isKnownProviderPresetFailure("something_newer")).toBe(false);
+    expect(isKnownProviderPresetFailure("")).toBe(false);
+  });
+
+  it("derives a clickable dashboard target from the endpoint", () => {
+    expect(providerConsoleUrl("https://api.commandcode.ai/provider/v1")).toBe(
+      "https://api.commandcode.ai/",
+    );
+    for (const bad of ["", "not a url", "file:///etc/passwd"]) {
+      expect(providerConsoleUrl(bad)).toBeNull();
+    }
+  });
+});
+
+describe("the save state machine", () => {
+  const failure = { kind: "rate_limited", params: {}, message: "quota" };
+
+  it("moves idle → verifying → saved on success", () => {
+    const verifying = reduceProviderPresetSave(IDLE_PROVIDER_PRESET_SAVE, {
+      type: "begin",
+    });
+    expect(verifying.phase).toBe("verifying");
+    expect(reduceProviderPresetSave(verifying, { type: "succeeded" })).toEqual({
+      phase: "saved",
+      failure: null,
+    });
+  });
+
+  it("never reports saved when verification failed", () => {
+    const verifying = reduceProviderPresetSave(IDLE_PROVIDER_PRESET_SAVE, {
+      type: "begin",
+    });
+    const failed = reduceProviderPresetSave(verifying, {
+      type: "failed",
+      failure,
+    });
+    expect(failed.phase).toBe("failed");
+    expect(failed.failure).toEqual(failure);
+    expect(failed.phase).not.toBe("saved");
+
+    // A late success must not paper over a failure that is still on screen.
+    expect(reduceProviderPresetSave(failed, { type: "succeeded" })).toBe(failed);
+  });
+
+  it("ignores a result for a run that was never started", () => {
+    expect(
+      reduceProviderPresetSave(IDLE_PROVIDER_PRESET_SAVE, { type: "succeeded" }),
+    ).toBe(IDLE_PROVIDER_PRESET_SAVE);
+    expect(
+      reduceProviderPresetSave(IDLE_PROVIDER_PRESET_SAVE, {
+        type: "failed",
+        failure,
+      }),
+    ).toBe(IDLE_PROVIDER_PRESET_SAVE);
+  });
+
+  it("clears the previous failure when a new attempt starts", () => {
+    const failed = reduceProviderPresetSave(
+      reduceProviderPresetSave(IDLE_PROVIDER_PRESET_SAVE, { type: "begin" }),
+      { type: "failed", failure },
+    );
+    expect(
+      reduceProviderPresetSave(failed, { type: "begin" }).failure,
+    ).toBeNull();
   });
 });

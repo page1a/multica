@@ -163,6 +163,13 @@ const maxSynthesizedFallbackCommentRunes = 8000
 
 const oversizedFallbackCommentNotice = "This task completed, but its output was too large to post safely. The raw output was not posted. Review the task in this issue's Execution log."
 
+func failureCommentBody(failureReason, errMsg string) string {
+	if failureReason == string(taskfailure.ReasonAgentProviderQuotaLimit) {
+		return "Provider quota exhausted; no automatic retry was created. Switch this agent to another available account or seat, then retry. Provider error: " + errMsg
+	}
+	return errMsg
+}
+
 // truncateFallbackCommentBody bounds a synthesized completion-fallback comment
 // body. Unlike truncateForSummary (which flattens newlines for a one-line row
 // snapshot), it preserves genuine final messages below the cap verbatim. Output
@@ -5128,7 +5135,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// in addition to the coordinator recovery signal, preserving visibility on
 	// both sides of a cross-issue handoff.
 	if errMsg != "" && task.IssueID.Valid && retried == nil {
-		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(errMsg), "system", task.TriggerCommentID, task.ID)
+		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(failureCommentBody(failureReason, errMsg)), "system", task.TriggerCommentID, task.ID)
 	}
 
 	// Quick-create tasks: push a failure inbox notification to the

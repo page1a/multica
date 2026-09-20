@@ -122,7 +122,10 @@ func TestInMemoryProviderPresetStore_KeyIsDeliveredOnceAndKeptNowhere(t *testing
 		t.Fatalf("status after claim = %s", stored.Status)
 	}
 
-	if err := store.Complete(ctx, req.ID, []ProviderPresetEntry{{ID: "test-provider"}}, &ProviderPresetActive{Provider: "test-provider", Model: "test-model"}, false); err != nil {
+	if err := store.Complete(ctx, req.ID, ProviderPresetResult{
+		Providers: []ProviderPresetEntry{{ID: "test-provider"}},
+		Active:    &ProviderPresetActive{Provider: "test-provider", Model: "test-model"},
+	}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	completed, err := store.Get(ctx, req.ID)
@@ -151,7 +154,7 @@ func TestInMemoryProviderPresetStore_FailKeepsTheKeyOut(t *testing.T) {
 	if _, err := store.PopPending(ctx, "runtime-1"); err != nil {
 		t.Fatalf("pop: %v", err)
 	}
-	if err := store.Fail(ctx, req.ID, "daemon said no"); err != nil {
+	if err := store.Fail(ctx, req.ID, ProviderPresetFailure{Kind: "provider_error", Message: "daemon said no"}); err != nil {
 		t.Fatalf("fail: %v", err)
 	}
 	failed, err := store.Get(ctx, req.ID)
@@ -174,10 +177,10 @@ func TestInMemoryProviderPresetStore_TerminalRecordIgnoresSecondReport(t *testin
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := store.Complete(ctx, req.ID, nil, nil, false); err != nil {
+	if err := store.Complete(ctx, req.ID, ProviderPresetResult{}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if err := store.Fail(ctx, req.ID, "late report"); err != nil {
+	if err := store.Fail(ctx, req.ID, ProviderPresetFailure{Message: "late report"}); err != nil {
 		t.Fatalf("fail: %v", err)
 	}
 	// The handler checks terminality before calling Fail; the store itself is
@@ -234,12 +237,15 @@ func TestApplyProviderPresetTimeout(t *testing.T) {
 }
 
 func TestValidProviderPresetAction(t *testing.T) {
-	for _, action := range []string{"list", "upsert", "refresh", "delete", "activate"} {
+	for _, action := range []string{"list", "models", "upsert", "delete", "activate"} {
 		if !validProviderPresetAction(action) {
 			t.Errorf("%q should be accepted", action)
 		}
 	}
-	for _, action := range []string{"", "List", "remove"} {
+	// `refresh` wrote the endpoint's whole catalog into the preset, which both
+	// overwrote the user's own selection and could mix two wire protocols in
+	// one route. `models` + `upsert` replace it.
+	for _, action := range []string{"", "List", "remove", "refresh"} {
 		if validProviderPresetAction(action) {
 			t.Errorf("%q should be rejected", action)
 		}
@@ -488,9 +494,13 @@ func TestInitiateProviderPresetAction_WritesAreOwnerOnly(t *testing.T) {
 	// testUserID is a workspace member but not the runtime's owner.
 	for _, action := range []string{
 		ProviderPresetActionUpsert,
-		ProviderPresetActionRefresh,
 		ProviderPresetActionDelete,
 		ProviderPresetActionActivate,
+		// Listing models is a write for this purpose: it makes the owner's
+		// daemon send a request to a caller-named host with the owner's stored
+		// credential attached when the caller names a preset instead of typing
+		// a key.
+		ProviderPresetActionModels,
 	} {
 		if w := post(testUserID, action); w.Code != http.StatusForbidden {
 			t.Fatalf("%s by a non-owner: expected 403, got %d: %s", action, w.Code, w.Body.String())

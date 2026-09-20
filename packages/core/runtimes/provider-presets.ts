@@ -3,6 +3,7 @@ import { api } from "../api";
 import type {
   RuntimeProviderPreset,
   RuntimeProviderPresetAction,
+  RuntimeProviderPresetModel,
   RuntimeProviderPresetRequest,
   RuntimeProviderPresetStatus,
   RuntimeProviderPresetTicket,
@@ -89,6 +90,36 @@ function knownPresetStatus(status: string): RuntimeProviderPresetStatus {
   }
 }
 
+/**
+ * A terminal provider-preset failure, carrying the daemon's machine-readable
+ * classification next to its English sentence.
+ *
+ * The kind is why this is a class rather than a plain `Error`: "the quota is
+ * exhausted" and "this key is bound to a cancelled billing cycle" are the same
+ * HTTP status and lead the user in opposite directions, and only the kind plus
+ * its parameters tells a localized surface which copy to render.
+ */
+export class ProviderPresetActionError extends Error {
+  readonly kind: string;
+  readonly params: Record<string, string>;
+
+  constructor(
+    message: string,
+    kind = "",
+    params: Record<string, string> = {},
+  ) {
+    super(message);
+    this.name = "ProviderPresetActionError";
+    this.kind = kind;
+    this.params = params;
+  }
+}
+
+/** The failure kind on a preset error, or "" when the error carries none. */
+export function providerPresetErrorKind(error: unknown): string {
+  return error instanceof ProviderPresetActionError ? error.kind : "";
+}
+
 // presetsFrom renders one reply as the cache entry. `cleared_active` is read
 // with `=== true` rather than truthiness: a backend that predates the field
 // omits it, and "absent" must not read as "the active model was just cleared".
@@ -135,8 +166,10 @@ async function awaitProviderPreset(
   }
 
   if (current.status !== "completed") {
-    throw new Error(
+    throw new ProviderPresetActionError(
       current.error || `provider preset ${action} failed (status: ${current.status})`,
+      current.error_kind ?? "",
+      current.error_params ?? {},
     );
   }
   return current;
@@ -165,20 +198,60 @@ function providerPresetPayload(
     }
     case "delete":
       return { id: input.id };
-    case "refresh":
-      return { id: input.id };
     case "activate":
       // An empty model asks the daemon for the preset's first model, which is
       // what "use this provider" means when the user did not pick one.
       return input.model ? { id: input.id, model: input.model } : { id: input.id };
+    case "models": {
+      // Only what the caller actually has. A blank field falls back on the
+      // daemon side to whatever the named preset already stores — endpoint,
+      // credential and protocol — which is what makes "fetch with the key I
+      // already saved" work without ever sending the key back to the browser.
+      const payload: Record<string, unknown> = {
+        base_url: input.baseUrl.trim(),
+        api: input.api.trim(),
+      };
+      if (input.id?.trim()) payload.id = input.id.trim();
+      // Same write-only channel as an upsert: present only when typed.
+      if (input.apiKey?.trim()) payload.api_key = input.apiKey.trim();
+      return payload;
+    }
   }
+}
+
+/** What a catalog fetch needs from the form. */
+export interface ProviderPresetModelsQuery {
+  /** Existing preset whose stored endpoint, key and protocol fill blank fields. */
+  id?: string;
+  baseUrl: string;
+  api: string;
+  /** Write-only, exactly like an upsert's key. */
+  apiKey?: string;
 }
 
 export type ProviderPresetActionInput =
   | { action: "upsert"; preset: RuntimeProviderPresetUpsertInput }
-  | { action: "refresh"; id: string }
   | { action: "delete"; id: string }
-  | { action: "activate"; id: string; model?: string };
+  | { action: "activate"; id: string; model?: string }
+  | ({ action: "models" } & ProviderPresetModelsQuery);
+
+/**
+ * Park one preset action and poll it to a terminal record. Kept separate from
+ * `runProviderPresetAction` so a caller that needs a field other than the
+ * preset list — `models` answers with a catalog — can read the record itself.
+ */
+async function runProviderPresetActionRequest(
+  runtimeId: string,
+  input: ProviderPresetActionInput,
+): Promise<RuntimeProviderPresetRequest> {
+  const ticket = await api.initiateProviderPresetAction(
+    runtimeId,
+    PROVIDER_PRESET_PROVIDER,
+    input.action,
+    providerPresetPayload(input),
+  );
+  return awaitProviderPreset(runtimeId, input.action, ticket);
+}
 
 /**
  * Run one preset action to completion and return the refreshed configuration.
@@ -193,13 +266,70 @@ export async function runProviderPresetAction(
   runtimeId: string,
   input: ProviderPresetActionInput,
 ): Promise<RuntimeProviderPresetsResult> {
-  const ticket = await api.initiateProviderPresetAction(
-    runtimeId,
-    PROVIDER_PRESET_PROVIDER,
-    input.action,
-    providerPresetPayload(input),
-  );
-  return presetsFrom(await awaitProviderPreset(runtimeId, input.action, ticket));
+  return presetsFrom(await runProviderPresetActionRequest(runtimeId, input));
+}
+
+/** The endpoint's own catalog, plus the protocol whose auth convention worked. */
+export interface ProviderPresetModelsResult {
+  /** Ids verbatim, exactly as the gateway spelled them — never escaped. */
+  models: RuntimeProviderPresetModel[];
+  /**
+   * The protocol under which the endpoint accepted the credential. Equal to the
+   * declared one unless the wrong auth convention was tried first and the other
+   * was retried (see `fetchProviderPresetModels`).
+   */
+  api: string;
+}
+
+// The two auth conventions a route can want. Anthropic-shaped gateways read the
+// key from `x-api-key`, everything else from `Authorization: Bearer`, and a
+// preset created before its protocol was set defaults to the OpenAI shape.
+// Picking the wrong one reads as a rejected key, which is indistinguishable
+// from a genuinely bad one until the other convention is tried.
+function otherAuthConvention(api: string): string {
+  return api.startsWith("anthropic")
+    ? PROVIDER_PRESET_DEFAULT_API
+    : "anthropic-messages";
+}
+
+/**
+ * Fetch a preset's model catalog without writing anything.
+ *
+ * The declared protocol is tried first; on a rejected credential the one other
+ * auth convention is tried exactly once. That is what removes the
+ * chicken-and-egg for a new anthropic gateway: its catalog can be fetched
+ * without first switching the form's protocol by hand, and the protocol that
+ * answered is returned so the form can reflect it.
+ *
+ * Deliberately not optimistic and deliberately not cached: the catalog is the
+ * endpoint's live answer, and a stale one would offer a model the route no
+ * longer serves.
+ */
+export async function fetchProviderPresetModels(
+  runtimeId: string,
+  query: ProviderPresetModelsQuery,
+): Promise<ProviderPresetModelsResult> {
+  const declared = query.api.trim() || PROVIDER_PRESET_DEFAULT_API;
+  try {
+    const request = await runProviderPresetActionRequest(runtimeId, {
+      action: "models",
+      ...query,
+      api: declared,
+    });
+    return { models: request.models ?? [], api: declared };
+  } catch (error) {
+    // Only a rejected credential is worth a second convention. An unreachable
+    // endpoint, a gateway with no catalog and a rate-limited account answer the
+    // same way to both, so a retry would only double the wait.
+    if (providerPresetErrorKind(error) !== "invalid_credential") throw error;
+    const fallback = otherAuthConvention(declared);
+    const request = await runProviderPresetActionRequest(runtimeId, {
+      action: "models",
+      ...query,
+      api: fallback,
+    });
+    return { models: request.models ?? [], api: fallback };
+  }
 }
 
 /** Read the machine's presets and which one is in effect. */

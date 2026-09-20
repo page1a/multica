@@ -43,9 +43,15 @@ import { useAutoSave } from "./use-auto-save";
  * definition, which the property panel already honours.
  *
  * The model field accepts manual ids but also gets a catalog from the selected
- * OpenAI-compatible gateway. The server keeps the credential on its side,
- * returns ids only, and the first id fills an empty field; manual entry stays
- * available for gateways that do not implement `/models`.
+ * gateway. The server keeps the credential on its side, returns ids only, and
+ * the first id fills an empty field; manual entry stays available for gateways
+ * that do not implement `/models`.
+ *
+ * Two protocols can be on the other end. An OpenAI-compatible gateway is
+ * asked for JSON; a TypeSafe System One endpoint (Jev) is asked for a typed
+ * judgment with its probability distribution. The section names which one is
+ * in use, because the confidence the threshold gates on means different things
+ * on the two: measured on one, self-reported on the other.
  *
  * Which gateway is now a workspace decision. It did not used to be: the judge
  * borrowed the deployment's MULTICA_LLM_* configuration, which is fine for one
@@ -464,6 +470,11 @@ function GatewayNote({ health }: { health?: RoutingHealth }) {
     <div className="flex flex-col gap-1 px-0.5">
       {health?.gateway_host ? (
         <p className="text-caption leading-5 text-muted-foreground">{scoped}</p>
+      ) : null}
+      {health?.gateway_protocol === "systemone" ? (
+        <p className="text-caption leading-5 text-muted-foreground">
+          {t(($) => $.routing.gateway_protocol_systemone)}
+        </p>
       ) : null}
       {health?.gateway_default_model ? (
         <p className="text-caption leading-5 text-muted-foreground">

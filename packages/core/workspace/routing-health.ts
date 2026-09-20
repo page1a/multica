@@ -51,6 +51,16 @@ export interface RoutingHealth {
    */
   gateway_scope: "workspace" | "deployment";
   /**
+   * Which wire format the endpoint speaks. `systemone` is a TypeSafe System
+   * One endpoint (Jev), which answers with typed judgments and the
+   * probabilities behind them; `openai` is a chat-completions gateway.
+   *
+   * It matters to a reader, not just to the server: the confidence the
+   * threshold gates on is a measured quantity on one protocol and a number the
+   * model wrote about itself on the other.
+   */
+  gateway_protocol: "openai" | "systemone";
+  /**
    * A workspace key is stored AND openable. Never the key itself.
    *
    * False for a key sealed under a deployment secret this server no longer
@@ -85,6 +95,7 @@ export const RoutingHealthSchema = z.object({
   gateway_default_model: z.string().optional(),
   gateway_configured: z.boolean().optional(),
   gateway_scope: z.string().optional(),
+  gateway_protocol: z.string().optional(),
   gateway_key_set: z.boolean().optional(),
   workspace_key_storable: z.boolean().optional(),
 });
@@ -109,6 +120,7 @@ export const UNKNOWN_ROUTING_HEALTH: RoutingHealth = {
   gateway_default_model: "",
   gateway_configured: false,
   gateway_scope: "deployment",
+  gateway_protocol: "openai",
   gateway_key_set: false,
   workspace_key_storable: false,
 };
@@ -160,6 +172,11 @@ export function parseRoutingHealth(raw: unknown): RoutingHealth {
     // deployment gateway. A backend that predates the field omits it, and
     // "deployment" is what it meant.
     gateway_scope: parsed.gateway_scope === "workspace" ? "workspace" : "deployment",
+    // A backend that predates the field omits it, and every endpoint before
+    // this field existed was OpenAI-compatible. Anything unrecognised reads
+    // the same way rather than claiming a protocol this client cannot check.
+    gateway_protocol:
+      parsed.gateway_protocol === "systemone" ? "systemone" : "openai",
     gateway_key_set: parsed.gateway_key_set === true,
     workspace_key_storable: parsed.workspace_key_storable === true,
   };

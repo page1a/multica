@@ -91,7 +91,10 @@ func TestRedisProviderPresetStore_DeliversTheKeyOnceAndKeepsItNowhere(t *testing
 		t.Fatalf("the raw Redis value holds the key: %s", raw)
 	}
 
-	if err := store.Complete(ctx, req.ID, []ProviderPresetEntry{{ID: "p", HasKey: true}}, &ProviderPresetActive{Provider: "p", Model: "m"}, false); err != nil {
+	if err := store.Complete(ctx, req.ID, ProviderPresetResult{
+		Providers: []ProviderPresetEntry{{ID: "p", HasKey: true}},
+		Active:    &ProviderPresetActive{Provider: "p", Model: "m"},
+	}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	done, err := store.Get(ctx, req.ID)

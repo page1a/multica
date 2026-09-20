@@ -519,18 +519,25 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// the finished handler. The judge runs on the same internal LLM layer as
 	// chat titling; an unconfigured deployment gets a disabled client, which
 	// makes every routing call take the else branch instead of failing.
-	h.Routing = routing.New(h.RoutingStore(), routing.LLMJudge{
-		Gen: llmClient,
-		// A workspace that supplies its own endpoint and key gets its own
-		// client. The retry budget is the deployment's, because it is a
-		// property of how long this server is willing to hold a goroutine, not
-		// of whose endpoint is on the other end.
-		Dial: func(baseURL, apiKey string) routing.TextGenerator {
-			return llm.New(llm.Config{
-				APIKey:     apiKey,
-				BaseURL:    baseURL,
-				MaxRetries: cfg.LLMMaxRetries,
-			})
+	// Two protocols, one judge interface. A workspace that pointed routing at
+	// a TypeSafe System One endpoint (Jev) is answered by the judge that
+	// speaks that wire format; everything else — including the deployment
+	// gateway — stays on the OpenAI-compatible path it was born on.
+	h.Routing = routing.New(h.RoutingStore(), routing.ProviderJudge{
+		SystemOne: routing.SystemOneJudge{},
+		Chat: routing.LLMJudge{
+			Gen: llmClient,
+			// A workspace that supplies its own endpoint and key gets its own
+			// client. The retry budget is the deployment's, because it is a
+			// property of how long this server is willing to hold a goroutine,
+			// not of whose endpoint is on the other end.
+			Dial: func(baseURL, apiKey string) routing.TextGenerator {
+				return llm.New(llm.Config{
+					APIKey:     apiKey,
+					BaseURL:    baseURL,
+					MaxRetries: cfg.LLMMaxRetries,
+				})
+			},
 		},
 	})
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)

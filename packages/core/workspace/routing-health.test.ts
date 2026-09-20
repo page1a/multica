@@ -36,9 +36,28 @@ describe("parseRoutingHealth", () => {
       // defaults have to read as "the deployment endpoint, no workspace key",
       // which is what such a backend means.
       gateway_scope: "deployment",
+      gateway_protocol: "openai",
       gateway_key_set: false,
       workspace_key_storable: false,
     });
+  });
+
+  it("narrows an unrecognised gateway protocol to openai", () => {
+    // Every endpoint that existed before this field was OpenAI-compatible, so
+    // an older backend omitting it means "openai". Claiming System One off an
+    // unrecognised value would tell a reader their tickets are judged by Jev
+    // when they are not.
+    expect(
+      parseRoutingHealth({ state: "enabled", gateway_protocol: "anthropic" })
+        .gateway_protocol,
+    ).toBe("openai");
+    expect(parseRoutingHealth({ state: "enabled" }).gateway_protocol).toBe(
+      "openai",
+    );
+    expect(
+      parseRoutingHealth({ state: "enabled", gateway_protocol: "systemone" })
+        .gateway_protocol,
+    ).toBe("systemone");
   });
 
   it("narrows an unrecognised gateway scope to the deployment", () => {

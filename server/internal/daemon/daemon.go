@@ -540,6 +540,9 @@ type Daemon struct {
 	// is per-machine, not per-runtime).
 	jevStatusMu sync.RWMutex
 	jevStatus   *protocol.JevStatusSnapshot
+	// jevConfigPathOverride points the runtime.env reader at a fixture file in
+	// tests, so they never read the developer's own JEV credentials.
+	jevConfigPathOverride string
 	// jevStateDirOverride points the reader at a fixture directory in tests.
 	// Empty in production, where the path follows XDG_STATE_HOME, then
 	// os.UserHomeDir()/.local/state/jev.
@@ -5196,7 +5199,7 @@ func (d *Daemon) handleProviderConfig(ctx context.Context, rt Runtime, pending P
 		"provider", pending.Provider, "action", pending.Action)
 
 	payload := map[string]any{}
-	snapshot, err := applyProviderConfig(pending.Provider, pending.Action, pending.Payload)
+	snapshot, err := applyProviderConfig(ctx, pending.Provider, pending.Action, pending.Payload)
 	if err != nil {
 		d.logger.Warn("runtime provider config failed",
 			"runtime_id", rt.ID, "request_id", pending.ID,
@@ -5207,6 +5210,19 @@ func (d *Daemon) handleProviderConfig(ctx context.Context, rt Runtime, pending P
 		// from file paths and field names: a decode or encode error is the one
 		// place a value from the body can end up inside a message.
 		payload["error"] = redact.Text(err.Error())
+		// The kind is what a localized surface renders, and the message above
+		// is only its fallback. Parameters are the daemon's own facts — a
+		// model id from the caller's body, a reset instant, a status code —
+		// and never a gateway's prose, which is why they need no redaction
+		// pass: the classify step keeps the raw body out of them and lets the
+		// filtered `error` above carry the one copy that goes out.
+		var failure *providerConfigFailure
+		if errors.As(err, &failure) && failure.Kind != "" {
+			payload["error_kind"] = failure.Kind
+			if len(failure.Params) > 0 {
+				payload["error_params"] = failure.Params
+			}
+		}
 	} else {
 		// Every action answers with the refreshed list, so the client can
 		// redraw from this reply alone.
@@ -5217,6 +5233,9 @@ func (d *Daemon) handleProviderConfig(ctx context.Context, rt Runtime, pending P
 		}
 		if snapshot.ClearedActive {
 			payload["cleared_active"] = true
+		}
+		if len(snapshot.Models) > 0 {
+			payload["models"] = snapshot.Models
 		}
 	}
 	d.reportProviderConfigResult(ctx, rt, pending.ID, payload)
@@ -9087,6 +9106,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if rootsValue, ok := composeOpenclawIncludeRoots(env.OpenclawIncludeRoot, os.Getenv("OPENCLAW_INCLUDE_ROOTS")); ok {
 		agentEnv["OPENCLAW_INCLUDE_ROOTS"] = rootsValue
 	}
+	// Export this machine's JEV credentials under both the names that read
+	// them: JEV_* for the `jev` CLI, TYPESAFE_* for the documented curl and
+	// the TypeSafe SDKs. Without this the SDK path 403s on a machine where
+	// `jev status` reports healthy, because nothing ever sets TYPESAFE_API_KEY
+	// for a daemon that launchd or make started.
+	//
+	// Set before custom_env is layered on, so an agent pinned to a different
+	// TypeSafe account can still override any of these names.
+	maps.Copy(agentEnv, d.jevTaskEnv())
 	// Inject user-configured custom environment variables (e.g. ANTHROPIC_API_KEY,
 	// ANTHROPIC_BASE_URL for router/proxy mode, or CLAUDE_CODE_USE_BEDROCK for
 	// Bedrock). These are set per-agent via the agent settings UI.

@@ -87,6 +87,7 @@ const HEALTHY = {
   gateway_default_model: "gpt-5.6-mini",
   gateway_configured: true,
   gateway_scope: "deployment" as const,
+  gateway_protocol: "openai" as const,
   gateway_key_set: false,
   workspace_key_storable: true,
 };
@@ -153,6 +154,52 @@ describe("RoutingTab", () => {
       ),
     );
     expect(listRoutingModels).toHaveBeenCalledWith("ws-1");
+  });
+
+  // The protocol line, not the host line. A workspace that configured Jev saw
+  // only "api.typesafe.ai" and a model id, which does not answer the question
+  // it had: is this actually a System One model deciding, or a chat model being
+  // asked to imitate one? The two mean different things for the confidence the
+  // threshold gates on.
+  it("names a System One endpoint as the one making the call", async () => {
+    workspace.current.settings = {
+      routing: {
+        enabled: true,
+        model: "jev-latest",
+        base_url: "https://api.typesafe.ai",
+      },
+    };
+    getRoutingHealth.mockResolvedValue({
+      ...HEALTHY,
+      model: "jev-latest",
+      gateway_scope: "workspace",
+      gateway_host: "api.typesafe.ai",
+      gateway_protocol: "systemone",
+      gateway_key_set: true,
+    });
+
+    const { qc } = render();
+    await healthSettled(qc);
+
+    // Matched on the clause that only the protocol line carries: the endpoint
+    // field's own help text names TypeSafe too, and asserting on the product
+    // name alone would pass on a page that never reported the protocol.
+    expect(
+      screen.getByText(/measured rather than self-reported/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about System One on an ordinary chat gateway", async () => {
+    workspace.current.settings = {
+      routing: { enabled: true, model: "gpt-5.6-luna" },
+    };
+
+    const { qc } = render();
+    await healthSettled(qc);
+
+    expect(
+      screen.queryByText(/measured rather than self-reported/i),
+    ).not.toBeInTheDocument();
   });
 
   it("saves the stored fields under the routing key and leaves the rest of settings alone", async () => {

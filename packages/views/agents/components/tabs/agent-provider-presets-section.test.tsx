@@ -25,6 +25,7 @@ const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 const resolveRuntimeProviderPresets = vi.hoisted(() => vi.fn());
 const runProviderPresetAction = vi.hoisted(() => vi.fn());
+const fetchProviderPresetModels = vi.hoisted(() => vi.fn());
 
 // The section's data layer is `packages/core/runtimes/provider-presets.ts`,
 // whose own contract with the API is covered by its own suite. Here it is
@@ -61,6 +62,11 @@ vi.mock("@multica/core/runtimes", async () => {
           queryClient.setQueryData(keys.forRuntime(runtimeId), result),
       });
     },
+    // Called directly by the model selector, not through a hook. Its own retry
+    // rule and payload live in provider-presets.test.ts; here it is a stub whose
+    // resolved value is the catalog under test.
+    fetchProviderPresetModels: (runtimeId: string, query: unknown) =>
+      fetchProviderPresetModels(runtimeId, query),
   };
 });
 
@@ -302,5 +308,186 @@ describe("actions", () => {
     );
     // Not optimistic: the row the delete failed on is still on screen.
     expect(screen.getByText("command-code")).toBeInTheDocument();
+  });
+});
+
+// The catalog rules themselves — filtering, label fallback, context-window
+// reading — are unit-tested in provider-presets-model.test.ts. These mounts
+// cover the wiring the acceptance names: the fetched dropdown, the in-progress
+// state of a multi-second verification, and the failed one.
+const CATALOG = [
+  {
+    id: "deepseek/deepseek-v4.1-flash",
+    name: "DeepSeek V4.1 Flash",
+    context_window: 1_000_000,
+  },
+  { id: "claude-sonnet-5", name: "Claude Sonnet 5", context_window: 200_000 },
+];
+
+async function openAddForm() {
+  resolveRuntimeProviderPresets.mockResolvedValue(result([]));
+  renderSection(runtime());
+  fireEvent.click(await screen.findByRole("button", { name: /Add provider/ }));
+  fireEvent.change(screen.getByLabelText("Name"), {
+    target: { value: "command-code2" },
+  });
+  fireEvent.change(screen.getByLabelText("API endpoint"), {
+    target: { value: "https://api.example.test/v1" },
+  });
+}
+
+function addManualModel(id: string) {
+  fireEvent.change(screen.getByLabelText("Model id"), { target: { value: id } });
+  fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+}
+
+describe("the model selector", () => {
+  it("fetches on request, filters as the user types, and keeps the real id", async () => {
+    fetchProviderPresetModels.mockResolvedValue({
+      models: CATALOG,
+      api: "openai-completions",
+    });
+    await openAddForm();
+
+    // Nothing is asked of the machine until a credential exists to ask with.
+    expect(screen.getByRole("button", { name: "Fetch models" })).toBeDisabled();
+    expect(
+      screen.getByText(/Enter an API endpoint and key first/),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "sk-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch models" }));
+
+    await waitFor(() => expect(fetchProviderPresetModels).toHaveBeenCalled());
+    expect(fetchProviderPresetModels.mock.calls[0]?.[1]).toMatchObject({
+      baseUrl: "https://api.example.test/v1",
+      api: "openai-completions",
+      apiKey: "sk-1",
+    });
+
+    fireEvent.click(await screen.findByTestId("preset-model-catalog-trigger"));
+    fireEvent.change(await screen.findByPlaceholderText("Search models"), {
+      target: { value: "sonnet" },
+    });
+
+    // The search hits both the display name and the wire id, and a row that
+    // does not match is gone rather than merely hidden.
+    expect(
+      screen.getByTestId("preset-model-catalog-row-claude-sonnet-5"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("preset-model-catalog-row-deepseek/deepseek-v4.1-flash"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("preset-model-catalog-row-claude-sonnet-5"));
+
+    // Selected: the label the user reads plus the id the request needs.
+    const selectedModels = screen.getByTestId("preset-selected-models");
+    expect(selectedModels).toHaveTextContent("Claude Sonnet 5");
+    expect(selectedModels).toHaveTextContent("claude-sonnet-5");
+    expect(selectedModels).toHaveTextContent("200,000 tokens");
+  });
+
+  it("sends the picked id verbatim, and still accepts a hand-typed one", async () => {
+    fetchProviderPresetModels.mockResolvedValue({
+      models: CATALOG,
+      api: "openai-completions",
+    });
+    runProviderPresetAction.mockResolvedValue(result([]));
+    await openAddForm();
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "sk-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch models" }));
+    fireEvent.click(await screen.findByTestId("preset-model-catalog-trigger"));
+    fireEvent.click(
+      await screen.findByTestId(
+        "preset-model-catalog-row-deepseek/deepseek-v4.1-flash",
+      ),
+    );
+
+    // A gateway with no model list is not worse off than before this selector.
+    addManualModel("local-llama");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(runProviderPresetAction).toHaveBeenCalledWith(
+        "rt-1",
+        expect.objectContaining({ action: "upsert" }),
+      ),
+    );
+    const input = runProviderPresetAction.mock.calls[0]?.[1] as {
+      preset: { models: { id: string }[] };
+    };
+    // Verbatim: escaping belongs to the seat string's codec, not the preset.
+    expect(input.preset.models.map((model) => model.id)).toEqual([
+      "deepseek/deepseek-v4.1-flash",
+      "local-llama",
+    ]);
+  });
+});
+
+describe("verifying a save", () => {
+  it("reports the multi-second step and blocks a second submit", async () => {
+    let settle: (value: unknown) => void = () => {};
+    runProviderPresetAction.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    await openAddForm();
+    addManualModel("deepseek/deepseek-v4.1-flash");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByTestId("preset-verify-progress")).toBeInTheDocument();
+    expect(screen.getByText("Verifying before saving")).toBeInTheDocument();
+    // A second press while the probes run would race two writes.
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    settle(result([]));
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("preset-verify-progress"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps the form open on a failed probe and names the actionable next step", async () => {
+    runProviderPresetAction.mockRejectedValue(
+      Object.assign(new Error("provider quota is used up"), {
+        kind: "rate_limited",
+        params: {
+          status: "429",
+          action: "regenerate_key",
+          reset_at_local: "2026-09-21 08:00",
+        },
+      }),
+    );
+    const { toast } = await import("sonner");
+    await openAddForm();
+    addManualModel("deepseek/deepseek-v4.1-flash");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByTestId("preset-verify-failure")).toBeInTheDocument();
+    expect(screen.getByTestId("preset-verify-failure-message")).toHaveTextContent(
+      /quota is used up/,
+    );
+    expect(screen.getByText(/2026-09-21 08:00/)).toBeInTheDocument();
+    const link = screen.getByRole("link", {
+      name: /Open the provider dashboard/,
+    });
+    expect(link).toHaveAttribute("href", "https://api.example.test/");
+
+    // Everything the user typed is still there, and the failure is in the form
+    // rather than a toast that would outlive the screen that explains it.
+    expect(screen.getByLabelText("Name")).toHaveValue("command-code2");
+    expect(screen.getByTestId("preset-selected-models")).toHaveTextContent(
+      "deepseek/deepseek-v4.1-flash",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });

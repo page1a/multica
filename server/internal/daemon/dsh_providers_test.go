@@ -3,8 +3,8 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,11 +16,14 @@ import (
 )
 
 // dshTestHome points DSH_HOME at a fresh directory so a test never reads or
-// writes the developer's real ~/.dsh.
+// writes the developer's real ~/.dsh, and installs the fake gateway every
+// save-time health check reaches. A test that needs a specific gateway answer
+// installs its own afterwards.
 func dshTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
+	dshInstallFakeGateway(t)
 	return home
 }
 
@@ -40,6 +43,22 @@ func dshReadTestFile(t *testing.T, path string) string {
 	return string(data)
 }
 
+// dshSettingsOrEmpty parses DSH's settings file, treating "the action was
+// refused before it wrote anything" as an empty document rather than a
+// failure — which is exactly what several tests are asserting.
+func dshSettingsOrEmpty(t *testing.T, home string) map[string]any {
+	t.Helper()
+	path := filepath.Join(home, dshSettingsFileName)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]any{}
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return dshYAMLMap(t, string(data))
+}
+
 func dshJSON(t *testing.T, body map[string]any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(body)
@@ -51,14 +70,24 @@ func dshJSON(t *testing.T, body map[string]any) json.RawMessage {
 
 func dshApply(t *testing.T, action string, body map[string]any) error {
 	t.Helper()
-	_, err := applyProviderConfig("dsh", action, dshJSON(t, body))
+	// A preset is only savable once the endpoint has both authenticated it and
+	// run a completion on it, so an upsert test needs a gateway that serves the
+	// models the test just listed. Tests that are about the probe itself call
+	// dshUpsertVerify instead, which leaves the catalog alone.
+	if action == providerActionUpsert && dshInstalledGateway != nil {
+		dshInstalledGateway.serve(dshBodyModelIDs(body)...)
+	}
+	_, err := applyProviderConfig(context.Background(), "dsh", action, dshJSON(t, body))
 	return err
 }
 
 // dshApplyOK fails the test on error and returns the snapshot.
 func dshApplyOK(t *testing.T, action string, body map[string]any) *providerConfigSnapshot {
 	t.Helper()
-	snapshot, err := applyProviderConfig("dsh", action, dshJSON(t, body))
+	if action == providerActionUpsert && dshInstalledGateway != nil {
+		dshInstalledGateway.serve(dshBodyModelIDs(body)...)
+	}
+	snapshot, err := applyProviderConfig(context.Background(), "dsh", action, dshJSON(t, body))
 	if err != nil {
 		t.Fatalf("%s: %v", action, err)
 	}
@@ -188,40 +217,6 @@ func TestDshProviderUpsertPreservesUnknownKeys(t *testing.T) {
 	}
 }
 
-func TestDshProviderRefreshDiscoversModelsFromEndpoint(t *testing.T) {
-	home := dshTestHome(t)
-	seedDshHome(t, home)
-	var gotPath, gotAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4.1-flash","name":"DeepSeek V4.1 Flash"},{"id":"qwen/qwen3"}]}`))
-	}))
-	defer server.Close()
-
-	dshApplyOK(t, providerActionUpsert, map[string]any{
-		"id":          "command-code",
-		"api":         "openai-completions",
-		"base_url":    server.URL + "/v1",
-		"api_key_env": "COMMAND_CODE_API_KEY",
-		"models":      []map[string]any{{"id": "stale-model"}},
-	})
-	snapshot := dshApplyOK(t, providerActionRefresh, map[string]any{"id": "command-code"})
-	if gotPath != "/v1/models" {
-		t.Fatalf("request path = %q, want /v1/models", gotPath)
-	}
-	if gotAuth != "Bearer sk-test-existing" {
-		t.Fatalf("authorization = %q, want stored key", gotAuth)
-	}
-	if len(snapshot.Providers) != 1 || len(snapshot.Providers[0].Models) != 2 {
-		t.Fatalf("refreshed providers = %#v", snapshot.Providers)
-	}
-	if snapshot.Providers[0].Models[0].ID != "deepseek/deepseek-v4.1-flash" {
-		t.Fatalf("first model = %#v", snapshot.Providers[0].Models[0])
-	}
-}
-
 // yamlEqual compares two decoded YAML values for equality.
 func yamlEqual(a, b any) bool {
 	left, err := json.Marshal(a)
@@ -244,6 +239,7 @@ func TestDshProviderUpsertPreservesUnrelatedProvider(t *testing.T) {
 		"api":      "openai-completions",
 		"base_url": "https://second.example.invalid/v1",
 		"models":   []map[string]any{{"id": "m-1", "name": "M One"}},
+		"api_key":  "sk-test-xxxx",
 	})
 
 	settings := dshYAMLMap(t, dshReadTestFile(t, filepath.Join(home, dshSettingsFileName)))
@@ -446,6 +442,7 @@ func TestDshProviderActivateDefaultsToFirstModel(t *testing.T) {
 		"api":      "openai-completions",
 		"base_url": "https://example.invalid/v1",
 		"models":   []map[string]any{{"id": "m-first"}, {"id": "m-second"}},
+		"api_key":  "sk-test-xxxx",
 	})
 	if snapshot.Active != nil {
 		t.Fatalf("a fresh preset must not be active: %+v", snapshot.Active)
@@ -502,7 +499,7 @@ func TestDshProviderDeleteInactivePresetKeepsActive(t *testing.T) {
 
 	dshApplyOK(t, providerActionUpsert, map[string]any{
 		"id": "other", "api": "openai-completions", "base_url": "https://other.invalid",
-		"models": []map[string]any{{"id": "m"}},
+		"models": []map[string]any{{"id": "m"}}, "api_key": "sk-test-xxxx",
 	})
 	snapshot := dshApplyOK(t, providerActionDelete, map[string]any{"id": "other"})
 	if snapshot.ClearedActive {
@@ -538,6 +535,7 @@ func TestDshProviderBackupRotation(t *testing.T) {
 			"api":      "openai-completions",
 			"base_url": "http://example.test/v1-" + strconv.Itoa(i),
 			"models":   []map[string]any{{"id": "m"}},
+			"api_key":  "sk-test-xxxx",
 		})
 	}
 
@@ -618,18 +616,18 @@ func TestDshCredentialFilesArePrivate(t *testing.T) {
 func TestDshProviderRejectsUnsupportedProviderAndAction(t *testing.T) {
 	dshTestHome(t)
 
-	if _, err := applyProviderConfig("claude", providerActionList, nil); err == nil {
+	if _, err := applyProviderConfig(context.Background(), "claude", providerActionList, nil); err == nil {
 		t.Error("an unimplemented provider must be reported as unsupported")
 	} else if !strings.Contains(err.Error(), "unsupported provider") {
 		t.Errorf("claude: %v", err)
 	}
-	if _, err := applyProviderConfig("agy", providerActionList, nil); err == nil {
+	if _, err := applyProviderConfig(context.Background(), "agy", providerActionList, nil); err == nil {
 		t.Error("agy must be reported as unsupported until it has a driver")
 	}
 	if err := dshApply(t, "explode", map[string]any{"id": "p1"}); err == nil {
 		t.Error("an unknown action must be rejected")
 	}
-	if _, err := applyProviderConfig("dsh", providerActionList, nil); err != nil {
+	if _, err := applyProviderConfig(context.Background(), "dsh", providerActionList, nil); err != nil {
 		t.Errorf("list on an empty DSH home must succeed: %v", err)
 	}
 }
@@ -669,7 +667,8 @@ func TestDshProviderUpsertDropsRemovedModelAndKeepsItsSibling(t *testing.T) {
 
 	dshApplyOK(t, providerActionUpsert, map[string]any{
 		"id": "p1", "api": "openai-completions", "base_url": "https://example.invalid",
-		"models": []map[string]any{{"id": "keep", "name": "Keep", "context_window": 1000}},
+		"models":  []map[string]any{{"id": "keep", "name": "Keep", "context_window": 1000}},
+		"api_key": "sk-test-xxxx",
 	})
 
 	settings := dshYAMLMap(t, dshReadTestFile(t, filepath.Join(home, dshSettingsFileName)))
@@ -732,6 +731,7 @@ func TestHandleProviderConfigReportsFailureForUnsupportedProvider(t *testing.T) 
 func TestHandleProviderConfigReportsRefreshedList(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 	dshTestHome(t)
+	dshInstalledGateway.serve("m")
 
 	var body map[string]any
 	d, _ := localSkillReportDaemon(t, func(w http.ResponseWriter, r *http.Request) {

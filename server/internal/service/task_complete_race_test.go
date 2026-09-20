@@ -430,6 +430,10 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		// same reason provider_network is — the request was fine — and
 		// resume-safe because nothing about the conversation was rejected.
 		{reason: "agent_error.provider_server_error", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
+		// A provider quota / weekly usage limit is deterministic: do not spend
+		// another run against the same exhausted account. The failure comment
+		// tells the operator to switch the agent's account/seat instead.
+		{reason: "agent_error.provider_quota_limit", wantType: "agent_error", wantResumeOK: true, wantRetry: false},
 		{reason: "runtime_recovery", wantType: "runtime", wantResumeOK: true, wantRetry: true},
 		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
 		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
@@ -452,6 +456,30 @@ func TestTaskFailureClassifiers(t *testing.T) {
 				t.Fatalf("retryableReasons[%q] = %v, want %v", tc.reason, got, tc.wantRetry)
 			}
 		})
+	}
+}
+
+func TestProviderQuotaFailureIsExplicitlyNonRetryable(t *testing.T) {
+	const raw = "Weekly usage limit reached"
+	reason := taskfailure.Classify(raw)
+	if reason != taskfailure.ReasonAgentProviderQuotaLimit {
+		t.Fatalf("Classify(%q) = %q, want %q", raw, reason, taskfailure.ReasonAgentProviderQuotaLimit)
+	}
+	if got := taskfailure.NormalizeDaemonReason("agent_error", raw); got != taskfailure.ReasonAgentProviderQuotaLimit {
+		t.Fatalf("NormalizeDaemonReason(agent_error, %q) = %q, want %q", raw, got, taskfailure.ReasonAgentProviderQuotaLimit)
+	}
+	if retryableReasons[reason.String()] {
+		t.Fatalf("retryableReasons[%q] = true, want false", reason)
+	}
+	capacity := taskfailure.Classify("API Error: 429 Too Many Requests")
+	if capacity != taskfailure.ReasonAgentProviderCapacityOrRateLimit || !retryableReasons[capacity.String()] {
+		t.Fatalf("429 classification = %q, retryable = %v; want provider capacity/rate-limit and retryable", capacity, retryableReasons[capacity.String()])
+	}
+	comment := failureCommentBody(reason.String(), raw)
+	for _, want := range []string{"quota exhausted", "no automatic retry", "another available account or seat"} {
+		if !strings.Contains(strings.ToLower(comment), want) {
+			t.Errorf("quota failure comment %q does not contain %q", comment, want)
+		}
 	}
 }
 

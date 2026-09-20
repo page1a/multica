@@ -1527,8 +1527,8 @@ export interface RuntimeLocalSkillImportResult {
 
 export type RuntimeProviderPresetAction =
   | "list"
+  | "models"
   | "upsert"
-  | "refresh"
   | "delete"
   | "activate";
 
@@ -1542,7 +1542,13 @@ export type RuntimeProviderPresetStatus =
 export interface RuntimeProviderPresetModel {
   id: string;
   name?: string;
+  /**
+   * Context window the gateway advertised. The daemon normalises either
+   * spelling it may have read off the wire onto `context_window`; the older
+   * `context_length` is kept so a response that carries it still shows a size.
+   */
   context_window?: number;
+  context_length?: number;
 }
 
 export interface RuntimeProviderPreset {
@@ -1587,11 +1593,28 @@ export interface RuntimeProviderPresetRequest {
   providers?: RuntimeProviderPreset[];
   active?: RuntimeProviderPresetActive;
   /**
+   * The endpoint's own catalog, filled only by the `models` action. Ids travel
+   * verbatim — escaping one for a seat's `provider/model` string is the
+   * surface's job, not the daemon's.
+   */
+  models?: RuntimeProviderPresetModel[];
+  /**
    * A delete that also emptied the active-model setting. The user just lost
    * their default model, which the UI has to say out loud.
    */
   cleared_active?: boolean;
   error?: string;
+  /**
+   * Machine-readable classification of `error`. A surface renders localized
+   * copy from the kind and its parameters; `error` is the English fallback for
+   * a kind this build does not know.
+   */
+  error_kind?: string;
+  /**
+   * Parameters for `error_kind` — the daemon's own facts only (`status`,
+   * `model`, `reset_at_local`, `action`). Never the gateway's raw body.
+   */
+  error_params?: Record<string, string>;
   created_at: string;
   updated_at: string;
 }

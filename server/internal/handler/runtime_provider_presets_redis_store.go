@@ -235,26 +235,29 @@ func (s *RedisProviderPresetStore) PopPending(ctx context.Context, runtimeID str
 	return nil, nil
 }
 
-func (s *RedisProviderPresetStore) Complete(ctx context.Context, id string, providers []ProviderPresetEntry, active *ProviderPresetActive, clearedActive bool) error {
+func (s *RedisProviderPresetStore) Complete(ctx context.Context, id string, result ProviderPresetResult) error {
 	req, err := s.loadRequest(ctx, id)
 	if err != nil || req == nil {
 		return err
 	}
 	req.Status = ProviderPresetCompleted
-	req.Providers = providers
-	req.Active = active
-	req.ClearedActive = clearedActive
+	req.Providers = result.Providers
+	req.Active = result.Active
+	req.ClearedActive = result.ClearedActive
+	req.Models = result.Models
 	req.UpdatedAt = time.Now()
 	return s.persistRedacted(ctx, req)
 }
 
-func (s *RedisProviderPresetStore) Fail(ctx context.Context, id string, errMsg string) error {
+func (s *RedisProviderPresetStore) Fail(ctx context.Context, id string, failure ProviderPresetFailure) error {
 	req, err := s.loadRequest(ctx, id)
 	if err != nil || req == nil {
 		return err
 	}
 	req.Status = ProviderPresetFailed
-	req.Error = errMsg
+	req.Error = failure.Message
+	req.ErrorKind = failure.Kind
+	req.ErrorParams = failure.Params
 	req.UpdatedAt = time.Now()
 	return s.persistRedacted(ctx, req)
 }

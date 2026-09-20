@@ -3587,11 +3587,16 @@ export const MALFORMED_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
 // A model entry with no `id` cannot be keyed or activated, so `id` is required
 // and an entry without one drops the whole response to the fallback rather than
 // rendering a row that would write an empty model id.
+//
+// `context_length` is the spelling some gateways use on the wire; the daemon
+// normalises it onto `context_window` before reporting, and both are accepted
+// so a catalog stays usable when only the older spelling arrives.
 const RuntimeProviderPresetModelSchema = z
   .object({
     id: z.string(),
     name: z.string().optional(),
     context_window: z.number().optional(),
+    context_length: z.number().optional(),
   })
   .loose();
 
@@ -3619,6 +3624,21 @@ const RuntimeProviderPresetActiveSchema = z
   })
   .loose();
 
+// Failure parameters are the daemon's own facts and are typed as a string map,
+// but a newer daemon could add a numeric one (a status code, a retry delay).
+// Non-string values are dropped rather than failing the whole record: losing a
+// parameter degrades one localized sentence, while rejecting the response would
+// hide the failure the user needs to see.
+const RuntimeProviderPresetErrorParamsSchema = z
+  .record(z.string(), z.unknown())
+  .transform((params) => {
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === "string") out[key] = value;
+    }
+    return out;
+  });
+
 export const RuntimeProviderPresetRequestSchema = z
   .object({
     id: z.string().default(""),
@@ -3632,7 +3652,12 @@ export const RuntimeProviderPresetRequestSchema = z
     providers: z.array(RuntimeProviderPresetSchema).optional(),
     active: RuntimeProviderPresetActiveSchema.optional(),
     cleared_active: z.boolean().optional(),
+    // The endpoint's own catalog, filled only by the `models` action. Absent on
+    // a response to any other action, and on a daemon older than the field.
+    models: z.array(RuntimeProviderPresetModelSchema).optional(),
     error: z.string().optional(),
+    error_kind: z.string().optional(),
+    error_params: RuntimeProviderPresetErrorParamsSchema.optional(),
     created_at: z.string().default(""),
     updated_at: z.string().default(""),
   })

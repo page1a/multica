@@ -20,17 +20,32 @@
 // unless the user types. `provider-presets-model.ts` holds the rules and their
 // canonical tests.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   runtimeProviderPresetsKeys,
   runtimeProviderPresetsOptions,
   useProviderPresetMutation,
+  fetchProviderPresetModels,
   PROVIDER_PRESET_APIS,
 } from "@multica/core/runtimes";
-import type { RuntimeDevice, RuntimeProviderPreset } from "@multica/core/types";
+import type {
+  RuntimeDevice,
+  RuntimeProviderPreset,
+  RuntimeProviderPresetModel,
+} from "@multica/core/types";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -59,6 +74,11 @@ import {
 } from "@multica/ui/components/ui/field";
 import { Input } from "@multica/ui/components/ui/input";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@multica/ui/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -69,15 +89,30 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../../i18n";
 import {
+  IDLE_PROVIDER_PRESET_SAVE,
+  PROVIDER_PRESET_FAILURE_I18N_KEYS,
+  type ProviderPresetFailure,
   type ProviderPresetFieldError,
   type ProviderPresetForm,
+  canFetchProviderPresetModels,
   canManageProviderPresets,
   emptyProviderPresetForm,
+  filterProviderPresetModels,
+  isKnownProviderPresetFailure,
+  providerConsoleUrl,
+  providerPresetContextWindow,
+  providerPresetFailureFrom,
   providerPresetFormFrom,
   providerPresetKeyState,
+  providerPresetModelLabel,
+  providerPresetModels,
+  providerPresetNeedsKeyRegeneration,
   providerPresetSummaryLine,
   providerPresetUpsertInput,
   providerPresetsViewState,
+  providerSeatModelDisplay,
+  providerSeatModelString,
+  reduceProviderPresetSave,
   supportsProviderPresets,
   validateProviderPresetForm,
 } from "./provider-presets-model";
@@ -129,6 +164,15 @@ function ProviderPresets({ runtimeId }: { runtimeId: string }) {
 
   const manageable = canManageProviderPresets(state);
 
+  // The seat's model string, rebuilt from the pair the daemon reported. Empty
+  // when either half is missing: a half-reported pair is not a seat value and
+  // rendering one would invent a route.
+  const active = query.data?.active ?? null;
+  const activeSeatModel =
+    active && active.provider.trim() && active.model.trim()
+      ? providerSeatModelString(active.provider, active.model)
+      : "";
+
   const handleActivate = async (preset: RuntimeProviderPreset) => {
     setActivatingId(preset.id);
     try {
@@ -160,33 +204,21 @@ function ProviderPresets({ runtimeId }: { runtimeId: string }) {
   };
 
   const handleSubmit = async (form: ProviderPresetForm) => {
-    try {
-      await mutation.mutateAsync({
-        action: "upsert",
-        preset: providerPresetUpsertInput(form),
-      });
-      // URL-backed providers are the source of truth for their model ids. A
-      // refresh runs on the daemon, where the stored key is available, so the
-      // browser never needs to read or forward the credential.
-      try {
-        await mutation.mutateAsync({ action: "refresh", id: form.id.trim() });
-      } catch (refreshError) {
-        toast.warning(
-          errorText(
-            refreshError,
-            t(($) => $.tab_body.providers.refresh_failed_toast),
-          ),
-        );
-      }
-      toast.success(
-        form.editingId
-          ? t(($) => $.tab_body.providers.updated_toast, { name: form.id.trim() })
-          : t(($) => $.tab_body.providers.created_toast, { name: form.id.trim() }),
-      );
-      setEditing(null);
-    } catch (err) {
-      toast.error(errorText(err, t(($) => $.tab_body.providers.save_failed_toast)));
-    }
+    // Saving IS the verification: the daemon runs both probes before it writes
+    // anything and a failure leaves the file untouched. The dialog owns the
+    // resulting state, so this only reports success upward. It deliberately
+    // does not toast a failure — a failed save belongs in the form beside the
+    // fields that caused it, with the localized reason and, for a dead billing
+    // cycle, the one actionable next step.
+    await mutation.mutateAsync({
+      action: "upsert",
+      preset: providerPresetUpsertInput(form),
+    });
+    toast.success(
+      form.editingId
+        ? t(($) => $.tab_body.providers.updated_toast, { name: form.id.trim() })
+        : t(($) => $.tab_body.providers.created_toast, { name: form.id.trim() }),
+    );
   };
 
   const handleRetry = () => {
@@ -275,13 +307,29 @@ function ProviderPresets({ runtimeId }: { runtimeId: string }) {
         </ul>
       ) : null}
 
+      {/* What the default model actually is, said in the two names the user
+          picked. The seat's own value is `provider/encoded-model`; rendering
+          that verbatim would put `%2F` on screen and invite a hand edit, which
+          is how the prefix went missing in DENE-680. */}
+      {state.kind === "ready" && activeSeatModel ? (
+        <p
+          className="text-caption text-muted-foreground"
+          data-testid="provider-presets-active-model"
+          translate="no"
+        >
+          {t(($) => $.tab_body.providers.active_model, {
+            model: providerSeatModelDisplay(activeSeatModel, state.presets),
+          })}
+        </p>
+      ) : null}
+
       {editing ? (
         <ProviderPresetDialog
+          runtimeId={runtimeId}
           form={editing}
-          saving={mutation.isPending}
           onChange={setEditing}
           onClose={() => setEditing(null)}
-          onSubmit={() => void handleSubmit(editing)}
+          onSubmit={() => handleSubmit(editing)}
         />
       ) : null}
 
@@ -391,45 +439,61 @@ function ProviderPresetRow({
 }
 
 function ProviderPresetDialog({
+  runtimeId,
   form,
-  saving,
   onChange,
   onClose,
   onSubmit,
 }: {
+  runtimeId: string;
   form: ProviderPresetForm;
-  saving: boolean;
   onChange: (next: ProviderPresetForm) => void;
   onClose: () => void;
-  onSubmit: () => void;
+  /** Resolves once the daemon accepted the write; rejects on a failed probe. */
+  onSubmit: () => Promise<void>;
 }) {
   const { t } = useT("agents");
   const [showErrors, setShowErrors] = useState(false);
+  // The save flow's own state. A failed verification lands in `failed` and the
+  // dialog stays open; only a `succeeded` transition closes it.
+  const [save, dispatchSave] = useReducer(
+    reduceProviderPresetSave,
+    IDLE_PROVIDER_PRESET_SAVE,
+  );
   const errors = validateProviderPresetForm(form);
   const editing = form.editingId !== "";
+  const saving = save.phase === "verifying";
 
   const set = <K extends keyof ProviderPresetForm>(
     key: K,
     value: ProviderPresetForm[K],
   ) => onChange({ ...form, [key]: value });
 
-  const setModel = (index: number, patch: { id?: string; name?: string }) =>
-    onChange({
-      ...form,
-      models: form.models.map((model, i) =>
-        i === index ? { ...model, ...patch } : model,
-      ),
-    });
-
   const has = (error: ProviderPresetFieldError) =>
     showErrors && errors.includes(error);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (errors.length > 0) {
       setShowErrors(true);
       return;
     }
-    onSubmit();
+    dispatchSave({ type: "begin" });
+    try {
+      await onSubmit();
+      dispatchSave({ type: "succeeded" });
+      onClose();
+    } catch (error) {
+      // No write landed — the daemon runs both probes before it touches the
+      // file. The reason belongs in the form, beside the fields that produced
+      // it, not in a toast the user has to hold in their head.
+      dispatchSave({
+        type: "failed",
+        failure: providerPresetFailureFrom(
+          error,
+          t(($) => $.tab_body.providers.save_failed_toast),
+        ),
+      });
+    }
   };
 
   return (
@@ -517,6 +581,13 @@ function ProviderPresetDialog({
                 ))}
               </SelectContent>
             </Select>
+            {/* The gateway is the authority on its own wire protocol: the save
+                records what its `supported_endpoints` say, and this select is
+                only consulted when it does not describe them. Saying so is what
+                keeps "I chose A" and "the file says B" from being a surprise. */}
+            <FieldDescription>
+              {t(($) => $.tab_body.providers.field_api_hint)}
+            </FieldDescription>
           </Field>
 
           <Field>
@@ -567,70 +638,44 @@ function ProviderPresetDialog({
             ) : null}
           </Field>
 
-          <Field>
-            <FieldLabel>{t(($) => $.tab_body.providers.field_models)}</FieldLabel>
-            <div className="space-y-2">
-              {form.models.map((model, index) => (
-                <div key={index} className="flex flex-wrap items-center gap-2">
-                  <Input
-                    className="min-w-0 flex-1 basis-48"
-                    value={model.id}
-                    onChange={(event) => setModel(index, { id: event.target.value })}
-                    placeholder={t(($) => $.tab_body.providers.field_model_id)}
-                    aria-label={t(($) => $.tab_body.providers.field_model_id_aria, {
-                      n: index + 1,
-                    })}
-                  />
-                  <Input
-                    className="min-w-0 flex-1 basis-40"
-                    value={model.name}
-                    onChange={(event) => setModel(index, { name: event.target.value })}
-                    placeholder={t(($) => $.tab_body.providers.field_model_name)}
-                    aria-label={t(($) => $.tab_body.providers.field_model_name_aria, {
-                      n: index + 1,
-                    })}
-                  />
-                  {form.models.length > 1 ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      aria-label={t(($) => $.tab_body.providers.remove_model_aria, {
-                        n: index + 1,
-                      })}
-                      onClick={() =>
-                        onChange({
-                          ...form,
-                          models: form.models.filter((_, i) => i !== index),
-                        })
-                      }
-                    >
-                      <Trash2 className="size-3.5" aria-hidden="true" />
-                    </Button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="mt-1 self-start"
-              onClick={() =>
-                onChange({ ...form, models: [...form.models, { id: "", name: "" }] })
-              }
-            >
-              <Plus className="size-3.5" aria-hidden="true" />
-              {t(($) => $.tab_body.providers.add_model_action)}
-            </Button>
-          </Field>
+          <ProviderPresetModelsField
+            runtimeId={runtimeId}
+            form={form}
+            onChange={onChange}
+            showErrors={showErrors}
+          />
         </FieldGroup>
+
+        {saving ? (
+          <div
+            role="status"
+            data-testid="preset-verify-progress"
+            className="mt-3 flex items-start gap-2 rounded-md border border-border bg-muted/40 p-2.5"
+          >
+            <Loader2
+              className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <p className="text-caption font-medium">
+                {t(($) => $.tab_body.providers.verifying_title)}
+              </p>
+              <p className="mt-0.5 text-pretty text-caption leading-5 text-muted-foreground">
+                {t(($) => $.tab_body.providers.verifying_hint)}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {save.phase === "failed" && save.failure ? (
+          <ProviderPresetFailureNote failure={save.failure} baseUrl={form.baseUrl} />
+        ) : null}
 
         <DialogFooter>
           <Button type="button" variant="outline" disabled={saving} onClick={onClose}>
             {t(($) => $.tab_body.providers.cancel_action)}
           </Button>
-          <Button type="button" disabled={saving} onClick={handleSubmit}>
+          <Button type="button" disabled={saving} onClick={() => void handleSubmit()}>
             {saving ? (
               <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
             ) : null}
@@ -640,6 +685,409 @@ function ProviderPresetDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * The model cell: a fetched, searchable catalog when the endpoint has one, and
+ * the hand-typed id as the fallback for a gateway that does not.
+ *
+ * The catalog is the endpoint's own answer and is never cached — a stale list
+ * would offer a model the route no longer serves. Manual entry survives on
+ * purpose (`upsert` still probes the model it names), so a gateway with no
+ * `/models` is not worse off than before this section existed.
+ */
+function ProviderPresetModelsField({
+  runtimeId,
+  form,
+  onChange,
+  showErrors,
+}: {
+  runtimeId: string;
+  form: ProviderPresetForm;
+  onChange: (next: ProviderPresetForm) => void;
+  showErrors: boolean;
+}) {
+  const { t } = useT("agents");
+  const [catalog, setCatalog] = useState<RuntimeProviderPresetModel[] | null>(
+    null,
+  );
+  const [catalogFailure, setCatalogFailure] = useState<ProviderPresetFailure | null>(
+    null,
+  );
+  const [fetching, setFetching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [manualId, setManualId] = useState("");
+
+  // The fetch is a round trip through the user's machine, so the form can move
+  // under it. Reading the latest value through a ref — updated after commit —
+  // keeps a detected protocol from being written over whatever was typed while
+  // the request was in flight.
+  const latestForm = useRef(form);
+  useEffect(() => {
+    latestForm.current = form;
+  }, [form]);
+
+  const canFetch = canFetchProviderPresetModels(form);
+  const selected = providerPresetModels(form);
+  const selectedIds = new Set(selected.map((model) => model.id));
+  const visible = catalog ? filterProviderPresetModels(catalog, search) : [];
+
+  const fetchModels = async () => {
+    setFetching(true);
+    setCatalogFailure(null);
+    try {
+      const result = await fetchProviderPresetModels(runtimeId, {
+        id: form.editingId || undefined,
+        baseUrl: form.baseUrl.trim(),
+        api: form.api.trim(),
+        apiKey: form.apiKey.trim() || undefined,
+      });
+      setCatalog(result.models);
+      // The endpoint answered under the other auth convention. Adopt it, so a
+      // save on a gateway that never publishes its endpoints does not record a
+      // protocol the route cannot speak.
+      if (result.api !== latestForm.current.api) {
+        onChange({ ...latestForm.current, api: result.api });
+      }
+    } catch (error) {
+      setCatalog(null);
+      setCatalogFailure(
+        providerPresetFailureFrom(
+          error,
+          t(($) => $.tab_body.providers.fetch_models_failed),
+        ),
+      );
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const toggle = (model: RuntimeProviderPresetModel) => {
+    if (selectedIds.has(model.id)) {
+      onChange({
+        ...form,
+        models: form.models.filter((row) => row.id.trim() !== model.id),
+      });
+      return;
+    }
+    // Drop the blank scaffolding row and any other empty row, then append the
+    // picked model with the display name the endpoint gave it.
+    onChange({
+      ...form,
+      models: [
+        ...form.models.filter(
+          (row) => row.id.trim() !== "" && row.id.trim() !== model.id,
+        ),
+        { id: model.id, name: model.name ?? "" },
+      ],
+    });
+  };
+
+  const removeSelected = (id: string) =>
+    onChange({
+      ...form,
+      models: form.models.filter((row) => row.id.trim() !== id),
+    });
+
+  const addManual = () => {
+    const id = manualId.trim();
+    if (!id) return;
+    setManualId("");
+    if (selectedIds.has(id)) return;
+    onChange({
+      ...form,
+      models: [
+        ...form.models.filter((row) => row.id.trim() !== ""),
+        { id, name: "" },
+      ],
+    });
+  };
+
+  return (
+    <Field>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <FieldLabel>{t(($) => $.tab_body.providers.field_models)}</FieldLabel>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          disabled={!canFetch || fetching}
+          onClick={() => void fetchModels()}
+        >
+          {fetching ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="size-3.5" aria-hidden="true" />
+          )}
+          {fetching
+            ? t(($) => $.tab_body.providers.fetch_models_loading)
+            : t(($) => $.tab_body.providers.fetch_models_action)}
+        </Button>
+      </div>
+
+      {!canFetch && !fetching ? (
+        <FieldDescription>
+          {t(($) => $.tab_body.providers.fetch_models_needs_credentials)}
+        </FieldDescription>
+      ) : null}
+
+      {catalogFailure ? (
+        <ProviderPresetFailureNote
+          failure={catalogFailure}
+          baseUrl={form.baseUrl}
+        />
+      ) : null}
+
+      {catalog && catalog.length === 0 ? (
+        <FieldDescription data-testid="preset-model-catalog-empty">
+          {t(($) => $.tab_body.providers.fetch_models_empty)}
+        </FieldDescription>
+      ) : null}
+
+      {catalog && catalog.length > 0 ? (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            data-testid="preset-model-catalog-trigger"
+            className="mt-1.5 flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-3 text-body transition-colors outline-none hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <span className="truncate">
+              {selected.length > 0
+                ? t(($) => $.tab_body.providers.models_selected, {
+                    count: selected.length,
+                  })
+                : t(($) => $.tab_body.providers.models_choose)}
+            </span>
+            <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            className="w-[var(--anchor-width)] gap-0 p-2"
+            data-testid="preset-model-catalog"
+          >
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t(($) => $.tab_body.providers.models_search_placeholder)}
+              aria-label={t(($) => $.tab_body.providers.models_search_placeholder)}
+              autoComplete="off"
+            />
+            <div className="mt-1.5 max-h-64 overflow-y-auto">
+              {visible.length === 0 ? (
+                <p className="px-2 py-4 text-center text-caption text-muted-foreground">
+                  {t(($) => $.tab_body.providers.models_search_empty)}
+                </p>
+              ) : (
+                visible.map((model) => {
+                  const isSelected = selectedIds.has(model.id);
+                  const context = providerPresetContextWindow(model);
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      data-testid={`preset-model-catalog-row-${model.id}`}
+                      onClick={() => toggle(model)}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-body transition-colors hover:bg-muted/60"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "flex size-4 shrink-0 items-center justify-center rounded-xs border",
+                          isSelected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-input",
+                        )}
+                      >
+                        {isSelected ? <Check className="size-3" /> : null}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium" translate="no">
+                          {providerPresetModelLabel(model)}
+                        </span>
+                        <span
+                          className="block truncate font-mono text-micro text-muted-foreground"
+                          translate="no"
+                        >
+                          {model.id}
+                        </span>
+                      </span>
+                      {context ? (
+                        <span className="shrink-0 text-micro text-muted-foreground">
+                          {t(($) => $.tab_body.providers.model_context, {
+                            tokens: context.toLocaleString(),
+                          })}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+
+      {selected.length > 0 ? (
+        <ul className="mt-2 space-y-1.5" data-testid="preset-selected-models">
+          {selected.map((model, index) => {
+            const entry = catalog?.find((candidate) => candidate.id === model.id);
+            const context = entry ? providerPresetContextWindow(entry) : null;
+            return (
+              <li
+                key={model.id}
+                className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-caption font-medium" translate="no">
+                    {providerPresetModelLabel(model)}
+                  </p>
+                  {model.name ? (
+                    <p
+                      className="truncate font-mono text-micro text-muted-foreground"
+                      translate="no"
+                    >
+                      {model.id}
+                    </p>
+                  ) : null}
+                </div>
+                {context ? (
+                  <span className="shrink-0 text-micro text-muted-foreground">
+                    {t(($) => $.tab_body.providers.model_context, {
+                      tokens: context.toLocaleString(),
+                    })}
+                  </span>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label={t(($) => $.tab_body.providers.remove_model_aria, {
+                    n: index + 1,
+                  })}
+                  onClick={() => removeSelected(model.id)}
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+
+      {/* The fallback. A gateway with no `/models` still has to be
+          configurable, and the save probes the typed id the same way. */}
+      <div className="mt-2 space-y-2 rounded-md border border-dashed border-border p-2.5">
+        <p className="text-caption text-muted-foreground">
+          {t(($) => $.tab_body.providers.manual_model_hint)}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="min-w-0 flex-1 basis-48"
+            value={manualId}
+            onChange={(event) => setManualId(event.target.value)}
+            placeholder={t(($) => $.tab_body.providers.field_model_id)}
+            aria-label={t(($) => $.tab_body.providers.field_model_id)}
+            autoComplete="off"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!manualId.trim()}
+            onClick={addManual}
+          >
+            <Plus className="size-3.5" aria-hidden="true" />
+            {t(($) => $.tab_body.providers.add_model_action)}
+          </Button>
+        </div>
+      </div>
+
+      {showErrors && selected.length === 0 ? (
+        <FieldError>
+          {t(($) => $.tab_body.providers.error_models_required)}
+        </FieldError>
+      ) : null}
+    </Field>
+  );
+}
+
+/**
+ * One failed probe, rendered from its kind rather than the daemon's English
+ * sentence. A kind this build does not know falls back to that sentence: an
+ * empty box would hide the reason entirely.
+ */
+function ProviderPresetFailureNote({
+  failure,
+  baseUrl,
+}: {
+  failure: ProviderPresetFailure;
+  baseUrl: string;
+}) {
+  const { t } = useT("agents");
+  const dashboard = providerPresetNeedsKeyRegeneration(failure)
+    ? providerConsoleUrl(baseUrl)
+    : null;
+
+  return (
+    <div
+      role="alert"
+      data-testid="preset-verify-failure"
+      className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 p-2.5"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle
+          className="mt-0.5 size-4 shrink-0 text-destructive"
+          aria-hidden="true"
+        />
+        <div className="min-w-0 space-y-1">
+          <p className="text-caption font-medium">
+            {t(($) => $.tab_body.providers.verify_failed_title)}
+          </p>
+          <p
+            className="text-pretty text-caption leading-5 text-muted-foreground"
+            data-testid="preset-verify-failure-message"
+          >
+            {providerPresetFailureMessage(failure, t)}
+          </p>
+          {/* The reset instant is only present on a rate-limited failure, and it
+              is only useful next to the "regenerate the key" sentence — waiting
+              for it is the dead end that copy exists to close. */}
+          {failure.params.reset_at_local ? (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.tab_body.providers.reset_at_local_hint, {
+                time: failure.params.reset_at_local,
+              })}
+            </p>
+          ) : null}
+          {dashboard ? (
+            <a
+              href={dashboard}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-caption font-medium text-brand underline"
+            >
+              {t(($) => $.tab_body.providers.open_dashboard_action)}
+              <ExternalLink className="size-3" aria-hidden="true" />
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type AgentsTranslator = ReturnType<typeof useT<"agents">>["t"];
+
+/** Localized copy for a failure kind, or the daemon's sentence as the fallback. */
+function providerPresetFailureMessage(
+  failure: ProviderPresetFailure,
+  t: AgentsTranslator,
+): string {
+  if (!isKnownProviderPresetFailure(failure.kind)) return failure.message;
+  const key = PROVIDER_PRESET_FAILURE_I18N_KEYS[failure.kind];
+  return t(($) => $.tab_body.providers[key], { ...failure.params });
 }
 
 function DeletePresetDialog({

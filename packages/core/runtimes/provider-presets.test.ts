@@ -3,7 +3,10 @@ import { QueryClient } from "@tanstack/react-query";
 import {
   PROVIDER_PRESET_DEFAULT_API,
   PROVIDER_PRESET_PROVIDER,
+  ProviderPresetActionError,
   activeProviderPreset,
+  fetchProviderPresetModels,
+  providerPresetErrorKind,
   resolveRuntimeProviderPresets,
   runProviderPresetAction,
   runtimeProviderPresetsKeys,
@@ -128,17 +131,17 @@ describe("runProviderPresetAction payloads", () => {
     );
   });
 
-  it("sends a refresh payload with only the provider id", async () => {
+  it("sends a delete payload with only the provider id", async () => {
     getProviderPresetResult.mockResolvedValue(
-      request({ action: "refresh", providers: [preset()] }),
+      request({ action: "delete", providers: [] }),
     );
 
-    await runProviderPresetAction("rt-1", { action: "refresh", id: "command-code" });
+    await runProviderPresetAction("rt-1", { action: "delete", id: "command-code" });
 
     expect(initiateProviderPresetAction).toHaveBeenCalledWith(
       "rt-1",
       PROVIDER_PRESET_PROVIDER,
-      "refresh",
+      "delete",
       { id: "command-code" },
     );
   });
@@ -257,5 +260,172 @@ describe("activeProviderPreset", () => {
 
   it("returns null when no preset claims to be active", () => {
     expect(activeProviderPreset([preset({ id: "a" })])).toBeNull();
+  });
+});
+
+describe("the models action payload", () => {
+  it("sends the endpoint, the declared protocol and the typed key", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({
+        action: "models",
+        models: [{ id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek" }],
+      }),
+    );
+
+    await fetchProviderPresetModels("rt-1", {
+      id: "command-code",
+      baseUrl: " https://api.example.test/v1 ",
+      api: " openai-completions ",
+      apiKey: " sk-test-0000 ",
+    });
+
+    expect(initiateProviderPresetAction).toHaveBeenCalledWith(
+      "rt-1",
+      PROVIDER_PRESET_PROVIDER,
+      "models",
+      {
+        base_url: "https://api.example.test/v1",
+        api: "openai-completions",
+        id: "command-code",
+        api_key: "sk-test-0000",
+      },
+    );
+  });
+
+  it("omits api_key when nothing was typed, so a stored credential is reused", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({ action: "models", models: [{ id: "m1" }] }),
+    );
+
+    await fetchProviderPresetModels("rt-1", {
+      id: "command-code",
+      baseUrl: "https://api.example.test/v1",
+      api: PROVIDER_PRESET_DEFAULT_API,
+    });
+
+    const payload = initiateProviderPresetAction.mock.calls[0]?.[3] as Record<
+      string,
+      unknown
+    >;
+    expect("api_key" in payload).toBe(false);
+  });
+
+  it("returns the catalog verbatim and the protocol that answered", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({
+        action: "models",
+        models: [
+          { id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" },
+          { id: "claude-sonnet-5", context_length: 200000 },
+        ],
+      }),
+    );
+
+    const result = await fetchProviderPresetModels("rt-1", {
+      baseUrl: "https://api.example.test/v1",
+      api: PROVIDER_PRESET_DEFAULT_API,
+    });
+
+    // The gateway's own id travels untouched — no escaping happens here.
+    expect(result.models.map((model) => model.id)).toEqual([
+      "deepseek/deepseek-v4.1-flash",
+      "claude-sonnet-5",
+    ]);
+    expect(result.api).toBe(PROVIDER_PRESET_DEFAULT_API);
+  });
+});
+
+describe("the anthropic auth-convention retry", () => {
+  it("retries once on the other convention and reports the one that worked", async () => {
+    getProviderPresetResult
+      .mockResolvedValueOnce(
+        request({
+          action: "models",
+          status: "failed",
+          error: "The provider rejected this API key (HTTP 401)",
+          error_kind: "invalid_credential",
+          error_params: { status: "401" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        request({
+          action: "models",
+          models: [{ id: "claude-sonnet-5" }],
+        }),
+      );
+
+    const result = await fetchProviderPresetModels("rt-1", {
+      baseUrl: "https://api.example.test/v1",
+      api: PROVIDER_PRESET_DEFAULT_API,
+    });
+
+    expect(initiateProviderPresetAction).toHaveBeenCalledTimes(2);
+    expect(initiateProviderPresetAction.mock.calls[1]?.[2]).toBe("models");
+    expect(
+      (initiateProviderPresetAction.mock.calls[1]?.[3] as Record<string, unknown>)
+        .api,
+    ).toBe("anthropic-messages");
+    expect(result.api).toBe("anthropic-messages");
+    expect(result.models.map((model) => model.id)).toEqual(["claude-sonnet-5"]);
+  });
+
+  it("tries the defined default first when the route already declares anthropic", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({ action: "models", models: [{ id: "m1" }] }),
+    );
+
+    await fetchProviderPresetModels("rt-1", {
+      baseUrl: "https://api.example.test/v1",
+      api: "anthropic-messages",
+    });
+
+    expect(initiateProviderPresetAction).toHaveBeenCalledTimes(1);
+    expect(
+      (initiateProviderPresetAction.mock.calls[0]?.[3] as Record<string, unknown>)
+        .api,
+    ).toBe("anthropic-messages");
+  });
+
+  it("does not retry a failure a second convention cannot fix", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({
+        action: "models",
+        status: "failed",
+        error: "https://api.example.test/v1 does not publish a model list (HTTP 404).",
+        error_kind: "models_unavailable",
+      }),
+    );
+
+    await expect(
+      fetchProviderPresetModels("rt-1", {
+        baseUrl: "https://api.example.test/v1",
+        api: PROVIDER_PRESET_DEFAULT_API,
+      }),
+    ).rejects.toThrow(/does not publish a model list/);
+    expect(initiateProviderPresetAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("providerPresetErrorKind", () => {
+  it("reads the kind off a thrown action error", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({
+        status: "failed",
+        error: "quota",
+        error_kind: "rate_limited",
+        error_params: { action: "regenerate_key" },
+      }),
+    );
+
+    await expect(resolveRuntimeProviderPresets("rt-1")).rejects.toMatchObject({
+      name: "ProviderPresetActionError",
+      kind: "rate_limited",
+      params: { action: "regenerate_key" },
+    });
+  });
+
+  it("is empty for an error the client raised itself", () => {
+    expect(providerPresetErrorKind(new Error("boom"))).toBe("");
+    expect(providerPresetErrorKind(new ProviderPresetActionError("boom"))).toBe("");
   });
 });
