@@ -487,12 +487,20 @@ func RoutingIssueUpdatedPayload(prev, issue db.Issue) map[string]any {
 	}
 }
 
-// inReviewCategory is the one category the stale-review sweep looks at,
-// expanded to this workspace's concrete status keys so a workspace that
-// renamed or added an awaiting-acceptance status sweeps identically to one
-// that did not.
-func (s routingStore) inReviewKeys(ctx context.Context, wsID pgtype.UUID) ([]string, error) {
-	return issuestatus.ExpandCategories(ctx, s.h.Queries, wsID, []string{"in_review"})
+// inReviewKeys is the awaiting-acceptance status set the stale-review sweep
+// looks at.
+//
+// It is the concrete `in_review` built-in, not a category: MUL-7365 collapsed
+// the stored vocabulary into four lifecycle categories (unstarted, started,
+// done, closed), and In Progress, In Review and Blocked all live in `started`.
+// Expanding "in_review" through ExpandCategories therefore resolves to the
+// whole `started` set — the sweep started picking up tickets actively being
+// worked on, and the completion guard would write done over an in_progress
+// ticket (DENE-730). The rest of internal/routing already matches on the
+// concrete key (`route.go`, `stale.go`), so this keeps the store consistent
+// with the decision layer.
+func (s routingStore) inReviewKeys(_ context.Context, _ pgtype.UUID) ([]string, error) {
+	return []string{issuestatus.InReview}, nil
 }
 
 // EnabledWorkspaces lists the workspaces the sweep should visit at all.

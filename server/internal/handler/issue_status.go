@@ -52,23 +52,35 @@ func (h *Handler) terminalIssueStatusKeys(ctx context.Context, workspaceID pgtyp
 	})
 }
 
-// blockedIssueStatusKeys resolves the concrete status keys in the `blocked`
-// category. Used by the per-parent child roll-up so a stuck sub-issue can be
-// surfaced on its parent without expanding it.
-func (h *Handler) blockedIssueStatusKeys(ctx context.Context, workspaceID pgtype.UUID) ([]string, error) {
-	return issuestatus.ExpandCategories(ctx, h.Queries, workspaceID, []string{
-		issuestatus.Blocked,
-	})
+// blockedIssueStatusKeys resolves the concrete status keys that mean a child is
+// stuck. `blocked` is a platform-owned status inside the `started` category
+// since MUL-7365 collapsed the stored vocabulary into four lifecycle
+// categories, so no custom status can carry a `blocked` category any more and
+// the key itself is the whole answer. Used by the per-parent child roll-up so a
+// stuck sub-issue can be surfaced on its parent without expanding it.
+func (h *Handler) blockedIssueStatusKeys(_ context.Context, _ pgtype.UUID) ([]string, error) {
+	return []string{issuestatus.Blocked}, nil
 }
 
 // activeIssueStatusKeys resolves the status keys that mean work is actually
-// moving — in_progress and in_review. `todo` and `backlog` are deliberately
-// excluded: a queued child is not an active pipeline.
+// moving: every status in the `started` category except `blocked`, which shares
+// that category but is a stuck child rather than a moving one. `unstarted` is
+// excluded because a queued child is not an active pipeline.
 func (h *Handler) activeIssueStatusKeys(ctx context.Context, workspaceID pgtype.UUID) ([]string, error) {
-	return issuestatus.ExpandCategories(ctx, h.Queries, workspaceID, []string{
-		issuestatus.InProgress,
-		issuestatus.InReview,
+	keys, err := issuestatus.ExpandCategories(ctx, h.Queries, workspaceID, []string{
+		issuestatus.CategoryStarted,
 	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key == issuestatus.Blocked {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out, nil
 }
 
 func issueStatusToResponse(s db.IssueStatus) IssueStatusResponse {

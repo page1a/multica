@@ -71,7 +71,9 @@ func TestChildIssueProgressReportsBlockedAndActiveCounts(t *testing.T) {
 }
 
 // A workspace can rename the built-ins away entirely, so the roll-up resolves
-// every count through the status CATEGORY rather than the literal key.
+// every count through the status CATEGORY rather than the literal key. Since
+// MUL-7365 a stored category is one of the four lifecycle categories, so a
+// renamed built-in is a custom status carrying that category.
 func TestChildIssueProgressCountsCustomStatusesByCategory(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -81,24 +83,24 @@ func TestChildIssueProgressCountsCustomStatusesByCategory(t *testing.T) {
 	// issue_status.key caps at 32 chars (migration 332), so the uniquifier is
 	// the low digits of the clock rather than the whole nanosecond count.
 	suffix := time.Now().UnixNano() % 1_000_000_000
-	blockedKey := fmt.Sprintf("legal_%d", suffix)
+	doneKey := fmt.Sprintf("shipped_%d", suffix)
 	activeKey := fmt.Sprintf("qapass_%d", suffix)
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO issue_status (workspace_id, key, name, description, category, color, position)
-		VALUES ($1, $2, 'Awaiting legal', '', 'blocked', '#ff0000', 90),
-		       ($1, $3, 'QA pass', '', 'in_review', '#00ff00', 91)
-	`, testWorkspaceID, blockedKey, activeKey); err != nil {
+		VALUES ($1, $2, 'Shipped', '', 'done', '#ff0000', 90),
+		       ($1, $3, 'QA pass', '', 'started', '#00ff00', 91)
+	`, testWorkspaceID, doneKey, activeKey); err != nil {
 		t.Fatalf("create custom statuses: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM issue_status WHERE workspace_id = $1 AND key = ANY($2::text[])`,
-			testWorkspaceID, []string{blockedKey, activeKey})
+			testWorkspaceID, []string{doneKey, activeKey})
 	})
 
 	parent := dbfx.Issue(t, "custom rollup parent", testutil.Cols{"status": "in_progress"})
-	dbfx.Issue(t, "custom rollup blocked child", testutil.Cols{
-		"status": blockedKey, "parent_issue_id": parent,
+	dbfx.Issue(t, "custom rollup shipped child", testutil.Cols{
+		"status": doneKey, "parent_issue_id": parent,
 	})
 	dbfx.Issue(t, "custom rollup active child", testutil.Cols{
 		"status": activeKey, "parent_issue_id": parent,
@@ -106,9 +108,9 @@ func TestChildIssueProgressCountsCustomStatusesByCategory(t *testing.T) {
 
 	got := childProgressFor(t, parent)
 
-	want := childProgressEntry{ParentIssueID: parent, Total: 2, Done: 0, Blocked: 1, Active: 1}
+	want := childProgressEntry{ParentIssueID: parent, Total: 2, Done: 1, Blocked: 0, Active: 1}
 	if got != want {
-		t.Errorf("roll-up = %+v, want %+v (a custom status counts under its category)", got, want)
+		t.Errorf("roll-up = %+v, want %+v (a custom status counts under its category; a started custom status is active, not blocked)", got, want)
 	}
 }
 

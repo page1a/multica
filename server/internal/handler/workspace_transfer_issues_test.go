@@ -879,14 +879,15 @@ func assertTransferMentionsResolvable(t *testing.T, ws string) {
 // §1.4: a status key the target catalog knows is written through unchanged,
 // and one it does not know degrades to the source category with a report row.
 //
-// The seven built-in statuses are seeded with category == key (migration 339),
-// so a case that only uses them cannot tell a preserved key from its category.
-// This one uses a custom status whose category differs.
+// The built-ins are seeded with a lifecycle category rather than with
+// category == key (MUL-7365), so a case that only uses them cannot tell a
+// preserved key from its category. This one uses a custom status whose category
+// differs from its key.
 func TestTransferIssues_CustomStatusKeyIsPreservedAndUnknownKeyDegrades(t *testing.T) {
 	_, dst := setupConfigWorkspaces(t)
 	dbfx.Insert(t, "issue_status", testutil.Cols{
 		"workspace_id": dst, "key": "design_review", "name": "Design Review",
-		"description": "", "category": "in_progress", "color": "#111111",
+		"description": "", "category": "started", "color": "#111111",
 		"is_system": false, "position": 10.0,
 	})
 

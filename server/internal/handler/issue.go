@@ -1472,15 +1472,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	where = append(where, listViewer.issueVisibilitySQL("i", addArg))
-	if sortByStatus {
-		var err error
-		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
-		if err != nil {
-			slog.Warn("resolve status sort failed", append(logger.RequestAttrs(r), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to resolve sort")
-			return
-		}
-	}
 
 	if len(statusCategoriesFilter) > 0 {
 		// Expanded to concrete status keys rather than filtered through

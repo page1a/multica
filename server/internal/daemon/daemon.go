@@ -8342,6 +8342,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// which repositories this machine already holds, and it cannot do that
 	// without knowing whether a directory is pinned here at all (DENE-595).
 	localAssignment, readOnlyLocalDirs, _ := d.resolveLocalDirectoryPlan(task)
+	// The task is past the lock wait and committed to this directory, so this is
+	// the first moment the identity backfill is paid for by a run that will
+	// actually use the path — a waiter cancelled during the queue never gets
+	// here and never POSTs (DENE-730).
+	d.backfillLocalDirectoryIdentity(task.WorkspaceID, localAssignment, readOnlyLocalDirs)
 
 	// Prepare isolated execution environment.
 	// Repos the local directory does not already hold are passed as metadata
