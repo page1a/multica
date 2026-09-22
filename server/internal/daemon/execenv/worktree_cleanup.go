@@ -80,11 +80,52 @@ const (
 	// about what is still sitting in the directory unrecorded, and a failed
 	// run's leftovers live exactly there.
 	KeepUncommittedChanges WorktreeKeepReason = "uncommitted_changes"
-	// KeepBranchNotMerged: the branch is not an ancestor of trunk, so it
-	// carries work that is not anywhere else.
+	// KeepBranchNotMerged: none of the delivery signals hold — the branch is
+	// neither contained in trunk by ancestry nor by content — so it carries
+	// work that is not anywhere else. See WorktreeMergeEvidence.
 	KeepBranchNotMerged WorktreeKeepReason = "branch_not_merged"
 	// KeepStatusUnknown: git could not be asked. Unknown is not permission.
 	KeepStatusUnknown WorktreeKeepReason = "status_unknown"
+)
+
+// WorktreeMergeEvidence names HOW a branch was found to be delivered (DENE-647).
+//
+// The original rule asked one question — is the branch an ancestor of trunk —
+// and that question has no true answer in a squash-merge repository: squashing
+// rewrites the work as a new commit, so the branch's own commits are never
+// ancestors of trunk and the condition fails forever. A cleanup that can never
+// fire is the same as no cleanup, so "delivered" is now a set of signals.
+//
+// What is accepted, and what is deliberately not:
+//
+//   - Ancestry. The branch is literally contained in trunk. Unchanged.
+//   - Content. The branch's net change against the merge base is already
+//     applied in trunk — either the two trees are identical, or git's own
+//     patch-id equivalence (`git cherry`) finds the change upstream. This is
+//     what a squash merge leaves behind, and it needs nothing but the local
+//     repository: no network, no GitHub, no forge account.
+//   - NOT "the remote branch is gone". `git ls-remote` cannot distinguish a
+//     branch deleted after merge from one that was never pushed, and the
+//     second is exactly the branch whose work exists nowhere else. It is the
+//     one signal here that could delete work, so it is not accepted.
+//   - NOT "its pull request is merged". The most accurate answer, and the one
+//     that stops working on an offline machine, a self-hosted forge, or any
+//     remote that is not the one we wired up. Cleanup must not need a network
+//     to be correct about a local disk.
+//
+// Both accepted signals can only be WRONG in the keep direction: a rebased or
+// conflict-rewritten branch whose patch no longer matches reads as undelivered
+// and stays on disk. That is the asymmetry the whole file is built on.
+type WorktreeMergeEvidence string
+
+const (
+	// MergeEvidenceNone: no signal held; the branch's work is only here.
+	MergeEvidenceNone WorktreeMergeEvidence = ""
+	// MergeEvidenceAncestor: the branch is an ancestor of trunk.
+	MergeEvidenceAncestor WorktreeMergeEvidence = "ancestor"
+	// MergeEvidenceSquash: the branch's content is in trunk, but its commits
+	// are not — the fingerprint of a squash (or rebase-and-merge) landing.
+	MergeEvidenceSquash WorktreeMergeEvidence = "squash"
 )
 
 // WorktreeCandidate is one working copy as the scan found it. Every field the
@@ -108,8 +149,11 @@ type WorktreeCandidate struct {
 	// and build output are present in every copy, and counting them would make
 	// this condition permanently true and the whole feature a no-op.
 	Dirty bool `json:"dirty"`
-	// Merged reports that Branch is an ancestor of trunk.
-	Merged bool `json:"merged"`
+	// Merged reports that the branch's work is in trunk by any accepted
+	// signal. MergedVia says which one, so the screen can tell a user why a
+	// branch whose commits are not in trunk still counts as delivered.
+	Merged    bool                  `json:"merged"`
+	MergedVia WorktreeMergeEvidence `json:"merged_via,omitempty"`
 	// Unknown is set when git could not answer Dirty or Merged.
 	Unknown bool `json:"unknown"`
 	// SizeBytes is what removing it would reclaim, for the preview.
@@ -172,8 +216,9 @@ type WorktreeGitProbe interface {
 	// Dirty reports uncommitted tracked changes or non-ignored untracked
 	// files in the working copy.
 	Dirty(worktreePath string) (bool, error)
-	// MergedInto reports whether branch is an ancestor of trunk in gitRoot.
-	MergedInto(gitRoot, branch, trunk string) (bool, error)
+	// MergeEvidenceOf reports which delivery signal holds for branch against
+	// trunk in gitRoot, or MergeEvidenceNone when none does.
+	MergeEvidenceOf(gitRoot, branch, trunk string) (WorktreeMergeEvidence, error)
 	// CurrentBranch reports the branch checked out in the working copy.
 	CurrentBranch(worktreePath string) (string, error)
 	// DefaultBranch reports the repository's trunk when the settings name none.
@@ -261,12 +306,13 @@ func inspectWorktree(root, path string, settings WorktreeCleanupSettings, inUse 
 		}
 		trunk = resolved
 	}
-	merged, mergedErr := probe.MergedInto(c.GitRoot, c.Branch, trunk)
+	evidence, mergedErr := probe.MergeEvidenceOf(c.GitRoot, c.Branch, trunk)
 	if mergedErr != nil {
 		c.Unknown = true
 		return WorktreeCleanupItem{WorktreeCandidate: c, KeepReason: EvaluateWorktreeCleanup(c, settings, now)}
 	}
-	c.Merged = merged
+	c.MergedVia = evidence
+	c.Merged = evidence != MergeEvidenceNone
 
 	return WorktreeCleanupItem{WorktreeCandidate: c, KeepReason: EvaluateWorktreeCleanup(c, settings, now)}
 }
@@ -342,20 +388,76 @@ func (GitWorktreeProbe) Dirty(worktreePath string) (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
-// MergedInto reports whether branch is already contained in trunk.
+// MergeEvidenceOf reports how — if at all — the branch's work is already in
+// trunk. See WorktreeMergeEvidence for which signals are accepted and why.
 //
-// `merge-base --is-ancestor` exits 0 for yes and 1 for no, so a non-zero exit
-// is not distinguishable here from a real failure — and it does not need to
-// be: both answers mean "do not remove", one by the merge rule and one by the
-// unknown rule.
-func (GitWorktreeProbe) MergedInto(gitRoot, branch, trunk string) (bool, error) {
+// Cheapest and most absolute first: ancestry, then identical trees, then
+// patch equivalence. An error is returned only when trunk itself cannot be
+// resolved, because a wrong trunk makes every answer below meaningless; a
+// question git declines to answer reads as MergeEvidenceNone, which keeps the
+// copy.
+func (GitWorktreeProbe) MergeEvidenceOf(gitRoot, branch, trunk string) (WorktreeMergeEvidence, error) {
 	if _, err := runGit(gitRoot, "rev-parse", "--verify", trunk); err != nil {
-		return false, fmt.Errorf("git: %q has no branch %q to compare against", gitRoot, trunk)
+		return MergeEvidenceNone, fmt.Errorf("git: %q has no branch %q to compare against", gitRoot, trunk)
 	}
-	if _, err := runGit(gitRoot, "merge-base", "--is-ancestor", branch, trunk); err != nil {
-		return false, nil
+	// `merge-base --is-ancestor` exits 0 for yes and 1 for no, so a non-zero
+	// exit is not distinguishable here from a real failure — and it does not
+	// need to be: both answers just mean the next signal gets its turn.
+	if _, err := runGit(gitRoot, "merge-base", "--is-ancestor", branch, trunk); err == nil {
+		return MergeEvidenceAncestor, nil
 	}
-	return true, nil
+	return squashMergeEvidence(gitRoot, branch, trunk)
+}
+
+// squashMergeEvidence answers the question a squash-merge repository actually
+// poses: the branch's commits are gone from trunk's history, so is its WORK
+// there?
+//
+// Two ways to be sure, both local:
+//
+//  1. `git diff --quiet trunk branch` — the two trees are identical, so there
+//     is by definition nothing on the branch that trunk does not have.
+//  2. The branch's net change against the merge base, replayed as one
+//     synthetic commit, is patch-equivalent to something already in trunk.
+//     That synthetic commit is exactly what a squash merge produces, so
+//     git's own patch-id matching (`git cherry`, the "-" prefix) finds it.
+//
+// Step 2 is best effort by construction: if trunk changed the same lines after
+// the squash landed, the patch ids no longer match and the answer is "no
+// evidence". That is the safe direction — the copy stays on disk.
+func squashMergeEvidence(gitRoot, branch, trunk string) (WorktreeMergeEvidence, error) {
+	if _, err := runGit(gitRoot, "diff", "--quiet", trunk, branch); err == nil {
+		return MergeEvidenceSquash, nil
+	}
+	base, err := runGitTrimmed(gitRoot, "merge-base", trunk, branch)
+	if err != nil || base == "" {
+		// No common ancestor: unrelated histories, nothing to replay against.
+		return MergeEvidenceNone, nil //nolint:nilerr // no answer is not an error, it is a keep
+	}
+	tree, err := runGitTrimmed(gitRoot, "rev-parse", branch+"^{tree}")
+	if err != nil || tree == "" {
+		return MergeEvidenceNone, nil //nolint:nilerr // same: unanswerable means keep
+	}
+	// The synthetic commit is written to the object database and referenced by
+	// nothing, so git's own gc collects it. Identity comes from the command
+	// rather than the machine's git config: a user with no `user.email` set
+	// must not turn cleanup into a permanent "unknown".
+	ident := []string{
+		"GIT_AUTHOR_NAME=multica", "GIT_AUTHOR_EMAIL=multica@localhost",
+		"GIT_COMMITTER_NAME=multica", "GIT_COMMITTER_EMAIL=multica@localhost",
+	}
+	synthetic, err := runGitTrimmedEnv(gitRoot, ident, "commit-tree", tree, "-p", base, "-m", "multica cleanup squash probe")
+	if err != nil || synthetic == "" {
+		return MergeEvidenceNone, nil //nolint:nilerr // same: unanswerable means keep
+	}
+	out, err := runGitTrimmed(gitRoot, "cherry", trunk, synthetic)
+	if err != nil {
+		return MergeEvidenceNone, nil //nolint:nilerr // same: unanswerable means keep
+	}
+	if strings.HasPrefix(strings.TrimSpace(out), "-") {
+		return MergeEvidenceSquash, nil
+	}
+	return MergeEvidenceNone, nil
 }
 
 // CurrentBranch reports the branch checked out in a working copy, or "" on a

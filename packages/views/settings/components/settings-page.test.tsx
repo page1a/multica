@@ -34,8 +34,12 @@ vi.mock("./billing-tab", stub("BillingTab"));
 vi.mock("./config-transfer-tab", stub("ConfigTransferTab"));
 
 vi.mock("@multica/core/paths", () => ({
-  useCurrentWorkspace: () => ({ name: "Acme" }),
+  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme" }),
 }));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return { ...actual, useQuery: () => ({ data: undefined }) };
+});
 
 const replace = vi.fn();
 const push = vi.fn();

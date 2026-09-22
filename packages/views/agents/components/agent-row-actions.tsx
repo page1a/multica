@@ -13,7 +13,10 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
-import type { AgentPresenceDetail } from "@multica/core/agents";
+import {
+  isAgentWorkEnabled,
+  type AgentPresenceDetail,
+} from "@multica/core/agents";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -35,6 +38,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { useT } from "../../i18n";
 import { AppLink, useIntentNavigate } from "../../navigation";
 import { agentHasChildrenNames, isAgentHasChildrenError } from "../specialization";
@@ -99,9 +103,11 @@ export function AgentRowActions({
   );
 
   const isArchived = !!agent.archived_at;
+  const workEnabled = isAgentWorkEnabled(agent);
   const runningCount = presence?.runningCount ?? 0;
   const queuedCount = presence?.queuedCount ?? 0;
   const hasActiveWork = runningCount + queuedCount > 0;
+  const [workTogglePending, setWorkTogglePending] = useState(false);
 
   // Derive which menu items to render. Doing this once here keeps the JSX
   // below a flat list of conditionals rather than a tangle of role/state
@@ -147,6 +153,26 @@ export function AgentRowActions({
     }
   };
 
+  const handleWorkEnabledChange = async (enabled: boolean) => {
+    if (workTogglePending) return;
+    setWorkTogglePending(true);
+    try {
+      await api.updateAgent(agent.id, { work_enabled: enabled });
+      invalidateAgents();
+      toast.success(
+        enabled
+          ? t(($) => $.row_actions.agent_enabled_toast)
+          : t(($) => $.row_actions.agent_disabled_toast),
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : t(($) => $.row_actions.work_toggle_failed_toast),
+      );
+    } finally {
+      setWorkTogglePending(false);
+    }
+  };
+
   const handleCancelTasks = async () => {
     try {
       const { cancelled } = await api.cancelAgentTasks(agent.id);
@@ -161,8 +187,21 @@ export function AgentRowActions({
     }
   };
 
+  const showWorkSwitch = canManage && !isArchived;
+
   return (
     <>
+      {showWorkSwitch && (
+        <Switch
+          size="sm"
+          checked={workEnabled}
+          disabled={workTogglePending}
+          onCheckedChange={(checked) => {
+            void handleWorkEnabledChange(checked);
+          }}
+          aria-label={t(($) => $.row_actions.work_enabled_aria)}
+        />
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -307,7 +346,7 @@ export function AgentRowActions({
           // The active rows hanging off this base role, as the list knows
           // them. Solidify is per child, so the dialog needs the ids — the
           // server's refusal only carries names.
-          children={childAgents.filter((child) => !child.archived_at)}
+          childAgents={childAgents.filter((child) => !child.archived_at)}
           serverChildNames={refusedChildNames}
           onClose={() => setBlockedByChildren(false)}
           onArchived={invalidateAgents}

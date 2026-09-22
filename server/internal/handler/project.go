@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/permission"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -44,6 +45,10 @@ type ProjectResponse struct {
 	// payload to keep parent metadata and child collections separate; clients
 	// that need the list call ListProjectResources directly.
 	ResourceCount int64 `json:"resource_count"`
+	// Visibility is the project's sharing scope (DENE-698). It is also the
+	// value new resources joining this project inherit.
+	Visibility string `json:"visibility"`
+	CreatedBy  string `json:"created_by,omitempty"`
 }
 
 func projectToResponse(p db.Project) ProjectResponse {
@@ -61,6 +66,8 @@ func projectToResponse(p db.Project) ProjectResponse {
 		DueDate:     dateToPtr(p.DueDate),
 		CreatedAt:   timestampToString(p.CreatedAt),
 		UpdatedAt:   timestampToString(p.UpdatedAt),
+		Visibility:  p.Visibility,
+		CreatedBy:   uuidToString(p.CreatedBy),
 	}
 }
 
@@ -156,6 +163,14 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list projects")
 		return
 	}
+	// Sharing scope (DENE-698). The list is unpaginated, so filtering the rows
+	// is the whole window; the stats below are then computed over what the
+	// caller can actually see.
+	if viewer, viewerErr := h.visibilityViewerFor(r, wsUUID); viewerErr == nil {
+		projects = viewer.filterProjects(projects)
+	} else {
+		projects = nil
+	}
 
 	// Batch-fetch issue stats and resource counts for all projects
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
@@ -211,6 +226,12 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 		ID: idUUID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	// A project the caller cannot see answers exactly as a missing one.
+	viewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+	if viewerErr != nil || !viewer.canSeeProject(project) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
@@ -395,6 +416,18 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Priority:    priority,
 		StartDate:   startDate,
 		DueDate:     dueDate,
+		// A new project is private (DENE-698). created_by is what makes that
+		// survivable: 'private' means "the creator and nobody else", so a
+		// project with no creator recorded would be a project nobody can see.
+		// An agent-created project records no creator and is therefore
+		// visible through the management fallback only until someone shares
+		// it — the same as any other unshared resource.
+		Visibility: pgtype.Text{String: string(permission.DefaultVisibility), Valid: true},
+	}
+	if creatorUUID, creatorErr := parseUUIDSafe(userID); creatorErr == nil {
+		if actorType, _ := h.resolveActor(r, userID, workspaceID); actorType == "member" {
+			createParams.CreatedBy = creatorUUID
+		}
 	}
 
 	// Without resources, keep the simple non-tx path.
@@ -447,6 +480,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if isUniqueViolation(err) {
+				if conflict, reason, cErr := h.findLocalDirectoryConflictReason(r.Context(), project.ID, res.ResourceType, normalizedRefs[i], pgtype.UUID{}); cErr == nil && conflict {
+					writeError(w, http.StatusConflict, "resources["+strconv.Itoa(i)+"]: "+reason)
+					return
+				}
 				writeError(w, http.StatusConflict, "resources["+strconv.Itoa(i)+"]: this resource is already attached")
 				return
 			}
@@ -691,6 +728,18 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete project members")
 		return
 	}
+	// issue.project_id is ON DELETE SET NULL (migration 034), and a
+	// 'project'-scoped issue with no project violates the pairing CHECK added
+	// in migration 510. Demote before the delete so the cascade cannot leave
+	// rows the constraint rejects — and because an issue whose project is gone
+	// has no audience left to be shared with (DENE-698).
+	if _, err := qtx.DemoteProjectScopedIssues(r.Context(), db.DemoteProjectScopedIssuesParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to narrow project-scoped issues")
+		return
+	}
 	if err := qtx.DeleteProject(r.Context(), db.DeleteProjectParams{
 		ID:          project.ID,
 		WorkspaceID: project.WorkspaceID,
@@ -714,7 +763,7 @@ type SearchProjectResponse struct {
 }
 
 // buildProjectSearchQuery builds a dynamic SQL query for project search.
-func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
+func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool, viewer visibilityViewer) (string, []any) {
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
 		terms[i] = strings.ToLower(t)
@@ -772,6 +821,11 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if !includeClosed {
 		whereClause += " AND p.status NOT IN ('completed', 'cancelled')"
 	}
+
+	// Sharing scope (DENE-698), bound before limit/offset because the caller
+	// fills those by position from the end. Project search paginates, so the
+	// filter has to be in the window, not applied to the page.
+	whereClause += " AND " + viewer.projectVisibilitySQL("p", nextArg)
 
 	// --- ORDER BY ranking ---
 	var rankCases []string
@@ -836,7 +890,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
 		p.status, p.priority, p.lead_type, p.lead_id,
 		p.start_date, p.due_date,
-		p.created_at, p.updated_at,
+		p.created_at, p.updated_at, p.visibility, p.created_by,
 		%s AS match_source
 	FROM project p
 	WHERE p.workspace_id = %s AND %s
@@ -888,7 +942,12 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed)
+	searchViewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+	if viewerErr != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"projects": []SearchProjectResponse{}})
+		return
+	}
+	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed, searchViewer)
 	args[1] = wsUUID
 	args[len(args)-2] = limit
 	args[len(args)-1] = offset
@@ -916,6 +975,8 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				&row.project.DueDate,
 				&row.project.CreatedAt,
 				&row.project.UpdatedAt,
+				&row.project.Visibility,
+				&row.project.CreatedBy,
 				&row.matchSource,
 			); err != nil {
 				return fmt.Errorf("scan: %w", err)

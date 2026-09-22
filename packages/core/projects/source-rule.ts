@@ -57,6 +57,9 @@ export function normalizeRepoUrl(raw: string): string {
   host = host.split(":")[0]!.trim().toLowerCase();
   path = path.replace(/\/+$/, "").replace(/\.git$/i, "").replace(/^\/+|\/+$/g, "");
   if (!host || !path) return "";
+  // Host and path are lowercased on purpose: DNS is case-insensitive (RFC 4343)
+  // and GitHub/GitLab treat owner/repo as case-insensitive. Comparing them
+  // as-typed would let github.com/Foo/Bar and GitHub.com/foo/bar both bind.
   return `${host}/${path.toLowerCase()}`;
 }
 
@@ -107,30 +110,54 @@ export interface DuplicateSourceGroup {
   remotes: ProjectResource[];
 }
 
+function repoKeyOfGithub(r: ProjectResource): string {
+  const ref = githubRef(r);
+  if (!ref) return "";
+  const stored = (ref.repo_key ?? "").trim();
+  if (stored) return stored;
+  return normalizeRepoUrl(ref.url ?? "");
+}
+
+function repoKeyOfLocal(r: ProjectResource): string {
+  return (localDirectoryRef(r)?.repo_key ?? "").trim();
+}
+
 /**
  * Find repositories configured both ways.
  *
- * Matching is by repository NAME, because a name is all the server can compare:
- * it stores a URL and an absolute path, and only the machine holding that path
- * can read its git remotes. A name match is therefore strong enough to ASK
- * ("these look like the same repository — merge them?") and never strong enough
- * to remove a resource on the user's behalf.
+ * Prefer `repo_key`: a local checkout and a github_repo that normalize to the
+ * same host/owner/name ARE the same repository, even when the folder is named
+ * something else. A name match is the fallback for rows written before
+ * `repo_key` existed, and is only strong enough to ASK ("these look like the
+ * same repository — merge them?") — never strong enough to remove a resource
+ * on the user's behalf.
  *
- * A group holds EVERY `github_repo` row whose name matches, including two rows
- * spelling one URL differently, so merging a group clears that repository
- * completely — and touches nothing outside it.
+ * A group holds EVERY `github_repo` row whose key (or name) matches, including
+ * two rows spelling one URL differently, so merging a group clears that
+ * repository completely — and touches nothing outside it.
  */
 export function findDuplicateSources(resources: ProjectResource[]): DuplicateSourceGroup[] {
   const locals = resources.filter((r) => r.resource_type === "local_directory");
   const remotes = resources.filter((r) => r.resource_type === "github_repo");
   const groups: DuplicateSourceGroup[] = [];
   for (const local of locals) {
+    const key = repoKeyOfLocal(local);
+    if (key) {
+      const matched = remotes.filter((r) => repoKeyOfGithub(r) === key);
+      if (matched.length > 0) {
+        groups.push({
+          repoName: key.slice(key.lastIndexOf("/") + 1) || key,
+          local,
+          remotes: matched,
+        });
+      }
+      continue;
+    }
     const path = localDirectoryRef(local)?.local_path ?? "";
     const name = repoNameFromLocalPath(path);
     if (!name) continue;
     const matched = remotes.filter((r) => {
-      const url = githubRef(r)?.url ?? "";
-      const remoteName = repoNameFromUrl(url);
+      const remoteName = repoNameFromUrl(githubRef(r)?.url ?? "");
       return remoteName !== "" && remoteName === name;
     });
     if (matched.length > 0) groups.push({ repoName: name, local, remotes: matched });

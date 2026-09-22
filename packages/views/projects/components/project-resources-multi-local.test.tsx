@@ -76,6 +76,7 @@ vi.mock("../../platform/local-directory", () => ({
       basename: pickedPath.current.split("/").pop(),
     }),
   validateLocalDirectory: () => Promise.resolve(validation.current),
+  validateWritablePath: async () => true,
 }));
 vi.mock("../../platform/use-local-daemon-status", () => ({
   useLocalDaemonStatus: () => ({

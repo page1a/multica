@@ -17,6 +17,10 @@ import { Label } from "@multica/ui/components/ui/label";
 import { useT } from "../../i18n";
 import { UnavailableModelsNote } from "./unavailable-models-note";
 import { ModelSearchHeader } from "./model-search-header";
+import {
+  providerSeatModelDisplay,
+  seatModelIsExactly,
+} from "./provider-seat-model";
 
 // ModelDropdown renders a searchable, creatable model picker for an agent.
 // It fetches the supported-model catalog from the selected runtime — the
@@ -92,7 +96,11 @@ export function ModelDropdown({
       const matches = list.filter(
         (m) =>
           m.id.toLowerCase().includes(needle) ||
-          m.label.toLowerCase().includes(needle),
+          m.label.toLowerCase().includes(needle) ||
+          // A DSH catalog id is percent-encoded (`preset/deepseek%2Fv4-flash`),
+          // but the string a user remembers and types to find it is the
+          // decoded one (DENE-684).
+          providerSeatModelDisplay(m.id).toLowerCase().includes(needle),
       );
       if (matches.length > 0) out[provider] = matches;
     }
@@ -101,7 +109,7 @@ export function ModelDropdown({
 
   const trimmedSearch = search.trim();
   const exactMatch = models.some(
-    (m) => m.id === trimmedSearch || m.label === trimmedSearch,
+    (m) => seatModelIsExactly(m.id, trimmedSearch) || m.label === trimmedSearch,
   );
   const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
@@ -119,13 +127,16 @@ export function ModelDropdown({
     });
   };
 
-  const triggerLabel =
-    value ||
-    (disabled
+  // The stored value is the seat model string (`preset/encodeURIComponent(id)`),
+  // which must never reach the screen: a user who reads `%2F` on the trigger is
+  // being shown a string they cannot find in any picker (DENE-684).
+  const triggerLabel = value
+    ? providerSeatModelDisplay(value)
+    : disabled
       ? t(($) => $.model_dropdown.select_runtime_first)
       : runtimeOnline
         ? t(($) => $.model_dropdown.default_provider)
-        : t(($) => $.model_dropdown.runtime_offline_manual));
+        : t(($) => $.model_dropdown.runtime_offline_manual);
 
   if (!supported && !modelsQuery.isLoading) {
     return (
@@ -211,28 +222,36 @@ export function ModelDropdown({
                       {provider}
                     </div>
                   )}
-                  {list.map((m) => (
-                    <button
-                      type="button"
-                      key={m.id}
-                      onClick={() => select(m.id)}
-                      className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body transition-colors ${
-                        m.id === value ? "bg-accent" : "hover:bg-accent/50"
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{m.label}</div>
-                        {m.label !== m.id && (
-                          <div className="truncate text-caption text-muted-foreground">
-                            {m.id}
-                          </div>
+                  {list.map((m) => {
+                    // The row's id is the seat model string, so its secondary
+                    // line is that pair decoded — `preset · model id` — and
+                    // never the escaped form (DENE-684). A row whose label is
+                    // its own id gets the decoded pair as its title instead.
+                    const pair = providerSeatModelDisplay(m.id);
+                    const title = m.label === m.id ? pair : m.label;
+                    return (
+                      <button
+                        type="button"
+                        key={m.id}
+                        onClick={() => select(m.id)}
+                        className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body transition-colors ${
+                          m.id === value ? "bg-accent" : "hover:bg-accent/50"
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{title}</div>
+                          {m.label !== m.id && (
+                            <div className="truncate text-caption text-muted-foreground">
+                              {pair}
+                            </div>
+                          )}
+                        </div>
+                        {m.id === value && (
+                          <Check className="h-4 w-4 shrink-0 text-primary" />
                         )}
-                      </div>
-                      {m.id === value && (
-                        <Check className="h-4 w-4 shrink-0 text-primary" />
-                      )}
-                    </button>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               ))}
 

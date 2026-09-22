@@ -64,5 +64,13 @@
       "title": "加入 Discord",
       "dismiss": "关闭"
     }
+  },
+  "guest": {
+    "badge": "你是访客，只能看不能改",
+    "no_edit": "访客没有编辑权限",
+    "nothing_shared_title": "还没有内容共享给你",
+    "nothing_shared_description": "等工作区里的人把你加进项目，这里就会出现你能看的内容。",
+    "not_found_title": "找不到这个页面",
+    "not_found_description": "它可能已经被删掉了，或者没有共享给你。"
   }
 }

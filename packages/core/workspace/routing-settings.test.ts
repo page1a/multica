@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONFIDENCE_THRESHOLD,
+  DEFAULT_STALE_REVIEW_HOURS,
   parseRoutingSettings,
+  normalizeStaleReviewHours,
   normalizeThreshold,
   routingGatewayIsComplete,
   routingIsActive,
@@ -19,9 +21,21 @@ describe("parseRoutingSettings", () => {
   it("reads a complete block", () => {
     expect(
       parseRoutingSettings({
-        routing: { enabled: true, model: "gpt-5.6-luna", confidence_threshold: 0.85, base_url: "" },
+        routing: {
+          enabled: true,
+          model: "gpt-5.6-luna",
+          confidence_threshold: 0.85,
+          stale_review_hours: 8,
+          base_url: "",
+        },
       }),
-    ).toEqual({ enabled: true, model: "gpt-5.6-luna", confidence_threshold: 0.85, base_url: "" });
+    ).toEqual({
+      enabled: true,
+      model: "gpt-5.6-luna",
+      confidence_threshold: 0.85,
+      stale_review_hours: 8,
+      base_url: "",
+    });
   });
 
   // Every one of these must read as switched off: a payload the client cannot
@@ -54,6 +68,30 @@ describe("parseRoutingSettings", () => {
   });
 });
 
+describe("normalizeStaleReviewHours", () => {
+  // The fallback direction for a threshold that can lead to a status write is
+  // "look at fewer tickets, later", never "sweep everything now".
+  it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY, 24 * 365 + 1, "8", null, undefined])(
+    "falls back to the default for %s",
+    (value) => {
+      expect(normalizeStaleReviewHours(value)).toBe(DEFAULT_STALE_REVIEW_HOURS);
+    },
+  );
+
+  it("keeps a value inside the range", () => {
+    expect(normalizeStaleReviewHours(6)).toBe(6);
+    expect(normalizeStaleReviewHours(0.5)).toBe(0.5);
+  });
+
+  it("defaults a block that predates the field", () => {
+    // Every workspace configured before DENE-712 has no stale_review_hours,
+    // and must read as the default rather than as zero.
+    expect(
+      parseRoutingSettings({ routing: { enabled: true, model: "m" } }).stale_review_hours,
+    ).toBe(DEFAULT_STALE_REVIEW_HOURS);
+  });
+});
+
 describe("normalizeThreshold", () => {
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "0.8", null, undefined])(
     "falls back to the default for %s",
@@ -71,7 +109,7 @@ describe("normalizeThreshold", () => {
 describe("routingState", () => {
   it("is off while the switch is off, whatever else is set", () => {
     expect(
-      routingState({ enabled: false, model: "m", confidence_threshold: 0.7, base_url: "" }),
+      routingState({ enabled: false, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
     ).toBe("off");
   });
 
@@ -79,21 +117,21 @@ describe("routingState", () => {
     // The state that exists because the product must not look enabled when it
     // is doing nothing.
     expect(
-      routingState({ enabled: true, model: "", confidence_threshold: 0.7, base_url: "" }),
+      routingState({ enabled: true, model: "", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
     ).toBe("incomplete");
     expect(
-      routingState({ enabled: true, model: "   ", confidence_threshold: 0.7, base_url: "" }),
+      routingState({ enabled: true, model: "   ", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
     ).toBe("incomplete");
   });
 
   it("is enabled when the switch is on and a model is chosen", () => {
     expect(
-      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, base_url: "" }),
+      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
     ).toBe("enabled");
   });
 
   it("is ineffective only when the server says ineffective in so many words", () => {
-    const configured = { enabled: true, model: "m", confidence_threshold: 0.7, base_url: "" };
+    const configured = { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" };
     expect(routingState(configured, { state: "ineffective" })).toBe("ineffective");
     expect(routingState(configured, { state: "enabled" })).toBe("enabled");
     expect(routingState(configured, null)).toBe("enabled");
@@ -109,7 +147,7 @@ describe("routingState", () => {
     ["the fallback used when the response cannot be read", "off"],
   ])("does not report a fault for %s", (_label, state) => {
     expect(
-      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, base_url: "" }, { state }),
+      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }, { state }),
     ).toBe("enabled");
   });
 
@@ -118,7 +156,7 @@ describe("routingState", () => {
     // light the red chip on a guess.
     expect(
       routingState(
-        { enabled: true, model: "m", confidence_threshold: 0.7, base_url: "" },
+        { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
         { state: "degraded" },
       ),
     ).toBe("enabled");
@@ -137,12 +175,30 @@ describe("withRoutingSettings", () => {
     expect(
       withRoutingSettings(
         { theme: "dark", other: { a: 1 } },
-        { enabled: true, model: " m ", confidence_threshold: 0.9, base_url: "" },
+        { enabled: true, model: " m ", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "" },
       ),
     ).toEqual({
       theme: "dark",
       other: { a: 1 },
-      routing: { enabled: true, model: "m", confidence_threshold: 0.9, base_url: "" },
+      routing: { enabled: true, model: "m", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "" },
+    });
+  });
+
+  // DENE-706: the project -> direction table lives in the same block and is
+  // written by the CLI. A save from this form must not erase it.
+  it("carries routing fields this form does not own through a save", () => {
+    const out = withRoutingSettings(
+      { routing: { enabled: false, model: "old", projects: { tarot: "出海" }, future: 1 } },
+      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
+    );
+    expect(out.routing).toEqual({
+      enabled: true,
+      model: "m",
+      confidence_threshold: 0.7,
+      stale_review_hours: 24,
+      base_url: "",
+      projects: { tarot: "出海" },
+      future: 1,
     });
   });
 
@@ -153,6 +209,7 @@ describe("withRoutingSettings", () => {
       enabled: true,
       model: "m",
       confidence_threshold: 0.7,
+      stale_review_hours: 24,
       base_url: "https://gw.example/v1",
     });
     expect("api_key" in (out.routing as Record<string, unknown>)).toBe(false);
@@ -161,13 +218,13 @@ describe("withRoutingSettings", () => {
   it("sends an empty key only when one was explicitly passed", () => {
     const cleared = withRoutingSettings(
       null,
-      { enabled: true, model: "m", confidence_threshold: 0.7, base_url: "" },
+      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
       "",
     );
     expect((cleared.routing as Record<string, unknown>).api_key).toBe("");
     const set = withRoutingSettings(
       null,
-      { enabled: true, model: "m", confidence_threshold: 0.7, base_url: "" },
+      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
       "  sk-live  ",
     );
     expect((set.routing as Record<string, unknown>).api_key).toBe("sk-live");
@@ -178,10 +235,14 @@ describe("withRoutingSettings", () => {
       enabled: true,
       model: "m",
       confidence_threshold: 9,
+      stale_review_hours: 0,
       base_url: "",
     });
     expect((out.routing as { confidence_threshold: number }).confidence_threshold).toBe(
       DEFAULT_CONFIDENCE_THRESHOLD,
+    );
+    expect((out.routing as { stale_review_hours: number }).stale_review_hours).toBe(
+      DEFAULT_STALE_REVIEW_HOURS,
     );
   });
 
@@ -197,7 +258,7 @@ describe("withRoutingSettings", () => {
   });
 
   it("round-trips through parse", () => {
-    const next = { enabled: true, model: "m", confidence_threshold: 0.42, base_url: "" };
+    const next = { enabled: true, model: "m", confidence_threshold: 0.42, stale_review_hours: 24, base_url: "" };
     expect(parseRoutingSettings(withRoutingSettings({}, next))).toEqual(next);
   });
 });

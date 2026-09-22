@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { StoreApi } from "zustand/vanilla";
+import type { IssueViewState } from "@multica/core/issues/stores/view-store";
+import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
 import { AlertTriangle, FilterX, ListTodo, Plus } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -33,6 +36,7 @@ import { ListView } from "../components/list-view";
 import { SwimLaneView } from "../components/swimlane-view";
 import { TableView } from "../components/table-view";
 import { useT } from "../../i18n";
+import { NothingSharedEmpty, WriteAction, useGuestReadOnly } from "../../layout/guest-readonly";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
 import { IssueSurfaceSelectionProvider } from "./selection-context";
@@ -57,6 +61,19 @@ interface IssueSurfaceComponentProps extends IssueSurfaceProps {
   showClientEmpty?: (context: IssueSurfaceRenderContext) => boolean;
   batchToolbar?: "always" | "list" | "never";
   contentClassName?: string;
+}
+
+/** An explicit, caller-owned store bypasses saved views and persisted surfaces. */
+export function IssueSurfaceWithStore({ store, baseline, ...props }: Omit<IssueSurfaceComponentProps, "surfaceKey"> & {
+  store: StoreApi<IssueViewState>;
+  baseline: IssueViewBaseline;
+}) {
+  const wsId = useWorkspaceId();
+  return <ViewStoreProvider store={store}>
+    <ViewBaselineProvider baseline={baseline}>
+      <IssueSurfaceContent key={wsId} {...props} />
+    </ViewBaselineProvider>
+  </ViewStoreProvider>;
 }
 
 export function IssueSurface({
@@ -181,6 +198,7 @@ function IssueSurfaceContent({
   contentClassName,
 }: Omit<IssueSurfaceComponentProps, "surfaceKey">) {
   const { t } = useT("projects");
+  const { isGuest } = useGuestReadOnly();
   const controller = useIssueSurfaceController({
     scope,
     modes,
@@ -294,22 +312,28 @@ function IssueSurfaceContent({
           // copy describes the unfiltered case.
           controller.hasActiveFilters ? (
             <FilteredEmptyState />
-          ) : renderEmpty ? (
+          ) : isGuest && scope.type === "workspace" ? (
+            <NothingSharedEmpty />
+          ) : renderEmpty && !isGuest ? (
             renderEmpty(renderContext)
           ) : (
             <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
               <ListTodo className="h-10 w-10 text-faint-foreground" />
               <p className="text-body">{t(($) => $.detail.empty_issues_title)}</p>
-              <p className="text-caption">{t(($) => $.detail.empty_issues_hint)}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1"
-                onClick={() => controller.openCreateIssue()}
-              >
-                <Plus className="size-3.5 mr-1.5" />
-                {t(($) => $.detail.empty_issues_new_button)}
-              </Button>
+              {!isGuest && (
+                <p className="text-caption">{t(($) => $.detail.empty_issues_hint)}</p>
+              )}
+              <WriteAction>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => controller.openCreateIssue()}
+                >
+                  <Plus className="size-3.5 mr-1.5" />
+                  {t(($) => $.detail.empty_issues_new_button)}
+                </Button>
+              </WriteAction>
             </div>
           )
         ) : (
@@ -426,7 +450,6 @@ function FilteredEmptyState() {
     <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
       <FilterX className="h-10 w-10 text-faint-foreground" />
       <p className="text-body">{t(($) => $.filtered_empty.title)}</p>
-      <p className="text-caption">{t(($) => $.filtered_empty.hint)}</p>
       <Button variant="outline" size="sm" className="mt-1" onClick={handleClear}>
         {t(($) => $.filtered_empty.clear_button)}
       </Button>

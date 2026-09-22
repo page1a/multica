@@ -35,6 +35,7 @@ const translations = {
       remove_now: "Clear now",
       removed: "Working copy cleared",
       reason_removable: "Merged, clean and idle",
+      reason_removable_squash: "Squashed into trunk, clean and idle",
       reason_uncommitted: "Kept: it still has uncommitted changes",
       reason_unmerged: "Kept: its branch is not in the trunk branch yet",
       reason_too_recent: "Kept: its last run is too recent",
@@ -116,6 +117,30 @@ describe("WorktreeCleanupSection", () => {
     expect(
       screen.getByText("Kept: it still has uncommitted changes"),
     ).toBeInTheDocument();
+  });
+
+  // DENE-647: in a squash-merge repository the branch's commits are never in
+  // trunk, so a copy that qualifies must not be described as "merged" — a user
+  // who checks `git log` would find nothing and stop believing the list.
+  it("says a squash-merged copy qualifies on its content, not its commits", async () => {
+    mocks.report.mockResolvedValue({
+      ok: true,
+      report: {
+        settings: { enabled: true, min_age_days: 14 },
+        items: [
+          copy({ path: "/squashed", merged_via: "squash" }),
+          copy({ path: "/plain", merged_via: "ancestor" }),
+        ],
+      },
+    });
+
+    render(<WorktreeCleanupSection />);
+    await screen.findByText(/would be cleared/);
+
+    expect(
+      screen.getByText("Squashed into trunk, clean and idle"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Merged, clean and idle")).toBeInTheDocument();
   });
 
   // Invariant 7's user-facing half: the button that removes a copy is simply

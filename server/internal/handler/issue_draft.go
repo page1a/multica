@@ -285,7 +285,7 @@ func (h *Handler) CreateIssueDraftSession(w http.ResponseWriter, r *http.Request
 	// cannot trust. Same two checks as agent create (agent.go), shared so the
 	// sentences cannot drift.
 	thinkingLevel := strings.TrimSpace(req.ThinkingLevel)
-	if !h.thinkingLevelAcceptedForRuntime(w, r, runtime, thinkingLevel) {
+	if !h.thinkingLevelAcceptedForRuntime(w, r, runtime, thinkingLevel, strings.TrimSpace(req.Model)) {
 		return
 	}
 

@@ -206,6 +206,27 @@ func TestPrunePackageStoreLeavesAStoreUnderTheCeilingAlone(t *testing.T) {
 	if _, err := os.Stat(argsLog); err == nil {
 		t.Fatal("pnpm ran against a store far below the ceiling")
 	}
+	if _, err := os.Stat(markerPath(d.cfg.WorkspacesRoot)); err != nil {
+		t.Fatalf("size check did not advance the prune marker: %v", err)
+	}
+}
+
+func TestPrunePackageStoreDefersWhileATaskIsActive(t *testing.T) {
+	d := newPackageStoreGCDaemon(t)
+	seedPackageStore(t, d.cfg.WorkspacesRoot)
+	d.cfg.GCPackageStoreMaxBytes = 1 // force the prune path if not guarded
+	argsLog, _ := fakePnpm(t, "")
+	d.activeTasks.Store(1)
+	defer d.activeTasks.Store(0)
+
+	d.prunePackageStore(context.Background(), d.cfg.WorkspacesRoot, &gcStats{byPattern: map[string]int{}})
+
+	if _, err := os.Stat(argsLog); err == nil {
+		t.Fatal("pnpm ran while a task was active")
+	}
+	if _, err := os.Stat(markerPath(d.cfg.WorkspacesRoot)); err == nil {
+		t.Fatal("active-task deferral advanced the prune marker")
+	}
 }
 
 func TestPrunePackageStoreRunsOnceTheCeilingIsExceeded(t *testing.T) {

@@ -174,9 +174,21 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]InboxItemResponse, len(items))
-	for i, item := range items {
-		resp[i] = inboxRowToResponse(item)
+	// Sharing scope (DENE-698): a notification about an issue this recipient
+	// cannot see is not theirs to read. The counts apply the same rule in SQL
+	// (see CountUnreadInbox), so list and badge cannot disagree.
+	viewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+	resp := make([]InboxItemResponse, 0, len(items))
+	for _, item := range items {
+		if viewerErr != nil {
+			break
+		}
+		if item.IssueID.Valid && !viewer.canSeeIssueFields(
+			item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
+			item.IssueAssigneeType, item.IssueAssigneeID) {
+			continue
+		}
+		resp = append(resp, inboxRowToResponse(item))
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -212,9 +224,18 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]InboxItemResponse, len(items))
-	for i, item := range items {
-		resp[i] = archivedInboxRowToResponse(item)
+	viewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+	resp := make([]InboxItemResponse, 0, len(items))
+	for _, item := range items {
+		if viewerErr != nil {
+			break
+		}
+		if item.IssueID.Valid && !viewer.canSeeIssueFields(
+			item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
+			item.IssueAssigneeType, item.IssueAssigneeID) {
+			continue
+		}
+		resp = append(resp, archivedInboxRowToResponse(item))
 	}
 
 	writeJSON(w, http.StatusOK, resp)

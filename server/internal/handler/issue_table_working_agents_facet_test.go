@@ -228,12 +228,16 @@ func TestIssueTableWorkingAgentsFacetHidesInaccessibleAgents(t *testing.T) {
 	}
 
 	var issueID string
+	// Shared workspace-wide (DENE-698) so that the only thing this test gates
+	// is the agent: a private issue would be hidden from everyone but its
+	// creator, and both viewers below would see an empty facet for the wrong
+	// reason.
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (
 			workspace_id, title, status, priority, creator_type, creator_id,
-			position, number
+			visibility, position, number
 		)
-		VALUES ($1, 'worked on by a private agent', 'todo', 'none', 'member', $2, $3, $4)
+		VALUES ($1, 'worked on by a private agent', 'todo', 'none', 'member', $2, 'workspace', $3, $4)
 		RETURNING id
 	`, testWorkspaceID, testUserID, finalNumber, finalNumber).Scan(&issueID); err != nil {
 		t.Fatalf("insert issue: %v", err)

@@ -332,6 +332,35 @@ func (c *APIClient) GetJSONWithHeaders(ctx context.Context, path string, out any
 	return resp.Header, nil
 }
 
+// GetBytes performs a GET request and returns the raw response body plus the
+// response headers. `logs export` needs this rather than GetJSON: it writes the
+// server-rendered artifact byte-for-byte, and decoding then re-encoding would
+// change formatting and map key order, breaking "the CLI and the dialog produce
+// the same artifact".
+func (c *APIClient) GetBytes(ctx context.Context, path string) ([]byte, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.setHeaders(req)
+
+	resp, err := c.HTTPClient.Do(req)
+	err = wrapTransport(req, err)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, resp.Header, newHTTPError(http.MethodGet, path, resp)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.Header, wrapBodyRead(req, err)
+	}
+	return body, resp.Header, nil
+}
+
 // DeleteJSON performs a DELETE request.
 func (c *APIClient) DeleteJSON(ctx context.Context, path string) error {
 	return c.DeleteJSONResponse(ctx, path, nil)

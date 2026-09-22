@@ -39,8 +39,8 @@ func PackageStoreRoot(workspacesRoot string) string {
 }
 
 // PackageStoreEnvKeys lists every environment name PreparePackageStore sets,
-// sorted. Tests and the Codex shell allowlist use it to reason about the set
-// without reconstructing paths.
+// sorted. Tests and diagnostics use it to reason about the set without
+// reconstructing paths.
 func PackageStoreEnvKeys() []string {
 	keys := make([]string, 0, len(packageStoreLayout))
 	for key := range packageStoreLayout {

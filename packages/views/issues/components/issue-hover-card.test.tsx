@@ -20,6 +20,7 @@ vi.mock("@multica/core/issue-statuses/hooks", () => ({
     statuses: [],
     activeStatuses: [],
     categoryOf: (key: string) => key,
+    iconOf: () => null,
     colorOf: (key: string) =>
       key === "awaiting_response" ? "#f97316" : null,
     labelOf: (key: string) => key,
@@ -118,7 +119,7 @@ const BASE_ISSUE: Issue = {
   priority: "none",
 };
 
-const NOT_FOUND_TEXT = "This issue does not exist or has been deleted in this workspace.";
+const NOT_FOUND_TEXT = "Page not found";
 
 /** The three query states the card body branches on, as react-query reports them. */
 type DetailState =
@@ -253,14 +254,14 @@ describe("IssueHoverCard", () => {
     mockIssue({
       ...BASE_ISSUE,
       status: "awaiting_response",
-      status_category: "in_review",
+      status_category: "started",
     });
 
     await openCard();
 
     expect(screen.getByTestId("status-icon")).toHaveAttribute(
       "data-category",
-      "in_review",
+      "started",
     );
     expect(screen.getByTestId("status-icon")).toHaveAttribute(
       "data-color",

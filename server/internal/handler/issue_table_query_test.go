@@ -89,16 +89,18 @@ func TestCanonicalIssueTableFingerprintNormalizesSetLikeArrays(t *testing.T) {
 	left := issueTableQuerySpec{
 		Scope: issueTableScope{Kind: "workspace", AssigneeTypes: []string{"agent", "member", "agent"}},
 		Filters: issueTableFiltersRequest{
-			Statuses:   []string{"todo", "backlog", "todo"},
-			ProjectIDs: []string{"b", "a"},
+			Statuses:        []string{"todo", "backlog", "todo"},
+			ProjectIDs:      []string{"b", "a"},
+			ProjectStatuses: []string{"planned", "in_progress", "planned"},
 		},
 		Sort: issueTableSortRequest{Field: "title", Direction: "asc"},
 	}
 	right := issueTableQuerySpec{
 		Scope: issueTableScope{Kind: "workspace", AssigneeTypes: []string{"member", "agent"}},
 		Filters: issueTableFiltersRequest{
-			Statuses:   []string{"backlog", "todo"},
-			ProjectIDs: []string{"a", "b"},
+			Statuses:        []string{"backlog", "todo"},
+			ProjectIDs:      []string{"a", "b"},
+			ProjectStatuses: []string{"in_progress", "planned"},
 		},
 		Sort: issueTableSortRequest{Field: "title", Direction: "asc"},
 	}
@@ -266,8 +268,24 @@ func TestIssueTableWorkingIssueIDsAreExplicitAndAssigneeIndependent(t *testing.T
 	if !strings.Contains(compiled.where, "i.id = ANY(") {
 		t.Errorf("working-issue predicate = %q, want issue-id membership", compiled.where)
 	}
-	if strings.Contains(compiled.where, "i.assignee_id") {
-		t.Fatalf("working-issue predicate must not filter issue assignees: %q", compiled.where)
+
+	// The working filter must select issues, never assignees. Counting
+	// against the same spec without the filter rather than banning the column
+	// outright: the sharing scope (DENE-698) legitimately names the caller as
+	// an assignee, and that clause is on every compiled query.
+	w = httptest.NewRecorder()
+	unfiltered, ok := testHandler.compileIssueTableQuery(
+		w,
+		newRequest(http.MethodPost, "/api/issues/table/rows", nil),
+		base,
+	)
+	if !ok {
+		t.Fatalf("compile unfiltered: %d %s", w.Code, w.Body.String())
+	}
+	if got, want := strings.Count(compiled.where, "i.assignee_id"),
+		strings.Count(unfiltered.where, "i.assignee_id"); got != want {
+		t.Fatalf("working-issue filter added %d assignee terms; it must filter issues only: %q",
+			got-want, compiled.where)
 	}
 }
 

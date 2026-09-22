@@ -12,6 +12,7 @@ import {
   canEditSkill,
   canManageMembers,
   canUpdateWorkspaceSettings,
+  canWrite,
 } from "./rules";
 
 const ALICE = "user-alice";
@@ -433,5 +434,31 @@ describe("canChangeMemberRole", () => {
   });
   it("owner can change owner role when 2+ owners exist", () => {
     expect(canChangeMemberRole(targetOwner, 2, ctxOwner).allowed).toBe(true);
+  });
+});
+
+describe("canWrite", () => {
+  it("allows owner, admin and member", () => {
+    expect(canWrite({ userId: ALICE, role: "owner" }).allowed).toBe(true);
+    expect(canWrite({ userId: ALICE, role: "admin" }).allowed).toBe(true);
+    expect(canWrite({ userId: ALICE, role: "member" }).allowed).toBe(true);
+  });
+
+  it("denies guests as read-only", () => {
+    const d = canWrite({ userId: ALICE, role: "guest" });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("guest_readonly");
+  });
+
+  it("denies signed-out viewers", () => {
+    const d = canWrite({ userId: null, role: null });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("not_authenticated");
+  });
+
+  it("denies a signed-in user who is not a member", () => {
+    const d = canWrite({ userId: ALICE, role: null });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("not_member");
   });
 });

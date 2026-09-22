@@ -385,3 +385,46 @@ func TestBuildResourceRefFromFlagsLocalDirectoryExecutionMode(t *testing.T) {
 		}
 	})
 }
+
+// A mode or label edit used to rebuild the ref from four fields and PUT the
+// whole thing, which wiped real_path / repo_key / worktree_root the server
+// already stored (DENE-618). Those keys are identity; dropping them lets
+// /tmp/x and /private/tmp/x both bind, and drops the row out of the
+// same-repository rule.
+func TestBuildResourceRefFromFlagsLocalDirectoryPreservesIdentityFields(t *testing.T) {
+	cmd := newProjectResourceUpdateTestCmd()
+	_ = cmd.Flags().Set("execution-mode", "in_place")
+	existing := map[string]any{
+		"local_path":     "/Users/foo/work/a",
+		"daemon_id":      "d1",
+		"execution_mode": "worktree",
+		"real_path":      "/private/tmp/a",
+		"repo_key":       "github.com/acme/a",
+		"worktree_root":  "/Volumes/Fast/copies",
+		"is_git_repo":    true,
+		"label":          "app",
+	}
+	ref, has, err := buildResourceRefFromFlags(cmd, "local_directory", existing)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
+		t.Fatal("expected has=true")
+	}
+	if ref["execution_mode"] != "in_place" {
+		t.Errorf("execution_mode = %v, want in_place", ref["execution_mode"])
+	}
+	for key, want := range map[string]any{
+		"real_path":     "/private/tmp/a",
+		"repo_key":      "github.com/acme/a",
+		"worktree_root": "/Volumes/Fast/copies",
+		"is_git_repo":   true,
+		"label":         "app",
+		"local_path":    "/Users/foo/work/a",
+		"daemon_id":     "d1",
+	} {
+		if ref[key] != want {
+			t.Errorf("%s = %v, want %v (an unrelated mode edit must not drop identity)", key, ref[key], want)
+		}
+	}
+}

@@ -108,7 +108,7 @@ func TestDshProviderPresetBaseURLTakesEffect(t *testing.T) {
 	// The CLI is expected to end with a transport complaint: the stand-in
 	// answers one JSON body, not the SSE stream the client wants. What the
 	// test asserts is where the request went, not that the turn completed.
-	t.Logf("dsh exited with %v\n--- dsh output ---\n%s", runErr, truncateForLog(output, 4000))
+	t.Logf("dsh exited with %v\n--- dsh output ---\n%s", runErr, truncateBytesForLog(output, 4000))
 
 	mu.Lock()
 	got := append([]hit(nil), hits...)
@@ -142,8 +142,8 @@ func TestDshProviderPresetBaseURLTakesEffect(t *testing.T) {
 	}
 }
 
-// truncateForLog bounds captured CLI output in the test log.
-func truncateForLog(raw []byte, limit int) string {
+// truncateBytesForLog bounds captured CLI output in the test log.
+func truncateBytesForLog(raw []byte, limit int) string {
 	text := strings.TrimSpace(string(raw))
 	if len(text) <= limit {
 		return text

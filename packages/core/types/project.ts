@@ -82,6 +82,12 @@ export interface GithubRepoResourceRef {
   url: string;
   ref?: string;
   default_branch_hint?: string;
+  /**
+   * Normalized repository identity (`host/owner/name`), computed from `url`
+   * with the same function local_directory uses. Compared for duplicate
+   * detection against a local checkout's `repo_key`.
+   */
+  repo_key?: string;
 }
 
 /**
@@ -137,9 +143,10 @@ export interface LocalDirectoryResourceRef {
    */
   worktree_root?: string;
   /**
-   * What the machine holding the directory saw at pick time. `false` refuses
-   * parallel mode at save; absent means nobody checked, and the daemon
-   * re-checks authoritatively at task time.
+   * What the machine holding the directory saw at pick time. Parallel mode
+   * requires `true` (a git working tree with at least one commit). `false`
+   * and absent both refuse it — a client that cannot look at the disk must
+   * not save a mode every task would fail.
    */
   is_git_repo?: boolean;
 }

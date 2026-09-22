@@ -161,9 +161,12 @@ func (d *Daemon) resolveLocalDirectoryAssignment(task Task) (*localDirectoryAssi
 // a directory nothing runs in has no mutex to skip.
 func (d *Daemon) resolveLocalDirectoryPlan(task Task) (*localDirectoryAssignment, []*localDirectoryAssignment, error) {
 	assignment, readOnly, err := localDirectoryPlanForTask(task, d.cfg.DaemonID)
-	if err != nil || assignment == nil {
+	if err != nil {
 		return assignment, readOnly, err
 	}
-	d.applyLocalSharedOverride(assignment)
+	if assignment != nil {
+		d.applyLocalSharedOverride(assignment)
+	}
+	d.backfillLocalDirectoryIdentity(task.WorkspaceID, assignment, readOnly)
 	return assignment, readOnly, nil
 }

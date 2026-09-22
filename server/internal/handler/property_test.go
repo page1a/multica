@@ -61,9 +61,13 @@ func deleteTestProperty(t *testing.T, id string) {
 func createPropertyTestIssue(t *testing.T, title string) string {
 	t.Helper()
 	var issueID string
+	// Shared workspace-wide (DENE-698): these rows exist to carry property
+	// values through the aggregates, and a facet counts only issues the
+	// reader can see. Leaving them private would hide them from every viewer
+	// but their creator and turn a sharing rule into a property-test failure.
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, number)
-		VALUES ($1, $2, 'todo', 'none', 'member', $3,
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, visibility, number)
+		VALUES ($1, $2, 'todo', 'none', 'member', $3, 'workspace',
 		        COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id = $1), 0) + 1)
 		RETURNING id
 	`, testWorkspaceID, title, testUserID).Scan(&issueID); err != nil {
@@ -1155,8 +1159,9 @@ func TestIssueActorPropertyValues(t *testing.T) {
 // TestIssueActorPropertyFacets: actor and multi_actor values aggregate into
 // table facets, which is what backs the "= me" filter in the header. Members
 // are the only referenceable kind, and workspace membership is visible to
-// every member, so there is no visibility gate to apply here — a plain member
-// sees the same keys the owner does.
+// every member, so the only gate is the one on the issues carrying the values:
+// these are shared workspace-wide, so a plain member sees the same keys the
+// owner does.
 func TestIssueActorPropertyFacets(t *testing.T) {
 	_, _, plainMemberID := privateAgentTestFixture(t)
 	property := createTestProperty(t, map[string]any{

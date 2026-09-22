@@ -44,6 +44,8 @@ function issue(overrides: Partial<Issue> = {}): Issue {
     priority: "high",
     assignee_type: "agent",
     assignee_id: "agent-1",
+    reviewer_type: null,
+    reviewer_id: null,
     creator_type: "agent",
     creator_id: "agent-1",
     parent_issue_id: "parent-1",
@@ -72,6 +74,19 @@ const deliveredMeta = {
   "close.wake_action": "stage_done",
 };
 
+// The chips carry a technical `data-chip` identifier rather than a `title`
+// tooltip: an untranslated key like "close.waiting_on" has no business being
+// read out to a screen-reader user.
+function chip(kind: string): HTMLElement {
+  const el = document.querySelector(`[data-chip="${kind}"]`);
+  if (!el) throw new Error(`no chip with data-chip="${kind}"`);
+  return el as HTMLElement;
+}
+
+function queryChip(kind: string): HTMLElement | null {
+  return document.querySelector(`[data-chip="${kind}"]`);
+}
+
 describe("SubIssueCloseStrip", () => {
   it("shows the five Stage 5 fields for a delivered close (DENE-231 shape)", () => {
     renderWithI18n(
@@ -88,12 +103,12 @@ describe("SubIssueCloseStrip", () => {
 
     const strip = screen.getByTestId("sub-issue-close-strip");
     expect(strip).toHaveAttribute("data-close-state", "ok");
-    expect(screen.getByTitle("stage")).toHaveTextContent("Stage 2");
-    expect(screen.getByTitle("close.conclusion")).toHaveTextContent("delivered");
-    expect(screen.getByTitle("close.next_owner")).toHaveTextContent("Next: none");
-    expect(screen.queryByTitle("close.waiting_on")).not.toBeInTheDocument();
-    expect(screen.getByTitle("last_activity_at")).toHaveTextContent("1h ago");
-    expect(screen.queryByTitle("close.missing")).not.toBeInTheDocument();
+    expect(chip("stage")).toHaveTextContent("Stage 2");
+    expect(chip("close.conclusion")).toHaveTextContent("delivered");
+    expect(chip("close.next_owner")).toHaveTextContent("Next: none");
+    expect(queryChip("close.waiting_on")).not.toBeInTheDocument();
+    expect(chip("last_activity_at")).toHaveTextContent("1h ago");
+    expect(queryChip("close.missing")).not.toBeInTheDocument();
   });
 
   it("marks a bag with no close.* keys as not closed under protocol (DENE-230)", () => {
@@ -101,11 +116,11 @@ describe("SubIssueCloseStrip", () => {
 
     const strip = screen.getByTestId("sub-issue-close-strip");
     expect(strip).toHaveAttribute("data-close-state", "missing");
-    expect(screen.getByTitle("close.missing")).toHaveTextContent(
+    expect(chip("close.missing")).toHaveTextContent(
       "Not closed under protocol",
     );
-    expect(screen.getByTitle("stage")).toHaveTextContent("Stage 1");
-    expect(screen.queryByTitle("close.conclusion")).not.toBeInTheDocument();
+    expect(chip("stage")).toHaveTextContent("Stage 1");
+    expect(queryChip("close.conclusion")).not.toBeInTheDocument();
   });
 
   it("marks close.status drift instead of rendering as a normal close (DENE-233 history)", () => {
@@ -124,10 +139,10 @@ describe("SubIssueCloseStrip", () => {
 
     const strip = screen.getByTestId("sub-issue-close-strip");
     expect(strip).toHaveAttribute("data-close-state", "drift");
-    expect(screen.getByTitle("close.status")).toHaveTextContent(
+    expect(chip("close.status")).toHaveTextContent(
       "close.status ≠ done",
     );
-    expect(screen.getByTitle("close.conclusion")).toHaveTextContent(
+    expect(chip("close.conclusion")).toHaveTextContent(
       "awaiting_review",
     );
   });
@@ -155,12 +170,12 @@ describe("SubIssueCloseStrip", () => {
 
     const strip = screen.getByTestId("sub-issue-close-strip");
     expect(strip).toHaveAttribute("data-stuck", "false");
-    expect(screen.getByTitle("close.next_owner")).toHaveTextContent(
+    expect(chip("close.next_owner")).toHaveTextContent(
       "Next: Code Reviewer",
     );
-    expect(screen.getByTitle("close.waiting_on")).toHaveTextContent(
+    expect(chip("close.waiting_on")).toHaveTextContent(
       "Waiting on DENE-196",
     );
-    expect(screen.getByTitle("last_activity_at")).toHaveTextContent("4h ago");
+    expect(chip("last_activity_at")).toHaveTextContent("4h ago");
   });
 });

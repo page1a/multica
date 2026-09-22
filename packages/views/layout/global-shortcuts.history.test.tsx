@@ -13,7 +13,12 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
 vi.mock("@multica/core/chat", () => ({
   useChatStore: { getState: () => ({ floatingChatEnabled: false }) },
 }));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return { ...actual, useQuery: () => ({ data: undefined }) };
+});
 vi.mock("@multica/core/paths", () => ({
+  useCurrentWorkspace: () => ({ id: "ws-1", slug: "w" }),
   useWorkspacePaths: () => ({
     inbox: () => "/w/inbox",
     chat: () => "/w/chat",

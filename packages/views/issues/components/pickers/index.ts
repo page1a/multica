@@ -3,6 +3,7 @@ export { StatusPicker } from "./status-picker";
 export { PriorityPicker } from "./priority-picker";
 export { StagePicker } from "./stage-picker";
 export { AssigneePicker, canAssignAgent } from "./assignee-picker";
+export { ReviewerPicker } from "./reviewer-picker";
 export { StartDatePicker } from "./start-date-picker";
 export { DueDatePicker } from "./due-date-picker";
 export { LabelPicker } from "./label-picker";

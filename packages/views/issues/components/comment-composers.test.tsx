@@ -6,7 +6,9 @@ import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { Attachment } from "@multica/core/types";
 import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
+import { TooltipProvider } from "@multica/ui/components/ui/tooltip";
 import { renderWithI18n } from "../../test/i18n";
+import { GuestReadOnlyScope } from "../../layout/guest-readonly";
 import { CommentInput } from "./comment-input";
 import { ReplyInput } from "./reply-input";
 
@@ -359,6 +361,29 @@ describe("quick action `/` menu", () => {
 });
 
 describe("comment composers", () => {
+  it("keeps the composer visible but inert for a guest", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    renderWithI18n(
+      <TooltipProvider>
+        <GuestReadOnlyScope isGuest>
+          <QueryClientProvider client={queryClient}>
+            <CommentInput issueId="issue-1" onSubmit={vi.fn().mockResolvedValue(true)} />
+          </QueryClientProvider>
+        </GuestReadOnlyScope>
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByTestId("comment-composer-shell")).toHaveTextContent(
+      "Leave a comment...",
+    );
+    const wrap = screen.getByTestId("write-action");
+    expect(wrap).toHaveAttribute("aria-label", "Guests can't edit");
+    fireEvent.click(wrap);
+    expect(screen.queryByPlaceholderText("Leave a comment...")).toBeNull();
+  });
+
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 

@@ -63,6 +63,10 @@ const (
 	ProviderPresetActionUpsert   = "upsert"
 	ProviderPresetActionDelete   = "delete"
 	ProviderPresetActionActivate = "activate"
+	// ProviderPresetActionReplay rewrites the presets this machine already
+	// saved back into a DSH installation whose configuration was reset or
+	// upgraded away. It carries no payload and no credential.
+	ProviderPresetActionReplay = "replay"
 )
 
 // ProviderPresetEntry mirrors the daemon's wire shape for one provider preset.
@@ -177,7 +181,7 @@ func validProviderPresetAction(action string) bool {
 	switch action {
 	case ProviderPresetActionList, ProviderPresetActionModels,
 		ProviderPresetActionUpsert, ProviderPresetActionDelete,
-		ProviderPresetActionActivate:
+		ProviderPresetActionActivate, ProviderPresetActionReplay:
 		return true
 	default:
 		return false

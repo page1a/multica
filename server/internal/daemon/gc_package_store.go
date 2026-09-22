@@ -46,6 +46,15 @@ func (d *Daemon) prunePackageStore(ctx context.Context, workspacesRoot string, s
 	if !d.cfg.SharedPackageStoreEnabled || d.cfg.GCPackageStorePruneInterval <= 0 {
 		return
 	}
+	// Do not race a live install. pnpm's store lock protects pnpm's own
+	// bookkeeping, but a task may still be populating entries that no project
+	// has claimed yet; pruning at that point can discard the work underneath
+	// the install. The daemon-wide active-task count covers preparation and
+	// execution, so one running task is enough to defer this best-effort pass.
+	if d.activeTasks.Load() > 0 {
+		d.logger.Debug("gc: shared package store prune deferred while tasks are active")
+		return
+	}
 	storeDir := execenv.PnpmStoreDir(workspacesRoot)
 	if storeDir == "" {
 		return
@@ -69,6 +78,11 @@ func (d *Daemon) prunePackageStore(ctx context.Context, workspacesRoot string, s
 	// evicting selectively, so pruning a small one just buys the next task a
 	// cold install.
 	if max := d.cfg.GCPackageStoreMaxBytes; max > 0 && before <= max {
+		// This cycle did the expensive size check, so advance the marker even
+		// though no prune was needed. Otherwise every GC cycle after the
+		// interval would walk the entire store again until it crosses the
+		// ceiling.
+		touchPackageStoreMarker(markerPath)
 		return
 	}
 

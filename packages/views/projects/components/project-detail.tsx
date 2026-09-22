@@ -23,7 +23,7 @@ import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } f
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { currentPath, useNavigation } from "../../navigation";
-import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
+import { TitleEditor, ContentEditor, ReadonlyContent, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
 import { ProjectMembersSection } from "./project-members-section";
@@ -54,6 +54,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { EmojiPicker } from "@multica/ui/components/common/emoji-picker";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
+import { ResourceNotFound, WriteAction, useGuestReadOnly } from "../../layout/guest-readonly";
 import {
   AnimatedRightSidebar,
   getAnimatedRightSidebarInitialOpen,
@@ -102,6 +103,7 @@ function PropRow({
 
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
+  const { isGuest } = useGuestReadOnly();
   const statusLabels = useProjectStatusLabels();
   const priorityLabels = useProjectPriorityLabels();
   const wsId = useWorkspaceId();
@@ -210,9 +212,10 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const handleUpdateField = useCallback(
     (data: Parameters<typeof updateProject.mutate>[0] extends { id: string } & infer R ? R : never) => {
       if (!project) return;
+      if (isGuest) return;
       updateProject.mutate({ id: project.id, ...data });
     },
-    [project, updateProject],
+    [project, updateProject, isGuest],
   );
 
   const handleDelete = useCallback(() => {
@@ -237,7 +240,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   }
 
   if (!project) {
-    return <div className="flex items-center justify-center h-full text-muted-foreground">{t(($) => $.detail.not_found)}</div>;
+    return <ResourceNotFound />;
   }
 
   const issueMetrics = getProjectIssueMetrics(project);
@@ -268,6 +271,13 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             />
           </PopoverContent>
         </Popover>
+        {isGuest ? (
+          <WriteAction className="mt-2 w-full">
+            <div className="w-full text-title-sm font-semibold leading-snug tracking-tight">
+              {project.title}
+            </div>
+          </WriteAction>
+        ) : (
         <TitleEditor
           key={`title-${projectId}`}
           defaultValue={project.title}
@@ -278,6 +288,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             if (trimmed && trimmed !== project.title) handleUpdateField({ title: trimmed });
           }}
         />
+        )}
       </div>
 
       {/* Properties */}
@@ -455,6 +466,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${descriptionOpen ? "rotate-90" : ""}`} />
         </button>
         {descriptionOpen && <div className="pl-2">
+          {isGuest ? (
+            <WriteAction className="block w-full">
+              <ReadonlyContent content={project.description || ""} />
+            </WriteAction>
+          ) : (
           <ContentEditor
             ref={descEditorRef}
             key={projectId}
@@ -463,6 +479,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             onUpdate={(md) => handleUpdateField({ description: md || null })}
             debounceMs={1500}
           />
+          )}
           <p className="mt-1 px-2 text-caption text-muted-foreground">
             {t(($) => $.detail.description_hint)}
           </p>

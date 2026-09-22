@@ -75,7 +75,7 @@
     "description_placeholder": "Add description...",
     "description_hint": "Shared with agents as context for every run in this project.",
     "empty_issues_title": "No issues linked",
-    "empty_issues_hint": "Create a new issue or assign existing ones to this project.",
+    "empty_issues_hint": "You can also add existing issues to this project.",
     "empty_issues_new_button": "New Issue",
     "no_issues_yet": "No issues yet",
     "toast_link_copied": "Link copied",
@@ -157,7 +157,11 @@
     "local_directory_move_down_tooltip": "Move down",
     "mode_worktree_root_label": "Working copies go in",
     "mode_worktree_root_not_absolute": "Use an absolute path — a relative one would land wherever the daemon happens to be running.",
-    "mode_worktree_root_inside_repo": "This is inside the repository. Copies there would show up in your own git status and need a .gitignore entry — pick a folder beside it instead."
+    "mode_worktree_root_inside_repo": "This is inside the repository. Copies there would show up in your own git status and need a .gitignore entry — pick a folder beside it instead.",
+    "mode_worktree_root_not_writable": "This folder is not writable. Pick a location this machine can create files in.",
+    "mode_worktree_root_conflicts": "This overlaps a directory already bound to the project. Pick a different folder.",
+    "local_daemon_already_attached_hint": "This machine already has a local directory attached. Remove it before adding another.",
+    "toast_local_daemon_already_attached": "This machine already has a local directory attached to this project. Remove it before adding another."
   },
   "members": {
     "section_header": "Members",

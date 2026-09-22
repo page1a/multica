@@ -9,8 +9,29 @@
 -- and once the column is gone such a row becomes indistinguishable from a real
 -- link — visible in the issue's PR list and, while its PR is in flight, blocking
 -- the issue from auto-advancing.
-DELETE FROM issue_pull_request WHERE reference_only;
-DELETE FROM issue_vcs_pull_request WHERE reference_only;
+--
+-- Idempotent on purpose. This migration is the same change as 468 (upstream
+-- renumbered its copy from 469 to 468 before release), and the ledger keys on
+-- the complete filename, so both files run in filename order on the same
+-- database: 468 drops the column and this one then finds it gone. The DELETE is
+-- guarded as well, because it names the column the drop removes — every
+-- statement here has to tolerate the object that 468 already took away.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'issue_pull_request' AND column_name = 'reference_only'
+    ) THEN
+        DELETE FROM issue_pull_request WHERE reference_only;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'issue_vcs_pull_request' AND column_name = 'reference_only'
+    ) THEN
+        DELETE FROM issue_vcs_pull_request WHERE reference_only;
+    END IF;
+END
+$$;
 
-ALTER TABLE issue_pull_request DROP COLUMN reference_only;
-ALTER TABLE issue_vcs_pull_request DROP COLUMN reference_only;
+ALTER TABLE issue_pull_request DROP COLUMN IF EXISTS reference_only;
+ALTER TABLE issue_vcs_pull_request DROP COLUMN IF EXISTS reference_only;

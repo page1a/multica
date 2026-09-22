@@ -21,7 +21,10 @@ import {
   ArrowDownUp,
   Route,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useCurrentWorkspace } from "@multica/core/paths";
+import { moduleVisibilityOptions } from "@multica/core/workspace/queries";
+import { canAccessModule } from "@multica/core/workspace";
 import { useFeatureEnabled } from "@multica/core/config";
 import {
   BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
@@ -67,8 +70,14 @@ type SettingsEntry = ExtraSettingsTab & { wide?: boolean };
 
 export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
   const { t } = useT("settings");
+  const workspace = useCurrentWorkspace();
   const workspaceName =
-    useCurrentWorkspace()?.name ?? t(($) => $.page.workspace_fallback);
+    workspace?.name ?? t(($) => $.page.workspace_fallback);
+  const { data: moduleAccess } = useQuery({
+    ...moduleVisibilityOptions(workspace?.id ?? ""),
+    enabled: !!workspace?.id,
+  });
+  const reposAllowed = canAccessModule(moduleAccess, "repos");
   const navigation = useNavigation();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const billingEnabled = useFeatureEnabled(
@@ -202,12 +211,16 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
       label: t(($) => $.page.groups.connections),
       scope: workspaceName,
       entries: [
-        entry(
-          "repositories",
-          t(($) => $.page.tabs.repositories),
-          FolderGit2,
-          <RepositoriesTab />,
-        ),
+        ...(reposAllowed
+          ? [
+              entry(
+                "repositories",
+                t(($) => $.page.tabs.repositories),
+                FolderGit2,
+                <RepositoriesTab />,
+              ),
+            ]
+          : []),
         entry(
           "integrations",
           t(($) => $.page.tabs.integrations),

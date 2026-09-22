@@ -85,7 +85,7 @@ policy.Behaviour          // 这一轮的任务，放最后
 
 ### 2.4 记录
 
-迁移 `492_issue_draft_capabilities`：
+迁移 `505_issue_draft_capabilities`：
 
 ```sql
 ALTER TABLE issue_draft

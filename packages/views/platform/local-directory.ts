@@ -62,6 +62,7 @@ interface DesktopLocalDirectoryAPI {
   validateLocalDirectory?: (
     path: string,
   ) => Promise<ValidateLocalDirectoryResult>;
+  validateWritablePath?: (path: string) => Promise<{ ok: boolean }>;
   listLocalDirectorySharedOverrides?: () => Promise<
     LocalDirectorySharedOverride[]
   >;
@@ -101,6 +102,20 @@ export async function validateLocalDirectory(
   const api = readDesktopAPI();
   if (!api?.validateLocalDirectory) return { ok: false, reason: "unsupported" };
   return api.validateLocalDirectory(path);
+}
+
+/** Whether `path` (or its nearest existing ancestor) is writable. Web and
+ *  older desktop builds return true: they cannot check, and the daemon
+ *  still refuses an unwritable root at task time. */
+export async function validateWritablePath(path: string): Promise<boolean> {
+  const api = readDesktopAPI();
+  if (!api?.validateWritablePath) return true;
+  try {
+    const result = await api.validateWritablePath(path);
+    return result.ok === true;
+  } catch {
+    return true;
+  }
 }
 
 /** True when this desktop build can persist a skip-mutex override locally. */

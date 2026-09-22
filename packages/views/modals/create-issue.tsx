@@ -333,7 +333,7 @@ export function ManualCreatePanel({
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
   const wsId = useWorkspaceId();
-  const { categoryOf: draftStatusCategory } = useIssueStatuses(wsId);
+  const { categoryOf: draftStatusCategory, colorOf, iconOf } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   // An alignment left half-finished is reachable from BOTH faces of this
   // dialog (DENE-443). It used to hang off the align face only, so switching
@@ -655,6 +655,8 @@ export function ManualCreatePanel({
             <div className="flex items-center gap-2 text-body text-muted-foreground ml-7">
               <StatusIcon
                 status={issue.status}
+                icon={iconOf(issue.status)}
+                color={colorOf(issue.status)}
                 category={issueStatusCategory(issue) ?? undefined}
                 className="size-3.5 shrink-0"
               />
@@ -1270,6 +1272,8 @@ export function ManualCreatePanel({
                     <DropdownMenuItem onClick={() => setFieldPickerOpen("status")}>
                       <StatusIcon
                         status={status}
+                        icon={iconOf(status)}
+                        color={colorOf(status)}
                         category={draftStatusCategory(status)}
                         className="h-3.5 w-3.5"
                       />

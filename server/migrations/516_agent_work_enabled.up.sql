@@ -1,0 +1,11 @@
+-- Per-agent reversible work gate (DENE-714).
+-- DEFAULT TRUE keeps existing dispatch / claim / assignment-wake behaviour:
+-- a seat still takes work unless its owner turns this off.
+-- Distinct from archive: disable does not leave the list, does not release
+-- the routing seat, does not affect specialisations, and does not cancel
+-- running tasks.
+-- No index: the column is loaded with the agent row by primary key, and the
+-- claim path already joins agent by id. The repo's CREATE INDEX CONCURRENTLY
+-- rule does not apply.
+-- Single-statement ALTER; no transaction split needed.
+ALTER TABLE agent ADD COLUMN work_enabled BOOLEAN NOT NULL DEFAULT TRUE;

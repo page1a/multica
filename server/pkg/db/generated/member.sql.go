@@ -11,6 +11,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countWorkspaceAudience = `-- name: CountWorkspaceAudience :one
+SELECT count(*)::bigint FROM member
+WHERE workspace_id = $1 AND role <> 'guest'
+`
+
+// How many people a 'workspace'-scoped resource reaches. Guests are not part
+// of "the whole workspace" (docs/kun/permission-model.md), so they are not
+// counted.
+func (q *Queries) CountWorkspaceAudience(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWorkspaceAudience, workspaceID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countWorkspaceManagers = `-- name: CountWorkspaceManagers :one
+SELECT count(*)::bigint FROM member
+WHERE workspace_id = $1 AND role IN ('owner', 'admin')
+`
+
+// How many people a private module reaches: owner and admin, who always
+// enter every module so they can administer a restriction.
+func (q *Queries) CountWorkspaceManagers(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWorkspaceManagers, workspaceID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countWorkspaceMembers = `-- name: CountWorkspaceMembers :one
+SELECT count(*)::bigint FROM member
+WHERE workspace_id = $1
+`
+
+// How many people a workspace-scoped *module* reaches. Modules include
+// guests (resource visibility still filters what they see inside).
+func (q *Queries) CountWorkspaceMembers(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWorkspaceMembers, workspaceID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createMember = `-- name: CreateMember :one
 INSERT INTO member (workspace_id, user_id, role)
 VALUES ($1, $2, $3)

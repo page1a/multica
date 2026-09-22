@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/permission"
+
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -93,14 +95,22 @@ func issueViewToResponse(v db.IssueView) IssueViewResponse {
 	}
 }
 
-// canReadIssueView: owner always; workspace-shared views for any member;
-// project-shared views when the caller is in projectIDs (explicit members
-// plus lead, or every workspace project for owner/admin). My-scope views
-// are constrained to private by the DB CHECK, so they only ever match the
-// owner branch.
-func canReadIssueView(v db.IssueView, userID pgtype.UUID, projectIDs []pgtype.UUID) bool {
-	if v.OwnerID == userID || v.Visibility == "workspace" {
+// canReadIssueView: owner always; workspace-shared views for any member
+// except a guest; project-shared views when the caller is in projectIDs
+// (explicit members plus lead, or every workspace project for owner/admin).
+// My-scope views are constrained to private by the DB CHECK, so they only
+// ever match the owner branch.
+//
+// "workspace" does not include guests (DENE-695): a project is the only way
+// to show a guest anything, so a workspace-shared view is invisible to them
+// even though they are members of the workspace. role is the caller's tier;
+// permission.CanSee is the matrix this mirrors.
+func canReadIssueView(v db.IssueView, userID pgtype.UUID, role string, projectIDs []pgtype.UUID) bool {
+	if v.OwnerID == userID {
 		return true
+	}
+	if v.Visibility == "workspace" {
+		return permission.CanSee(permission.Role(role), permission.VisibilityWorkspace, permission.Relation{})
 	}
 	if v.Visibility != "project" || v.ScopeType != "project" || !v.ScopeID.Valid {
 		return false
@@ -115,7 +125,8 @@ func canReadIssueView(v db.IssueView, userID pgtype.UUID, projectIDs []pgtype.UU
 
 func (h *Handler) userCanReadIssueView(ctx context.Context, view db.IssueView, wsUUID pgtype.UUID, userID string) bool {
 	userUUID := parseUUID(userID)
-	if canReadIssueView(view, userUUID, nil) {
+	role := h.workspaceRole(ctx, wsUUID, userUUID)
+	if canReadIssueView(view, userUUID, role, nil) {
 		return true
 	}
 	if view.Visibility != "project" {
@@ -125,7 +136,21 @@ func (h *Handler) userCanReadIssueView(ctx context.Context, view db.IssueView, w
 	if err != nil {
 		return false
 	}
-	return canReadIssueView(view, userUUID, ids)
+	return canReadIssueView(view, userUUID, role, ids)
+}
+
+// workspaceRole reads the caller's tier for visibility decisions. An
+// unreadable membership yields "", which permission.CanSee treats as an
+// unknown tier and denies — the same answer as not being a member.
+func (h *Handler) workspaceRole(ctx context.Context, wsUUID, userUUID pgtype.UUID) string {
+	member, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID:      userUUID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		return ""
+	}
+	return member.Role
 }
 
 // listAccessibleProjectIDs is the caller's project set for visibility='project'
@@ -362,9 +387,18 @@ func (h *Handler) ListIssueViews(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list views")
 		return
 	}
-	resp := make([]IssueViewResponse, len(views))
-	for i, v := range views {
-		resp[i] = issueViewToResponse(v)
+	// ListIssueViewsForUser pre-filters in SQL but cannot express "workspace
+	// does not include guests" without a second parameter on a query that is
+	// already the hot path for every board load. canReadIssueView stays the
+	// one authority: the SQL narrows, this re-checks, and the list can only
+	// lose rows here, never gain them.
+	role := h.workspaceRole(r.Context(), wsUUID, parseUUID(userID))
+	resp := make([]IssueViewResponse, 0, len(views))
+	for _, v := range views {
+		if !canReadIssueView(v, parseUUID(userID), role, projectIDs) {
+			continue
+		}
+		resp = append(resp, issueViewToResponse(v))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

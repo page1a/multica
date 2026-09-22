@@ -9,7 +9,7 @@ import { setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
 import type {
   Issue,
-  IssueStatusCategory,
+  IssueStatus,
   IssueTableQuerySpec,
   IssueTableRowsRequest,
 } from "@multica/core/types";
@@ -27,6 +27,8 @@ function makeIssue(id: string): Issue {
     priority: "none",
     assignee_type: null,
     assignee_id: null,
+    reviewer_type: null,
+    reviewer_id: null,
     creator_type: "member",
     creator_id: "user-1",
     parent_issue_id: null,
@@ -93,7 +95,7 @@ describe("useIssueStatusBranches", () => {
     });
 
     const { result, rerender } = renderHook(
-      ({ statuses }: { statuses: IssueStatusCategory[] }) =>
+      ({ statuses }: { statuses: IssueStatus[] }) =>
         useIssueStatusBranches({
           wsId: "ws-1",
           query,
@@ -138,9 +140,6 @@ describe("useIssueStatusBranches", () => {
     expect(listIssueTableRows).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        // No custom statuses in this fixture, so the hook keeps the
-        // pre-feature contract. See use-issue-status-branches.category.test.tsx
-        // for the category contract. (MUL-6243)
         group_key: "status:todo",
         page: { limit: 50, cursor: "cursor-2" },
       }),

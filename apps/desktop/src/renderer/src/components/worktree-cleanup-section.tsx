@@ -185,6 +185,18 @@ export function WorktreeCleanupSection() {
     }
   };
 
+  /**
+   * The one sentence a qualifying copy gets. A squash-merged branch gets its
+   * own: its commits are NOT in trunk and never will be, so a user who reads
+   * "merged" and checks `git log` would find nothing and stop trusting the
+   * list. Saying "its changes are in trunk, as a squash" is the claim the
+   * daemon actually verified.
+   */
+  const removableLabel = (item: (typeof items)[number]): string =>
+    item.merged_via === "squash"
+      ? t(($) => $.desktop.worktree_cleanup.reason_removable_squash)
+      : t(($) => $.desktop.worktree_cleanup.reason_removable);
+
   return (
     <SettingsSection
       title={t(($) => $.desktop.worktree_cleanup.title)}
@@ -292,7 +304,7 @@ export function WorktreeCleanupSection() {
                     </p>
                     <p className="mt-0.5 text-caption text-muted-foreground">
                       {isRemovable(item)
-                        ? t(($) => $.desktop.worktree_cleanup.reason_removable)
+                        ? removableLabel(item)
                         : keepReasonLabel(item.keep_reason)}
                     </p>
                   </div>

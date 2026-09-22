@@ -163,6 +163,7 @@ func TestBuildSearchQuery_CandidateFirstParity(t *testing.T) {
 
 			candidateQuery, candidateArgs := buildSearchQuery(
 				tt.phrase, append([]string(nil), terms...), tt.queryNum, tt.hasNum, tt.includeClosed, tt.terminalKeys,
+				internalVisibilityViewer(),
 			)
 			candidateArgs[3] = testWorkspaceID
 			candidateArgs[len(candidateArgs)-2] = tt.limit
@@ -256,7 +257,7 @@ func runBuiltSearchForParity(t *testing.T, phrase string, includeClosed bool, te
 	t.Helper()
 	terms := splitSearchTerms(phrase)
 	queryNum, hasNum := parseQueryNumber(phrase)
-	query, args := buildSearchQuery(phrase, terms, queryNum, hasNum, includeClosed, terminalKeys)
+	query, args := buildSearchQuery(phrase, terms, queryNum, hasNum, includeClosed, terminalKeys, internalVisibilityViewer())
 	args[3] = testWorkspaceID
 	args[len(args)-2] = limit
 	args[len(args)-1] = offset
@@ -291,7 +292,13 @@ func runSearchForParity(t *testing.T, label, query string, args []any) []searchP
 	var result []searchParityRow
 	for rows.Next() {
 		var sr searchResult
-		if err := rows.Scan(
+		// The candidate query hydrates i.reviewer_type / i.reviewer_id
+		// between assignee_id and creator_type (DENE-720) and i.visibility
+		// between revision and match_source (DENE-698); the legacy copy
+		// below is the parent commit's query verbatim and has none of those
+		// columns, so the two destination lists differ by exactly those
+		// three fields.
+		dest := []any{
 			&sr.issue.ID,
 			&sr.issue.WorkspaceID,
 			&sr.issue.Title,
@@ -300,6 +307,11 @@ func runSearchForParity(t *testing.T, label, query string, args []any) []searchP
 			&sr.issue.Priority,
 			&sr.issue.AssigneeType,
 			&sr.issue.AssigneeID,
+		}
+		if label == "candidate" {
+			dest = append(dest, &sr.issue.ReviewerType, &sr.issue.ReviewerID)
+		}
+		dest = append(dest,
 			&sr.issue.CreatorType,
 			&sr.issue.CreatorID,
 			&sr.issue.ParentIssueID,
@@ -314,9 +326,12 @@ func runSearchForParity(t *testing.T, label, query string, args []any) []searchP
 			&sr.issue.Number,
 			&sr.issue.ProjectID,
 			&sr.issue.Revision,
-			&sr.matchSource,
-			&sr.matchedCommentContent,
-		); err != nil {
+		)
+		if label == "candidate" {
+			dest = append(dest, &sr.issue.Visibility)
+		}
+		dest = append(dest, &sr.matchSource, &sr.matchedCommentContent)
+		if err := rows.Scan(dest...); err != nil {
 			t.Fatalf("scan %s row: %v", label, err)
 		}
 		result = append(result, searchParityRow{

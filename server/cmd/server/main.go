@@ -24,10 +24,12 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/maintenance"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/profiling"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
+	"github.com/multica-ai/multica/server/internal/selfhosttelemetry"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -305,6 +307,10 @@ func newMainHTTPServer(addr string, handler http.Handler) *http.Server {
 
 func main() {
 	logger.Init()
+	// Read the opt-out before constructing any telemetry dependency. In the
+	// disabled case no collector or HTTP client is ever created.
+	telemetryConfig := selfhosttelemetry.ConfigFromDoNotTrack(os.Getenv("DO_NOT_TRACK"))
+	selfhosttelemetry.LogStartupStatus(slog.Default(), telemetryConfig)
 	// Warn about missing configuration
 	if err := jwtSecretBootError(os.Getenv("JWT_SECRET"), os.Getenv("APP_ENV")); err != nil {
 		slog.Error(
@@ -676,10 +682,15 @@ func main() {
 
 	srv := newMainHTTPServer(":"+port, r)
 	profilingServer := profiling.NewServer()
+	maintenanceServer, maintenanceErr := maintenance.NewServer(os.Getenv("MAINTENANCE_PORT"), maintenance.NewService(pool, maintenance.StatusCategory{}))
+	if maintenanceErr != nil {
+		slog.Error("maintenance listener disabled", "error", maintenanceErr)
+	}
 
 	// Start background workers.
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	autopilotCtx, autopilotCancel := context.WithCancel(context.Background())
+	telemetryWorker := selfhosttelemetry.New(pool, version, telemetryConfig, slog.Default())
 	// Reuse the router's services here. In particular, the router wires the
 	// EmptyClaim cache into TaskService; constructing a second TaskService for
 	// scheduled Autopilot dispatch would send the daemon wakeup without bumping
@@ -710,6 +721,9 @@ func main() {
 	// work, so there is no separate queue TTL to tune: a busy runtime keeps its
 	// backlog, and a departed one retires everything it owned at once.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus, runtimeReconnectGrace)
+	if telemetryWorker != nil {
+		go telemetryWorker.Run(sweepCtx)
+	}
 	go runDelegatedFailureRecoverySweeper(sweepCtx, taskSvc)
 	// Seven-day runtime retention does not share the 30-second liveness tick:
 	// its bounded transactions run independently once per hour, so a slow GC
@@ -791,6 +805,15 @@ func main() {
 	if err := schedulerMgr.Register(scheduler.PluginHookScheduleDispatchJob(queries, h.PluginService)); err != nil {
 		slog.Warn("scheduler: failed to register plugin_hook_schedule_dispatch job", "error", err)
 	}
+	// DENE-712: the routing stale-review sweep. Every other routing row is
+	// triggered by an event the product delivers; a ticket going quiet in
+	// review is the absence of one, so this row needs a clock and it shares
+	// the same lease + audit machinery as the jobs above.
+	if h.Routing != nil {
+		if err := schedulerMgr.Register(scheduler.RoutingStaleReviewJob(h.Routing)); err != nil {
+			slog.Warn("scheduler: failed to register routing_stale_review job", "error", err)
+		}
+	}
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)
 	}()
@@ -800,6 +823,15 @@ func main() {
 			slog.Info("metrics server starting", "addr", metricsConfig.Addr)
 			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("metrics server disabled after startup error", "error", err)
+			}
+		}()
+	}
+
+	if maintenanceServer != nil {
+		go func() {
+			slog.Info("maintenance server starting", "addr", maintenanceServer.Addr)
+			if err := maintenanceServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("maintenance listener disabled", "error", err)
 			}
 		}()
 	}
@@ -837,6 +869,17 @@ func main() {
 	// finds no socket to deliver over.
 	shutdownSequence{
 		StopAutopilot: autopilotCancel,
+		DrainMaintenance: func() {
+			if maintenanceServer == nil {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 16*time.Second)
+			defer cancel()
+			if err := maintenanceServer.Shutdown(ctx); err != nil {
+				slog.Error("maintenance shutdown interrupted", "error", err)
+				_ = maintenanceServer.Close()
+			}
+		},
 		DrainHTTP: func() {
 			apiShutdownCtx, apiShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := srv.Shutdown(apiShutdownCtx); err != nil {

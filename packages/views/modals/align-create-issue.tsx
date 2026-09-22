@@ -8,8 +8,10 @@ import { ApiError, clientErrorMessage } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
-  DEFAULT_ISSUE_DRAFT_CAPABILITIES,
+  type IssueDraftCapabilityKey,
   encodeIssueDraftCapabilities,
+  readIssueDraftCapabilityPreference,
+  writeIssueDraftCapabilityPreference,
   IssueDraftSessionUnrecognizedError,
   issueDraftListOptions,
   unfinishedIssueDrafts,
@@ -159,12 +161,19 @@ export function AlignCreatePanel({
   // the request does.
   const [model, setModel] = useState("");
   const [thinkingLevel, setThinkingLevel] = useState("");
-  // The default is applied here, at read time, rather than written into the
-  // store on mount: a user who never opens the panel has expressed no opinion,
-  // and freezing the default into the draft would make it look like one — and
-  // would outlive a change to what the default IS.
-  const capabilities =
-    draft.align.capabilities ?? DEFAULT_ISSUE_DRAFT_CAPABILITIES;
+  // What the boxes start as: this user's last actually-used combination, on
+  // any workspace (DENE-691). Keyed on the user so a late sign-in or an account
+  // switch never inherits somebody else's selection; a first use or an
+  // unreadable preference reads back as the default.
+  const rememberedCapabilities = useMemo(
+    () => readIssueDraftCapabilityPreference(currentUserId),
+    [currentUserId],
+  );
+  // Applied at read time rather than written into the store on mount: a user
+  // who never opens the panel has expressed no opinion, and freezing a value
+  // into the draft would make it look like one.
+  const capabilities: readonly IssueDraftCapabilityKey[] =
+    draft.align.capabilities ?? rememberedCapabilities;
 
   const draftsQuery = useQuery(issueDraftListOptions(wsId));
   const runtimesQuery = useQuery(runtimeListOptions(wsId));
@@ -296,6 +305,9 @@ export function AlignCreatePanel({
       // failure into a return instead of an unhandled rejection.
       .catch(() => null);
     if (!result) return;
+    // Remembered only once the alignment really started: the preference is
+    // "the combination last USED", not the last one somebody clicked through.
+    writeIssueDraftCapabilityPreference(capabilities, currentUserId);
     onClose();
     // Navigating even when the first turn failed: the draft exists and holds
     // the request, so staying would only invite the user to create a second

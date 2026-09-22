@@ -495,6 +495,9 @@ beforeEach(() => {
   // from the draft slot, so a mock that only counted calls would leave it
   // rendering — and submitting — the set from before the click.
   draftStore.draft.align.capabilities = undefined;
+  // A started alignment remembers its capability set (DENE-691); without this
+  // every test after the first submit would open on a previous test's boxes.
+  localStorage.removeItem("multica_alignment_capabilities:user-1");
   editorLive = true;
   mocks.setAlign.mockImplementation(
     (patch: { request?: string; capabilities?: string[] }) => {
@@ -702,6 +705,34 @@ describe("AlignCreatePanel", () => {
     await openConfigPanel();
     for (const name of [/Decision map/, /Requirement interview/, /See the screen first/]) {
       expect(screen.getByRole("checkbox", { name })).toBeChecked();
+    }
+  }, 15_000);
+
+  // DENE-691. The storage format and its fallbacks are covered in
+  // packages/core/issue-drafts/capability-preference.test.ts; this keeps the
+  // wiring — what the boxes open on, and that only a started alignment counts.
+  it("opens on the combination this user last used and remembers the next one", async () => {
+    localStorage.setItem("multica_alignment_capabilities:user-1", JSON.stringify(["grill"]));
+    try {
+      renderPanel();
+      await typeRequest("add dark mode");
+      await openConfigPanel();
+      expect(screen.getByRole("checkbox", { name: /Requirement interview/ })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /Decision map/ })).not.toBeChecked();
+
+      // Ticking a box is not "using" it: nothing is remembered until the start.
+      await userEvent.click(screen.getByRole("checkbox", { name: /Decision map/ }));
+      expect(localStorage.getItem("multica_alignment_capabilities:user-1")).toBe(JSON.stringify(["grill"]));
+
+      await userEvent.click(submitButton());
+      await waitFor(() => expect(mocks.createIssueDraftSession).toHaveBeenCalledTimes(1));
+      await waitFor(() => {
+        const stored = JSON.parse(localStorage.getItem("multica_alignment_capabilities:user-1") ?? "[]") as string[];
+        expect(stored).toHaveLength(2);
+        expect(stored).toContain("grill");
+      });
+    } finally {
+      localStorage.removeItem("multica_alignment_capabilities:user-1");
     }
   }, 15_000);
 

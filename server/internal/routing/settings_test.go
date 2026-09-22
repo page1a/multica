@@ -6,6 +6,7 @@ package routing
 
 import (
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestParseSettingsContract(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := ParseSettings([]byte(tc.raw))
-			if got != tc.want {
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("ParseSettings() = %+v, want %+v", got, tc.want)
 			}
 			if s := got.State(); s != tc.state {

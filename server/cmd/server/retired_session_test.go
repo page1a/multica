@@ -134,6 +134,86 @@ func TestGetLastChatTaskSessionExcludesAuthResolutionFailure(t *testing.T) {
 	requireSessionExcluded(t, prior.SessionID, err)
 }
 
+// TestGetLastChatTaskSessionExcludesAntigravityTokenExpired is the chat half of
+// DENE-724, mirroring GetLastTaskSession. A chat turn that ran long enough for
+// agy's in-process OAuth token to expire must not be handed back to the next
+// message: the same conversation would resume and burn another token lifetime
+// to fail identically. The row carries agent_error.provider_auth_or_access,
+// which every resume filter treats as safe, so only the phrase guard drops it.
+func TestGetLastChatTaskSessionExcludesAntigravityTokenExpired(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	_, agentID, runtimeID := setupRerunTestFixture(t)
+	chatSessionID := newPoisonTestChatSession(t, agentID, runtimeID, "agy-token-expired")
+	ctx := context.Background()
+
+	const antigravityAuthError = `UNAUTHENTICATED (code 401): Request had invalid authentication credentials. ` +
+		`Expected OAuth 2 access token, login cookie or other valid authentication credential. ` +
+		`See https://developers.google.com/identity/sign-in/web/devconsole-project.; ` +
+		`agy stderr: error: UNAUTHENTICATED (code 401): Request had invalid authentication credentials.`
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'CHAT-AGY-EXPIRED', '/tmp/chat', 'agent_error.provider_auth_or_access', $4)
+	`, agentID, runtimeID, chatSessionID, antigravityAuthError); err != nil {
+		t.Fatalf("insert antigravity token-expiry task: %v", err)
+	}
+
+	queries := db.New(testPool)
+	prior, err := queries.GetLastChatTaskSession(ctx, lastChatTaskSessionParams(chatSessionID))
+	requireSessionExcluded(t, prior.SessionID, err)
+}
+
+// TestGetLastChatTaskSessionExcludesAntigravityNotLoggedIn is the chat twin of
+// the same split: the CLI's own logged-out notice retires the chat session too,
+// whichever half of the guard catches it — the reason the current daemon writes,
+// or the legacy agent_error.provider_auth_or_access row for the same text.
+func TestGetLastChatTaskSessionExcludesAntigravityNotLoggedIn(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	const notLoggedInError = "error: You are not logged into Antigravity"
+
+	cases := []struct {
+		name          string
+		failureReason string
+		errText       any
+	}{
+		{
+			name:          "reason written by the current daemon",
+			failureReason: "antigravity_not_logged_in",
+			errText:       nil,
+		},
+		{
+			name:          "legacy row classified as provider auth",
+			failureReason: "agent_error.provider_auth_or_access",
+			errText:       notLoggedInError,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, agentID, runtimeID := setupRerunTestFixture(t)
+			chatSessionID := newPoisonTestChatSession(t, agentID, runtimeID, "agy-not-logged-in")
+			ctx := context.Background()
+
+			if _, err := testPool.Exec(ctx, `
+				INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
+				VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'CHAT-AGY-NOT-LOGGED-IN', '/tmp/chat', $4, $5)
+			`, agentID, runtimeID, chatSessionID, tc.failureReason, tc.errText); err != nil {
+				t.Fatalf("insert antigravity not-logged-in task: %v", err)
+			}
+
+			queries := db.New(testPool)
+			prior, err := queries.GetLastChatTaskSession(ctx, lastChatTaskSessionParams(chatSessionID))
+			requireSessionExcluded(t, prior.SessionID, err)
+		})
+	}
+}
+
 // TestGetLastChatTaskSessionKeepsSessionOnAuthAdjacentError is the chat
 // narrowness half: the ILIKE guard must match the exact provider phrase, not an
 // error that merely resembles it, or a healthy conversation loses its resume

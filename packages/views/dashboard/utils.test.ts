@@ -9,6 +9,7 @@ import {
   aggregateDailyTasks,
   aggregateFailureClasses,
   aggregateFailureReasons,
+  aggregateIssueTokens,
   aggregateWeeklyErrors,
   aggregateWeeklyTasks,
   aggregateWeeklyTime,
@@ -137,6 +138,79 @@ describe("aggregateAgentTokens", () => {
     expect(rows[0]?.taskCount).toBe(5);
     // big-spender across two models — verify cost > small-spender's.
     expect(rows[0]!.cost).toBeGreaterThan(rows[1]!.cost);
+  });
+});
+
+describe("aggregateIssueTokens", () => {
+  it("folds per-(issue, model) rows into per-issue totals, keeps the label, and sorts by cost desc", () => {
+    const rows = aggregateIssueTokens([
+      {
+        issue_id: "issue-cheap",
+        identifier: "MUL-2",
+        title: "Cheap issue",
+        provider: "claude",
+        model: "claude-sonnet-4-6",
+        input_tokens: 100_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+      },
+      {
+        issue_id: "issue-pricey",
+        identifier: "MUL-1",
+        title: "Pricey issue",
+        provider: "claude",
+        model: "claude-sonnet-4-6",
+        input_tokens: 5_000_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+      },
+      {
+        issue_id: "issue-pricey",
+        identifier: "MUL-1",
+        title: "Pricey issue",
+        provider: "claude",
+        model: "claude-haiku-4-5",
+        input_tokens: 1_000_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+      },
+    ]);
+
+    // Cost ranks, not tokens: an issue that ran two models must collapse into
+    // one row, and the row's label survives the fold.
+    expect(rows.map((r) => r.issueId)).toEqual(["issue-pricey", "issue-cheap"]);
+    expect(rows[0]?.identifier).toBe("MUL-1");
+    expect(rows[0]?.title).toBe("Pricey issue");
+    expect(rows[0]?.tokens).toBe(6_000_000);
+    expect(rows[0]!.cost).toBeGreaterThan(rows[1]!.cost);
+  });
+
+  it("keeps the provider's authoritative charge on the row instead of re-estimating it", () => {
+    // cost_usd_ticks is what the provider billed (1e-10 USD). A missing rate
+    // table must not zero it, and the estimated half must not double-charge
+    // the tokens the provider already priced.
+    const rows = aggregateIssueTokens([
+      {
+        issue_id: "issue-1",
+        identifier: "MUL-1",
+        title: "Priced by the provider",
+        provider: "mystery",
+        model: "unknown-model",
+        input_tokens: 10_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd_ticks: 2_500_000_000,
+        uncosted_input_tokens: 0,
+        uncosted_output_tokens: 0,
+        uncosted_cache_read_tokens: 0,
+        uncosted_cache_write_tokens: 0,
+      },
+    ]);
+    expect(rows[0]?.cost).toBeCloseTo(0.25, 10);
   });
 });
 

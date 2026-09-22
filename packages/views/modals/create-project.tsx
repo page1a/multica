@@ -94,17 +94,26 @@ export function buildLocalDirectoryResourceRef({
   daemonId,
   label,
   mode,
+  realPath,
+  repoKey,
+  isGitRepo,
 }: {
   localPath: string;
   daemonId: string;
   label: string | null;
   mode: LocalDirectoryExecutionMode;
+  realPath?: string;
+  repoKey?: string;
+  isGitRepo?: boolean;
 }): Record<string, unknown> {
   return {
     local_path: localPath,
     daemon_id: daemonId,
     ...(label ? { label } : {}),
     execution_mode: mode,
+    ...(realPath ? { real_path: realPath } : {}),
+    ...(repoKey ? { repo_key: repoKey } : {}),
+    ...(isGitRepo === undefined ? {} : { is_git_repo: isGitRepo }),
   };
 }
 
@@ -204,6 +213,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   // undefined = could not check (older desktop build); the daemon re-checks
   // authoritatively, so unknown stays permissive.
   const [localIsGitRepo, setLocalIsGitRepo] = useState<boolean | undefined>(undefined);
+  const [localRealPath, setLocalRealPath] = useState<string | undefined>(undefined);
+  const [localRepoKey, setLocalRepoKey] = useState<string | undefined>(undefined);
   const [localModeOpen, setLocalModeOpen] = useState(false);
 
   // The daemon's worktree capability is no longer read here. It only ever fed
@@ -282,6 +293,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       setSelectedLocalPath(picked.path);
       setSelectedLocalLabel(picked.basename ?? null);
       setLocalIsGitRepo(validation.is_git_repo);
+      setLocalRealPath(validation.real_path);
+      setLocalRepoKey(validation.repo_key);
     } finally {
       setLocalPicking(false);
     }
@@ -292,6 +305,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     setSelectedLocalLabel(null);
     setLocalPickError(null);
     setLocalIsGitRepo(undefined);
+    setLocalRealPath(undefined);
+    setLocalRepoKey(undefined);
     setLocalMode(null);
   };
 
@@ -347,6 +362,9 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             daemonId: daemonStatus.daemonId,
             label: selectedLocalLabel,
             mode: apiExecutionMode(effectiveLocalMode, serverAcceptsShared),
+            realPath: localRealPath,
+            repoKey: localRepoKey,
+            isGitRepo: localIsGitRepo,
           }),
         },
       ];

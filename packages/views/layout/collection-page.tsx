@@ -13,6 +13,7 @@ import {
 } from "@multica/ui/components/ui/empty";
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "./page-header";
+import { WriteAction } from "./guest-readonly";
 
 interface CollectionPageHeaderProps {
   icon: LucideIcon;
@@ -100,17 +101,19 @@ export function CollectionPageHeaderAction({
   const accessibleLabel = props["aria-label"] ?? label;
 
   return (
-    <Button
-      type={type}
-      size={size}
-      variant={variant}
-      className={cn("h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5", className)}
-      aria-label={accessibleLabel}
-      {...props}
-    >
-      <Icon aria-hidden="true" className="size-3.5" />
-      <span className="hidden md:inline">{label}</span>
-    </Button>
+    <WriteAction>
+      <Button
+        type={type}
+        size={size}
+        variant={variant}
+        className={cn("h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5", className)}
+        aria-label={accessibleLabel}
+        {...props}
+      >
+        <Icon aria-hidden="true" className="size-3.5" />
+        <span className="hidden md:inline">{label}</span>
+      </Button>
+    </WriteAction>
   );
 }
 

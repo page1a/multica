@@ -4,6 +4,7 @@ import { createI18n } from "@multica/core/i18n/react";
 import type { SupportedLocale } from "@multica/core/i18n";
 import { describe, expect, it } from "vitest";
 import enAgents from "../../../locales/en/agents.json";
+import frAgents from "../../../locales/fr/agents.json";
 import jaAgents from "../../../locales/ja/agents.json";
 import koAgents from "../../../locales/ko/agents.json";
 import zhHansAgents from "../../../locales/zh-Hans/agents.json";
@@ -20,6 +21,7 @@ const AGENT_RESOURCES = {
   "zh-Hans": zhHansAgents,
   ja: jaAgents,
   ko: koAgents,
+  fr: frAgents,
 } as const;
 
 function fixedT(locale: SupportedLocale): TFunction<"agents"> {
@@ -105,6 +107,7 @@ describe("cancelReasonLabel", () => {
       "zh-Hans": "已由系统取消",
       ja: "システムによってキャンセルされました",
       ko: "시스템에서 취소함",
+      fr: "Annulée par le système",
     };
 
     for (const locale of Object.keys(expected) as SupportedLocale[]) {
@@ -153,6 +156,13 @@ describe("failureReasonLabel", () => {
     );
   });
 
+  it("maps runtime access denial to actionable recovery copy", () => {
+    const label = failureReasonLabel("runtime_access_denied", enT);
+    expect(label).toMatch(/make the runtime public/i);
+    expect(label).toMatch(/rebind\/copy/i);
+    expect(label).not.toBe("Task identity mismatch");
+  });
+
   it("covers operational reasons emitted outside the canonical taxonomy", () => {
     expect(failureReasonLabel("agent_fallback_message", enT)).toBe(
       "Agent returned a fallback message",
@@ -162,6 +172,18 @@ describe("failureReasonLabel", () => {
     );
     expect(failureReasonLabel("cancelled", enT)).toBe(
       "Cancelled by the system",
+    );
+  });
+
+  it("names the two Antigravity reasons apart", () => {
+    // DENE-724 review: one shared reason made one label wrong for whoever read
+    // it. The labels must stay distinguishable so the execution log says which
+    // of the two happened without opening the raw error.
+    expect(failureReasonLabel("antigravity_session_token_expired", enT)).toBe(
+      "Antigravity session token expired",
+    );
+    expect(failureReasonLabel("antigravity_not_logged_in", enT)).toBe(
+      "Antigravity not signed in",
     );
   });
 

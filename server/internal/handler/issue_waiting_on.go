@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -184,7 +185,7 @@ func (h *Handler) triggerWaitingOnAgent(ctx context.Context, waiter db.Issue, ag
 		ID:          agentID,
 		WorkspaceID: waiter.WorkspaceID,
 	})
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid || !agent.WorkEnabled {
 		return
 	}
 	hasActive, err := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
@@ -194,7 +195,7 @@ func (h *Handler) triggerWaitingOnAgent(ctx context.Context, waiter db.Issue, ag
 	if err != nil || hasActive {
 		return
 	}
-	if _, err := h.TaskService.EnqueueTaskForMention(ctx, waiter, agentID, triggerCommentID); err != nil {
+	if _, err := h.TaskService.EnqueueTaskForMention(ctx, waiter, agentID, triggerCommentID, service.OriginDerived); err != nil {
 		slog.Warn("waiting_on: enqueue waiter agent task failed",
 			"error", err,
 			"waiter_id", uuidToString(waiter.ID),
@@ -211,7 +212,7 @@ func (h *Handler) triggerWaitingOnSquad(ctx context.Context, waiter db.Issue, tr
 		return
 	}
 	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid || !agent.WorkEnabled {
 		return
 	}
 	hasActive, err := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
@@ -221,7 +222,7 @@ func (h *Handler) triggerWaitingOnSquad(ctx context.Context, waiter db.Issue, tr
 	if err != nil || hasActive {
 		return
 	}
-	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, waiter, squad.LeaderID, squad.ID, triggerCommentID); err != nil {
+	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, waiter, squad.LeaderID, squad.ID, triggerCommentID, service.OriginDerived); err != nil {
 		slog.Warn("waiting_on: enqueue waiter squad leader task failed",
 			"error", err,
 			"waiter_id", uuidToString(waiter.ID),

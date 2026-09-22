@@ -13,7 +13,7 @@ import (
 // GetLastTaskSession can filter them out and the next task starts from
 // a fresh agent session instead of inheriting the bad state.
 //
-// Two flavors:
+// The flavors so far:
 //   - Output-side: agent "completed" with output that is actually a known
 //     fallback marker (gave up mid-thought, emitted a meta message) or the
 //     provider's context-window-exhausted notice (GH #6402). Detected
@@ -29,6 +29,16 @@ import (
 //   - Transport-side: a Codex thread/resume response too large to read back.
 //     The thread only grows, so every later resume overflows identically.
 //     Detected via classifyResumeUnsafeTransport.
+//   - Credential-lifetime-side: the Antigravity CLI (agy) holds the OAuth
+//     access token it loaded at process start and never refreshes it, so a run
+//     longer than the token's remaining lifetime dies with Google's
+//     UNAUTHENTICATED 401. The session is not a bad conversation, but its
+//     transcript now ends in that rejection and every long resume re-expires
+//     the same way; the next turn must start a fresh agy process, which
+//     reloads the login. The same CLI also reports its own logged-out notice,
+//     which retires the session the same way but keeps a different reason so
+//     its copy does not claim the login is fine. Detected via
+//     classifyResumeUnsafeAuthExpiry.
 //
 // MUL-2946: ReasonIterationLimit and ReasonAPIInvalidRequest are aliased
 // to the canonical taskfailure values so the daemon and the in-flight
@@ -43,6 +53,27 @@ const (
 	FailureReasonAPIInvalidRequest       = string(taskfailure.ReasonAPIInvalidRequest)
 	FailureReasonCodexSemanticInactivity = "codex_semantic_inactivity"
 	FailureReasonCodexResumeOversized    = "codex_resume_oversized"
+	// FailureReasonAntigravitySessionTokenExpired is DENE-724: agy ran long
+	// enough that the access token inside its process expired, and the run died
+	// on Google's 401. Distinct from agent_error.provider_auth_or_access on
+	// purpose — that reason's copy tells the member to sign in again, which
+	// cannot fix a token the CLI failed to refresh, and that reason is
+	// resume-safe, which is what turned one 401 into an endless chain of 30+
+	// minute resumes of the same conversation. Unprefixed like the Codex
+	// operational reasons above: it is a Multica/backend lifecycle fact about
+	// the session, not a classification of the provider's error string.
+	FailureReasonAntigravitySessionTokenExpired = "antigravity_session_token_expired"
+	// FailureReasonAntigravityNotLoggedIn is the second half of DENE-724: the
+	// CLI's own "You are not logged into Antigravity" notice. Same session
+	// retirement as the reason above, deliberately a different wire value
+	// because the two need different words — the 401 above proves the saved
+	// login is fine (a short invocation reloads it and succeeds), so its copy
+	// must not send the member to sign in; this notice is the one symptom that
+	// can mean the account really is signed out, so its copy must not claim
+	// "your login is fine". One shared reason forced one sentence to be wrong
+	// for the other audience, which was the blocking finding on the first
+	// review of this fix.
+	FailureReasonAntigravityNotLoggedIn = "antigravity_not_logged_in"
 )
 
 // poisonedOutputMaxLen caps how long an output can be and still be
@@ -212,6 +243,56 @@ func classifyResumeUnsafeTimeout(provider, errMsg string) (string, bool) {
 	if strings.Contains(lowered, strings.ToLower(agent.CodexSemanticInactivityMarker)) ||
 		strings.Contains(lowered, strings.ToLower(agent.CodexFirstTurnNoProgressMarker)) {
 		return FailureReasonCodexSemanticInactivity, true
+	}
+	return "", false
+}
+
+// classifyResumeUnsafeAuthExpiry reports whether an agent error is the
+// Antigravity CLI (agy) unable to authenticate, and which of the two DENE-724
+// conditions it is (DENE-724).
+//
+// Why this is resume-unsafe rather than an ordinary auth failure: `agy -p`
+// loads its access token once at startup and never refreshes it mid-turn, so
+// the run dies on the 401 the moment the token's remaining lifetime is spent —
+// after however many minutes of real work. Short CLI invocations reload the
+// login every time and keep working, which is why the same account looks
+// healthy from a shell and broken from a long Multica run. The next trigger
+// must therefore start a NEW agy process (which reloads the token) instead of
+// resuming the conversation whose transcript now ends in the rejection.
+//
+// The two conditions share that remedy but not their copy, so they get
+// separate reasons:
+//
+//   - Google's 401 wording means the token the RUNNING process held expired.
+//     The saved login is fine (a short invocation just used it), so the copy
+//     says so and sends the member straight back to their message.
+//   - The CLI's own "You are not logged into Antigravity" notice may mean the
+//     account really is signed out. Its copy must never claim the login is
+//     fine; it leads with `agy -p ping` and branches on the result.
+//
+// The notice is checked first because both wordings can land in one error
+// blob: when Google rejects the mid-run token, the CLI may append its own
+// logged-out notice to the same stderr tail. The not-logged-in copy is the one
+// that is still correct in that overlap — it never asserts the login is fine,
+// and its ping-then-retry step is exactly what a long-run expiry needs too.
+//
+// Deliberately NOT wired into shouldRetryWithFreshSession, unlike the Codex
+// cases above. That in-turn retry is gated on tools == 0, and the failure only
+// happens after a long run has already done real work — the gate is satisfied
+// here mostly when the backend under-reported its tool events, which is not a
+// safe basis for replaying half an hour of side effects. Retiring the session
+// keeps the NEXT round off the dead conversation without re-running this one.
+//
+// The phrases live in taskfailure.AntigravitySessionTokenExpired /
+// AntigravityNotLoggedIn, shared with the resume queries' SQL guard
+// (pkg/db/queries) and with service.ResumeUnsafeFailure, so a row written by a
+// daemon too old to carry this classifier is still excluded from resume.
+func classifyResumeUnsafeAuthExpiry(errMsg string) (string, bool) {
+	if taskfailure.AntigravityNotLoggedIn(errMsg) {
+		return FailureReasonAntigravityNotLoggedIn, true
+	}
+	if taskfailure.AntigravitySessionTokenExpired(errMsg) {
+		return FailureReasonAntigravitySessionTokenExpired, true
 	}
 	return "", false
 }

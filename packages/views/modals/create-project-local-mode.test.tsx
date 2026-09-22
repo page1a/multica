@@ -146,6 +146,7 @@ vi.mock("../platform/local-directory", () => ({
   pickDirectory: () =>
     Promise.resolve({ ok: true, path: "/Users/dev/work/game-client", basename: "game-client" }),
   validateLocalDirectory: () => Promise.resolve({ ok: true, is_git_repo: pickedIsGitRepo }),
+  validateWritablePath: async () => true,
   canSetLocalDirectorySharedOverride: () => true,
   setLocalDirectorySharedOverride: vi.fn().mockResolvedValue({ ok: true }),
 }));
@@ -412,6 +413,27 @@ describe("buildLocalDirectoryResourceRef", () => {
       daemon_id: "daemon-1",
       label: "pg-game",
       execution_mode: "shared",
+    });
+  });
+
+  it("sends identity fields the machine measured at pick time", () => {
+    expect(
+      buildLocalDirectoryResourceRef({
+        localPath: "/tmp/x",
+        daemonId: "d",
+        label: null,
+        mode: "in_place",
+        realPath: "/private/tmp/x",
+        repoKey: "github.com/acme/x",
+        isGitRepo: true,
+      }),
+    ).toEqual({
+      local_path: "/tmp/x",
+      daemon_id: "d",
+      execution_mode: "in_place",
+      real_path: "/private/tmp/x",
+      repo_key: "github.com/acme/x",
+      is_git_repo: true,
     });
   });
 });

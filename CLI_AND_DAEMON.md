@@ -197,6 +197,12 @@ find out that the daemon you care about is running on a different profile —
 
 ### Supported Agents
 
+Antigravity's `stream-json` tool snapshots are forwarded as live tool-start and
+tool-result messages. Repeated snapshots are deduplicated by conversation and
+step index; failed or cancelled tools retain their error in the result output.
+These messages report actual tool activity, not model reasoning or estimated
+progress. The CLI must emit the events before Multica can display them.
+
 The daemon auto-detects these AI CLIs on your PATH:
 
 | CLI | Command | Description |
@@ -597,7 +603,10 @@ Pass `--to-id <uuid>` to assign by canonical UUID (mutually exclusive with `--to
 multica issue status <id> in_progress
 ```
 
-Valid statuses: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`, `cancelled`.
+Built-in statuses: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`,
+`cancelled`. A workspace can define custom statuses on top of these; their keys are
+shown in **Settings → Issue Statuses**, and passing an unknown value returns the full
+list.
 
 ### Comments
 
@@ -1097,3 +1106,11 @@ On the API, both endpoints accept `?include=content` and `?include=metadata`.
 A request that sends neither still gets `content`, on both endpoints, so a
 server upgrade never changes what an un-upgraded client receives — it is the
 CLI that asks for the smaller shape.
+
+### Custom runtime compatibility targets
+
+Create custom Oh-My-Pi profiles with `multica runtime profile create --runtime-type omp --command-name omp --display-name "Custom Oh-My-Pi"`.
+The immutable `runtime_type` selects model discovery, skills paths, and launch behavior;
+the server derives `protocol_family` (`pi` for `omp`). Custom command/path overrides and
+fixed arguments still apply, and the runtime retains its custom-profile provenance.
+Existing profiles and the legacy `--protocol-family` flag retain their original target.

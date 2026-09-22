@@ -60,3 +60,21 @@ SELECT project_id, count(*)::bigint AS resource_count
 FROM project_resource
 WHERE project_id = ANY(sqlc.arg('project_ids')::uuid[])
 GROUP BY project_id;
+
+-- name: ListProjectRepoURLs :many
+-- The repository URLs a project holds. A workspace repo has no row of its own
+-- (it is an entry in workspace.repos, see migration 511), so this join table
+-- is what "this repo belongs to that project" means.
+SELECT DISTINCT (resource_ref->>'url')::text AS url
+FROM project_resource
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND resource_type = 'github_repo'
+  AND resource_ref ? 'url';
+
+-- name: ListProjectIDsForRepoURL :many
+SELECT DISTINCT project_id
+FROM project_resource
+WHERE workspace_id = $1
+  AND resource_type = 'github_repo'
+  AND resource_ref->>'url' = sqlc.arg('url')::text;

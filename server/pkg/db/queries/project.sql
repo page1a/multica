@@ -36,9 +36,12 @@ FOR UPDATE;
 -- name: CreateProject :one
 INSERT INTO project (
     workspace_id, title, description, icon, status,
-    lead_type, lead_id, priority, start_date, due_date
+    lead_type, lead_id, priority, start_date, due_date,
+    created_by, visibility
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    sqlc.narg('created_by')::uuid,
+    COALESCE(sqlc.narg('visibility')::text, 'private')
 ) RETURNING *;
 
 -- name: UpdateProject :one
@@ -72,3 +75,10 @@ FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')::uuid
   AND project_id = ANY(sqlc.arg('project_ids')::uuid[])
 GROUP BY project_id;
+
+-- name: SetProjectVisibility :one
+UPDATE project SET
+    visibility = $3,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;

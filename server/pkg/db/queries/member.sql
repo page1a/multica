@@ -36,3 +36,22 @@ FROM member m
 JOIN "user" u ON u.id = m.user_id
 WHERE m.workspace_id = $1
 ORDER BY m.created_at ASC;
+
+-- name: CountWorkspaceAudience :one
+-- How many people a 'workspace'-scoped resource reaches. Guests are not part
+-- of "the whole workspace" (docs/kun/permission-model.md), so they are not
+-- counted.
+SELECT count(*)::bigint FROM member
+WHERE workspace_id = $1 AND role <> 'guest';
+
+-- name: CountWorkspaceMembers :one
+-- How many people a workspace-scoped *module* reaches. Modules include
+-- guests (resource visibility still filters what they see inside).
+SELECT count(*)::bigint FROM member
+WHERE workspace_id = $1;
+
+-- name: CountWorkspaceManagers :one
+-- How many people a private module reaches: owner and admin, who always
+-- enter every module so they can administer a restriction.
+SELECT count(*)::bigint FROM member
+WHERE workspace_id = $1 AND role IN ('owner', 'admin');

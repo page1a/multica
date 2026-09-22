@@ -1,6 +1,9 @@
 package routing
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Issue is the slice of an issue routing reads. Everything here is either fed
 // to the judge in trimmed form or used by the state table; nothing else about
@@ -30,10 +33,70 @@ type Issue struct {
 	ParentExecutor string
 	HasChildren    bool
 
-	// Reviewer is the current value of the reviewer property, resolved to its
-	// option NAME. Empty means the slot is empty — the only condition under
-	// which routing may write it.
-	Reviewer string
+	// Reviewer is the ticket's reviewer slot. A zero Kind means the slot is
+	// empty — the only condition under which routing may write it.
+	Reviewer ReviewerRef
+
+	// LastActivityAt is when anything last happened on this ticket. The
+	// stale-review row measures quiet from here; every other row ignores it.
+	// Zero means the store could not tell, which that row reads as "not
+	// stale" rather than as "stale forever".
+	LastActivityAt time.Time
+}
+
+// ReviewerTarget is what the reviewer slot holds. The values are the strings
+// stored in issue.reviewer_type, so the module and the column agree by
+// construction.
+type ReviewerTarget string
+
+const (
+	// ReviewerEmpty is the unfilled slot.
+	ReviewerEmpty ReviewerTarget = ""
+	// ReviewerAgent — a seat accepts the ticket. ID is the agent id.
+	ReviewerAgent ReviewerTarget = "agent"
+	// ReviewerMember — a person accepts the ticket. ID is the user id.
+	//
+	// Routing never WRITES this value; only a person filling the slot by hand
+	// does, and tickets routed by earlier versions still carry it. At 待验收
+	// it means "ping this person", not "hand them the ticket": handing it over
+	// puts the ticket beyond routing's reach for good, which is what left
+	// people unable to move its status.
+	ReviewerMember ReviewerTarget = "member"
+	// ReviewerNoReview — this ticket needs no acceptance pass. It is a
+	// WRITTEN value and carries no id: an empty slot would be re-judged on
+	// every later status change, and the fill-only-empty-slots rule would
+	// never close.
+	ReviewerNoReview ReviewerTarget = "none"
+)
+
+// ReviewerRef is the reviewer slot's value: a reference to an actor, the same
+// shape as the assignee pair. Name is display only — it is resolved from the
+// roster on read and never stored, which is the whole point of the reference:
+// renaming or archiving a seat cannot leave a ticket pointing at a name that
+// no longer means anybody.
+type ReviewerRef struct {
+	Kind ReviewerTarget
+	ID   string
+	Name string
+}
+
+// Empty reports the one state routing may write over.
+func (r ReviewerRef) Empty() bool { return r.Kind == ReviewerEmpty }
+
+// Label is what the decision comment prints for this slot.
+func (r ReviewerRef) Label() string {
+	switch r.Kind {
+	case ReviewerNoReview:
+		return LabelNoReview
+	case ReviewerMember:
+		if r.Name != "" {
+			return r.Name
+		}
+		return LabelHuman
+	case ReviewerAgent:
+		return r.Name
+	}
+	return ""
 }
 
 // AssignedToHuman reports the one case routing never touches at all. A ticket
@@ -48,24 +111,10 @@ type Member struct {
 	Name   string
 }
 
-// ReviewerProperty is the workspace's reviewer slot definition.
-type ReviewerProperty struct {
-	ID string
-	// Options maps option name to option id. Routing addresses options by
-	// name — seat names plus the two fixed non-seat values — so ids stay an
-	// implementation detail of the property system.
-	Options map[string]string
-}
-
-// Fixed non-seat option names on the reviewer property.
+// Labels for the two non-seat answers, used in routing comments only.
 const (
-	// OptionNoReview is written when the judge decides this ticket needs no
-	// separate acceptance pass. It is a value rather than an empty slot so
-	// the slot stops being re-judged on every later status change.
-	OptionNoReview = "不需要验收"
-	// OptionHuman is written when acceptance needs a person. Which person is
-	// not stored here: it is the same target the @ rule resolves.
-	OptionHuman = "交给人"
+	LabelNoReview = "不需要验收"
+	LabelHuman    = "交给人"
 )
 
 // CommentKind identifies a routing comment. It is also the de-duplication key:
@@ -83,6 +132,20 @@ const (
 	// KindUnavailable — the model could not be reached on a workspace that is
 	// configured. Posted once, then the breaker keeps the issue quiet.
 	KindUnavailable CommentKind = "unavailable"
+	// KindStalled — the stale-review row could not wake anybody by writing a
+	// value, because the acceptance belongs to a PERSON. Posted once per
+	// issue and paired with an @, which is the only thing that reaches them.
+	//
+	// The agent half of the same row needs no comment: reassigning a seat
+	// starts its run, and that reassignment is already in the timeline. A
+	// comment per sweep is impossible anyway — one comment of each kind per
+	// issue is the de-duplication key — and it is the right impossibility:
+	// the wake may repeat, the noise may not.
+	KindStalled CommentKind = "stalled"
+	// KindCompleted — the stale-review row aligned the status to an
+	// acceptance the ticket already carried. At most once per issue by
+	// nature: there is only one such transition.
+	KindCompleted CommentKind = "completed"
 )
 
 // Store is everything Route needs from the rest of the server. Every write on
@@ -95,20 +158,20 @@ type Store interface {
 	Issue(ctx context.Context, workspaceID, issueID string) (Issue, error)
 	// Roster maps agent name to agent for the whole workspace.
 	Roster(ctx context.Context, workspaceID string) (map[string]Agent, error)
-	// Reviewer returns the reviewer property definition. ok=false means the
-	// workspace has no reviewer slot; routing then fills the executor slot
-	// only and says so, rather than failing the whole call.
-	Reviewer(ctx context.Context, workspaceID string) (prop ReviewerProperty, ok bool, err error)
-
 	// AssignAgentIfUnassigned fills the executor slot only while it is still
 	// empty. Reports whether THIS call wrote it. Starting the seat's run is
 	// the store's job, because assignment is what wakes an agent.
 	AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat Seat) (written bool, err error)
 	// SetReviewerIfUnset fills the reviewer slot only while it is still empty.
-	SetReviewerIfUnset(ctx context.Context, workspaceID, issueID, propertyID, optionID string) (written bool, err error)
+	// The slot is a field on the issue, not a workspace property, so there is
+	// nothing to provision and nothing that can be missing: every workspace
+	// with routing on has it.
+	SetReviewerIfUnset(ctx context.Context, workspaceID, issueID string, ref ReviewerRef) (written bool, err error)
 	// Handoff reassigns an issue that already has an assignee. Unlike the two
 	// above this is not a fill: the in-review row hands the ticket from the
-	// seat that did the work to the seat or person that accepts it.
+	// seat that did the work to the seat that accepts it. It is only ever
+	// called with assigneeType "agent" — routing does not hand tickets to
+	// people, it notifies them.
 	Handoff(ctx context.Context, workspaceID, issueID, assigneeType, assigneeID string) error
 
 	HasComment(ctx context.Context, workspaceID, issueID string, kind CommentKind) (bool, error)
@@ -124,4 +187,42 @@ type Store interface {
 	// NotifyTarget resolves who to @ for this issue: the creator, or the
 	// workspace owner when the creator is an agent. One rule, no setting.
 	NotifyTarget(ctx context.Context, workspaceID string, issue Issue) (Member, error)
+
+	// --- the stale-review row -------------------------------------------
+	//
+	// These four exist for one row of the table and are used nowhere else.
+
+	// EnabledWorkspaces lists the workspaces whose routing switch is on. The
+	// sweep has no request to hang off, so it has to find its own work; every
+	// workspace it returns is re-checked against Settings anyway, because the
+	// switch can flip between this call and the pass.
+	EnabledWorkspaces(ctx context.Context) ([]string, error)
+
+	// StaleReviews lists issues in this workspace that sit in the in_review
+	// CATEGORY, carry no active run, and have had no activity since `before`.
+	//
+	// "No activity" rather than "entered review at": a ticket somebody
+	// commented on an hour ago is not stalled, whenever it entered review.
+	// Quiet is the thing this row is about.
+	StaleReviews(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error)
+
+	// ReviewRemarks returns what the ticket's reviewer has said on it IN THE
+	// CURRENT review round — since the ticket last entered the in_review
+	// category — oldest first. An empty result is the deterministic half of
+	// the completion gate: with nothing from the reviewer in this round there
+	// is no acceptance to align to, whatever the judge answers.
+	//
+	// The round boundary is part of the contract, not an implementation
+	// detail. A pass verdict from an earlier round, before the ticket was
+	// sent back and redone, is an expired fact, and aligning a status to an
+	// expired fact is the one thing this row must never do. A store that
+	// cannot establish where the round began returns nothing, which routes
+	// to the wake.
+	ReviewRemarks(ctx context.Context, workspaceID, issueID string, reviewer ReviewerRef) ([]string, error)
+
+	// CompleteFromReview is the ONLY status write this package has, and it is
+	// conditional: it moves the ticket to done only while it is still in the
+	// in_review category, and reports whether THIS call wrote it. A ticket
+	// that moved between the decision and the write is left alone.
+	CompleteFromReview(ctx context.Context, workspaceID, issueID string) (written bool, err error)
 }

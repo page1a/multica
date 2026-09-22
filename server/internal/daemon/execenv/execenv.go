@@ -29,10 +29,11 @@ type RepoContextForEnv struct {
 // fields the meta-skill template needs to render a human-readable summary
 // (URL for github_repo, generic label otherwise).
 type ProjectResourceForEnv struct {
-	ID           string          `json:"id"`              // server-assigned UUID
-	ResourceType string          `json:"resource_type"`   // e.g. "github_repo"
-	ResourceRef  json.RawMessage `json:"resource_ref"`    // raw JSONB payload from the API
-	Label        string          `json:"label,omitempty"` // optional user-supplied label
+	ID           string          `json:"id"`               // server-assigned UUID
+	ResourceType string          `json:"resource_type"`    // e.g. "github_repo"
+	ResourceRef  json.RawMessage `json:"resource_ref"`     // raw JSONB payload from the API
+	Label        string          `json:"label,omitempty"`  // optional user-supplied label
+	Access       string          `json:"access,omitempty"` // "read-write" for the directory this run works in, "read-only" for the project's others (DENE-619)
 }
 
 // ProjectContextForEnv is one project attached to the task, in priority order

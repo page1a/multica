@@ -103,6 +103,8 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `agent_blocked` | エージェントが続行できないと自ら報告した | エージェントがコメントで求めた情報を補う |
 | `api_invalid_request` | プラットフォーム API が不正なリクエストを拒否した | リトライし、繰り返し発生する場合は問題を報告する |
 | `codex_semantic_inactivity` | Codex が長時間有効な出力を出さず、停滞と判定された | リトライするか、Codex の停滞タイムアウトを調整する |
+| `antigravity_session_token_expired` | Antigravity CLI（agy）が起動時に読み込んだ OAuth アクセストークンより長く動作し、Google に 401 で拒否された。保存済みのログインは有効なままで、CLI が実行中にトークンを更新しないだけ | リトライしてください。次回は新しいセッションで保存済みのログインを読み直します。すぐに失敗する場合は、そのマシンで Antigravity にサインインしたままか確認してください |
+| `antigravity_not_logged_in` | Antigravity CLI（agy）が、エージェントを実行しているマシンにサインインしていないと報告した。上のトークン失効と違い、保存されたログインが実際に失われている可能性がある | そのマシンで `agy -p ping` を実行してください。通ればリトライ（次回は新しいセッション）。すぐに失敗する場合は Antigravity に再サインインしてください |
 
 **ツール側（`agent_error.*`、接頭辞は省略）**
 

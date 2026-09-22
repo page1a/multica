@@ -686,6 +686,7 @@ export const AgentSchema: z.ZodType<Agent> = z.object({
   updated_at: z.string().default(""),
   archived_at: z.string().nullable().default(null),
   archived_by: z.string().nullable().default(null),
+  work_enabled: z.boolean().optional().catch(undefined),
 }).loose();
 
 export const AgentListSchema = z.array(AgentSchema).default([]);
@@ -762,6 +763,8 @@ export const EMPTY_ISSUE_FALLBACK: import("@multica/core/types").Issue = {
   priority: "none",
   assignee_type: null,
   assignee_id: null,
+  reviewer_type: null,
+  reviewer_id: null,
   creator_type: "member",
   creator_id: "",
   parent_issue_id: null,

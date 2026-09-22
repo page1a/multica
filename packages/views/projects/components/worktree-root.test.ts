@@ -47,6 +47,20 @@ describe("worktree root", () => {
     expect(worktreeRootProblem("relative", undefined)).toBe("not_absolute");
   });
 
+  it("refuses a root that overlaps another bound directory", () => {
+    expect(
+      worktreeRootProblem("/Users/me/code/app", undefined, ["/Users/me/code/app"]),
+    ).toBe("conflicts_with_binding");
+    expect(
+      worktreeRootProblem("/Users/me/code/app/copies", undefined, [
+        "/Users/me/code/app",
+      ]),
+    ).toBe("conflicts_with_binding");
+    expect(
+      worktreeRootProblem("/Users/me/copies", undefined, ["/Users/me/code/app"]),
+    ).toBeUndefined();
+  });
+
   // The default is stored as ABSENT, not as its own literal path: "beside the
   // repository" follows a repository the user moves, while a stored literal
   // would keep pointing at where it used to be.

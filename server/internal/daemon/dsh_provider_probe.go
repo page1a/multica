@@ -258,8 +258,14 @@ func dshVerifyProviderRoute(ctx context.Context, request dshVerifyRequest) (*dsh
 		return nil, err
 	}
 	return &dshProviderRoute{
-		API:            api,
-		ThinkingFormat: providerThinkingFormatForModel(model.ID),
+		API: api,
+		// Every model the preset will carry, not only the one the probe ran
+		// against. The compat switch is a property of the preset — one `compat`
+		// block serves all of its models — so deriving it from the verify model
+		// alone drops it whenever a preset's DeepSeek model is not the one that
+		// happened to be verified, and that loss is silent: the route answers
+		// and the reply renders blank.
+		ThinkingFormat: providerThinkingFormatForModels(append([]string{model.ID}, request.ModelIDs...)),
 		Model:          model,
 	}, nil
 }
@@ -293,7 +299,7 @@ func verifyProviderRouteWithoutCatalog(ctx context.Context, request dshVerifyReq
 	}
 	return &dshProviderRoute{
 		API:            api,
-		ThinkingFormat: providerThinkingFormatForModel(modelID),
+		ThinkingFormat: providerThinkingFormatForModels(append([]string{modelID}, request.ModelIDs...)),
 		Model:          providerDiscoveredModel{ID: modelID},
 	}, nil
 }
@@ -384,6 +390,19 @@ func providerProtocolForEndpoints(endpoints []string) (string, bool) {
 func providerThinkingFormatForModel(modelID string) string {
 	if strings.Contains(strings.ToLower(modelID), "deepseek") {
 		return providerThinkingFormatDeepSeek
+	}
+	return ""
+}
+
+// providerThinkingFormatForModels returns the switch the preset needs: one
+// `compat` block covers every model under it, so a single model that needs one
+// decides it for the preset. Models that need none contribute nothing, which is
+// why the first non-empty answer wins rather than the last.
+func providerThinkingFormatForModels(modelIDs []string) string {
+	for _, id := range modelIDs {
+		if format := providerThinkingFormatForModel(id); format != "" {
+			return format
+		}
 	}
 	return ""
 }

@@ -631,6 +631,114 @@ func (q *Queries) ListDashboardUsageByAgent(ctx context.Context, arg ListDashboa
 	return items, nil
 }
 
+const listDashboardUsageByIssue = `-- name: ListDashboardUsageByIssue :many
+SELECT
+    atq.issue_id,
+    i.number,
+    i.title,
+    LOWER(tu.provider) AS provider,
+    tu.model,
+    SUM(tu.input_tokens)::bigint        AS input_tokens,
+    SUM(tu.output_tokens)::bigint       AS output_tokens,
+    SUM(tu.cache_read_tokens)::bigint   AS cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint  AS cache_write_tokens,
+    COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS cost_usd_ticks,
+    COALESCE(SUM(tu.input_tokens)       FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_input_tokens,
+    COALESCE(SUM(tu.output_tokens)      FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_output_tokens,
+    COALESCE(SUM(tu.cache_read_tokens)  FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_cache_read_tokens,
+    COALESCE(SUM(tu.cache_write_tokens) FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_cache_write_tokens
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+JOIN agent a ON a.id = atq.agent_id
+JOIN issue i ON i.id = atq.issue_id
+WHERE a.workspace_id = $1
+  AND tu.created_at >= $2::timestamptz
+  AND ($3::uuid IS NULL OR i.project_id = $3)
+GROUP BY atq.issue_id, i.number, i.title, LOWER(tu.provider), tu.model
+ORDER BY atq.issue_id, LOWER(tu.provider), tu.model
+`
+
+type ListDashboardUsageByIssueParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+}
+
+type ListDashboardUsageByIssueRow struct {
+	IssueID                  pgtype.UUID `json:"issue_id"`
+	Number                   int32       `json:"number"`
+	Title                    string      `json:"title"`
+	Provider                 string      `json:"provider"`
+	Model                    string      `json:"model"`
+	InputTokens              int64       `json:"input_tokens"`
+	OutputTokens             int64       `json:"output_tokens"`
+	CacheReadTokens          int64       `json:"cache_read_tokens"`
+	CacheWriteTokens         int64       `json:"cache_write_tokens"`
+	CostUsdTicks             int64       `json:"cost_usd_ticks"`
+	UncostedInputTokens      int64       `json:"uncosted_input_tokens"`
+	UncostedOutputTokens     int64       `json:"uncosted_output_tokens"`
+	UncostedCacheReadTokens  int64       `json:"uncosted_cache_read_tokens"`
+	UncostedCacheWriteTokens int64       `json:"uncosted_cache_write_tokens"`
+}
+
+// Per-(issue, provider, model) token aggregates for the workspace, optionally
+// scoped to a single project. Powers the workspace dashboard's per-issue cost
+// list — the entry point into one issue's Token cost view.
+//
+// Served from the raw `task_usage` table rather than `task_usage_hourly`:
+// the hourly rollup denormalises runtime_id / agent_id / project_id but NOT
+// issue_id, and `agent_task_queue` (the only carrier of issue_id) cannot be
+// joined back to a rollup bucket without re-reading the raw rows anyway.
+// `idx_task_usage_created_at` bounds the scan to the window, and the join to
+// `agent` re-applies the workspace boundary the rollup would have enforced.
+//
+// The model dimension stays on the wire for the same reason the by-agent
+// rollup keeps it: cost is priced client-side from a per-model rate table,
+// and a row that has already collapsed two models into one sum can no longer
+// be priced at all.
+//
+// No `@tz`: there is no date axis in the result. `@since` is therefore the
+// viewer's local start-of-day for the EXACT N-day window
+// (parseExactSinceParamInTZ) so this list covers the same span as the
+// by-agent card and the Cost / Tokens KPI tiles beside it.
+//
+// cost_usd_ticks / uncosted_* mirror GetIssueUsageSummary's split: the
+// provider's own charge plus the tokens from rows it did not price.
+func (q *Queries) ListDashboardUsageByIssue(ctx context.Context, arg ListDashboardUsageByIssueParams) ([]ListDashboardUsageByIssueRow, error) {
+	rows, err := q.db.Query(ctx, listDashboardUsageByIssue, arg.WorkspaceID, arg.Since, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDashboardUsageByIssueRow{}
+	for rows.Next() {
+		var i ListDashboardUsageByIssueRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.Number,
+			&i.Title,
+			&i.Provider,
+			&i.Model,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.CostUsdTicks,
+			&i.UncostedInputTokens,
+			&i.UncostedOutputTokens,
+			&i.UncostedCacheReadTokens,
+			&i.UncostedCacheWriteTokens,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDashboardUsageDaily = `-- name: ListDashboardUsageDaily :many
 SELECT
     DATE(bucket_hour AT TIME ZONE $2::text) AS date,

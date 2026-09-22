@@ -98,6 +98,10 @@ func NormalizeURL(raw string) Key {
 	if rest == "" || rest == "." {
 		return ""
 	}
+	// Host and path are lowercased on purpose: DNS is case-insensitive
+	// (RFC 4343) and GitHub/GitLab treat owner/repo as case-insensitive.
+	// Comparing them as-typed would let github.com/Foo/Bar and
+	// GitHub.com/foo/bar both bind.
 	return Key(host + "/" + strings.ToLower(rest))
 }
 

@@ -11,6 +11,7 @@ import { useCommentDraftStore } from "@multica/core/issues/stores";
 import { composeAnnotatedReply, hasReplyIntent } from "@multica/core/drafts/reply-annotation";
 import { ReplyAnnotations } from "./reply-annotations";
 import { useT } from "../../i18n";
+import { useGuestReadOnly, WriteAction } from "../../layout/guest-readonly";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
@@ -31,6 +32,7 @@ interface CommentInputProps {
 function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: CommentInputProps) {
   const { t } = useT("issues");
   const { t: tEditor } = useT("editor");
+  const { isGuest } = useGuestReadOnly();
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
   // Sending mid-upload would strip the pending image's blob URL out of the
@@ -204,6 +206,38 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
     },
   });
 
+  const sendTooltip = sendShortcut
+    ? `${t(($) => $.comment.send_tooltip)} · ${formatShortcut(sendShortcut)}`
+    : t(($) => $.comment.send_tooltip);
+
+  if (isGuest) {
+    return (
+      <WriteAction className="flex w-full">
+        <div className="relative flex w-full flex-col rounded-lg bg-card pb-8 ring-1 ring-border">
+          <div
+            data-testid="comment-composer-shell"
+            className="flex-1 min-h-0 px-3 py-2"
+          >
+            <div className="rich-text-editor text-body">
+              <p className="text-muted-foreground">
+                {t(($) => $.comment.leave_comment_placeholder)}
+              </p>
+            </div>
+          </div>
+          <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+            <FileUploadButton size="sm" multiple onSelect={() => {}} />
+            <SubmitButton
+              onClick={() => {}}
+              disabled
+              tooltip={sendTooltip}
+              ariaLabel={t(($) => $.comment.send_tooltip)}
+            />
+          </div>
+        </div>
+      </WriteAction>
+    );
+  }
+
   return (
     <div
       {...dropZoneProps}
@@ -286,6 +320,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
         <CommentTriggerChips
           agents={triggerPreview.agents}
           blocked={triggerPreview.blocked}
+          hasAllMembersMention={triggerPreview.hasAllMembersMention}
           draftContent={composedContent}
           suppressedAgentIds={suppressedAgentIds}
           onToggle={toggleSuppressedAgent}

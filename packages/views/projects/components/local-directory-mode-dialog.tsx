@@ -48,6 +48,9 @@ interface LocalDirectoryModeDialogProps {
   /** The repository root, when the machine could read it. Used only to warn
    *  that a typed landing folder sits inside the repository. */
   gitRoot?: string;
+  /** Other directories already bound on this machine. A landing folder that
+   *  overlaps one of them is refused before save. */
+  boundIdentities?: string[];
   /** Called when the user edits where parallel-mode copies should land. When
    *  absent the location is shown but not editable — a surface that cannot
    *  check a path should not invite one to be typed. */
@@ -80,6 +83,7 @@ export function LocalDirectoryModeDialog({
   sharedUsesLocalOverride,
   worktreeRootPreview,
   gitRoot,
+  boundIdentities,
   onWorktreeRootChange,
   errorMessage,
   saving = false,
@@ -117,6 +121,7 @@ export function LocalDirectoryModeDialog({
           sharedUsesLocalOverride={sharedUsesLocalOverride}
           worktreeRootPreview={worktreeRootPreview}
           gitRoot={gitRoot}
+          boundIdentities={boundIdentities}
           onWorktreeRootChange={onWorktreeRootChange}
         />
 
@@ -152,6 +157,7 @@ interface LocalDirectoryModeOptionsProps {
   sharedUsesLocalOverride?: boolean;
   worktreeRootPreview?: string;
   gitRoot?: string;
+  boundIdentities?: string[];
   onWorktreeRootChange?: (next: string) => void;
 }
 
@@ -170,11 +176,16 @@ export function LocalDirectoryModeOptions({
   sharedUsesLocalOverride = false,
   worktreeRootPreview,
   gitRoot,
+  boundIdentities,
   onWorktreeRootChange,
 }: LocalDirectoryModeOptionsProps) {
   const { t } = useT("projects");
   const worktreeDisabled = unavailableReason !== undefined;
-  const rootProblem = worktreeRootProblem(worktreeRootPreview ?? "", gitRoot);
+  const rootProblem = worktreeRootProblem(
+    worktreeRootPreview ?? "",
+    gitRoot,
+    boundIdentities,
+  );
 
   return (
     <div className="flex flex-col gap-2">
@@ -240,7 +251,9 @@ export function LocalDirectoryModeOptions({
             <p className="text-micro text-destructive">
               {rootProblem === "not_absolute"
                 ? t(($) => $.resources.mode_worktree_root_not_absolute)
-                : t(($) => $.resources.mode_worktree_root_inside_repo)}
+                : rootProblem === "conflicts_with_binding"
+                  ? t(($) => $.resources.mode_worktree_root_conflicts)
+                  : t(($) => $.resources.mode_worktree_root_inside_repo)}
             </p>
           )}
         </div>

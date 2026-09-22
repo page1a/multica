@@ -18,6 +18,7 @@ import type {
   AgentPresenceDetail,
   Workload,
 } from "./types";
+import { isAgentWorkEnabled } from "./work-enabled";
 
 type RuntimeLiveness = Pick<AgentRuntime, "status" | "last_seen_at">;
 
@@ -124,10 +125,23 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     };
   }
 
+  const detail = deriveWorkloadDetail(input.tasks);
+  if (!isAgentWorkEnabled(input.agent)) {
+    // Disabled wins over runtime health so the list cannot read "Online"
+    // while the seat is off. Workload is kept: disable does not cancel
+    // running tasks, so "Disabled · 2 runs" is the honest row.
+    return {
+      availability: "disabled",
+      workload: detail.workload,
+      runningCount: detail.runningCount,
+      queuedCount: detail.queuedCount,
+      capacity: input.agent.max_concurrent_tasks,
+    };
+  }
+
   const availability = input.runtime
     ? deriveAgentAvailability(input.runtime, input.now)
     : runtimeAvailabilityFromAgent(input.agent) ?? "offline";
-  const detail = deriveWorkloadDetail(input.tasks);
 
   return {
     availability,

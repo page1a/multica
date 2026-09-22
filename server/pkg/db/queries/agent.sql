@@ -75,14 +75,15 @@ INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,
     runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id,
     instructions, custom_env, custom_args, mcp_config, model, thinking_level,
-    service_tier, conversation_starters,
+    service_tier, routing_tier, conversation_starters,
     composio_toolkit_allowlist, permission_mode, parent_agent_id,
     runtime_inherited
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13, $14, $15, $16,
-    $17, COALESCE(sqlc.narg('conversation_starters')::jsonb, '[]'::jsonb),
+    $17, sqlc.narg('routing_tier'),
+    COALESCE(sqlc.narg('conversation_starters')::jsonb, '[]'::jsonb),
     sqlc.narg('composio_toolkit_allowlist')::text[],
     COALESCE(sqlc.narg('permission_mode'), 'private'),
     sqlc.narg('parent_agent_id')::uuid,
@@ -206,6 +207,7 @@ UPDATE agent SET
     model = COALESCE(sqlc.narg('model'), model),
     thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
     service_tier = COALESCE(sqlc.narg('service_tier'), service_tier),
+    routing_tier = COALESCE(sqlc.narg('routing_tier'), routing_tier),
     conversation_starters = COALESCE(sqlc.narg('conversation_starters'), conversation_starters),
     composio_toolkit_allowlist = COALESCE(sqlc.narg('composio_toolkit_allowlist')::text[], composio_toolkit_allowlist),
     switchable_models = COALESCE(sqlc.narg('switchable_models'), switchable_models),
@@ -213,6 +215,10 @@ UPDATE agent SET
     -- "turned off" the same way thinking_level's two-query pattern does for
     -- nullable text. A bool column cannot be cleared to NULL.
     auto_retry_enabled = COALESCE(sqlc.narg('auto_retry_enabled'), auto_retry_enabled),
+    -- Reversible seat gate (DENE-714). Same omitted-preserves / present-sets
+    -- contract as auto_retry_enabled. FALSE means the seat stays in the list
+    -- but does not take new work.
+    work_enabled = COALESCE(sqlc.narg('work_enabled'), work_enabled),
     -- Same tri-state for runtime inheritance (DENE-505): NULL leaves the flag
     -- alone, FALSE switches a specialisation to its own runtime configuration,
     -- TRUE makes it follow its base role again. Setting it back to "not
@@ -336,6 +342,13 @@ UPDATE agent SET service_tier = NULL, updated_at = now()
 WHERE id = $1
 RETURNING *;
 
+-- name: ClearAgentRoutingTier :one
+-- Explicit NULL-clear for routing_tier. COALESCE-based UpdateAgent cannot set
+-- the column back to NULL, so "this seat is not on the ladder" routes here.
+UPDATE agent SET routing_tier = NULL, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: ClearAgentMcpConfig :one
 UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1
@@ -418,6 +431,18 @@ SELECT * FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY name ASC
 FOR UPDATE;
+
+-- name: ListUserAgentIDsByRuntime :many
+-- Non-locking companion to ListUserAgentsByRuntimeForUpdate, for callers that
+-- must reason about retention GC without taking the teardown's locks.
+--
+-- Archived rows are included deliberately, and that is the whole point: an
+-- archived agent can still own a non-terminal task, and gcRuntime counts those
+-- before it will delete a runtime. A read that filtered them would report a
+-- runtime as reclaimable when the sweeper is going to skip it.
+SELECT id FROM agent
+WHERE runtime_id = $1 AND kind = 'user'
+ORDER BY id;
 
 -- name: ListUserAgentsByRuntimeForUpdate :many
 -- Locks active AND archived user agents before a runtime teardown. Locking only
@@ -867,6 +892,15 @@ RETURNING *;
 SELECT * FROM agent_task_queue
 WHERE id = $1;
 
+-- name: GetAgentTaskStatus :one
+-- Hot-path status polling needs only the task status and the owning agent's
+-- workspace for authorization. Keep this independent of optional source links
+-- (issue, chat session, autopilot run) so it needs no source-entity lookup.
+SELECT atq.status, a.workspace_id
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE atq.id = $1;
+
 -- name: GetAgentTaskForDelegatedFailureUpdate :one
 -- Serializes the idempotent delegated-failure recovery signal for one failed
 -- task. FailTask and the stale-task sweepers can converge on the same row; the
@@ -922,6 +956,10 @@ WHERE id = (
           WHERE a.id = atq.agent_id
             -- A task's persisted runtime is not authority after an agent rebind.
             AND a.runtime_id = atq.runtime_id
+            -- Reversible seat gate (DENE-714). Queued work stays queued until
+            -- the seat is turned back on. Already-dispatched reclaim queries
+            -- do NOT check this: disable must not interrupt an in-flight claim.
+            AND a.work_enabled
             -- Private runtimes only execute their owner's agents. Ownerless
             -- runtime/agent rows remain claimable only so the handler can
             -- settle them explicitly before daemon delivery; filtering them
@@ -929,14 +967,7 @@ WHERE id = (
             -- Public runtimes remain shareable across agent owners.
             AND (
                 r.visibility = 'public'
-                OR (
-                    r.visibility = 'private'
-                    AND (
-                        r.owner_id IS NULL
-                        OR a.owner_id IS NULL
-                        OR r.owner_id = a.owner_id
-                    )
-                )
+                OR r.visibility = 'private'
             )
             AND r.status = 'online'
             AND COALESCE(r.last_seen_at, r.updated_at) >=
@@ -990,6 +1021,22 @@ WHERE id = @task_id
   )
 RETURNING delivered_comment_ids;
 
+-- name: SetTaskIssueSnapshot :exec
+-- Record the comparable issue state this claim's payload was built from, so the
+-- NEXT run this agent takes on the issue can be told whether the issue itself
+-- moved. Written for every issue-bound claim, not just comment-backed ones: an
+-- assignment run that skips this leaves the following run with no baseline to
+-- compare against, which reads as "not compared" and costs an extra issue read.
+-- Same CAS as SetTaskDeliveredCommentIDs so a stale handler cannot overwrite a
+-- newer reclaim's snapshot, or write one after execution has started.
+UPDATE agent_task_queue
+SET issue_snapshot = @issue_snapshot
+WHERE id = @task_id
+  AND runtime_id = @runtime_id
+  AND status = 'dispatched'
+  AND started_at IS NULL
+  AND dispatched_at = @dispatched_at;
+
 -- name: RequeueAgentTaskAfterClaimFailure :one
 -- Claim finalization (task token + optional comment receipt) failed before any
 -- response bytes were written. Return only that exact claim generation to the
@@ -1025,7 +1072,8 @@ WHERE id = (
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
       AND EXISTS (
-          -- Keep this authorization fence in sync with ClaimAgentTask.
+          -- Keep the dispatched-reclaim owner fence intentionally stricter
+          -- than the queued claim carve-out below.
           SELECT 1
           FROM agent a
           JOIN agent_runtime r ON r.id = atq.runtime_id
@@ -1071,7 +1119,8 @@ WHERE id IN (
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
       AND EXISTS (
-          -- Keep this authorization fence in sync with ClaimAgentTask.
+          -- Keep the dispatched-reclaim owner fence intentionally stricter
+          -- than the queued claim carve-out below.
           SELECT 1
           FROM agent a
           JOIN agent_runtime r ON r.id = atq.runtime_id
@@ -1261,6 +1310,34 @@ RETURNING *;
 -- emptyContentRe and historyMessageLocatorRe in pkg/taskfailure/resume.go.
 -- Keep the three in sync.
 --
+-- Triage runs are excluded from all three CTEs (MUL-7189 §5.6). A triage run
+-- and the execution run that follows accept are the same (agent_id, issue_id)
+-- pair, so without this the first execution run would resume the conversation
+-- in which the agent was deciding whether the entry was worth keeping. From the
+-- execution side an accepted issue is a new issue, and it starts cold. The
+-- exclusion is symmetric: a triage run does not resume an execution session
+-- either, which is what force_fresh_session on the triage task already ensures.
+--
+-- DENE-724 is the newest text guard, and the reason it needs one at all is
+-- that the row it must catch is written by daemons that predate
+-- 'antigravity_session_token_expired' / 'antigravity_not_logged_in': an
+-- expired in-process OAuth token in the Antigravity CLI surfaces as an
+-- ordinary 401, so those rows carry agent_error.provider_auth_or_access —
+-- resume-safe by every rule above. Antigravity loads that token once per
+-- process and never refreshes it, so the resumed conversation burns a whole new
+-- token lifetime before failing identically. The two phrases are
+-- Google/Antigravity's own wording ("Request had invalid authentication
+-- credentials", "You are not logged into Antigravity"), which is what keeps
+-- this narrow without a provider column to filter on. They are exactly the
+-- ones in taskfailure.AntigravitySessionTokenExpired / AntigravityNotLoggedIn
+-- (both covered by taskfailure.AntigravityResumeUnsafe); the three guards
+-- (daemon classifier, service.ResumeUnsafeFailure, this query) read the same
+-- list.
+--
+-- The two Antigravity reasons are separate wire values only because their copy
+-- differs (see the daemon classifier). Here both are excluded, because the
+-- session is equally unusable either way.
+--
 -- retired_sessions is the explicit half of the same rule (GH #6066). The
 -- per-session latest state above can only judge sessions that some row still
 -- POINTS at, so it cannot see a session a run deliberately abandoned: a fresh
@@ -1273,11 +1350,13 @@ WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
     FROM agent_task_queue r
     WHERE r.agent_id = $1 AND r.issue_id = $2
+      AND COALESCE(r.context->>'type', '') <> 'triage'
       AND r.retired_session_id IS NOT NULL
 ), resume_overflow_at AS (
     SELECT MAX(COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at)) AS at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND COALESCE(t.context->>'type', '') <> 'triage'
       AND t.status = 'failed'
       AND (
         COALESCE(t.failure_reason, '') = 'codex_resume_oversized'
@@ -1286,20 +1365,33 @@ WITH retired_sessions AS (
 ), latest_per_session AS (
     SELECT DISTINCT ON (t.session_id)
         t.session_id, t.work_dir, t.runtime_id, t.status, t.failure_reason, t.error,
+        t.started_at, t.issue_snapshot,
         COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) AS terminal_at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND COALESCE(t.context->>'type', '') <> 'triage'
       AND t.session_id IS NOT NULL
       AND t.status IN ('completed', 'failed', 'cancelled')
     ORDER BY t.session_id, COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) DESC
 )
-SELECT session_id, work_dir, runtime_id FROM latest_per_session
+-- status, started_at and issue_snapshot ride along because the row this query
+-- picks IS the run whose context the next turn continues, and both of a claim's
+-- deltas must be measured from THAT run rather than from whichever run started
+-- last (MUL-7344). status is what says the run actually delivered its prompt to
+-- the provider: this query deliberately accepts failed and cancelled rows so
+-- their SESSION stays resumable, but such a row may have died before the agent
+-- ever ran, and its snapshot would then describe an issue the session never
+-- saw. The two are not always the same row: this query skips poisoned
+-- and retired sessions, so it can legitimately return an OLDER run than the
+-- newest one. Measuring against the newest one would then tell an agent whose
+-- resumed memory predates an edit that the issue is unchanged.
+SELECT session_id, work_dir, runtime_id, status, started_at, issue_snapshot FROM latest_per_session
 WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
   AND (
     status IN ('completed', 'cancelled')
     OR (
       status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity', 'agent_error.context_overflow', 'codex_resume_oversized')
+      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity', 'agent_error.context_overflow', 'codex_resume_oversized', 'antigravity_session_token_expired', 'antigravity_not_logged_in')
       AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
       AND NOT (COALESCE(error, '') ILIKE '%image dimensions exceed max allowed size%' AND COALESCE(error, '') ILIKE '%image.source.base64.data%')
       -- A provider credential-resolution failure ("Could not resolve
@@ -1316,6 +1408,14 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
       AND NOT (COALESCE(error, '') ILIKE '%could not resolve authentication method%')
       AND NOT (COALESCE(error, '') ~* 'must not be empty|must be non-?empty|must have non-?empty|non-?empty content|cannot be empty|should not be empty'
                AND COALESCE(error, '') ~* 'role[^a-z0-9]{0,2}assistant|assistant message|message at position|messages\.[0-9]|messages\[[0-9]')
+      -- DENE-724: Antigravity's in-process OAuth token expiry, and the CLI's
+      -- own logged-out notice. Mirrors the phrase lists in
+      -- taskfailure.AntigravitySessionTokenExpired / AntigravityNotLoggedIn,
+      -- which the daemon classifier and service.ResumeUnsafeFailure also read —
+      -- see the comment above for why this CLI's credential failure is
+      -- session-scoped rather than a credential the member can renew.
+      AND NOT (COALESCE(error, '') ILIKE '%request had invalid authentication credentials%')
+      AND NOT (COALESCE(error, '') ILIKE '%not logged into antigravity%')
     )
   )
   -- MUL-5722: a resume that overflowed the reader names no session, so it can
@@ -1339,8 +1439,15 @@ LIMIT 1;
 -- disclose that the most recent turn's context could not be carried over. Any
 -- later task that records a real session resets this to FALSE by being the new
 -- most-recent row, so the disclosure fires once and then clears.
+--
+-- Triage runs are excluded for the same reason GetLastTaskSession excludes them
+-- (MUL-7189 §5.6), and the two must agree: this query only reports whether THAT
+-- one fell back. A triage run is invisible to it, so a triage run reported here
+-- would tell the first execution run after accept that the previous turn's
+-- context could not be carried over — about a turn it was never entitled to.
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND COALESCE(context->>'type', '') <> 'triage'
   AND status IN ('completed', 'failed')
   AND started_at IS NOT NULL
 ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC
@@ -1360,18 +1467,6 @@ WHERE chat_session_id = sqlc.arg('chat_session_id')
   AND status IN ('completed', 'failed')
   AND started_at IS NOT NULL
 ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC
-LIMIT 1;
-
--- name: GetLastTaskStartedAtForIssueAndAgent :one
--- Returns the started_at of the most recent prior task for this (agent, issue)
--- pair, used as the "since" anchor for counting comments that arrived since the
--- agent's last run. Any terminal state counts as "a run happened". Tasks with
--- no started_at (never dispatched / the just-claimed current task) are excluded,
--- so this never returns the current claim's own row. MUST use started_at, never
--- completed_at: a long run would otherwise miss comments posted while it ran.
-SELECT started_at FROM agent_task_queue
-WHERE agent_id = $1 AND issue_id = $2 AND started_at IS NOT NULL
-ORDER BY started_at DESC
 LIMIT 1;
 
 -- name: FailAgentTask :one
@@ -1521,6 +1616,31 @@ WHERE (
     )
   )
 RETURNING *;
+
+-- name: FailTasksOverWorkspaceTimeLimit :many
+-- Stops running issue tasks that outlived the workspace's own wall-clock
+-- limit (`settings.agent_task_timeout_minutes`). Unlike FailStaleTasks this
+-- fires while the daemon is healthy: the limit is a spend guard, not a
+-- liveness check. Absent, zero or malformed settings mean "no workspace
+-- limit" and leave the row to the liveness sweepers. The CASE keeps the cast
+-- behind the digit check; a bare AND does not guarantee evaluation order.
+UPDATE agent_task_queue t
+SET status = 'failed', completed_at = now(),
+    error = 'task time limit reached',
+    failure_reason = 'task_time_limit',
+    prepare_lease_expires_at = NULL
+FROM issue i, workspace w
+WHERE i.id = t.issue_id
+  AND w.id = i.workspace_id
+  AND t.status = 'running'
+  AND t.started_at IS NOT NULL
+  -- Absent, malformed and zero all collapse to NULL, which makes the
+  -- comparison NULL and the row ineligible.
+  AND t.started_at < now() - make_interval(mins => NULLIF(CASE
+        WHEN w.settings->>'agent_task_timeout_minutes' ~ '^[0-9]{1,6}$'
+          THEN (w.settings->>'agent_task_timeout_minutes')::int
+      END, 0))
+RETURNING t.*;
 
 -- name: ExpireStaleQueuedTasks :many
 -- Fails queued tasks whose runtime can no longer prove it is alive.
@@ -2276,7 +2396,8 @@ WHERE id = @comment_id
 -- that one condition is recorded as durable state instead of being re-proven
 -- through four joins and two NOT EXISTS subqueries on every tick. The predicate
 -- of idx_comment_delegated_failure_unsettled matches the first four conditions,
--- so LIMIT now bounds the rows CHECKED and not just the rows RETURNED.
+-- narrowing the scan to unsettled signals. Reversible eligibility must still
+-- be checked before LIMIT so paused signals cannot starve executable ones.
 SELECT recovery.*
 FROM comment recovery
 JOIN agent_task_queue failed ON failed.id = recovery.source_task_id
@@ -2301,7 +2422,21 @@ WHERE recovery.author_type = 'system'
   AND source.autopilot_run_id IS NULL
   AND source.issue_id IS NOT NULL
   AND source.agent_id <> failed.agent_id
-  AND COALESCE(source_status.category, source_issue.status) NOT IN ('done', 'cancelled', 'backlog')
+  -- Match canDispatchDelegatedFailureRecovery: lifecycle permits recovery only
+  -- for open work; parking belongs exclusively to the fixed Backlog status.
+  -- Built-ins resolve without catalog rows; unknown custom states stay pending.
+  AND source_issue.status <> 'backlog'
+  -- A coordinator waiting in Triage is the entry's proposed owner, not its
+  -- owner, so a worker failure must not wake it (MUL-7189 §2.3). Triage is not
+  -- a status, so it is a predicate of its own rather than a CASE arm.
+  AND source_issue.triage_state IS NULL
+  AND CASE
+      WHEN source_issue.status IN ('backlog', 'todo') THEN 'unstarted'
+      WHEN source_issue.status IN ('in_progress', 'in_review', 'blocked') THEN 'started'
+      WHEN source_issue.status = 'done' THEN 'done'
+      WHEN source_issue.status = 'cancelled' THEN 'closed'
+      ELSE source_status.category
+  END IN ('unstarted', 'started')
   AND source_agent.archived_at IS NULL
   AND source_agent.runtime_id IS NOT NULL
   AND source_agent.workspace_id = source_issue.workspace_id
@@ -2398,16 +2533,10 @@ WHERE atq.runtime_id = $1
       JOIN agent_runtime r ON r.id = atq.runtime_id
       WHERE a.id = atq.agent_id
         AND a.runtime_id = atq.runtime_id
+        AND a.work_enabled
         AND (
             r.visibility = 'public'
-            OR (
-                r.visibility = 'private'
-                AND (
-                    r.owner_id IS NULL
-                    OR a.owner_id IS NULL
-                    OR r.owner_id = a.owner_id
-                )
-            )
+            OR r.visibility = 'private'
         )
   )
 ORDER BY atq.priority DESC, atq.created_at ASC;
@@ -2525,16 +2654,10 @@ WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
       JOIN agent_runtime r ON r.id = atq.runtime_id
       WHERE a.id = atq.agent_id
         AND a.runtime_id = atq.runtime_id
+        AND a.work_enabled
         AND (
             r.visibility = 'public'
-            OR (
-                r.visibility = 'private'
-                AND (
-                    r.owner_id IS NULL
-                    OR a.owner_id IS NULL
-                    OR r.owner_id = a.owner_id
-                )
-            )
+            OR r.visibility = 'private'
         )
   )
 ORDER BY atq.priority DESC, atq.created_at ASC;
@@ -2704,11 +2827,15 @@ GROUP BY atq.agent_id;
 -- still in flight has no completed_at and contributes nothing here — that's
 -- correct: in-flight tasks are surfaced via the live presence indicator,
 -- not the historical trend.
+-- Keep total activity separate from outcomes: cancelled runs belong in the
+-- history, but success rate is completed / (completed + failed).
 SELECT
     atq.agent_id,
     DATE_TRUNC('day', atq.completed_at)::timestamptz AS bucket,
     COUNT(*)::int AS task_count,
-    COUNT(*) FILTER (WHERE atq.status = 'failed')::int AS failed_count
+    COUNT(*) FILTER (WHERE atq.status = 'failed')::int AS failed_count,
+    COUNT(*) FILTER (WHERE atq.status = 'completed')::int AS completed_count,
+    COUNT(*) FILTER (WHERE atq.status = 'cancelled')::int AS cancelled_count
 FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
@@ -2952,3 +3079,17 @@ RETURNING *;
 
 -- name: GetCommentThreadRootID :one
 SELECT comment_thread_root_id(@comment_id::uuid)::uuid AS id;
+
+-- name: SetAgentTaskCodeDecision :exec
+-- Records where this run's code lives, as decided at claim time by
+-- internal/coderesolve (DENE-619). The daemon already has the answer on its
+-- claim response; this is the copy every later read serves, so the UI can say
+-- where a run went without re-deriving the rule — or guessing, once the
+-- project's resources have moved on.
+--
+-- Written once, by the claim that computed it: a redelivery re-runs the
+-- resolution against the runtime actually claiming, which is the decision that
+-- is true for the attempt now running, so a plain assignment is correct.
+UPDATE agent_task_queue
+SET code_decision = sqlc.arg('code_decision')
+WHERE id = sqlc.arg('id');

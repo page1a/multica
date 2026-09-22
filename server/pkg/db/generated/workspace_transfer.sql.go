@@ -55,7 +55,7 @@ func (q *Queries) DeleteTransferAttachmentUploadChunks(ctx context.Context, arg 
 
 const getRuntimeProfileByDisplayName = `-- name: GetRuntimeProfileByDisplayName :one
 
-SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at FROM runtime_profile
+SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at, runtime_type FROM runtime_profile
 WHERE workspace_id = $1 AND display_name = $2
 `
 
@@ -83,6 +83,7 @@ func (q *Queries) GetRuntimeProfileByDisplayName(ctx context.Context, arg GetRun
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RuntimeType,
 	)
 	return i, err
 }

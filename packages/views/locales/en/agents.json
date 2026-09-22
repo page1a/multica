@@ -27,6 +27,7 @@
     "online": "Online",
     "unstable": "Unstable",
     "offline": "Offline",
+    "disabled": "Disabled",
     "archived": "Archived"
   },
   "workload": {
@@ -111,6 +112,10 @@
     "set_access_skipped": "{{count}} skipped (not owned by you).",
     "set_access_dialog_confirm": "Apply",
     "set_access_bulk_partial": "Applied to {{succeeded}}; {{failed}} failed (kept in current state).",
+    "work_enabled_aria": "Accept new work",
+    "agent_enabled_toast": "Seat enabled",
+    "agent_disabled_toast": "Seat disabled — it will not take new work",
+    "work_toggle_failed_toast": "Couldn't update the seat",
     "agent_archived_toast": "Agent archived",
     "archive_failed_toast": "Failed to archive agent",
     "agent_restored_toast": "Agent restored",
@@ -250,6 +255,8 @@
     "prop_speed": "Speed",
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
+    "prop_work_enabled": "Accept work",
+    "prop_work_enabled_hint": "When off, this seat stays in the list but is not selected for automatic dispatch, is not woken by assignment, and does not claim new runs. Running work is not stopped.",
     "prop_auto_retry": "Auto retry",
     "prop_auto_retry_hint": "When off, failures such as capacity limits or network cuts surface immediately instead of retrying. You can still retry a run yourself.",
     "prop_switchable_models": "Model lineup",
@@ -275,7 +282,9 @@
     "edit_description_title": "Edit description",
     "description_placeholder": "What does this agent do?",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "prop_routing_tier": "Dispatch tier",
+    "prop_routing_tier_hint": "How strong this seat is when routing picks a seat for a ticket. You set it: strength is the model, the thinking level and the prompt together, so the same model can sit on two different rungs. A seat with no tier is off the ladder."
   },
   "overview": {
     "agent_context": "Agent",
@@ -324,7 +333,14 @@
     "service_tier_standard_description": "Standard speed and standard usage",
     "service_tier_tooltip": "Speed · {{value}}",
     "service_tier_clear": "Runtime default",
-    "service_tier_clear_title": "Clear the speed override and let the local Codex configuration decide"
+    "service_tier_clear_title": "Clear the speed override and let the local Codex configuration decide",
+    "routing_tier_strongest": "Strongest",
+    "routing_tier_strong": "Strong",
+    "routing_tier_medium": "Medium",
+    "routing_tier_weak": "Light",
+    "routing_tier_none": "Off the ladder",
+    "routing_tier_none_title": "Routing never picks this seat automatically; you can still assign it by hand",
+    "routing_tier_tooltip": "Dispatch tier · {{value}}"
   },
   "model_dropdown": {
     "label": "Model",
@@ -555,7 +571,7 @@
       "unsaved_changes": "Unsaved changes"
     },
     "instructions": {
-      "intro": "Set the system prompt used for every run. Markdown is supported.",
+      "intro": "Set the system prompt used for every run. It guides behavior but does not enforce permissions or security boundaries. Markdown is supported.",
       "system_prompt_label": "System prompt",
       "placeholder": "Define this agent's role, expertise, and working style.\n\n# Example\nYou are a frontend engineer specializing in React and TypeScript.\n\n## Working Style\n- Write small, focused PRs — one commit per logical change\n- Prefer composition over inheritance\n- Always add unit tests for new components\n\n## Constraints\n- Do not modify shared/ types without explicit approval\n- Follow the existing component patterns in features/",
       "system_layer_label": "Maintained by Multica",
@@ -563,7 +579,7 @@
       "system_layer_show": "Show",
       "system_layer_hide": "Hide",
       "workspace_notes_label": "Workspace notes",
-      "workspace_notes_intro": "Add your team's context and preferences below. They apply on top of the instructions Multica maintains for this agent. Markdown is supported.",
+      "workspace_notes_intro": "Add your team's context and preferences below. They guide behavior on top of the instructions Multica maintains for this agent, but do not enforce permissions or security boundaries. Markdown is supported.",
       "workspace_notes_placeholder": "Add context this agent should always have.\n\n# Example\nOur main repository is github.com/acme/platform.\nWrite issues in English even when we chat in Chinese.\nWe do not deploy on Fridays."
     },
     "accounts": {
@@ -625,6 +641,10 @@
       "title": "Providers",
       "intro": "A provider is one route this CLI can send requests down: an endpoint, the protocol it speaks, and the key that authenticates it. One is in effect at a time. Keys are stored on the machine running the daemon and are never shown here again.",
       "add_action": "Add provider",
+      "restore_action": "Restore from Multica",
+      "restore_hint": "Reinstalling or resetting the CLI takes its provider configuration with it. Restoring writes back what Multica saved here — every field except the key, which only you can supply again. It is not a full backup: anything you added to the CLI's own file by hand stays out of it.",
+      "restored_toast": "Provider configuration restored on this machine.",
+      "restore_failed_toast": "Could not restore the provider configuration.",
       "active_badge": "In effect",
       "active_model": "Default model: {{model}}",
       "activate_action": "Use this",
@@ -635,6 +655,26 @@
       "key_absent": "No key",
       "model_count_one": "{{count}} model",
       "model_count_other": "{{count}} models",
+      "sync_aria": "Sync provider {{name}} to other machines",
+      "sync_title": "Sync {{name}} to other machines",
+      "sync_description": "Every machine keeps its own copy of this provider and a seat's model only names it, so two machines can spell the same name and call different endpoints. Here is what each of them holds right now.",
+      "sync_peer_loading": "Reading…",
+      "sync_peer_offline": "Offline — can't be written to until it is back",
+      "sync_peer_unreadable": "Couldn't read: {{reason}}",
+      "sync_peer_missing": "Doesn't have this provider",
+      "sync_peer_match": "Same endpoint",
+      "sync_peer_drift": "Different endpoint: {{base_url}}",
+      "sync_peer_synced": "Synced",
+      "sync_peer_failed": "Failed: {{reason}}",
+      "sync_key_label": "API key (optional)",
+      "sync_key_hint": "Left empty, every machine keeps the key it already stores. A machine that has no key for this provider needs one typed here — keys are never read back off a machine, so this one cannot be copied across for you.",
+      "sync_key_required": "One of the selected machines has no key for this provider. Type the key to sync it.",
+      "sync_confirm_action_one": "Sync {{count}} machine",
+      "sync_confirm_action_other": "Sync {{count}} machines",
+      "sync_done_toast_one": "Synced to {{count}} machine",
+      "sync_done_toast_other": "Synced to {{count}} machines",
+      "sync_partial_toast": "{{synced}} synced, {{failed}} failed",
+      "sync_failed_toast": "Sync failed",
       "loading_text": "Reading this machine's provider configuration…",
       "empty_title": "No providers configured",
       "empty_description": "This machine's CLI has no named provider yet. Add one to point it at your own endpoint and key.",
@@ -859,7 +899,8 @@
       "invalid_json": "Invalid JSON: {{error}}",
       "save_failed_toast": "Failed to save MCP config",
       "redacted_title": "Configured — hidden from your view",
-      "redacted_hint": "Only the agent owner or a workspace admin can read this config."
+      "redacted_hint": "Only the agent owner or a workspace admin can read this config.",
+      "dialog_json_help": "Edit the full server configuration as JSON."
     },
     "composio_mcp": {
       "subtitle": "Check a toolkit to let this agent mount it as an MCP server — but only when you (its creator) are the one who triggered the run, directly or down a sub-agent chain.",
@@ -999,7 +1040,10 @@
       "cancel_failed_toast": "Failed to cancel run",
       "started_prefix": "Started {{when}}",
       "dispatched_prefix": "Dispatched {{when}}",
-      "queued_prefix": "Queued {{when}}"
+      "queued_prefix": "Queued {{when}}",
+      "success_hint": "Completed runs divided by completed and failed runs. Cancelled runs are excluded.",
+      "success_unavailable": "No completed or failed runs in this period, so there is no success rate to show.",
+      "cancelled_count": "{{count}} cancelled"
     }
   },
   "char_counter": {
@@ -1199,12 +1243,14 @@
       "runtime_reconnect_timeout": "Daemon did not reconnect in time",
       "runtime_recovery": "Daemon restarted",
       "timeout": "Run timed out",
+      "task_time_limit": "Stopped at the workspace run time limit",
       "iteration_limit": "Hit the iteration limit",
       "agent_blocked": "Waiting on human input",
       "api_invalid_request": "Rejected by the model API",
       "skill_bundle_unavailable": "Couldn't download the agent's skills",
       "runtime_cli_timeout": "Local runtime CLI timed out",
       "environment_prepare_failed": "Couldn't prepare the execution environment",
+      "runtime_access_denied": "This agent can't run on its private runtime, so it couldn't reply. Make the runtime public, or rebind/copy the agent to a runtime its owner can use.",
       "invalid_task_identity": "Run identity mismatch",
       "agent_error_provider_auth_or_access": "Provider auth failed",
       "agent_error_provider_quota_limit": "Provider quota exhausted",
@@ -1222,6 +1268,8 @@
       "agent_error_unknown": "Agent execution error",
       "agent_fallback_message": "Agent returned a fallback message",
       "codex_resume_oversized": "Session too large to resume",
+      "antigravity_session_token_expired": "Antigravity session token expired",
+      "antigravity_not_logged_in": "Antigravity not signed in",
       "idle_watchdog": "Agent stopped after inactivity",
       "local_directory_error": "Local directory error",
       "cancelled": "Cancelled by the system",

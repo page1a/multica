@@ -548,7 +548,7 @@ func (c transferIssuesChunk) split() (transferIssuesChunk, transferIssuesChunk, 
 // pairing is the exporter's own contract (`CommentShards[i]` holds exactly the
 // comments of `IssueShards[i]`).
 type transferIssuesPlanner struct {
-	limit            int
+	limit int
 	// compress mirrors the sender's decision, so the planner measures the
 	// bytes that will actually travel rather than the ones it could make.
 	compress         bool

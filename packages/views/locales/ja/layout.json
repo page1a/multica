@@ -64,5 +64,13 @@
       "title": "Discord に参加",
       "dismiss": "閉じる"
     }
+  },
+  "guest": {
+    "badge": "ゲストです。閲覧のみできます",
+    "no_edit": "ゲストは編集できません",
+    "nothing_shared_title": "まだ共有された内容はありません",
+    "nothing_shared_description": "ワークスペースの誰かがあなたをプロジェクトに追加すると、ここで見られるようになります。",
+    "not_found_title": "このページは見つかりません",
+    "not_found_description": "削除されたか、あなたには共有されていない可能性があります。"
   }
 }

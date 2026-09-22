@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/attributionbackfill"
 	"github.com/multica-ai/multica/server/internal/chatoriginbackfill"
@@ -139,6 +140,13 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // they are still pending: a fresh self-hosted install, which is exactly where an
 // interrupted build would otherwise leave a permanently unusable index.
 var concurrentIndexCleanups = map[string]string{
+	"495_issue_to_label_label_id_index":                         "issue_to_label_label_idx",
+	"496_chat_session_agent_id_index":                           "idx_chat_session_agent_id",
+	"497_agent_task_queue_delegated_failure_evidence_index":     "idx_agent_task_queue_delegated_failure_evidence",
+	"498_chat_session_runtime_id_index":                         "idx_chat_session_runtime_id",
+	"486_maintenance_job_id_index":                              "idx_maintenance_job_id",
+	"487_maintenance_job_idempotency_index":                     "idx_maintenance_job_idempotency",
+	"488_maintenance_job_active_index":                          "idx_maintenance_job_active",
 	"035_task_queue_issue_id_index":                             "idx_agent_task_queue_issue_id",
 	"067_task_queue_claim_candidate_index":                      "idx_agent_task_queue_claim_candidates",
 	"074_task_usage_updated_at_index":                           "idx_task_usage_updated_at",
@@ -312,6 +320,17 @@ var concurrentIndexCleanups = map[string]string{
 	"488_agent_parent_index":                                    "idx_agent_parent_agent_id",
 	"498_project_resource_local_directory_identity":             "idx_project_resource_local_directory_identity",
 	"499_project_resource_local_directory_repo":                 "idx_project_resource_local_directory_repo",
+	"494_chat_session_project_unique":                           "idx_chat_session_project_session_project",
+	"495_chat_session_project_project_index":                    "idx_chat_session_project_project",
+	"504_comment_routing_kind_unique":                           "comment_routing_kind_uniq",
+	"513_visibility_audit_workspace_index":                      "idx_visibility_audit_workspace_created",
+	"514_visibility_audit_resource_index":                       "idx_visibility_audit_resource",
+	"515_issue_visibility_index":                                "idx_issue_workspace_visibility",
+	"472_agent_task_queue_chat_session_index":                   "idx_agent_task_queue_chat_session",
+	"474_dingtalk_bot_identity_workspace_index":                 "idx_dingtalk_bot_identity_workspace",
+	"480_instance_telemetry_state_singleton_index":              "instance_telemetry_state_singleton_uidx",
+	"482_agent_task_queue_telemetry_started_index":              "idx_agent_task_queue_telemetry_started",
+	"484_issue_triage_state_index":                              "idx_issue_triage_state",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -341,6 +360,7 @@ var concurrentDownIndexCleanups = map[string]string{
 	"455_drop_comment_content_trgm_index":                   "idx_comment_content_trgm",
 	"463_drop_issue_description_bigm_index":                 "idx_issue_description_bigm",
 	"464_drop_issue_description_trgm_index":                 "idx_issue_description_trgm",
+	"473_drop_agent_task_queue_chat_with_session_index":     "idx_agent_task_queue_chat_with_session_created_at",
 }
 
 var preMigrationHooks = func() map[string]preMigrationHook {
@@ -414,6 +434,9 @@ func refuseChannelChatRouteHistoryRollbackWith(ctx context.Context, query rowQue
 }
 
 var upMigrationConditions = map[string]migrationCondition{
+	// Preserve applied history; pending 469 is superseded by the bounded expand
+	// migration. SaaS backfills separately; self-host converges in 491.
+	"469_issue_status_lifecycle_categories": skipMigration("superseded by 478 expansion and 491 convergence (MUL-7365)"),
 	// Current search no longer consumes an issue-description GIN. Fresh installs
 	// should not build the historical fallback only to retire it at migration 464.
 	"139_issue_description_trgm_index": skipMigration("issue description search indexes are retired by migration 464"),
@@ -760,7 +783,13 @@ func main() {
 	}
 
 	startupSettings := dbstartup.SettingsFromEnv()
-	pool, err := dbstartup.NewPool(context.Background(), dbURL, startupSettings.ConnectTimeout)
+	poolConfig, err := dbstartup.ParsePoolConfig(dbURL, startupSettings.ConnectTimeout)
+	if err != nil {
+		slog.Error("unable to connect to database", "error", err)
+		os.Exit(1)
+	}
+	poolConfig.ConnConfig.OnNotice = logMigrationNotice
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
 		slog.Error("unable to connect to database", "error", err)
 		os.Exit(1)
@@ -821,6 +850,33 @@ func main() {
 	}
 
 	fmt.Println("Done.")
+}
+
+// migrationReportPrefix marks a notice a migration raises on purpose to say
+// what it changed, e.g.
+//
+//	RAISE NOTICE 'migration report: renamed % row(s)', n;
+//
+// Only these reach the migration log. The server's own notices cannot be told
+// apart from a deliberate RAISE by condition code — "does not exist, skipping"
+// and the rename notice of ADD CONSTRAINT ... USING INDEX both carry SQLSTATE
+// 00000 — so the marker is explicit.
+const migrationReportPrefix = "migration report: "
+
+// migrationReport returns the text of a notice raised with
+// migrationReportPrefix, and false for every other notice.
+func migrationReport(notice *pgconn.Notice) (string, bool) {
+	return strings.CutPrefix(notice.Message, migrationReportPrefix)
+}
+
+// logMigrationNotice forwards migration reports to the migration log. pgx
+// drops server notices unless a handler is set, so without it the per-row
+// report a data-repair migration prints (e.g. 476) never reached whoever ran
+// the deploy.
+func logMigrationNotice(_ *pgconn.PgConn, notice *pgconn.Notice) {
+	if report, ok := migrationReport(notice); ok {
+		slog.Info("migration report", "message", report)
+	}
 }
 
 // runMigrations applies (direction="up") or rolls back (direction="down")

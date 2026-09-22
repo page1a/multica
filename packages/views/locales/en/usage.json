@@ -103,9 +103,19 @@
     "show_less": "Show top {{count}}",
     "no_data": "No agent activity in this window."
   },
+  "issues": {
+    "title": "Costliest issues",
+    "caption": "Spend by issue · open one for its token breakdown",
+    "header_issue": "Issue",
+    "header_tokens": "Tokens",
+    "header_cost": "Cost",
+    "show_all": "Show all",
+    "show_less": "Show top {{count}}",
+    "no_data": "No issue spend in this window."
+  },
   "empty": {
     "title": "No usage yet",
-    "body": "Once agents start working here, their token spend and run time will appear in this view."
+    "body": "Run agents to see token usage and run time."
   },
   "duration": {
     "less_than_minute": "<1m"

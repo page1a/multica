@@ -243,6 +243,8 @@ const desktopAPI = {
   /** Validate that a path is an existing readable+writable directory. */
   validateLocalDirectory: (path: string) =>
     ipcRenderer.invoke("local-directory:validate", path),
+  validateWritablePath: (path: string) =>
+    ipcRenderer.invoke("local-directory:writable", path),
   /** This machine's parallel-copy cleanup: report, policy, one-off removal.
    *  Served by the local daemon — the paths and sizes exist only here. */
   worktreeCleanupReport: () => ipcRenderer.invoke("worktree-cleanup:report"),

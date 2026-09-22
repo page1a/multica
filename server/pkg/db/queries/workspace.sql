@@ -42,11 +42,12 @@ WHERE id = $1;
 -- name: GetWorkspaceAgentChainBudget :one
 -- Workspace-level chain budget. Invalid or absent settings fail safe to the
 -- product default instead of making enqueue paths fail on a cast error.
+-- Keep ELSE in sync with service.DefaultAgentChainBudget.
 SELECT CASE
     WHEN settings->>'agent_chain_budget' ~ '^[0-9]+$'
-         AND (settings->>'agent_chain_budget')::int > 0
+         AND (settings->>'agent_chain_budget')::int >= 0
       THEN (settings->>'agent_chain_budget')::int
-    ELSE 6
+    ELSE 30
   END::int AS budget
 FROM workspace
 WHERE id = $1;

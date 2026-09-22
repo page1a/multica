@@ -185,6 +185,29 @@ export function canDeleteRuntime(
 
 // ---- Workspace -------------------------------------------------------------
 
+/**
+ * Workspace-level write gate. Guests are read-only on every path — create,
+ * edit, comment, assign, upload, status. Visibility is a separate layer;
+ * this only answers "may this person change anything".
+ *
+ * Callers that render always-visible affordances must treat a loading
+ * membership (`role === null` while the member query is in flight) as
+ * undetermined, not as a deny — otherwise the loading frame would expose
+ * that the viewer is a guest.
+ */
+export function canWrite(ctx: PermissionContext): Decision {
+  if (ctx.userId === null) {
+    return deny("not_authenticated", "Sign in to edit.");
+  }
+  if (ctx.role === "guest") {
+    return deny("guest_readonly", "Guests cannot edit.");
+  }
+  if (ctx.role === null) {
+    return deny("not_member", "Join this workspace to edit.");
+  }
+  return ALLOW;
+}
+
 export function canUpdateWorkspaceSettings(ctx: PermissionContext): Decision {
   if (isAdminLike(ctx.role)) return ALLOW;
   return deny(

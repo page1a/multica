@@ -140,11 +140,16 @@ the backend adds the new leader as a squad member with role `leader`.
 ## Leader briefing
 
 For squad leader tasks, Multica appends a squad leader briefing to the leader
-agent instructions. The briefing includes:
+agent instructions. The briefing includes four ordered blocks (Squad
+Instructions is omitted when `instructions` is empty):
 
 - Squad Operating Protocol;
 - Squad Roster;
-- Squad Instructions, only when `instructions` is non-empty.
+- Squad Instructions, only when `instructions` is non-empty;
+- Leader Identity Reminder, always last. It re-establishes that the running
+  agent is the squad leader after the roster and any squad instructions;
+  member roles and squad guidance remain coordination context and do not
+  replace the leader's own identity or instructions.
 
 Roster entries include member name, member type, mention markdown, and non-empty
 role. For agent members the roster also lists their assigned skills
@@ -183,8 +188,7 @@ Current behavior:
   — on those paths the protocol instead carries an explicit "do not change this
   issue's status".
 
-The status names above are category rules: a custom status inherits its
-category's behavior in full.
+The status names above are fixed built-in keys, not categories.
 
 Assignment validation rejects a missing type/id pair, non-existent squad,
 archived squad, archived leader, and private leader when the actor cannot access

@@ -115,8 +115,10 @@ const BUNDLED_ICON_PATH = join(__dirname, "../../resources/icon.png").replace(
 if (process.platform !== "win32") {
   fixPath();
   // Fallback padding in case fix-path came up short (broken shell rc,
-  // non-interactive $SHELL, missing entries); it is prepended, so its order
-  // decides which install of an agent CLI wins. See path-fallback.ts.
+  // non-interactive $SHELL, missing entries). The user-local install dir is
+  // prepended so a standalone CLI beats an older Homebrew copy (DENE-507); the
+  // machine-wide dirs are only appended, so a recovered nvm/fnm Node stays
+  // ahead of /usr/local/bin (MUL-7312). See path-fallback.ts.
   process.env.PATH = applyFallbackPathDirs(process.env.PATH, homedir());
 }
 

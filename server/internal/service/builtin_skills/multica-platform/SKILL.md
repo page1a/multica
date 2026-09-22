@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Multica platform actions the runtime brief does not fully cover: issue and PR contracts, close protocol, mentions, agents and base-role specialisations, squads, autopilots, projects, runtimes, skill import, workspace transfer. Not for the product code you are working on."
+description: "Use for Multica platform actions the runtime brief does not fully cover: issue and PR contracts, automatic routing, close protocol, mentions, agents and base-role specialisations, squads, autopilots, projects, runtimes, skill import, workspace transfer. Not for the product code you are working on."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -20,6 +20,7 @@ Read the invariants below, then open the reference(s) your task actually needs
 | Open | When the task is about |
 |---|---|
 | `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, sub-issues and stages, who else is running |
+| `references/routing.md` | Automatic routing: which slots it fills at which status, the 验收席 field, what an `issue route` result means, why dispatch stopped |
 | `references/close-protocol.md` | Closing an issue: the eight `close.*` keys, conclusion / status / next owner / wake decision tables, blocked-close fields, dispatcher stage promotion |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |
@@ -69,16 +70,18 @@ normally enqueue a run. When the work is already underway and the write merely
 records ownership or progress, pass `--no-start` on EVERY command in that flow —
 suppressing the assignment alone does not suppress a later status update.
 
-**Status is a category, not a literal.** A workspace may define custom statuses
-beyond the built-ins; each inherits its category's platform behavior in full,
-and the runtime brief lists this workspace's catalog. Read `status_category`
-rather than matching `status` against built-in names.
+**Status keys identify workflow states; categories describe lifecycle only.**
+Custom statuses do not inherit built-in automation behavior. For status side
+effects and API field meanings, read `references/issues.md`.
 
 **Comment reads stay bounded.** Scan the threads cheaply
 (`--roots-only --summary --compact`), then expand only what matters
 (`--thread <thread-id> --tail 30`). Never one unbounded pull — a wide read on a
 busy issue costs more than the answer is worth and still buries the reply
-bodies where triggers and instructions actually live.
+bodies where triggers and instructions actually live. One exception, and it is
+narrower than it looks: when the per-turn message hands you a `--since` delta
+read, that read is the bounded scan — the server already computed which
+comments are new, so running it returns exactly those and nothing else.
 
 ## When behavior looks wrong
 

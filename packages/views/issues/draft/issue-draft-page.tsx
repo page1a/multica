@@ -15,6 +15,10 @@ import {
 import { useWorkspacePaths } from "@multica/core/paths";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { memberListOptions } from "@multica/core/workspace/queries";
+import {
+  issueDraftAssigneeSuggestionsOptions,
+  issueDraftSuggestionRequest,
+} from "@multica/core/issue-drafts";
 import type { ChatMessage } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -85,6 +89,16 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
 
   const runtimesQuery = useQuery(runtimeListOptions(wsId));
   const membersQuery = useQuery(memberListOptions(wsId));
+  // Asked only once the draft has converged: every answer is a routing-model
+  // call per row, and a draft still being aligned changes under it. Built from
+  // the server-held draft, so typing in the panel never re-asks.
+  const suggestionRequest = useMemo(
+    () => (session.stage === "ready" && !record ? issueDraftSuggestionRequest(session.draft) : null),
+    [record, session.draft, session.stage],
+  );
+  const assigneeSuggestions = useQuery(
+    issueDraftAssigneeSuggestionsOptions(wsId, draftId, suggestionRequest),
+  ).data;
 
   /**
    * The transcript as a person should read it.
@@ -265,6 +279,7 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
               runtimes={runtimesQuery.data ?? []}
               runtimesLoading={runtimesQuery.isLoading}
               members={membersQuery.data ?? []}
+              assigneeSuggestions={assigneeSuggestions}
               currentUserId={currentUserId}
               switchingRuntime={session.switchingRuntime}
               pending={session.pending}

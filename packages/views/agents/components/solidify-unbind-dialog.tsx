@@ -45,14 +45,14 @@ import { solidifyTargets } from "../specialization";
  */
 export function SolidifyUnbindDialog({
   parent,
-  children,
+  childAgents,
   serverChildNames = [],
   onClose,
   onArchived,
 }: {
   parent: Agent;
   /** Active specialisations of `parent`, already resolved by the caller. */
-  children: readonly Agent[];
+  childAgents: readonly Agent[];
   /**
    * Child names as the archive refusal reported them, when the caller caught
    * one. Empty means the server named none (an older backend) — the dialog
@@ -68,7 +68,7 @@ export function SolidifyUnbindDialog({
   const qc = useQueryClient();
   const [working, setWorking] = useState(false);
 
-  const targets = solidifyTargets(children, serverChildNames);
+  const targets = solidifyTargets(childAgents, serverChildNames);
   const hiddenCount = targets.filter((target) => !target.agent).length;
   const names = targets.map((target) => target.name).join(", ");
 
@@ -76,7 +76,7 @@ export function SolidifyUnbindDialog({
     setWorking(true);
     let failed: Agent | null = null;
     let failureMessage = "";
-    for (const child of children) {
+    for (const child of childAgents) {
       try {
         await api.solidifyAgent(child.id);
       } catch (error) {
@@ -112,7 +112,7 @@ export function SolidifyUnbindDialog({
     await qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
     toast.success(
       t(($) => $.specialization.archive_block_solidified_toast, {
-        count: children.length,
+        count: childAgents.length,
         name: parent.name,
       }),
     );

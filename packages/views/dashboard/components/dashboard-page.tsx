@@ -19,6 +19,7 @@ import {
   dashboardKeys,
   dashboardUsageDailyOptions,
   dashboardUsageByAgentOptions,
+  dashboardUsageByIssueOptions,
   dashboardAgentRunTimeOptions,
   dashboardRunTimeDailyOptions,
   dashboardFailuresDailyOptions,
@@ -47,6 +48,7 @@ import {
   aggregateDailyTokens,
   aggregateFailureClasses,
   aggregateFailureReasons,
+  aggregateIssueTokens,
   aggregateWeeklyErrors,
   aggregateWeeklyTasks,
   aggregateWeeklyTime,
@@ -66,6 +68,7 @@ import {
 import { ProjectFilter, TimeRangeFilter } from "./dashboard-filters";
 import { UsageTrendCard } from "./usage-trend-card";
 import { Leaderboard } from "./leaderboard";
+import { IssueCostList } from "./issue-cost-list";
 import { ErrorsTab } from "./errors-tab";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -74,6 +77,7 @@ import { cn } from "@multica/ui/lib/utils";
 // reference-equality dep check and trips the exhaustive-deps lint rule.
 const EMPTY_DAILY: import("@multica/core/types").DashboardUsageDaily[] = [];
 const EMPTY_BY_AGENT: import("@multica/core/types").DashboardUsageByAgent[] = [];
+const EMPTY_BY_ISSUE: import("@multica/core/types").DashboardUsageByIssue[] = [];
 const EMPTY_RUNTIME: import("@multica/core/types").DashboardAgentRunTime[] = [];
 const EMPTY_RUNTIME_DAILY: import("@multica/core/types").DashboardRunTimeDaily[] = [];
 const EMPTY_FAILURE_DAILY: import("@multica/core/types").DashboardFailureDaily[] = [];
@@ -218,6 +222,11 @@ export function DashboardPage() {
   const byAgentQuery = useQuery(
     dashboardUsageByAgentOptions(wsId, days, projectId, viewTZ),
   );
+  // Per-issue cost list. Same exact-N-day window as the by-agent rollup it sits
+  // under, so the two rankings cannot disagree about which days they cover.
+  const byIssueQuery = useQuery(
+    dashboardUsageByIssueOptions(wsId, days, projectId, viewTZ),
+  );
   const runTimeQuery = useQuery(
     dashboardAgentRunTimeOptions(wsId, days, projectId, viewTZ),
   );
@@ -233,6 +242,7 @@ export function DashboardPage() {
 
   const dailyUsage = dailyQuery.data ?? EMPTY_DAILY;
   const byAgentUsage = byAgentQuery.data ?? EMPTY_BY_AGENT;
+  const byIssueUsage = byIssueQuery.data ?? EMPTY_BY_ISSUE;
   const runTimeRows = runTimeQuery.data ?? EMPTY_RUNTIME;
   const runTimeDailyRows = runTimeDailyQuery.data ?? EMPTY_RUNTIME_DAILY;
   const failureDailyRows = failuresDailyQuery.data ?? EMPTY_FAILURE_DAILY;
@@ -245,6 +255,7 @@ export function DashboardPage() {
   const isRefreshing =
     dailyQuery.isFetching ||
     byAgentQuery.isFetching ||
+    byIssueQuery.isFetching ||
     runTimeQuery.isFetching ||
     runTimeDailyQuery.isFetching ||
     failuresDailyQuery.isFetching ||
@@ -406,6 +417,10 @@ export function DashboardPage() {
   const agentTokenRows = useMemo(
     () => aggregateAgentTokens(byAgentUsage),
     [byAgentUsage],
+  );
+  const issueCostRows = useMemo(
+    () => aggregateIssueTokens(byIssueUsage),
+    [byIssueUsage],
   );
 
   // Run-time totals — taskCount + failedCount summed for the KPI row.
@@ -612,6 +627,11 @@ export function DashboardPage() {
                   deletedAgentCount={deletedAgentCount}
                   lessThanMinuteLabel={lessThanMinuteLabel}
                 />
+
+                {/* Per-issue spend, ranked. Each row is the deep link into
+                    that issue's Token cost view — the agent leaderboard above
+                    answers "who spent it", this answers "on what". */}
+                <IssueCostList rows={issueCostRows} />
               </>
             )}
           </TabsContent>

@@ -15,6 +15,7 @@ import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
+import { useGuestReadOnly } from "../../layout/guest-readonly";
 import { runConfirmIntent } from "./run-confirm-gate";
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 import type { IssueSurfaceMutationOptions } from "../surface/actions-context";
@@ -42,6 +43,7 @@ export interface UseIssueActionsResult {
  */
 export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const { t } = useT("issues");
+  const { isGuest } = useGuestReadOnly();
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -77,6 +79,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
       options?: IssueSurfaceMutationOptions,
     ) => {
       if (!issueId) return;
+      if (isGuest) return;
       // The two writes that can hand work to an agent — giving it an owner, and
       // promoting it out of the parking lot — confirm first, through the shared
       // gate every single-issue entry point routes on (runConfirmIntent). The
@@ -116,7 +119,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
         );
       }
     },
-    [issue, issueId, entryOf, surfaceActions, updateIssue, openModal, t],
+    [issue, issueId, isGuest, entryOf, surfaceActions, updateIssue, openModal, t],
   );
 
   // Explicit "open it somewhere else" CTA, so the new tab takes focus
@@ -153,13 +156,14 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   // returning to its pinned state. (DENE-500)
   const togglePin = useCallback(() => {
     if (!issueId) return;
+    if (isGuest) return;
     const onError = () => toast.error(t(($) => $.actions.pin_failed));
     if (isPinned) {
       deletePin.mutate({ itemType: "issue", itemId: issueId }, { onError });
     } else {
       createPin.mutate({ item_type: "issue", item_id: issueId }, { onError });
     }
-  }, [isPinned, issueId, createPin, deletePin, t]);
+  }, [isPinned, issueId, isGuest, createPin, deletePin, t]);
 
   const copyLink = useCallback(async () => {
     if (!issueId) return;
@@ -176,6 +180,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const openCreateSubIssue = useCallback(() => {
     if (!issueId) return;
+    if (isGuest) return;
     openModal("create-issue", {
       parent_issue_id: issueId,
       parent_issue_identifier: issueIdentifier,
@@ -194,6 +199,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   }, [
     openModal,
     issueId,
+    isGuest,
     issueIdentifier,
     issueProjectId,
     issueAssigneeType,
@@ -202,8 +208,9 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const openSetParent = useCallback(() => {
     if (!issueId) return;
+    if (isGuest) return;
     openModal("issue-set-parent", { issueId });
-  }, [openModal, issueId]);
+  }, [openModal, issueId, isGuest]);
 
   // Detach from the parent and promote to a standalone issue. Reversible
   // (Set parent re-links it), non-destructive, and mirrors the clear-date
@@ -215,6 +222,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   // error toast and the optimistic rollback (false confirmation).
   const removeParent = useCallback(() => {
     if (!issueId) return;
+    if (isGuest) return;
     if (surfaceActions) {
       surfaceActions.updateIssue(
         issueId,
@@ -247,23 +255,25 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
         },
       );
     }
-  }, [issueId, surfaceActions, updateIssue, t]);
+  }, [issueId, isGuest, surfaceActions, updateIssue, t]);
 
   const openAddChild = useCallback(() => {
     if (!issueId) return;
+    if (isGuest) return;
     openModal("issue-add-child", { issueId });
-  }, [openModal, issueId]);
+  }, [openModal, issueId, isGuest]);
 
   const openDeleteConfirm = useCallback(
     (opts?: { onDeletedFallbackPath?: string }) => {
       if (!issueId) return;
+      if (isGuest) return;
       openModal("issue-delete-confirm", {
         issueId,
         identifier: issueIdentifier,
         onDeletedFallbackPath: opts?.onDeletedFallbackPath,
       });
     },
-    [openModal, issueId, issueIdentifier],
+    [openModal, issueId, issueIdentifier, isGuest],
   );
 
   return {

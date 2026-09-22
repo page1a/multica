@@ -53,7 +53,10 @@ const (
 	reconnectRetryExpireBatchSize = 500
 	// offlineRuntimeTTLSeconds deletes offline runtimes with no active agents
 	// after this duration. 7 days gives users plenty of time to restart daemons.
-	offlineRuntimeTTLSeconds = 7 * 24 * 3600.0
+	// Shared with the delete handlers, which quote the same window when they
+	// refuse to remove a profile-backed instance the user could otherwise only
+	// wait out.
+	offlineRuntimeTTLSeconds = service.OfflineRuntimeTTLSeconds
 	// runtimeGCBatchSize bounds both the candidate scan and the number of
 	// per-runtime transactions one sweeper tick may open. At the hourly cadence,
 	// 500 preserves a theoretical capacity of 12,000 candidates per day; the
@@ -165,6 +168,7 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 		sweepOfflineRuntimeTasks(ctx, queries, taskSvc, reconnectGrace)
 		sweepExpiredRuntimeReconnectRetries(ctx, queries, taskSvc, reconnectGrace)
 		sweepStaleTasks(ctx, queries, taskSvc, bus, reconnectGrace)
+		sweepTaskTimeLimits(ctx, taskSvc)
 		sweepExpiredQueuedTasks(ctx, queries, taskSvc, reconnectGrace)
 		sweepDeferredChatFinalizations(ctx, queries, taskSvc)
 	})
@@ -617,6 +621,27 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 	return
 }
 
+// sweepTaskTimeLimits stops running issue tasks that outlived their
+// workspace's configured wall-clock limit and tells the responsible people.
+// It is a spend guard, so unlike sweepStaleTasks it fires on healthy runs; the
+// daemon notices the terminal status on its next status poll and interrupts
+// the agent.
+func sweepTaskTimeLimits(ctx context.Context, taskSvc *service.TaskService) {
+	stopped, err := taskSvc.FailTasksOverWorkspaceTimeLimit(ctx)
+	if err != nil {
+		slog.Warn("task sweeper: failed to enforce workspace task time limit", "error", err)
+		return
+	}
+	if len(stopped) == 0 {
+		return
+	}
+	slog.Info("task sweeper: stopped tasks over workspace time limit", "count", len(stopped))
+	// Notify first: HandleFailedTasks resets a stranded in_progress issue to
+	// todo, and the notice reports the status the run was stopped in.
+	taskSvc.NotifyTaskTimeLimit(ctx, stopped)
+	taskSvc.HandleFailedTasks(ctx, stopped)
+}
+
 // sweepExpiredQueuedTasks fails queued tasks whose runtime has stopped proving
 // it is alive. Companion to the dispatch-time admission gate added in MUL-1899:
 // that gate prevents new doomed enqueues; this one retires work already queued
@@ -706,12 +731,15 @@ func broadcastFailedTasks(ctx context.Context, queries *db.Queries, taskSvc *ser
 				workspaceID = util.UUIDToString(issue.WorkspaceID)
 				issueKey := util.UUIDToString(t.IssueID)
 				// Only issues whose status means "an agent is actively working"
-				// get reset. in_review and blocked are deliberately excluded —
-				// they mean a human or an external dependency owns the issue
-				// now, and resetting those to todo would re-trigger an agent on
-				// work someone else is holding. A custom status resolves to the
-				// canonical status it inherits, so a custom review gate is
-				// excluded for the same reason In Review is. (MUL-6243)
+				// get reset, which since MUL-7240 is the fixed in_progress key
+				// alone. in_review and blocked are deliberately excluded — they
+				// mean a human or an external dependency owns the issue now,
+				// and resetting those to todo would re-trigger an agent on work
+				// someone else is holding. A CUSTOM started status is excluded
+				// because custom statuses inherit lifecycle only, not the
+				// active-status recovery rule; Effective() no longer projects a
+				// nonterminal custom key onto a built-in, so this is a key
+				// comparison on purpose. (MUL-6243, MUL-7240)
 				effectiveStatus := issuestatus.Effective(ctx, queries, issue.WorkspaceID, issue.Status)
 				if effectiveStatus == "in_progress" && !processedIssues[issueKey] {
 					processedIssues[issueKey] = true

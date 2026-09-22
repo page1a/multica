@@ -137,6 +137,9 @@ interface DesktopAPI {
     /** The repository root containing the directory, when there is one. */
     git_root?: string;
   }>;
+  /** Whether `path` (or its nearest existing ancestor) is writable. Used for
+   *  worktree_root, which the first task often creates. */
+  validateWritablePath: (path: string) => Promise<{ ok: boolean }>;
   /** Report on this machine's parallel-mode working copies and the cleanup
    *  policy in force. Served by the local daemon (DENE-617). */
   worktreeCleanupReport: () => Promise<WorktreeCleanupResult>;

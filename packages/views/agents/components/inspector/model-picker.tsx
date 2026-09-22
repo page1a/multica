@@ -16,6 +16,10 @@ import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
 import { UnavailableModelsNote } from "../unavailable-models-note";
 import { ModelSearchHeader } from "../model-search-header";
+import {
+  providerSeatModelDisplay,
+  seatModelIsExactly,
+} from "../provider-seat-model";
 
 /**
  * Inline model picker for the agent inspector. Lighter cousin of
@@ -29,6 +33,11 @@ import { ModelSearchHeader } from "../model-search-header";
  * instead of a clickable picker. No built-in provider sets this today
  * (Antigravity gained `--model` in agy 1.0.6), but the branch stays for any
  * future model-less runtime.
+ *
+ * Every model string this component shows goes through
+ * `providerSeatModelDisplay`. The catalog id is a seat model string
+ * (`preset/encodeURIComponent(modelId)`), and a DSH gateway's ids carry
+ * slashes — rendering one verbatim would put `%2F` on screen (DENE-684).
  */
 export function ModelPicker({
   runtimeId,
@@ -75,17 +84,28 @@ export function ModelPicker({
     if (!s) return models;
     return models.filter(
       (m) =>
-        m.id.toLowerCase().includes(s) || m.label.toLowerCase().includes(s),
+        m.id.toLowerCase().includes(s) ||
+        m.label.toLowerCase().includes(s) ||
+        // A DSH catalog id is percent-encoded (`preset/deepseek%2Fv4-flash`),
+        // but the string a user remembers and types to find it is the decoded
+        // one. Matching the stored id alone leaves the row reachable by every
+        // spelling except the one a person knows (DENE-684).
+        providerSeatModelDisplay(m.id).toLowerCase().includes(s),
     );
   }, [models, search]);
 
   const trimmedSearch = search.trim();
   const exactMatch = models.some(
-    (m) => m.id === trimmedSearch || m.label === trimmedSearch,
+    (m) => seatModelIsExactly(m.id, trimmedSearch) || m.label === trimmedSearch,
   );
   const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
-  const triggerLabel = value || t(($) => $.pickers.model_default);
+  // The stored value is the seat model string (`preset/encodeURIComponent(id)`),
+  // which must never reach the screen: a user who reads `%2F` on the chip is
+  // being shown a string they cannot find in any picker (DENE-684).
+  const triggerLabel = value
+    ? providerSeatModelDisplay(value)
+    : t(($) => $.pickers.model_default);
   const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
 
   const select = async (id: string) => {
@@ -224,33 +244,44 @@ export function ModelPicker({
       )}
 
       {!modelsQuery.isLoading &&
-        filtered.map((m) => (
-          <PickerItem
-            key={m.id}
-            selected={m.id === value}
-            onClick={() => void select(m.id)}
-            // Tooltip carries the canonical model id even when the chip
-            // shows the friendlier label, so users can always see what
-            // string actually ships to the agent.
-            tooltip={m.label !== m.id ? `${m.label} · ${m.id}` : m.id}
-          >
-            {/* PickerItem wraps children in a flex `<span>`. Putting a
-                `<div>` inside that <span> is block-in-inline (invalid
-                HTML5) and triggers the browser-default centering quirk
-                that pushes descendants off-axis (model IDs floated to the
-                center instead of left-aligning under their labels). Use
-                `<span block text-left>` to keep layout deterministic —
-                matches the fix already applied in thinking-picker.tsx. */}
-            <span className="block min-w-0 flex-1 text-left">
-              <span className="block truncate text-label font-medium">{m.label}</span>
-              {m.label !== m.id && (
-                <span className="mt-0.5 block truncate font-mono text-micro leading-snug text-muted-foreground">
-                  {m.id}
-                </span>
-              )}
-            </span>
-          </PickerItem>
-        ))}
+        filtered.map((m) => {
+          // A catalog row's id is the seat model string. Its secondary line is
+          // that same pair decoded — `preset · model id` — so the escape never
+          // reaches the screen. The picker fetches no preset list (that is a
+          // daemon round trip), so the model half is the id the runtime
+          // advertised rather than the preset's own name for it.
+          const pair = providerSeatModelDisplay(m.id);
+          // A row whose label IS its id has nothing friendlier to say, so the
+          // decoded pair becomes the title instead of a subtitle repeating it.
+          const title = m.label === m.id ? pair : m.label;
+          return (
+            <PickerItem
+              key={m.id}
+              selected={m.id === value}
+              onClick={() => void select(m.id)}
+              // Tooltip carries the row's canonical identity in its decoded
+              // form, so a label truncated by the popover's width is still
+              // readable — and never as the escaped catalog id.
+              tooltip={pair}
+            >
+              {/* PickerItem wraps children in a flex `<span>`. Putting a
+                  `<div>` inside that <span> is block-in-inline (invalid
+                  HTML5) and triggers the browser-default centering quirk
+                  that pushes descendants off-axis (model IDs floated to the
+                  center instead of left-aligning under their labels). Use
+                  `<span block text-left>` to keep layout deterministic —
+                  matches the fix already applied in thinking-picker.tsx. */}
+              <span className="block min-w-0 flex-1 text-left">
+                <span className="block truncate text-label font-medium">{title}</span>
+                {m.label !== m.id && (
+                  <span className="mt-0.5 block truncate font-mono text-micro leading-snug text-muted-foreground">
+                    {pair}
+                  </span>
+                )}
+              </span>
+            </PickerItem>
+          );
+        })}
 
       {!modelsQuery.isLoading && filtered.length === 0 && !canCreate && (
         <p className="px-3 py-3 text-center text-caption text-muted-foreground">

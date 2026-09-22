@@ -62,7 +62,7 @@ export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
       )}
     >
       <Chip
-        title="stage"
+        kind="stage"
         tone={state === "ok" ? "muted" : state}
       >
         {issue.stage == null
@@ -70,36 +70,36 @@ export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
           : t(($) => $.stage.value, { n: issue.stage })}
       </Chip>
       {state === "missing" && (
-        <Chip title="close.missing" tone="missing">
+        <Chip kind="close.missing" tone="missing">
           {t(($) => $.close_protocol.missing)}
         </Chip>
       )}
       {close.statusDrift && (
-        <Chip title="close.status" tone="drift">
+        <Chip kind="close.status" tone="drift">
           {t(($) => $.close_protocol.status_drift, {
             issueStatus: issue.status,
           })}
         </Chip>
       )}
       {close.conclusion !== null && (
-        <Chip title="close.conclusion" tone={stuck && state === "ok" ? "stuck" : "muted"}>
+        <Chip kind="close.conclusion" tone={stuck && state === "ok" ? "stuck" : "muted"}>
           {close.conclusion}
         </Chip>
       )}
       {nextOwnerLabel !== null && (
         <Chip
-          title="close.next_owner"
+          kind="close.next_owner"
           tone={stuck && state === "ok" ? "stuck" : "muted"}
         >
           {nextOwnerLabel}
         </Chip>
       )}
       {waitingOn !== null && (
-        <Chip title="close.waiting_on" tone={stuck && state === "ok" ? "stuck" : "muted"}>
+        <Chip kind="close.waiting_on" tone={stuck && state === "ok" ? "stuck" : "muted"}>
           {t(($) => $.close_protocol.waiting_on, { id: waitingOn })}
         </Chip>
       )}
-      <Chip title="last_activity_at" tone="muted">
+      <Chip kind="last_activity_at" tone="muted">
         {lastActivity}
       </Chip>
     </div>
@@ -107,17 +107,21 @@ export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
 }
 
 function Chip({
-  title,
+  kind,
   tone,
   children,
 }: {
-  title: string;
+  // A technical identifier for the chip, not user-visible text: it labels the
+  // chip for tests and DOM inspection. It used to be rendered as `title`,
+  // which turned untranslated keys like "close.waiting_on" into a tooltip a
+  // screen reader would read out.
+  kind: string;
   tone: "muted" | "missing" | "drift" | "stuck";
   children: string;
 }) {
   return (
     <span
-      title={title}
+      data-chip={kind}
       className={cn(
         "inline-flex max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-micro",
         tone === "muted" && "bg-muted/60 text-muted-foreground",

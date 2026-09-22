@@ -27,7 +27,6 @@ import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -42,6 +41,7 @@ import {
   CollectionPageHeaderAction,
   CollectionPageState,
 } from "../../layout/collection-page";
+import { NothingSharedEmpty, useGuestReadOnly } from "../../layout/guest-readonly";
 import { PAGE_GUTTER, PAGE_RAIL, PageHeader } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink, useNavigation } from "../../navigation";
@@ -91,6 +91,7 @@ export function RuntimesPage({
   const isAuthLoading = useAuthStore((state) => state.isLoading);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const wsId = useWorkspaceId();
+  const { isGuest } = useGuestReadOnly();
   const qc = useQueryClient();
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
@@ -174,9 +175,13 @@ export function RuntimesPage({
       />
 
       {showEmpty ? (
+        isGuest ? (
+          <NothingSharedEmpty />
+        ) : (
         <div className="flex flex-1 items-center justify-center p-6">
           <EmptyState onConnectRemote={() => setShowConnectDialog(true)} />
         </div>
+        )
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex flex-col py-4 sm:py-6")}>
@@ -308,9 +313,6 @@ function MikaSetupCard({
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>{t(($) => $.mika_setup.dialog_title)}</DialogTitle>
-            <DialogDescription>
-              {t(($) => $.mika_setup.dialog_description)}
-            </DialogDescription>
           </DialogHeader>
 
           <MikaRuntimeChoice

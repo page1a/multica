@@ -267,6 +267,21 @@ var issueCommentAddCmd = &cobra.Command{
 	RunE:  runIssueCommentAdd,
 }
 
+var issueCommentUpdateCmd = &cobra.Command{
+	Use:   "update <comment-id>",
+	Short: "Update a comment",
+	Long: "Update a comment you authored. Workspace owners and admins can update any comment.\n\n" +
+		"Pass the revision returned by `multica issue comment list <issue-id> --output json`; " +
+		"the update is rejected if another editor changed the comment first. On that rejection, " +
+		"read the latest body and merge your change into it before retrying. Do not just resend " +
+		"with the newer revision: that overwrites the other edit.\n\n" +
+		"Changing the content is a new trigger, not a silent fix: the server cancels runs this " +
+		"comment triggered that are still in flight and re-enqueues every agent the new body " +
+		"mentions. Attachments are left as they are.",
+	Args: exactArgs(1),
+	RunE: runIssueCommentUpdate,
+}
+
 var issueCommentDeleteCmd = &cobra.Command{
 	Use:   "delete <comment-id>",
 	Short: "Delete a comment",
@@ -439,7 +454,8 @@ var validIssueSortColumns = []string{
 var validIssueFields = []string{
 	"id", "workspace_id", "number", "identifier", "title", "description",
 	"status", "status_category", "status_name", "priority", "assignee_type",
-	"assignee_id", "creator_type", "creator_id", "parent_issue_id",
+	"assignee_id", "reviewer_type", "reviewer_id", "creator_type",
+	"creator_id", "parent_issue_id",
 	"project_id", "position", "stage", "start_date", "due_date", "created_at",
 	"updated_at", "revision", "last_activity_at", "metadata", "properties",
 	"labels",
@@ -519,6 +535,7 @@ func init() {
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
+	issueCommentCmd.AddCommand(issueCommentUpdateCmd)
 	issueCommentCmd.AddCommand(issueCommentDeleteCmd)
 	issueCommentCmd.AddCommand(issueCommentResolveCmd)
 	issueCommentCmd.AddCommand(issueCommentUnresolveCmd)
@@ -584,6 +601,7 @@ func init() {
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
 	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
+	issueUpdateCmd.Flags().String("reviewer", "", "验收席 — who accepts this issue: a member or agent name, \"none\" for no acceptance pass, or \"\" to clear the slot")
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
 	issueUpdateCmd.Flags().String("start-date", "", "New start date (calendar day, YYYY-MM-DD; pass empty string to clear)")
 	issueUpdateCmd.Flags().String("due-date", "", "New due date (calendar day, YYYY-MM-DD)")
@@ -649,6 +667,14 @@ func init() {
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID to reply under. A comment-triggered agent run must reply under its trigger comment; omitting --parent to post a top-level comment is rejected")
 	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
+
+	// issue comment update
+	issueCommentUpdateCmd.Flags().String("content", "", "New comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
+	issueCommentUpdateCmd.Flags().Bool("content-stdin", false, "Read new comment content from stdin (preserves multi-line content verbatim)")
+	issueCommentUpdateCmd.Flags().String("content-file", "", "Read new comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
+	issueCommentUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --content-file to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
+	issueCommentUpdateCmd.Flags().Int64("expected-revision", 0, "Current positive comment revision from issue comment list --output json (required; prevents overwriting a concurrent edit)")
+	issueCommentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue comment resolve/unresolve
 	issueCommentResolveCmd.Flags().String("output", "json", "Output format: table or json")
@@ -1045,13 +1071,14 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 		if dueDate != "" && len(dueDate) >= 10 {
 			dueDate = dueDate[:10]
 		}
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY", "ASSIGNEE", "START DATE", "DUE DATE", "DESCRIPTION"}
+		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY", "ASSIGNEE", "REVIEWER", "START DATE", "DUE DATE", "DESCRIPTION"}
 		rows := [][]string{{
 			issueDisplayKey(issue),
 			strVal(issue, "title"),
 			strVal(issue, "status"),
 			strVal(issue, "priority"),
 			assignee,
+			formatReviewer(issue, actors),
 			startDate,
 			dueDate,
 			strVal(issue, "description"),
@@ -1556,6 +1583,26 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		if hasAssignee {
 			body["assignee_type"] = aType
 			body["assignee_id"] = aID
+		}
+	}
+	if cmd.Flags().Changed("reviewer") {
+		v, _ := cmd.Flags().GetString("reviewer")
+		switch strings.TrimSpace(v) {
+		case "":
+			// Empty clears the slot back to undecided, so routing may fill it
+			// again. "none" is the opposite: it closes the question.
+			body["reviewer_type"] = nil
+			body["reviewer_id"] = nil
+		case "none":
+			body["reviewer_type"] = "none"
+			body["reviewer_id"] = nil
+		default:
+			rType, rID, err := resolveAssignee(ctx, client, v, memberOrAgentKinds)
+			if err != nil {
+				return fmt.Errorf("resolve reviewer: %w", err)
+			}
+			body["reviewer_type"] = rType
+			body["reviewer_id"] = rID
 		}
 	}
 	if cmd.Flags().Changed("parent") {
@@ -2273,6 +2320,49 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Comment added to issue %s.\n", issueRef.Display)
 
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+func runIssueCommentUpdate(cmd *cobra.Command, args []string) error {
+	expectedRevision, _ := cmd.Flags().GetInt64("expected-revision")
+	if !cmd.Flags().Changed("expected-revision") || expectedRevision < 1 {
+		return fmt.Errorf("--expected-revision is required and must be a positive integer; read the current revision with `multica issue comment list <issue-id> --output json`")
+	}
+
+	content, hasContent, err := resolveTextFlag(cmd, "content")
+	if err != nil {
+		return err
+	}
+	if !hasContent {
+		return fmt.Errorf("--content, --content-stdin, or --content-file is required")
+	}
+	if err := guardLocalPathLinks(content, "comment body",
+		"Comment updates cannot attach files; deliver the file in a new comment with `multica issue comment add <issue-id> --attachment <path>` and drop the link."); err != nil {
+		return err
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	commentID := args[0]
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/comments/"+url.PathEscape(commentID), map[string]any{
+		"content":           content,
+		"expected_revision": expectedRevision,
+	}, &result); err != nil {
+		return fmt.Errorf("update comment: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Comment %s updated.\n", commentID)
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		return nil
@@ -3245,6 +3335,26 @@ func formatAssignee(issue map[string]any, actors actorDisplayLookup) string {
 		return ""
 	}
 	return actors.actor(aType, aID)
+}
+
+// formatReviewer renders the acceptance slot. It is the same reference pair as
+// the assignee, plus one value the assignee has no equivalent of: reviewer_type
+// "none" carries no id and means "this issue needs no acceptance pass" — a
+// recorded decision, not an empty slot, so it must read differently from "".
+// (DENE-633)
+func formatReviewer(issue map[string]any, actors actorDisplayLookup) string {
+	rType := strVal(issue, "reviewer_type")
+	switch rType {
+	case "":
+		return ""
+	case "none":
+		return "不需要验收"
+	}
+	rID := strVal(issue, "reviewer_id")
+	if rID == "" {
+		return ""
+	}
+	return actors.actor(rType, rID)
 }
 
 // filterIssueFields keeps only the requested top-level keys on each issue,

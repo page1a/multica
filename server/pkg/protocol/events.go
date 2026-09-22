@@ -53,6 +53,11 @@ const (
 	// Workspace events
 	EventWorkspaceUpdated = "workspace:updated"
 	EventWorkspaceDeleted = "workspace:deleted"
+	// EventModuleVisibilityUpdated fires when a workspace restricts or opens
+	// a product area (Issues, Projects, Repos, Runtimes). Clients refetch
+	// the caller's module access map so nav entries appear and disappear
+	// without a reload (DENE-699).
+	EventModuleVisibilityUpdated = "modules:updated"
 
 	// Member events
 	EventMemberAdded   = "member:added"

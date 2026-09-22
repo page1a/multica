@@ -95,8 +95,12 @@ func (h *Handler) RouteIssue(w http.ResponseWriter, r *http.Request) {
 	if outcome.ExecutorWritten != nil {
 		resp["executor"] = outcome.ExecutorWritten.Name
 	}
-	if outcome.ReviewerWritten != "" {
-		resp["reviewer"] = outcome.ReviewerWritten
+	if !outcome.ReviewerWritten.Empty() {
+		resp["reviewer"] = outcome.ReviewerWritten.Label()
+		resp["reviewer_type"] = string(outcome.ReviewerWritten.Kind)
+		if outcome.ReviewerWritten.ID != "" {
+			resp["reviewer_id"] = outcome.ReviewerWritten.ID
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

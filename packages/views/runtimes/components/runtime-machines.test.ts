@@ -5,6 +5,7 @@ import type { AgentRuntime } from "@multica/core/types";
 import {
   buildRuntimeMachines,
   filterRuntimeMachines,
+  runtimeDeviceName,
   runtimeMachineCounts,
   runtimeRowLabel,
   sharedCustomName,
@@ -398,6 +399,27 @@ describe("splitRuntimeName", () => {
       base: "Codex cloud",
       hostname: null,
     });
+  });
+});
+
+describe("runtimeDeviceName", () => {
+  it("prefers the hostname parsed from the daemon name", () => {
+    expect(
+      runtimeDeviceName({
+        name: "Grok (box.local)",
+        device_info: "studio · linux-amd64",
+      }),
+    ).toBe("box.local");
+  });
+
+  it("falls back to the first device_info part, then null", () => {
+    expect(
+      runtimeDeviceName({
+        name: "Grok",
+        device_info: "studio · linux-amd64",
+      }),
+    ).toBe("studio");
+    expect(runtimeDeviceName({ name: "Grok", device_info: "" })).toBeNull();
   });
 });
 

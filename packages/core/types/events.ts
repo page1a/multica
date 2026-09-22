@@ -41,6 +41,7 @@ export type WSEventType =
   | "inbox:batch-archived"
   | "workspace:updated"
   | "workspace:deleted"
+  | "modules:updated"
   | "member:added"
   | "member:updated"
   | "member:removed"
@@ -285,6 +286,8 @@ export interface ActivityCreatedPayload {
 }
 
 export interface TaskMessagePayload {
+  /** Opaque tool-call identity, scoped to one backend execution. */
+  call_id?: string;
   task_id: string;
   issue_id: string;
   chat_session_id?: string;
@@ -612,6 +615,7 @@ export interface WSEventPayloadMap {
   "inbox:batch-archived": InboxBatchArchivedPayload;
   "workspace:updated": WorkspaceUpdatedPayload;
   "workspace:deleted": WorkspaceDeletedPayload;
+  "modules:updated": unknown;
   "member:added": MemberAddedPayload;
   "member:updated": MemberUpdatedPayload;
   "member:removed": MemberRemovedPayload;

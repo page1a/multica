@@ -396,9 +396,10 @@ WHERE id = sqlc.arg('id')
 -- backwards onto the turn the user interrupted.
 --
 -- The newer-task lookup depends on
--- idx_agent_task_queue_chat_with_session_created_at (migration 465). Neither
--- chat_pending_v3 nor chat_terminal_resume can replace it: this guard spans
--- both in-flight and terminal tasks and compares created_at.
+-- idx_agent_task_queue_chat_session (migration 472). Neither chat_pending_v3
+-- nor chat_terminal_resume can replace it: this guard spans both in-flight and
+-- terminal tasks and compares created_at; the broader index also serves the
+-- chat_session foreign-key delete lookup.
 UPDATE chat_session cs
 SET session_id = t.session_id,
     runtime_id = t.runtime_id,
@@ -1273,7 +1274,7 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
     status IN ('completed', 'cancelled')
     OR (
       status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity', 'agent_error.context_overflow', 'codex_resume_oversized')
+      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity', 'agent_error.context_overflow', 'codex_resume_oversized', 'antigravity_session_token_expired', 'antigravity_not_logged_in')
       AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
       -- Mirrors the GetLastTaskSession auth-resolution guard: a provider that
       -- cannot resolve its auth method fails deterministically on resume, and
@@ -1287,6 +1288,16 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
       AND NOT (COALESCE(error, '') ILIKE '%could not resolve authentication method%')
       AND NOT (COALESCE(error, '') ~* 'must not be empty|must be non-?empty|must have non-?empty|non-?empty content|cannot be empty|should not be empty'
                AND COALESCE(error, '') ~* 'role[^a-z0-9]{0,2}assistant|assistant message|message at position|messages\.[0-9]|messages\[[0-9]')
+      -- DENE-724, mirroring GetLastTaskSession: an Antigravity run whose
+      -- in-process OAuth token expired is the CLI's own 401 wording, and an
+      -- older daemon records it as agent_error.provider_auth_or_access — a
+      -- reason this filter keeps resuming. The CLI's separate "not logged into
+      -- Antigravity" notice gets the same treatment: it retires the session
+      -- too, and only its copy differs. Keep in sync with
+      -- taskfailure.AntigravitySessionTokenExpired / AntigravityNotLoggedIn and
+      -- the issue-side twin.
+      AND NOT (COALESCE(error, '') ILIKE '%request had invalid authentication credentials%')
+      AND NOT (COALESCE(error, '') ILIKE '%not logged into antigravity%')
     )
   )
   -- MUL-5722, mirroring GetLastTaskSession: an overflowed resume records no

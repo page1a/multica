@@ -1,6 +1,6 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import type { Agent, Squad, Workspace } from "../types";
+import type { Agent, ModuleVisibility, Squad, Workspace } from "../types";
 
 export const workspaceKeys = {
   all: (wsId: string) => ["workspaces", wsId] as const,
@@ -28,6 +28,7 @@ export const workspaceKeys = {
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
   mcpServers: (wsId: string) => ["workspaces", wsId, "mcp-servers"] as const,
   routingHealth: (wsId: string) => ["workspaces", wsId, "routing-health"] as const,
+  modules: (wsId: string) => ["workspaces", wsId, "modules"] as const,
 };
 
 export function workspaceListOptions() {
@@ -55,6 +56,14 @@ export function workspaceBySlugOptions(slug: string) {
  * rather than continuously, because a cooldown ends on a clock and the chip
  * should stop lying without the person reloading.
  */
+export function moduleVisibilityOptions(wsId: string) {
+  return queryOptions<ModuleVisibility[]>({
+    queryKey: workspaceKeys.modules(wsId),
+    queryFn: () => api.listModuleVisibility(),
+    enabled: !!wsId,
+  });
+}
+
 export function routingHealthOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.routingHealth(wsId),

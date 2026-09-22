@@ -16,6 +16,13 @@ const (
 	ReviewerSeat ReviewerKind = "seat"
 	// ReviewerHuman — this acceptance needs a person, because it needs a
 	// conversation rather than a check.
+	//
+	// It never becomes the reviewer slot's VALUE. A slot naming a person
+	// hands the ticket to that person at 待验收, and from then on routing
+	// skips it — an issue a person holds is that person's issue — so the
+	// ticket freezes with nobody able to move it on. The answer is kept as a
+	// note instead: a seat takes the slot and is told to @ the person for the
+	// call it cannot make.
 	ReviewerHuman ReviewerKind = "human"
 	// ReviewerNone — this issue does not need a separate acceptance pass.
 	//
@@ -82,6 +89,11 @@ type JudgeState struct {
 type Judge interface {
 	Assign(ctx context.Context, target Target, st JudgeState) (Verdict, error)
 	Unblock(ctx context.Context, target Target, st JudgeState) (Advice, error)
+	// Stale answers the stale-review row: wake the reviewer, or align a
+	// status to an acceptance the ticket already carries. It is the only
+	// question whose answer can reach a status write, which is why its
+	// branch set is two values and why the caller gates it a second time.
+	Stale(ctx context.Context, target Target, st StaleState) (StaleDecision, error)
 }
 
 // TextGenerator is the slice of the server-internal LLM layer this package
@@ -218,7 +230,10 @@ func (j LLMJudge) Unblock(ctx context.Context, target Target, st JudgeState) (Ad
 	return a, nil
 }
 
-func (j LLMJudge) ask(ctx context.Context, target Target, system string, st JudgeState) (string, error) {
+// ask sends one question and returns the raw JSON body. st is the question's
+// own state struct: every row embeds JudgeState and adds its own fields, which
+// is why this takes any rather than the base type.
+func (j LLMJudge) ask(ctx context.Context, target Target, system string, st any) (string, error) {
 	gen := j.generator(target)
 	if gen == nil {
 		return "", ErrJudgeUnavailable
@@ -235,4 +250,79 @@ func (j LLMJudge) ask(ctx context.Context, target Target, system string, st Judg
 		return "", fmt.Errorf("%w: %w", ErrJudgeUnavailable, err)
 	}
 	return raw, nil
+}
+
+// StaleAction is the judge's whole answer for the stale-review row. It is a
+// closed two-value set, and that is the point: the model is asked "wake, or
+// align the status to a verdict that already exists", never "is this work
+// done".
+type StaleAction string
+
+const (
+	// StaleWake — nobody is going to move this ticket; put it back in front of
+	// the reviewer. Writes no status.
+	StaleWake StaleAction = "wake"
+	// StaleComplete — the reviewer already passed this on the ticket and the
+	// status simply never followed. Only ever honoured when the deterministic
+	// gate in routeStale agrees that the reviewer actually spoke.
+	StaleComplete StaleAction = "complete"
+)
+
+// StaleDecision is one answer plus its confidence. No prose the product
+// depends on, no action, no free-form status.
+type StaleDecision struct {
+	Action     StaleAction `json:"action"`
+	Confidence float64     `json:"confidence"`
+	Reason     string      `json:"reason"`
+}
+
+// StaleState is the trimmed view the stale-review question is asked against.
+// It carries the reviewer's own remarks because the whole question is whether
+// THOSE remarks already contain an acceptance — not whether the work looks
+// finished.
+type StaleState struct {
+	JudgeState
+	// QuietHours is how long the ticket has been sitting in the in-review
+	// category with nothing happening on it.
+	QuietHours int `json:"quiet_hours"`
+	// Reviewer is the display name of the seat or person holding the
+	// acceptance.
+	Reviewer string `json:"reviewer"`
+	// ReviewRemarks are what the reviewer said on this ticket, oldest first
+	// and clipped. Empty means the reviewer never spoke, and an empty list can
+	// never produce a completion — routeStale refuses it before the answer is
+	// read.
+	ReviewRemarks []string `json:"review_remarks"`
+}
+
+const staleSystemPrompt = `A work ticket has been sitting in "in review" with nothing happening on it, and no run is active. Decide one thing.
+
+action: "complete" ONLY IF review_remarks already contain an explicit acceptance from the reviewer — they checked the work and passed it. "wake" for everything else, including an empty review_remarks, remarks that ask for changes, remarks that are questions, and remarks you are unsure about.
+
+You are NOT judging whether the work is finished. You are judging whether the reviewer has ALREADY said it is. If nobody has said so on the ticket, the answer is "wake".
+
+confidence: calibrated in [0,1]. A below-threshold answer is discarded and treated as "wake", so do not inflate it.
+
+Respond with a JSON object with keys: action, confidence, reason. reason is one short sentence for a human reader.`
+
+// Stale asks the stale-review question.
+func (j LLMJudge) Stale(ctx context.Context, target Target, st StaleState) (StaleDecision, error) {
+	raw, err := j.ask(ctx, target, staleSystemPrompt, st)
+	if err != nil {
+		return StaleDecision{}, err
+	}
+	var d StaleDecision
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		return StaleDecision{}, fmt.Errorf("%w: stale decision was not JSON: %v", ErrJudgeUnavailable, err)
+	}
+	d.Action = StaleAction(strings.ToLower(strings.TrimSpace(string(d.Action))))
+	switch d.Action {
+	case StaleWake, StaleComplete:
+	default:
+		// An unrecognised branch is a broken contract, not a weak answer. The
+		// caller would otherwise read the zero value, and the zero value of a
+		// string is not "wake".
+		return StaleDecision{}, fmt.Errorf("%w: unknown stale action %q", ErrJudgeUnavailable, d.Action)
+	}
+	return d, nil
 }

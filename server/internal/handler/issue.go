@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/permission"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
@@ -42,11 +43,9 @@ type IssueResponse struct {
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 	Status      string  `json:"status"`
-	// StatusCategory is the canonical status whose platform behavior Status
-	// carries — identical to Status for the 7 built-ins, and the inherited
-	// category for a custom status. Omitted when the endpoint does not resolve
-	// it, so consumers must fall back to Status rather than assume a blank
-	// value means "no category". (MUL-6243)
+	// StatusCategory encodes lifecycle using the legacy seven-value wire enum. It is
+	// omitted when an endpoint cannot resolve a custom status, so consumers must
+	// fall back to their catalog rather than treat a blank as "no category".
 	StatusCategory string `json:"status_category,omitempty"`
 	// StatusName is a CUSTOM status's display name, carried beside the key so a
 	// consumer that only ever sees `status` is not left holding a bare handle.
@@ -61,15 +60,25 @@ type IssueResponse struct {
 	// field at all: with omitempty a built-in fixture hides it from BOTH
 	// renderings, and the drift guard goes green on a payload that has drifted.
 	// (MUL-6749)
-	StatusName    string  `json:"status_name"`
-	Priority      string  `json:"priority"`
-	AssigneeType  *string `json:"assignee_type"`
-	AssigneeID    *string `json:"assignee_id"`
+	StatusName   string  `json:"status_name"`
+	Priority     string  `json:"priority"`
+	AssigneeType *string `json:"assignee_type"`
+	AssigneeID   *string `json:"assignee_id"`
+	// ReviewerType / ReviewerID are the acceptance slot, shaped exactly like
+	// the assignee pair: a REFERENCE to an agent or a member, not a copy of a
+	// name, so renaming or archiving the target cannot leave stale text behind.
+	// ReviewerType also carries the value 'none' ("this issue needs no
+	// acceptance pass"), which is a written answer and not an empty slot —
+	// with ReviewerID nil. Both nil means nobody has decided yet. (DENE-633)
+	ReviewerType  *string `json:"reviewer_type"`
+	ReviewerID    *string `json:"reviewer_id"`
 	CreatorType   string  `json:"creator_type"`
 	CreatorID     string  `json:"creator_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
 	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
+	// Visibility is the issue's sharing scope (DENE-698).
+	Visibility string  `json:"visibility,omitempty"`
+	Position   float64 `json:"position"`
 	// OriginType / OriginID are the issue's provenance for platform-internal
 	// flows — autopilot runs, quick-create tasks, and requirement alignment
 	// (`origin_type='issue_draft'`, `origin_id` = the alignment's
@@ -132,9 +141,22 @@ var validIssuePriorities = []string{"urgent", "high", "medium", "low", "none"}
 // driven); it is scoped out here so this change cannot alter the table view for
 // workspaces that have no custom statuses.
 var validIssueStatuses = issuestatus.Canonical()
+var validIssueStatusCategories = issuestatus.Categories()
 
-// Status sort follows the board's category order and resolves custom keys to
-// their effective category with one catalog read plus a parameterized CASE.
+// Status sort ranks by the CONCRETE status key, in the catalog's own display
+// order. Sorting is a display question, so it resolves on status; only behavior
+// decisions aggregate on the four lifecycle categories (MUL-7379).
+//
+// Ranking by category instead collapses the seven built-ins into four buckets —
+// Backlog ties with Todo, and In Progress / In Review / Blocked all tie — which
+// leaves the created_at tiebreak deciding the visible order of a list the user
+// explicitly asked to sort by status.
+//
+// issueTableStatusOrder is the same "board order" the status GROUPING path
+// already builds, so sorting and grouping now share one source of truth instead
+// of drifting apart. Archived statuses are included because issues stay on them
+// after archival and still have to rank somewhere real.
+//
 // Keeping the indexed column bare avoids the per-row issue_effective_status()
 // call that would otherwise turn a bounded page into a workspace scan.
 func (h *Handler) issueStatusSortExpression(
@@ -142,15 +164,17 @@ func (h *Handler) issueStatusSortExpression(
 	workspaceID pgtype.UUID,
 	addArg func(any) string,
 ) (string, error) {
-	customKeys, err := issuestatus.CustomKeyCategories(
-		ctx,
-		h.issueStatusCatalog(),
-		workspaceID,
-	)
+	entries, err := h.issueStatusCatalog().ListIssueStatusEntries(ctx, db.ListIssueStatusEntriesParams{
+		WorkspaceID:     workspaceID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		return "", err
 	}
-	return statusOrderExpression(statusCategoryExpr(customKeys, addArg)), nil
+	return fmt.Sprintf(
+		"COALESCE(array_position(%s::text[], i.status), 100000)",
+		addArg(issueTableStatusOrder(entries)),
+	), nil
 }
 
 // resolveIssueStatusKey checks a status against the workspace's catalog and
@@ -213,8 +237,8 @@ var errIssueStatusArchivedRace = errors.New("issue status was archived while the
 //
 //   - archive first: it commits, this re-resolve then fails and the write is
 //     rejected, so no new assignment lands on an archived status;
-//   - writer first: archive blocks until this transaction commits, then retires
-//     the status from future use while the issue keeps its existing assignment.
+//   - writer first: archive blocks until this transaction commits, then its
+//     issue count rejects archival of the now-occupied status.
 //
 // A built-in status is a no-op: it can never be archived (enforced by
 // issue_status_system_not_archivable), so the common path takes no lock and
@@ -283,8 +307,8 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 }
 
 // fillStatusCategories resolves status_category for responses whose status is
-// CUSTOM. The pure builders below fill it for built-in keys — where key IS the
-// category — and leave it empty otherwise, so this is the step that makes the
+// CUSTOM. The pure builders below map built-ins directly and leave custom
+// statuses empty, so this is the step that makes the
 // field authoritative on every payload a client caches or buckets by.
 //
 // Uses one Resolver for the whole slice: built-in statuses cost no query, and a
@@ -309,7 +333,7 @@ func (h *Handler) newStatusCategoryFiller(ctx context.Context, wsID pgtype.UUID)
 		if resp == nil || resp.StatusCategory != "" {
 			return
 		}
-		resp.StatusCategory = resolver.Effective(ctx, h.Queries, resp.Status)
+		resp.StatusCategory = issuestatus.WireCategory(resp.Status, resolver.Category(ctx, h.Queries, resp.Status))
 		// Same Resolver, same single catalog read, so the name rides along for
 		// free. Built-ins return "" and stay omitted. (MUL-6749)
 		resp.StatusName = resolver.Name(ctx, h.Queries, resp.Status)
@@ -332,10 +356,8 @@ func issueIdentifier(issuePrefix string, number int32) string {
 
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issueIdentifier(issuePrefix, i.Number)
-	// A built-in status IS its own category, so this costs no catalog lookup and
-	// every response carries it. A CUSTOM status is left empty here and filled
-	// in by endpoints that resolve the catalog (see the children endpoints'
-	// Resolver); consumers fall back on the same rule. (MUL-6243)
+	// Built-ins map to public categories without a catalog lookup. A custom
+	// status is filled by endpoints that resolve the workspace catalog.
 	statusCategory := ""
 	if issuestatus.IsBuiltIn(i.Status) {
 		statusCategory = i.Status
@@ -352,10 +374,13 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		Priority:       i.Priority,
 		AssigneeType:   textToPtr(i.AssigneeType),
 		AssigneeID:     uuidToPtr(i.AssigneeID),
+		ReviewerType:   textToPtr(i.ReviewerType),
+		ReviewerID:     uuidToPtr(i.ReviewerID),
 		CreatorType:    i.CreatorType,
 		CreatorID:      uuidToString(i.CreatorID),
 		ParentIssueID:  uuidToPtr(i.ParentIssueID),
 		ProjectID:      uuidToPtr(i.ProjectID),
+		Visibility:     i.Visibility,
 		Position:       i.Position,
 		OriginType:     textToPtr(i.OriginType),
 		OriginID:       uuidToPtr(i.OriginID),
@@ -391,10 +416,13 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		Priority:       i.Priority,
 		AssigneeType:   textToPtr(i.AssigneeType),
 		AssigneeID:     uuidToPtr(i.AssigneeID),
+		ReviewerType:   textToPtr(i.ReviewerType),
+		ReviewerID:     uuidToPtr(i.ReviewerID),
 		CreatorType:    i.CreatorType,
 		CreatorID:      uuidToString(i.CreatorID),
 		ParentIssueID:  uuidToPtr(i.ParentIssueID),
 		ProjectID:      uuidToPtr(i.ProjectID),
+		Visibility:     i.Visibility,
 		Position:       i.Position,
 		Stage:          int4ToPtr(i.Stage),
 		StartDate:      dateToPtr(i.StartDate),
@@ -460,10 +488,13 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 		Priority:       i.Priority,
 		AssigneeType:   textToPtr(i.AssigneeType),
 		AssigneeID:     uuidToPtr(i.AssigneeID),
+		ReviewerType:   textToPtr(i.ReviewerType),
+		ReviewerID:     uuidToPtr(i.ReviewerID),
 		CreatorType:    i.CreatorType,
 		CreatorID:      uuidToString(i.CreatorID),
 		ParentIssueID:  uuidToPtr(i.ParentIssueID),
 		ProjectID:      uuidToPtr(i.ProjectID),
+		Visibility:     i.Visibility,
 		Position:       i.Position,
 		Stage:          int4ToPtr(i.Stage),
 		StartDate:      dateToPtr(i.StartDate),
@@ -662,7 +693,7 @@ type searchResult struct {
 // case-insensitive LIKE semantics as the legacy query. The pipeline deliberately
 // trades the title, description, and comment content GIN fast paths for one
 // predictable pass over each relation within the selected workspace.
-func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, terminalStatusKeys []string) (string, []any) {
+func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, terminalStatusKeys []string, viewer visibilityViewer) (string, []any) {
 	// Lowercase in Go so SQL only needs LOWER() on the column side.
 	phrase = strings.ToLower(phrase)
 	for i, term := range terms {
@@ -699,6 +730,13 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		// searchable instead of disappearing from the default result set.
 		terminalStatusesParam = nextArg(terminalStatusKeys)
 	}
+
+	// Sharing scope narrows the candidate stage, not the result page: search
+	// paginates, so a hidden row dropped afterwards would shrink pages and
+	// eventually leak through the total. Stage two is driven by issue_matches,
+	// so filtering there covers comment matches too. Bound before limit/offset
+	// because the caller fills those by position from the end.
+	visibilityPredicate := viewer.issueVisibilitySQL("i", nextArg)
 
 	limitParam := nextArg(nil)
 	offsetParam := nextArg(nil)
@@ -741,7 +779,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		)
 	}
 
-	issueWhere := "i.workspace_id = " + wsParam
+	issueWhere := "i.workspace_id = " + wsParam + " AND " + visibilityPredicate
 	if terminalStatusesParam != "" {
 		issueWhere += fmt.Sprintf(" AND NOT (i.status = ANY(%s::text[]))", terminalStatusesParam)
 	}
@@ -953,10 +991,10 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	%s,
 	%s
 	SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+		i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
 		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
-		i.revision,
+		i.revision, i.visibility,
 		pc.match_source,
 		COALESCE(c.content, '') AS matched_comment_content
 	FROM page_candidates pc
@@ -1019,14 +1057,21 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		terminalStatusKeys = resolvedKeys
 	}
 
-	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, includeClosed, terminalStatusKeys)
+	searchViewer, err := h.visibilityViewerFor(r, wsUUID)
+	if err != nil {
+		// The caller's sharing facts could not be established. Search sees
+		// nothing rather than falling back to an unfiltered scan.
+		writeJSON(w, http.StatusOK, map[string]any{"issues": []SearchIssueResponse{}})
+		return
+	}
+	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, includeClosed, terminalStatusKeys, searchViewer)
 	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
 	args[3] = wsUUID
 	args[len(args)-2] = limit
 	args[len(args)-1] = offset
 
 	var results []searchResult
-	err := runSearchQuery(ctx, h.TxStarter, sqlQuery, args, func(rows pgx.Rows) error {
+	err = runSearchQuery(ctx, h.TxStarter, sqlQuery, args, func(rows pgx.Rows) error {
 		for rows.Next() {
 			var sr searchResult
 			if err := rows.Scan(
@@ -1038,6 +1083,8 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.Priority,
 				&sr.issue.AssigneeType,
 				&sr.issue.AssigneeID,
+				&sr.issue.ReviewerType,
+				&sr.issue.ReviewerID,
 				&sr.issue.CreatorType,
 				&sr.issue.CreatorID,
 				&sr.issue.ParentIssueID,
@@ -1052,6 +1099,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.Number,
 				&sr.issue.ProjectID,
 				&sr.issue.Revision,
+				&sr.issue.Visibility,
 				&sr.matchSource,
 				&sr.matchedCommentContent,
 			); err != nil {
@@ -1230,6 +1278,11 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
 			return
 		}
+		openViewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+		if viewerErr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"issues": []IssueResponse{}, "total": 0})
+			return
+		}
 		issues, err := h.Queries.ListOpenIssues(ctx, db.ListOpenIssuesParams{
 			WorkspaceID:        wsUUID,
 			TerminalStatusKeys: terminalStatusKeys,
@@ -1245,6 +1298,20 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
 			return
+		}
+
+		// open_only returns the whole set rather than a page, so filtering
+		// here cannot shrink a page or skew a total.
+		if !openViewer.bypasses() {
+			visible := issues[:0]
+			for _, issue := range issues {
+				if openViewer.canSeeIssueFields(
+					issue.Visibility, issue.CreatorType, issue.CreatorID, issue.ProjectID,
+					issue.AssigneeType.String, issue.AssigneeID) {
+					visible = append(visible, issue)
+				}
+			}
+			issues = visible
 		}
 
 		prefix := h.getIssuePrefix(ctx, wsUUID)
@@ -1292,10 +1359,10 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if len(statusesFilter) == 0 {
 		statusesFilter = splitCommaParam(r.URL.Query().Get("status"))
 	}
-	// status_category filters by BEHAVIOR rather than by exact key, so one
-	// board column can hold a category's canonical status plus every custom
-	// status that inherits it. Without this the board would need one column —
-	// and one request — per status. (MUL-6243)
+	// status_category filters by lifecycle phase rather than by exact key, so
+	// one board column can hold all concrete and custom statuses in that phase.
+	// Without this the board would need one column — and one request — per
+	// status. (MUL-6243, MUL-7240)
 	statusCategoriesFilter := splitCommaParam(r.URL.Query().Get("status_categories"))
 	if len(statusCategoriesFilter) == 0 {
 		statusCategoriesFilter = splitCommaParam(r.URL.Query().Get("status_category"))
@@ -1396,6 +1463,15 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
+	// Sharing scope belongs in the window, next to the facets and for the same
+	// reason: a row removed after LIMIT/OFFSET would shrink the page and leave
+	// `total` counting issues the caller cannot see.
+	listViewer, err := h.visibilityViewerFor(r, wsUUID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"issues": []IssueResponse{}, "total": 0})
+		return
+	}
+	where = append(where, listViewer.issueVisibilitySQL("i", addArg))
 	if sortByStatus {
 		var err error
 		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
@@ -1572,6 +1648,18 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	whereSql := strings.Join(where, " AND ")
 
 	// Build ORDER BY clause.
+	// Count queries use only filter parameters. Sort-only CASE parameters must
+	// be appended afterwards or COUNT receives unused/untyped bind positions.
+	filterArgCount := len(args)
+	if sortByStatus {
+		var err error
+		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
+		if err != nil {
+			slog.Warn("resolve status sort failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to resolve sort")
+			return
+		}
+	}
 	orderBy := sortCol
 	if !sortIsExpr {
 		orderBy = "i." + sortCol
@@ -1595,9 +1683,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	limitRef := addArg(int64(limit))
 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-	   i.revision
+	   i.revision, i.visibility
 FROM issue i
 WHERE %s
 ORDER BY %s
@@ -1623,6 +1711,8 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Priority,
 			&row.AssigneeType,
 			&row.AssigneeID,
+			&row.ReviewerType,
+			&row.ReviewerID,
 			&row.CreatorType,
 			&row.CreatorID,
 			&row.ParentIssueID,
@@ -1638,6 +1728,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.Visibility,
 		); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -1654,7 +1745,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	// Get the true total count for pagination awareness.
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
 	// Count query uses the same args minus the OFFSET and LIMIT params (last two added).
-	countArgs := args[:len(args)-2]
+	countArgs := args[:filterArgCount]
 	var total int64
 	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		slog.Warn("ListIssues count failed", "error", err)
@@ -1884,6 +1975,15 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
+
+	// Sharing scope, inside the grouped window for the same reason as the
+	// table's: a group header counting issues the caller cannot open is worse
+	// than no group at all.
+	groupViewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+	if viewerErr != nil {
+		groupViewer = visibilityViewer{}
+	}
+	where = append(where, groupViewer.issueVisibilitySQL("i", addArg))
 
 	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
 	if len(statuses) == 0 {
@@ -2194,7 +2294,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 WITH ranked AS (
 	SELECT
 		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+		i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
 		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
@@ -2207,7 +2307,7 @@ WITH ranked AS (
 )
 SELECT
 	id, workspace_id, title, description, status, priority,
-	assignee_type, assignee_id, creator_type, creator_id,
+	assignee_type, assignee_id, reviewer_type, reviewer_id, creator_type, creator_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at, last_activity_at,
 	number, project_id, metadata, stage, properties, revision, group_total
 FROM ranked
@@ -2243,6 +2343,8 @@ ORDER BY
 			&row.Priority,
 			&row.AssigneeType,
 			&row.AssigneeID,
+			&row.ReviewerType,
+			&row.ReviewerID,
 			&row.CreatorType,
 			&row.CreatorID,
 			&row.ParentIssueID,
@@ -2374,6 +2476,14 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list child issues")
 		return
 	}
+	// A parent the caller can see does not vouch for its children: each child
+	// carries its own scope. The list is unpaginated, so filtering here is the
+	// whole answer.
+	if viewer, viewerErr := h.visibilityViewerFor(r, issue.WorkspaceID); viewerErr == nil {
+		children = viewer.filterIssues(children)
+	} else {
+		children = nil
+	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	ids := make([]pgtype.UUID, len(children))
 	for i, child := range children {
@@ -2382,14 +2492,14 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 	labelsMap := h.labelsByIssue(r.Context(), issue.WorkspaceID, ids)
 	// Sub-issue progress is computed from these rows (the CLI's `issue children`
 	// stage counts, among others), so they carry the resolved category — a
-	// custom done status must count as done. One Resolver for the whole list:
+	// custom completed status must count as completed. One Resolver for the whole list:
 	// built-in statuses still cost no query, and a list full of custom ones
 	// costs one catalog read rather than one per row.
 	statusResolver := issuestatus.NewResolver(issue.WorkspaceID)
 	resp := make([]IssueResponse, len(children))
 	for i, child := range children {
 		resp[i] = issueToResponse(child, prefix)
-		resp[i].StatusCategory = statusResolver.Effective(r.Context(), h.Queries, child.Status)
+		resp[i].StatusCategory = issuestatus.WireCategory(child.Status, statusResolver.Category(r.Context(), h.Queries, child.Status))
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -2460,6 +2570,11 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to list child issues")
 		return
 	}
+	if viewer, viewerErr := h.visibilityViewerFor(r, wsUUID); viewerErr == nil {
+		children = viewer.filterIssues(children)
+	} else {
+		children = nil
+	}
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
 	ids := make([]pgtype.UUID, len(children))
 	for i, child := range children {
@@ -2468,14 +2583,14 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 	labelsMap := h.labelsByIssue(r.Context(), wsUUID, ids)
 	// Sub-issue progress is computed from these rows (the CLI's `issue children`
 	// stage counts, among others), so they carry the resolved category — a
-	// custom done status must count as done. One Resolver for the whole list:
+	// custom completed status must count as completed. One Resolver for the whole list:
 	// built-in statuses still cost no query, and a list full of custom ones
 	// costs one catalog read rather than one per row.
 	statusResolver := issuestatus.NewResolver(wsUUID)
 	resp := make([]IssueResponse, len(children))
 	for i, child := range children {
 		resp[i] = issueToResponse(child, prefix)
-		resp[i].StatusCategory = statusResolver.Effective(r.Context(), h.Queries, child.Status)
+		resp[i].StatusCategory = issuestatus.WireCategory(child.Status, statusResolver.Category(r.Context(), h.Queries, child.Status))
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -3247,17 +3362,23 @@ type UpdateIssueRequest struct {
 	// that landed asynchronously after that base without making media already
 	// present in the base impossible for the user to delete. Older clients omit
 	// it and receive conservative channel-media preservation.
-	DescriptionBase *string  `json:"description_base,omitempty"`
-	Status          *string  `json:"status"`
-	Priority        *string  `json:"priority"`
-	AssigneeType    *string  `json:"assignee_type"`
-	AssigneeID      *string  `json:"assignee_id"`
-	Position        *float64 `json:"position"`
-	StartDate       *string  `json:"start_date"`
-	DueDate         *string  `json:"due_date"`
-	ParentIssueID   *string  `json:"parent_issue_id"`
-	ProjectID       *string  `json:"project_id"`
-	Stage           *int32   `json:"stage"`
+	DescriptionBase *string `json:"description_base,omitempty"`
+	Status          *string `json:"status"`
+	Priority        *string `json:"priority"`
+	AssigneeType    *string `json:"assignee_type"`
+	AssigneeID      *string `json:"assignee_id"`
+	// ReviewerType / ReviewerID set the acceptance slot. Sending the pair as
+	// explicit nulls clears it back to "undecided"; sending reviewer_type
+	// "none" with a null id records "this issue needs no acceptance pass",
+	// which is an answer and not an empty slot. (DENE-633)
+	ReviewerType  *string  `json:"reviewer_type"`
+	ReviewerID    *string  `json:"reviewer_id"`
+	Position      *float64 `json:"position"`
+	StartDate     *string  `json:"start_date"`
+	DueDate       *string  `json:"due_date"`
+	ParentIssueID *string  `json:"parent_issue_id"`
+	ProjectID     *string  `json:"project_id"`
+	Stage         *int32   `json:"stage"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -3334,6 +3455,15 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 	if !assigneeTypeTouched && !assigneeIDTouched {
 		params.AssigneeType = current.AssigneeType
 		params.AssigneeID = current.AssigneeID
+	}
+	// Same pairing rule as the assignee above: reviewer_type and reviewer_id
+	// are one validated value, so an untouched pair is restored whole from the
+	// locked row and a touched one is left exactly as validation left it.
+	_, reviewerTypeTouched := rawFields["reviewer_type"]
+	_, reviewerIDTouched := rawFields["reviewer_id"]
+	if !reviewerTypeTouched && !reviewerIDTouched {
+		params.ReviewerType = current.ReviewerType
+		params.ReviewerID = current.ReviewerID
 	}
 	if _, touched := rawFields["start_date"]; !touched {
 		params.StartDate = current.StartDate
@@ -3485,11 +3615,20 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
 
+	if prevIssue.TriageState.Valid {
+		if field := triageLockedField(rawFields); field != "" {
+			writeIssueInTriage(w, field)
+			return
+		}
+	}
+
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
 		ID:            prevIssue.ID,
 		AssigneeType:  prevIssue.AssigneeType,
 		AssigneeID:    prevIssue.AssigneeID,
+		ReviewerType:  prevIssue.ReviewerType,
+		ReviewerID:    prevIssue.ReviewerID,
 		StartDate:     prevIssue.StartDate,
 		DueDate:       prevIssue.DueDate,
 		ParentIssueID: prevIssue.ParentIssueID,
@@ -3553,6 +3692,24 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			params.AssigneeID = id
 		} else {
 			params.AssigneeID = pgtype.UUID{Valid: false} // explicit null = unassign
+		}
+	}
+	if _, ok := rawFields["reviewer_type"]; ok {
+		if req.ReviewerType != nil {
+			params.ReviewerType = pgtype.Text{String: *req.ReviewerType, Valid: true}
+		} else {
+			params.ReviewerType = pgtype.Text{Valid: false} // explicit null = undecided again
+		}
+	}
+	if _, ok := rawFields["reviewer_id"]; ok {
+		if req.ReviewerID != nil {
+			id, ok := parseUUIDOrBadRequest(w, *req.ReviewerID, "reviewer_id")
+			if !ok {
+				return
+			}
+			params.ReviewerID = id
+		} else {
+			params.ReviewerID = pgtype.UUID{Valid: false}
 		}
 	}
 	if _, ok := rawFields["start_date"]; ok {
@@ -3642,6 +3799,18 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			params.ProjectID = pgtype.UUID{Valid: false}
 		}
 	}
+	// An issue moved into a different project takes that project's current
+	// scope, then stays independent of it (DENE-698). Re-reading the project
+	// here rather than trusting the request keeps the inherited value the one
+	// the project actually has.
+	if params.ProjectID.Valid && uuidToString(params.ProjectID) != uuidToString(prevIssue.ProjectID) {
+		if target, projectErr := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+			ID:          params.ProjectID,
+			WorkspaceID: prevIssue.WorkspaceID,
+		}); projectErr == nil && permission.Visibility(target.Visibility).Valid() {
+			params.Visibility = pgtype.Text{String: target.Visibility, Valid: true}
+		}
+	}
 	if _, ok := rawFields["stage"]; ok {
 		if req.Stage != nil {
 			if *req.Stage < 1 {
@@ -3667,6 +3836,15 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	_, touchedID := rawFields["assignee_id"]
 	if touchedType || touchedID {
 		if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
+			writeError(w, status, msg)
+			return
+		}
+	}
+
+	_, touchedReviewerType := rawFields["reviewer_type"]
+	_, touchedReviewerID := rawFields["reviewer_id"]
+	if touchedReviewerType || touchedReviewerID {
+		if status, msg := h.validateReviewerPair(r.Context(), workspaceID, params.ReviewerType, params.ReviewerID); status != 0 {
 			writeError(w, status, msg)
 			return
 		}
@@ -3809,8 +3987,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
 		h.notifyWaitersOfIssueDone(r.Context(), prevIssue, issue)
 		// Routing hook (DENE-633): the status is now what it is, so ask who
-		// should be holding this ticket. Routing never writes a status of its
-		// own, so this cannot loop back here.
+		// should be holding this ticket. The one status routing can write is
+		// in_review -> done, from the stale sweep (DENE-712), and that write
+		// does not come through here — it calls the same two notifications
+		// above for itself. So this cannot loop back.
 		h.RouteIssueAsync(r, uuidToString(issue.WorkspaceID), uuidToString(issue.ID))
 	}
 
@@ -3832,6 +4012,66 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 // Returns (statusCode, errorMessage). statusCode == 0 means the pair is valid;
 // callers should treat any non-zero status as a rejection and surface it back
 // to the client.
+// validateReviewerPair checks the acceptance slot the same way
+// validateAssigneePair checks the executor slot: the pair is a reference, so
+// it must point at something that exists in THIS workspace.
+//
+// It deliberately does not run the invoke-permission check the assignee
+// branch runs. Naming a reviewer does not dispatch work — the routing layer
+// hands the ticket over only when it reaches in_review, and that handoff goes
+// through the same assignment path, with the same permission check, then.
+//
+// 'none' is the one type that carries no id: it means "this issue needs no
+// acceptance pass", which is a decision worth recording precisely because an
+// empty slot would otherwise be re-judged forever. (DENE-633)
+func (h *Handler) validateReviewerPair(ctx context.Context, workspaceID string, reviewerType pgtype.Text, reviewerID pgtype.UUID) (int, string) {
+	if !reviewerType.Valid {
+		if reviewerID.Valid {
+			return http.StatusBadRequest, "reviewer_id requires reviewer_type"
+		}
+		return 0, ""
+	}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return http.StatusBadRequest, "invalid workspace_id"
+	}
+	switch reviewerType.String {
+	case "none":
+		if reviewerID.Valid {
+			return http.StatusBadRequest, "reviewer_type 'none' takes no reviewer_id"
+		}
+		return 0, ""
+	case "member":
+		if !reviewerID.Valid {
+			return http.StatusBadRequest, "reviewer_type 'member' requires reviewer_id"
+		}
+		if _, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+			UserID:      reviewerID,
+			WorkspaceID: wsUUID,
+		}); err != nil {
+			return http.StatusBadRequest, "reviewer_id does not refer to a member of this workspace"
+		}
+		return 0, ""
+	case "agent":
+		if !reviewerID.Valid {
+			return http.StatusBadRequest, "reviewer_type 'agent' requires reviewer_id"
+		}
+		agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+			ID:          reviewerID,
+			WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			return http.StatusBadRequest, "reviewer_id does not refer to an agent of this workspace"
+		}
+		if agent.ArchivedAt.Valid {
+			return http.StatusBadRequest, "cannot set an archived agent as reviewer"
+		}
+		return 0, ""
+	default:
+		return http.StatusBadRequest, "reviewer_type must be 'member', 'agent', or 'none'"
+	}
+}
+
 func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, workspaceID string, assigneeType pgtype.Text, assigneeID pgtype.UUID) (int, string) {
 	// Both unset → unassigned issue, valid.
 	if !assigneeType.Valid && !assigneeID.Valid {
@@ -3847,11 +4087,20 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 	}
 	switch assigneeType.String {
 	case "member":
-		if _, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		target, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 			UserID:      assigneeID,
 			WorkspaceID: wsUUID,
-		}); err != nil {
+		})
+		if err != nil {
 			return http.StatusBadRequest, "assignee_id does not refer to a member of this workspace"
+		}
+		// Owning an issue is work, and a guest cannot do work: they can
+		// neither change its status nor comment on it, so an issue parked
+		// on a guest is an issue nobody is carrying. This is the assignment
+		// half of DENE-695's "guests cannot be assigned or @-triggered";
+		// the write half is middleware.GuestReadOnly.
+		if !permission.AllowedInWorkspace(permission.Role(target.Role), permission.WorkspaceBeAssigned) {
+			return http.StatusBadRequest, "guests cannot be assigned work"
 		}
 		return 0, ""
 	case "agent":
@@ -3913,8 +4162,10 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 // triggering execution. Moving out of backlog is handled separately in
 // UpdateIssue.
 func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
-	// A custom status in the backlog category parks like Backlog. (MUL-6243)
-	if issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
+	// Only the fixed backlog key parks work; custom unstarted statuses do not.
+	// An issue in Triage is not parked but refused: it produces no run from any
+	// entry point until it is accepted (MUL-7189 §2.3).
+	if issue.TriageState.Valid || issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
 		return false
 	}
 	return h.isAgentAssigneeReady(ctx, issue)
@@ -4236,10 +4487,14 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !h.validateBatchTriageLocks(w, r, wsUUID, req.IssueIDs, rawUpdates) {
+		return
+	}
 	// The batch shares one project_id, so it is checked once here rather than
 	// per issue, and rejected instead of skipped like the per-item guards in
 	// the loop: a foreign project invalidates the whole request.
 	batchProjectID := pgtype.UUID{Valid: false}
+	batchProjectVisibility := pgtype.Text{}
 	if _, ok := rawUpdates["project_id"]; ok && req.Updates.ProjectID != nil {
 		projectUUID, ok := parseUUIDOrBadRequest(w, *req.Updates.ProjectID, "project_id")
 		if !ok {
@@ -4259,6 +4514,14 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		batchProjectID = projectUUID
+		if project, projectErr := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+			ID:          projectUUID,
+			WorkspaceID: wsUUID,
+		}); projectErr == nil && permission.Visibility(project.Visibility).Valid() {
+			// Same inheritance as the single-issue move: everything landing in
+			// this project takes its current scope (DENE-698).
+			batchProjectVisibility = pgtype.Text{String: project.Visibility, Valid: true}
+		}
 	}
 
 	updated := 0
@@ -4287,6 +4550,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			ID:            prevIssue.ID,
 			AssigneeType:  prevIssue.AssigneeType,
 			AssigneeID:    prevIssue.AssigneeID,
+			ReviewerType:  prevIssue.ReviewerType,
+			ReviewerID:    prevIssue.ReviewerID,
 			StartDate:     prevIssue.StartDate,
 			DueDate:       prevIssue.DueDate,
 			ParentIssueID: prevIssue.ParentIssueID,
@@ -4392,6 +4657,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if _, ok := rawUpdates["project_id"]; ok {
 			// Resolved before the loop; an explicit null stays invalid and clears.
 			params.ProjectID = batchProjectID
+			if batchProjectID.Valid && uuidToString(batchProjectID) != uuidToString(prevIssue.ProjectID) {
+				params.Visibility = batchProjectVisibility
+			}
 		}
 		if _, ok := rawUpdates["stage"]; ok {
 			if req.Updates.Stage != nil {

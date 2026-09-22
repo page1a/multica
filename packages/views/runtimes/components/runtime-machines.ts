@@ -277,7 +277,9 @@ function runtimeMachineId(runtime: AgentRuntime): string {
   return `${runtime.runtime_mode}:runtime:${runtime.id}`;
 }
 
-function runtimeDeviceName(runtime: AgentRuntime): string | null {
+export function runtimeDeviceName(
+  runtime: Pick<AgentRuntime, "name" | "device_info">,
+): string | null {
   const host = splitRuntimeName(runtime.name).hostname;
   if (host) return host;
 

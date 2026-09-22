@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2009,5 +2010,130 @@ func TestDashboardMismatchedRequestTimezoneHidesTheRun(t *testing.T) {
 		t.Errorf("a request pinned to UTC counted %ds of a run the fixture placed in %s — "+
 			"the pin is meant to be the thing that keeps the two windows together, so a mismatch has to be visible here",
 			mismatched, dashboardFixtureTZ)
+	}
+}
+
+// TestDashboardUsageByIssueIsTheCostEntryPoint pins what the workspace usage
+// page needs to link into one issue's Token cost view: a row per
+// (issue, model) carrying the issue's human identifier and title, bounded to
+// the same window and project scope as the cards beside it.
+//
+// The identifier is the load-bearing field. The dashboard links with it (the
+// client resolves UUIDs and identifiers to the same page, but the identifier
+// is what the address bar canonicalizes to and what a copied link should
+// read), so a handler that emitted a bare UUID would make every link it
+// offers non-canonical. It is composed from the workspace prefix + issue
+// number, the same way issueToResponse composes it.
+func TestDashboardUsageByIssueIsTheCostEntryPoint(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	var runtimeID, agentID, prefix string
+	dbfx.QueryRow(t, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID)
+	dbfx.QueryRow(t, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID)
+	dbfx.QueryRow(t, `SELECT issue_prefix FROM workspace WHERE id = $1`, testWorkspaceID).Scan(&prefix)
+	if prefix == "" {
+		t.Fatalf("fixture workspace %s has no issue_prefix; the identifier assertion has nothing to compare against", testWorkspaceID)
+	}
+
+	projectID := dbfx.Project(t, "dashboard by-issue project")
+	projectIssueID := dbfx.Issue(t, "dashboard by-issue in project", testutil.Cols{"project_id": projectID})
+	otherIssueID := dbfx.Issue(t, "dashboard by-issue no project")
+
+	var projectNumber int32
+	dbfx.QueryRow(t, `SELECT number FROM issue WHERE id = $1`, projectIssueID).Scan(&projectNumber)
+
+	mkUsage := func(issueID string, tokens int64, age string) {
+		taskID := dbfx.Task(t, agentID, testutil.Cols{
+			"issue_id":     issueID,
+			"runtime_id":   runtimeID,
+			"status":       "completed",
+			"started_at":   testutil.Raw("now() - interval '10 minutes'"),
+			"completed_at": testutil.Raw("now()"),
+			"created_at":   testutil.Raw("now()"),
+		})
+		dbfx.Exec(t, `
+			INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at)
+			VALUES ($1, 'claude', 'claude-3-5-sonnet', $2, 0, now() - $3::interval)
+		`, taskID, tokens, age)
+		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	}
+
+	mkUsage(projectIssueID, 1000, "0 minutes")
+	mkUsage(otherIssueID, 500, "0 minutes")
+	// Outside the days=1 window: the list must not reach back past the cutoff
+	// the KPI tiles and the by-agent card use.
+	mkUsage(projectIssueID, 9999, "3 days")
+
+	type byIssueRow struct {
+		IssueID     string `json:"issue_id"`
+		Identifier  string `json:"identifier"`
+		Title       string `json:"title"`
+		Model       string `json:"model"`
+		InputTokens int64  `json:"input_tokens"`
+	}
+	get := func(query string) []byIssueRow {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.GetDashboardUsageByIssue(w, newRequest("GET", "/api/dashboard/usage/by-issue?"+query, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("by-issue %q: expected 200, got %d: %s", query, w.Code, w.Body.String())
+		}
+		var rows []byIssueRow
+		if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+			t.Fatalf("by-issue %q: decode: %v", query, err)
+		}
+		return rows
+	}
+	sumFor := func(rows []byIssueRow, issueID string) int64 {
+		var total int64
+		for _, r := range rows {
+			if r.IssueID == issueID {
+				total += r.InputTokens
+			}
+		}
+		return total
+	}
+
+	projectRows := get("days=1&" + dashboardFixtureTZParam + "&project_id=" + projectID)
+
+	if got := sumFor(projectRows, projectIssueID); got != 1000 {
+		t.Errorf("project-scoped window counted %d tokens for the in-project issue, want 1000 "+
+			"(the 9999-token row is 3 days old and the days=1 cutoff must exclude it)", got)
+	}
+	if got := sumFor(projectRows, otherIssueID); got != 0 {
+		t.Errorf("project-scoped window counted %d tokens for an issue outside the project, want 0", got)
+	}
+
+	var found *byIssueRow
+	for i := range projectRows {
+		if projectRows[i].IssueID == projectIssueID {
+			found = &projectRows[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("project-scoped window has no row for issue %s: %+v", projectIssueID, projectRows)
+	}
+	wantIdentifier := prefix + "-" + strconv.Itoa(int(projectNumber))
+	if found.Identifier != wantIdentifier {
+		t.Errorf("identifier = %q, want %q — the dashboard links with this field", found.Identifier, wantIdentifier)
+	}
+	if found.Title != "dashboard by-issue in project" {
+		t.Errorf("title = %q, want the issue title", found.Title)
+	}
+	if found.Model == "" {
+		t.Error("model is empty; the client prices cost from the per-model rate table and cannot price a collapsed row")
+	}
+
+	// Workspace-wide: no project filter, so the no-project issue shows up too.
+	wsRows := get("days=1&" + dashboardFixtureTZParam)
+	if got := sumFor(wsRows, projectIssueID); got != 1000 {
+		t.Errorf("workspace window counted %d tokens for the in-project issue, want 1000", got)
+	}
+	if got := sumFor(wsRows, otherIssueID); got != 500 {
+		t.Errorf("workspace window counted %d tokens for the no-project issue, want 500", got)
 	}
 }

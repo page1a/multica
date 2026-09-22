@@ -28,6 +28,12 @@
    - 无冲突：跑构建和测试（Go 与前端各跑一次，命令以仓库 README / Makefile 为准）。
 5. 推送同步分支并开 PR：`git push -u origin sync/upstream-<日期>`，`gh pr create --base kun --title "sync: upstream main <日期>"`。PR 必须经 Reviewer 审查，由人合并。
 
+### 已提前照搬到 `kun`、上游还没合并的 PR
+
+官方 PR 还开着时我们就先照搬了，上游随后合并会在同一处产生 diff，同步时按这里处理：
+
+- [upstream #8385](https://github.com/multica-ai/multica/pull/8385)（Antigravity 工具事件实时转发，DENE-723）：`server/pkg/agent/antigravity.go` 与官方逐行一致，不会冲突；`server/pkg/agent/antigravity_tools_test.go` 是 add/add 冲突点，取官方版本（官方那个 POSIX sh 版 live fixture 在 macOS 和 Linux 上都成立）。上游合并后删掉这一条。
+
 ## DeepSeek Harness
 
 官方已支持 `dsh` 运行时，但桥接包还没上公共 npm（[upstream #6936](https://github.com/multica-ai/multica/issues/6936)）。自托管请用本 fork 的一键脚本：

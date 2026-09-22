@@ -23,8 +23,23 @@ func dshTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
+	dshTestLedger(t)
 	dshInstallFakeGateway(t)
 	return home
+}
+
+// dshTestLedger points the replay ledger at a directory of the test's own.
+// Unlike DSH_HOME it is not read from the environment, so without this every
+// save in this package would append to the developer's real
+// ~/.multica/dsh-provider-presets.yaml — and a later replay there would write
+// a test's fixture into their own DSH installation.
+func dshTestLedger(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), dshLedgerFileName)
+	previous := dshLedgerPathFn
+	dshLedgerPathFn = func() (string, error) { return path, nil }
+	t.Cleanup(func() { dshLedgerPathFn = previous })
+	return path
 }
 
 func dshWriteTestFile(t *testing.T, path, content string) {

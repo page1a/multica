@@ -101,9 +101,19 @@
     "show_less": "상위 {{count}}개만",
     "no_data": "이 기간에는 에이전트 활동이 없습니다."
   },
+  "issues": {
+    "title": "비용이 가장 큰 이슈",
+    "caption": "이슈별 지출 · 열면 토큰 구성",
+    "header_issue": "이슈",
+    "header_tokens": "토큰",
+    "header_cost": "비용",
+    "show_all": "전체 보기",
+    "show_less": "상위 {{count}}개만",
+    "no_data": "이 기간에는 이슈 지출이 없습니다."
+  },
   "empty": {
     "title": "아직 사용량이 없습니다",
-    "body": "여기에서 에이전트가 실행을 시작하면 토큰 비용과 실행 시간이 이 화면에 표시됩니다."
+    "body": "에이전트를 실행하면 토큰 사용량과 실행 시간을 볼 수 있습니다."
   },
   "duration": {
     "less_than_minute": "1분 미만"

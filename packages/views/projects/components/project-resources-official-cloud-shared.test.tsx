@@ -48,6 +48,7 @@ vi.mock("../../platform/local-directory", () => ({
       basename: "pg-game",
     }),
   validateLocalDirectory: () => Promise.resolve({ ok: true, is_git_repo: false }),
+  validateWritablePath: async () => true,
 }));
 vi.mock("../../platform/use-local-daemon-status", () => ({
   useLocalDaemonStatus: () => ({ daemonId: "daemon-1", deviceName: "MacBook", running: true }),

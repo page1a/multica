@@ -7,10 +7,12 @@ import {
   activeProviderPreset,
   fetchProviderPresetModels,
   providerPresetErrorKind,
+  providerPresetSyncSummary,
   resolveRuntimeProviderPresets,
   runProviderPresetAction,
   runtimeProviderPresetsKeys,
   runtimeProviderPresetsOptions,
+  syncProviderPresetToRuntimes,
 } from "./provider-presets";
 import type {
   RuntimeProviderPreset,
@@ -143,6 +145,25 @@ describe("runProviderPresetAction payloads", () => {
       PROVIDER_PRESET_PROVIDER,
       "delete",
       { id: "command-code" },
+    );
+  });
+
+  // Replay restores what the daemon already recorded for its own DSH home
+  // (DENE-683), so the request names nothing — and above all carries no key:
+  // the credential is the one field a replay cannot put back, and the one the
+  // client has never held.
+  it("sends a replay payload with no fields at all", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({ action: "replay", providers: [preset()] }),
+    );
+
+    await runProviderPresetAction("rt-1", { action: "replay" });
+
+    expect(initiateProviderPresetAction).toHaveBeenCalledWith(
+      "rt-1",
+      PROVIDER_PRESET_PROVIDER,
+      "replay",
+      {},
     );
   });
 });
@@ -427,5 +448,87 @@ describe("providerPresetErrorKind", () => {
   it("is empty for an error the client raised itself", () => {
     expect(providerPresetErrorKind(new Error("boom"))).toBe("");
     expect(providerPresetErrorKind(new ProviderPresetActionError("boom"))).toBe("");
+  });
+});
+
+describe("syncProviderPresetToRuntimes", () => {
+  const upsert = {
+    id: "command-code",
+    api: PROVIDER_PRESET_DEFAULT_API,
+    base_url: "https://gateway.example.com/v1",
+    api_key_env: "COMMAND_CODE_API_KEY",
+    models: [{ id: "deepseek/deepseek-v4.1-flash" }],
+  };
+
+  it("sends the same upsert to every named runtime", async () => {
+    initiateProviderPresetAction.mockImplementation((runtimeId: string) =>
+      Promise.resolve({ id: `req-${runtimeId}`, status: "pending" }),
+    );
+    getProviderPresetResult.mockImplementation((runtimeId: string) =>
+      Promise.resolve(request({ runtime_id: runtimeId, action: "upsert", providers: [preset()] })),
+    );
+
+    const result = await syncProviderPresetToRuntimes({
+      runtimeIds: ["rt-1", "rt-2"],
+      preset: upsert,
+    });
+
+    expect(initiateProviderPresetAction.mock.calls.map((call) => call[0])).toEqual([
+      "rt-1",
+      "rt-2",
+    ]);
+    for (const call of initiateProviderPresetAction.mock.calls) {
+      expect(call[2]).toBe("upsert");
+      expect(call[3]).toMatchObject({ base_url: "https://gateway.example.com/v1" });
+    }
+    expect(result.outcomes.map((outcome) => outcome.status)).toEqual([
+      "synced",
+      "synced",
+    ]);
+    expect(Object.keys(result.configs).toSorted()).toEqual(["rt-1", "rt-2"]);
+  });
+
+  // The whole point of a fan-out receipt: a failure on one machine must not
+  // hide that the other one did take the write, or the user cannot tell what
+  // is still drifting.
+  it("reports a per-machine failure without losing the machines that succeeded", async () => {
+    initiateProviderPresetAction.mockImplementation((runtimeId: string) =>
+      runtimeId === "rt-2"
+        ? Promise.reject(new ProviderPresetActionError("daemon offline", "unreachable"))
+        : Promise.resolve({ id: "req-1", status: "pending" }),
+    );
+    getProviderPresetResult.mockResolvedValue(
+      request({ action: "upsert", providers: [preset()] }),
+    );
+
+    const result = await syncProviderPresetToRuntimes({
+      runtimeIds: ["rt-1", "rt-2"],
+      preset: upsert,
+    });
+
+    expect(result.outcomes).toEqual([
+      { runtimeId: "rt-1", status: "synced", error: "", errorKind: "" },
+      {
+        runtimeId: "rt-2",
+        status: "failed",
+        error: "daemon offline",
+        errorKind: "unreachable",
+      },
+    ]);
+    expect(Object.keys(result.configs)).toEqual(["rt-1"]);
+    expect(providerPresetSyncSummary(result.outcomes)).toEqual({ synced: 1, failed: 1 });
+  });
+
+  // An omitted key means "keep what each machine already stores". A fan-out
+  // that invented an empty one would blank a working credential on every
+  // target at once.
+  it("never puts a key on the wire that the caller did not supply", async () => {
+    getProviderPresetResult.mockResolvedValue(
+      request({ action: "upsert", providers: [preset()] }),
+    );
+
+    await syncProviderPresetToRuntimes({ runtimeIds: ["rt-1"], preset: upsert });
+
+    expect(initiateProviderPresetAction.mock.calls[0]?.[3]).not.toHaveProperty("api_key");
   });
 });

@@ -202,14 +202,59 @@ func TestAutomaticCleanupDoesNothingWhileDisabled(t *testing.T) {
 	}
 }
 
+// countingProbe records that the scan reached git at all. Its answers do not
+// matter — the point of the test below is that it is never asked.
+type countingProbe struct{ calls int }
+
+func (p *countingProbe) Dirty(string) (bool, error) { p.calls++; return true, nil }
+func (p *countingProbe) MergeEvidenceOf(_, _, _ string) (execenv.WorktreeMergeEvidence, error) {
+	p.calls++
+	return execenv.MergeEvidenceNone, nil
+}
+func (p *countingProbe) CurrentBranch(string) (string, error) { p.calls++; return "main", nil }
+func (p *countingProbe) DefaultBranch(string) (string, error) { p.calls++; return "main", nil }
+
+// With the policy off, the scheduled pass does not even LOOK (DENE-648). The
+// scan sizes every working copy and probes git in each; on a machine where
+// cleanup was never switched on that is gigabytes of disk IO every couple of
+// hours to reach a decision already made by the switch.
+func TestAutomaticCleanupDoesNotScanWhileDisabled(t *testing.T) {
+	state := withProfile(t)
+	probe := &countingProbe{}
+	state.probe = probe
+	root := t.TempDir()
+	copyPath := filepath.Join(root, "task-1")
+	if err := os.MkdirAll(copyPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordRoot(root, "/repo"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, errs := state.RunAutomatic(); len(errs) != 0 {
+		t.Fatalf("RunAutomatic errored while disabled: %v", errs)
+	}
+	if probe.calls != 0 {
+		t.Fatalf("the disabled pass ran %d git probes; it must return before scanning", probe.calls)
+	}
+
+	// The settings screen's preview still scans with the policy off — that is
+	// what lets a user read the verdicts before consenting (invariant 6).
+	if report := state.Scan(); len(report.Items) != 1 {
+		t.Fatalf("the preview stopped reporting copies while disabled: %+v", report.Items)
+	}
+}
+
 // The entry point (DENE-617 S1). Everything above tests the machine's rules;
 // this tests that something in production actually RUNS them. The feature's
 // whole promise — "turn it on and merged, aged, clean copies go away" — is a
 // promise about a scheduled pass, and a pass nothing calls keeps none of it.
 //
-// It drives d.runGC, the daemon's live periodic cycle, rather than
-// RunAutomatic: deleting the call inside runGC must turn this red.
-func TestPeriodicGCRunsTheAutomaticWorktreeCleanup(t *testing.T) {
+// It drives the scheduled loop itself rather than RunAutomatic, with daemon GC
+// switched OFF (DENE-648): the pass has to keep its promise on a machine whose
+// owner disabled workspace GC, because the storage screen's switch says nothing
+// about workspace GC.
+func TestScheduledCleanupRunsWithDaemonGCDisabled(t *testing.T) {
 	t.Setenv(cli.TaskConfigRootEnv, t.TempDir())
 	d := newGCTestDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -232,10 +277,22 @@ func TestPeriodicGCRunsTheAutomaticWorktreeCleanup(t *testing.T) {
 		t.Fatalf("fixture is not a removal candidate: %+v", report.Items)
 	}
 
-	d.runGC(context.Background())
+	d.cfg.GCEnabled = false
+	worktreeCleanupStartupDelay = time.Millisecond
+	t.Cleanup(func() { worktreeCleanupStartupDelay = 30 * time.Second })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.worktreeCleanupLoop(ctx)
 
-	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
-		t.Fatalf("the GC cycle left the qualifying copy at %q (stat err %v); automatic cleanup is not wired to anything", copyPath, err)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(copyPath); os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the scheduled pass left the qualifying copy at %q; automatic cleanup is not wired to anything (or is still gated on GCEnabled)", copyPath)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	// Removal went through git, so the repository has no orphan metadata left.
 	if out := runGitForGC(t, repo, "worktree", "list"); strings.Contains(out, copyPath) {
@@ -243,9 +300,9 @@ func TestPeriodicGCRunsTheAutomaticWorktreeCleanup(t *testing.T) {
 	}
 }
 
-// The same cycle with the policy off removes nothing (invariant 6): the switch
-// is the user's consent, and the GC cycle must not be a way around it.
-func TestPeriodicGCRemovesNothingWhileCleanupIsDisabled(t *testing.T) {
+// The same pass with the policy off removes nothing (invariant 6): the switch
+// is the user's consent, and the scheduled pass must not be a way around it.
+func TestScheduledCleanupRemovesNothingWhileCleanupIsDisabled(t *testing.T) {
 	t.Setenv(cli.TaskConfigRootEnv, t.TempDir())
 	d := newGCTestDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -256,10 +313,10 @@ func TestPeriodicGCRemovesNothingWhileCleanupIsDisabled(t *testing.T) {
 		t.Fatalf("RecordRoot: %v", err)
 	}
 
-	d.runGC(context.Background())
+	d.runWorktreeCleanup()
 
 	if _, err := os.Stat(copyPath); err != nil {
-		t.Fatalf("the GC cycle removed a copy while cleanup was switched off: %v", err)
+		t.Fatalf("the scheduled pass removed a copy while cleanup was switched off: %v", err)
 	}
 }
 

@@ -20,8 +20,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/coderesolve"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -163,8 +165,14 @@ type AgentResponse struct {
 	// (DENE-217). Default true. When false, FailTask and
 	// MaybeRetryFailedTask skip retryableReasons; manual rerun is
 	// unaffected.
-	AutoRetryEnabled bool   `json:"auto_retry_enabled"`
-	Model            string `json:"model"`
+	AutoRetryEnabled bool `json:"auto_retry_enabled"`
+	// WorkEnabled is the reversible seat gate (DENE-714). Default true.
+	// When false the seat stays in the list, keeps its routing tag and
+	// specialisations, and does not cancel running tasks — it is simply
+	// not selected for automatic dispatch, not woken by assignment, and
+	// does not claim new runs.
+	WorkEnabled bool   `json:"work_enabled"`
+	Model       string `json:"model"`
 	// ThinkingLevel is the runtime-native reasoning/effort token persisted
 	// for this agent (empty = use runtime default). The picker is per-runtime
 	// per-model; the API never normalizes across providers. See MUL-2339.
@@ -172,6 +180,12 @@ type AgentResponse struct {
 	// ServiceTier is the runtime-native Codex execution tier persisted for
 	// this agent (empty = inherit local Codex configuration).
 	ServiceTier string `json:"service_tier"`
+	// RoutingTier is the seat's strength rung for automatic dispatch
+	// (DENE-633): one of the ladder's tier keys, or empty for a seat that is
+	// not on the ladder. It is tagged by a person rather than derived from
+	// `model`, because the same model at another thinking_level is another
+	// rung.
+	RoutingTier string `json:"routing_tier"`
 	// ComposioToolkitAllowlist is the subset of Composio toolkit slugs this
 	// agent is allowed to mount as MCP at task dispatch — for ANY run that
 	// passes the agent's invocation permission, using the agent OWNER's
@@ -294,9 +308,11 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Status:                   a.Status,
 		MaxConcurrentTasks:       a.MaxConcurrentTasks,
 		AutoRetryEnabled:         a.AutoRetryEnabled,
+		WorkEnabled:              a.WorkEnabled,
 		Model:                    a.Model.String,
 		ThinkingLevel:            a.ThinkingLevel.String,
 		ServiceTier:              a.ServiceTier.String,
+		RoutingTier:              a.RoutingTier.String,
 		ComposioToolkitAllowlist: composioAllowlist,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
@@ -643,6 +659,14 @@ type ProjectResourceData struct {
 	ResourceType string          `json:"resource_type"`
 	ResourceRef  json.RawMessage `json:"resource_ref"`
 	Label        string          `json:"label,omitempty"`
+	// Access is "read-write" for the single directory this run writes in and
+	// "read-only" for every other local_directory on the machine (DENE-619).
+	// Empty for resource types that have no access dimension, such as a
+	// repository, which is checked out rather than written in place. The
+	// daemon carries it into .multica/project/resources.json and the brief, so
+	// an agent can read across a project's directories while only one of them
+	// is its workspace. Mirror field: internal/daemon/types.go, same JSON name.
+	Access string `json:"access,omitempty"`
 }
 
 // TaskProjectContextData is one project attached to a daemon claim. The daemon
@@ -731,6 +755,11 @@ type AgentTaskResponse struct {
 	// the cap, so the brief can say the list is incomplete instead of
 	// presenting a truncated catalog as the whole one.
 	IssueStatusesOmitted int                   `json:"issue_statuses_omitted,omitempty"`
+	IssueStateDeltaKnown bool                  `json:"issue_state_delta_known,omitempty"`
+	IssueChangedFields   []string              `json:"issue_changed_fields,omitempty"`
+	IssueStatus          string                `json:"issue_status,omitempty"`
+	IssueAssigneeType    string                `json:"issue_assignee_type,omitempty"`
+	IssueAssigneeID      string                `json:"issue_assignee_id,omitempty"`
 	ThreadName           string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Status               string                `json:"status"`
 	Priority             int32                 `json:"priority"`
@@ -752,6 +781,14 @@ type AgentTaskResponse struct {
 	ProjectTitle         string                `json:"project_title,omitempty"`       // for surfacing in agent context
 	ProjectDescription   string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
 	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
+	// CodeDecision states which code this run uses, computed once on the
+	// server by internal/coderesolve and shipped with the task so the daemon
+	// and the desktop UI read one answer instead of each deriving it from the
+	// resource list (DENE-619). Failure is a value here (kind=unresolvable
+	// with a code), never a missing field: a daemon that reads no decision is
+	// talking to a server that predates it, which is a different situation
+	// from a run whose code source could not be resolved.
+	CodeDecision *coderesolve.Decision `json:"code_decision,omitempty"`
 	// Projects is the task's full project set in priority order (DENE-523): a
 	// chat session can attach several projects, every other surface at most
 	// one. The singular project_* fields above mirror the FIRST entry so a
@@ -816,9 +853,6 @@ type AgentTaskResponse struct {
 	NewCommentsDeltaKnown    bool                  `json:"new_comments_delta_known,omitempty"`
 	IssueTitle               string                `json:"issue_title,omitempty"`
 	IssueDescription         string                `json:"issue_description,omitempty"`
-	IssueStatus              string                `json:"issue_status,omitempty"`
-	IssueAssigneeType        string                `json:"issue_assignee_type,omitempty"`
-	IssueAssigneeID          string                `json:"issue_assignee_id,omitempty"`
 	IssueCommentSummaries    []IssueContextComment `json:"issue_comment_summaries,omitempty"`
 	IssueTriggerThread       []IssueContextComment `json:"issue_trigger_thread,omitempty"`
 	IssueNewComments         []IssueContextComment `json:"issue_new_comments,omitempty"`
@@ -1199,6 +1233,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		Error:                  textToPtr(t.Error),
 		FailureReason:          failureReason,
 		BranchName:             branchName,
+		CodeDecision:           codeDecisionFromRow(t.CodeDecision),
 		Attempt:                t.Attempt,
 		MaxAttempts:            t.MaxAttempts,
 		ParentTaskID:           uuidToPtr(t.ParentTaskID),
@@ -1686,6 +1721,10 @@ type CreateAgentRequest struct {
 	Model              string                     `json:"model"`
 	ThinkingLevel      string                     `json:"thinking_level"`
 	ServiceTier        string                     `json:"service_tier"`
+	// RoutingTier is the seat's rung on the dispatch ladder (DENE-633).
+	// Empty on a specialisation inherits the base role's rung: a direction
+	// seat is the same strength as the seat it specialises.
+	RoutingTier string `json:"routing_tier"`
 	// ComposioToolkitAllowlist seeds the per-task overlay gate (MUL-3869). On
 	// create only the calling user can be the owner, so we accept the field
 	// unconditionally here; the cross-owner permission gate lives on PUT.
@@ -1956,7 +1995,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		// its picker says "Extra high" is the same lie as an agent whose saved
 		// level was silently dropped, and two copies of these three steps is
 		// how the two answers drift apart.
-		if !h.thinkingLevelAcceptedForRuntime(w, r, runtime, req.ThinkingLevel) {
+		if !h.thinkingLevelAcceptedForRuntime(w, r, runtime, req.ThinkingLevel, req.Model) {
 			return
 		}
 		if !agent.IsKnownServiceTier(runtime.Provider, req.ServiceTier) {
@@ -2042,6 +2081,21 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	createdModel := pgtype.Text{String: req.Model, Valid: req.Model != ""}
 	createdThinkingLevel := pgtype.Text{String: req.ThinkingLevel, Valid: req.ThinkingLevel != ""}
 	createdServiceTier := pgtype.Text{String: req.ServiceTier, Valid: req.ServiceTier != ""}
+	routingTierKey, tierOK := routing.DefaultLadder.NormalizeTier(req.RoutingTier)
+	if !tierOK {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"routing_tier %q is not a known tier; expected one of %s",
+			req.RoutingTier, strings.Join(routing.DefaultLadder.TierKeys(), ", ")))
+		return
+	}
+	createdRoutingTier := pgtype.Text{String: routingTierKey, Valid: routingTierKey != ""}
+	if parentAgent.ID.Valid && routingTierKey == "" {
+		// A specialisation with no rung of its own sits on its base role's
+		// rung. Strength follows the runtime profile it was cloned from, so
+		// leaving the 16 direction seats untagged would take them all off the
+		// ladder the moment tags become how rungs are decided.
+		createdRoutingTier = parentAgent.RoutingTier
+	}
 	if inheritRuntime {
 		createdRuntimeMode = parentAgent.RuntimeMode
 		createdRuntimeID = parentAgent.RuntimeID
@@ -2078,6 +2132,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		Model:                    createdModel,
 		ThinkingLevel:            createdThinkingLevel,
 		ServiceTier:              createdServiceTier,
+		RoutingTier:              createdRoutingTier,
 		ConversationStarters:     sp,
 		ComposioToolkitAllowlist: allowlist,
 		ParentAgentID:            parentAgentUUID,
@@ -2214,6 +2269,10 @@ type UpdateAgentRequest struct {
 	// ServiceTier follows the same tri-state contract as ThinkingLevel:
 	// omitted preserves, empty clears, and non-empty sets a Codex catalog ID.
 	ServiceTier *string `json:"service_tier"`
+	// RoutingTier follows the same tri-state contract: omitted preserves,
+	// empty takes the seat off the routing ladder, and a tier key or its
+	// Chinese label sets the rung (DENE-633).
+	RoutingTier *string `json:"routing_tier"`
 	// ComposioToolkitAllowlist is a tri-state, same pattern as
 	// thinking_level, mcp_config:
 	//   - field omitted → no change (column preserved as-is)
@@ -2228,6 +2287,9 @@ type UpdateAgentRequest struct {
 	// is not NULL, so COALESCE in UpdateAgent can distinguish "not sent"
 	// from "turned off".
 	AutoRetryEnabled *bool `json:"auto_retry_enabled"`
+	// WorkEnabled is omitted-preserves / present-sets, same contract as
+	// AutoRetryEnabled (DENE-714).
+	WorkEnabled *bool `json:"work_enabled"`
 	// ParentAgentID re-parents this agent (DENE-301): a non-empty value attaches
 	// it to a base role, and an explicitly empty string detaches it. The field
 	// is a tri-state like thinking_level — omitted preserves, `""` clears, a
@@ -2577,6 +2639,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.AutoRetryEnabled != nil {
 		params.AutoRetryEnabled = pgtype.Bool{Bool: *req.AutoRetryEnabled, Valid: true}
 	}
+	if req.WorkEnabled != nil {
+		params.WorkEnabled = pgtype.Bool{Bool: *req.WorkEnabled, Valid: true}
+	}
 	if req.AvatarURL != nil {
 		avatarURL, ok := h.acceptAvatarURL(w, r, *req.AvatarURL, existing.AvatarUrl.String)
 		if !ok {
@@ -2776,6 +2841,50 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Same combination check as CreateAgent, but against the state the request
+	// actually lands on: a cleared model with a carried-over effort, or a new
+	// effort on an agent that never had a model, are both the invalid pair. The
+	// caller can always recover by pinning a model or clearing the level, so
+	// this cannot lock an agent out of editing (MUL-7412).
+	if effectiveThinking := effectiveThinkingLevel(params, existing, shouldClearThinkingLevel); effectiveThinking != "" &&
+		strings.TrimSpace(effectiveModelValue(params, existing)) == "" {
+		provider := targetProvider
+		if provider == "" {
+			var ok bool
+			provider, ok = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+			if !ok {
+				writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
+				return
+			}
+		}
+		if agent.ThinkingLevelRejectedWithoutModel(provider) {
+			writeError(w, http.StatusBadRequest, thinkingNeedsExplicitModelRejection(provider))
+			return
+		}
+	}
+
+	// routing_tier is workspace configuration rather than a runtime override:
+	// it says how strong this seat is for automatic dispatch. A key or its
+	// label is accepted, only the key is stored, and anything else is refused
+	// rather than written — an unknown rung would silently take the seat off
+	// the ladder with nothing on the agent page to show it.
+	shouldClearRoutingTier := false
+	if req.RoutingTier != nil {
+		value := strings.TrimSpace(*req.RoutingTier)
+		if value == "" {
+			shouldClearRoutingTier = true
+		} else {
+			key, ok := routing.DefaultLadder.NormalizeTier(value)
+			if !ok {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf(
+					"routing_tier %q is not a known tier; expected one of %s",
+					value, strings.Join(routing.DefaultLadder.TierKeys(), ", ")))
+				return
+			}
+			params.RoutingTier = pgtype.Text{String: key, Valid: true}
+		}
+	}
+
 	shouldClearServiceTier := false
 	if req.ServiceTier != nil {
 		value := *req.ServiceTier
@@ -2899,6 +3008,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Warn("clear agent service_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear service_tier: "+err.Error())
+			return
+		}
+	}
+	if shouldClearRoutingTier {
+		updated, err = h.Queries.ClearAgentRoutingTier(r.Context(), updated.ID)
+		if err != nil {
+			slog.Warn("clear agent routing_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to clear routing_tier: "+err.Error())
 			return
 		}
 	}
@@ -3053,6 +3170,41 @@ func (h *Handler) resolveAgentProvider(r *http.Request, workspaceID pgtype.UUID,
 		return "", false
 	}
 	return rt.Provider, true
+}
+
+// thinkingNeedsExplicitModelRejection is the copy for a level that is valid for
+// the runtime but has no model to run it on.
+func thinkingNeedsExplicitModelRejection(provider string) string {
+	return fmt.Sprintf(
+		"runtime %q resolves its own default model, so a reasoning effort needs an explicit model; set model or pass thinking_level=\"\" to clear",
+		provider,
+	)
+}
+
+// effectiveModelValue is the model the update lands on: the requested value
+// when this request sets one (including an explicit clear), otherwise what the
+// agent already holds.
+func effectiveModelValue(params db.UpdateAgentParams, existing db.Agent) string {
+	if params.Model.Valid {
+		return params.Model.String
+	}
+	return existing.Model.String
+}
+
+// effectiveThinkingLevel is the effort the update lands on. An explicit clear
+// wins over everything; otherwise a value set by this request wins over the
+// stored one, which is carried when the field was omitted.
+func effectiveThinkingLevel(params db.UpdateAgentParams, existing db.Agent, cleared bool) string {
+	if cleared {
+		return ""
+	}
+	if params.ThinkingLevel.Valid {
+		return params.ThinkingLevel.String
+	}
+	if existing.ThinkingLevel.Valid {
+		return existing.ThinkingLevel.String
+	}
+	return ""
 }
 
 // thinkingLevelRejection explains why the target runtime will not take this
@@ -3247,6 +3399,20 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("archive agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return
+	}
+
+	// Release every acceptance slot pointing at this agent. The reviewer pair
+	// is a reference with no foreign key behind it, so nothing else would drop
+	// it — and a ticket whose reviewer can no longer be dispatched would sit in
+	// in_review forever. Clearing it puts the slot back to "undecided", which
+	// is what lets routing pick a live seat the next time the ticket moves.
+	// (DENE-633)
+	if _, err := h.Queries.ClearIssueReviewer(r.Context(), db.ClearIssueReviewerParams{
+		WorkspaceID:  archived.WorkspaceID,
+		ReviewerType: "agent",
+		ReviewerID:   archived.ID,
+	}); err != nil {
+		slog.Warn("clear issue reviewer on agent archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 	}
 
 	// Cancel all pending/active tasks for this agent. The cancel and its

@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import type { DraftAssigneeSuggestionRequest } from "./assignee-suggestions";
 import type {
   IssueDraft,
   IssueDraftSession,
@@ -15,7 +16,32 @@ import type {
 export const issueDraftKeys = {
   all: (wsId: string) => ["workspace", wsId, "issue-drafts"] as const,
   list: (wsId: string) => [...issueDraftKeys.all(wsId), "list"] as const,
+  assigneeSuggestions: (wsId: string, sessionId: string, request: DraftAssigneeSuggestionRequest | null) =>
+    [...issueDraftKeys.all(wsId), "assignee-suggestions", sessionId, request] as const,
 };
+
+/**
+ * The seats routing suggests for a draft's unassigned rows.
+ *
+ * Keyed on the request itself, which is built from the draft the SERVER holds:
+ * every answer costs a routing-model call per row, so it must be re-asked when
+ * a save or a generate changes the rows and never on a keystroke. A null
+ * request (nothing unassigned, or no title yet) disables the query.
+ */
+export function issueDraftAssigneeSuggestionsOptions(
+  wsId: string,
+  sessionId: string,
+  request: DraftAssigneeSuggestionRequest | null,
+) {
+  return queryOptions({
+    queryKey: issueDraftKeys.assigneeSuggestions(wsId, sessionId, request),
+    queryFn: () =>
+      request ? api.suggestIssueDraftAssignees(sessionId, request) : Promise.resolve([]),
+    enabled: wsId.length > 0 && sessionId.length > 0 && request !== null,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
 
 /**
  * Every alignment conversation this user has in the workspace — live ones and

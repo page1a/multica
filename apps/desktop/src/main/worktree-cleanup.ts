@@ -25,6 +25,13 @@ export interface WorktreeCleanupItem {
   last_run_at: string;
   dirty: boolean;
   merged: boolean;
+  /**
+   * How the branch was found to be delivered (DENE-647). "ancestor" is a
+   * plain merge; "squash" means its content is in trunk while its commits are
+   * not, which is what this repository's squash merges leave behind. Absent on
+   * a copy that is not delivered, and on daemons that predate the distinction.
+   */
+  merged_via?: "ancestor" | "squash";
   unknown: boolean;
   size_bytes: number;
   /** Absent means the copy qualifies for removal. */

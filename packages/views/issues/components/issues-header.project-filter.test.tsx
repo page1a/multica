@@ -214,7 +214,7 @@ describe("toolbar project quick filter", () => {
     const { store } = renderToolbar();
 
     fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Project/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Project$/ }));
     const alphaInFilterMenu = await screen.findByRole("menuitemcheckbox", {
       name: /Alpha/,
     });

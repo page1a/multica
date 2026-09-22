@@ -135,6 +135,9 @@ const STATUS_LABEL: Record<AgentTask["status"], string> = {
   queued: "Queued",
   dispatched: "Starting",
   waiting_local_directory: "Waiting for directory",
+  // Auto-retry child waiting out its backoff — non-terminal, same bucket as
+  // queued. Web/desktop label this "重试中" (`issues.status_deferred`).
+  deferred: "Retrying",
   running: "Running",
   completed: "Done",
   failed: "Failed",
@@ -145,6 +148,7 @@ const STATUS_CLASS: Record<AgentTask["status"], string> = {
   queued: "text-muted-foreground",
   dispatched: "text-brand",
   waiting_local_directory: "text-muted-foreground",
+  deferred: "text-muted-foreground",
   running: "text-brand",
   completed: "text-muted-foreground",
   failed: "text-destructive",

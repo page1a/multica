@@ -210,6 +210,55 @@ WHERE workspace_id = $1
 GROUP BY agent_id, LOWER(provider), model
 ORDER BY agent_id, LOWER(provider), model;
 
+-- name: ListDashboardUsageByIssue :many
+-- Per-(issue, provider, model) token aggregates for the workspace, optionally
+-- scoped to a single project. Powers the workspace dashboard's per-issue cost
+-- list — the entry point into one issue's Token cost view.
+--
+-- Served from the raw `task_usage` table rather than `task_usage_hourly`:
+-- the hourly rollup denormalises runtime_id / agent_id / project_id but NOT
+-- issue_id, and `agent_task_queue` (the only carrier of issue_id) cannot be
+-- joined back to a rollup bucket without re-reading the raw rows anyway.
+-- `idx_task_usage_created_at` bounds the scan to the window, and the join to
+-- `agent` re-applies the workspace boundary the rollup would have enforced.
+--
+-- The model dimension stays on the wire for the same reason the by-agent
+-- rollup keeps it: cost is priced client-side from a per-model rate table,
+-- and a row that has already collapsed two models into one sum can no longer
+-- be priced at all.
+--
+-- No `@tz`: there is no date axis in the result. `@since` is therefore the
+-- viewer's local start-of-day for the EXACT N-day window
+-- (parseExactSinceParamInTZ) so this list covers the same span as the
+-- by-agent card and the Cost / Tokens KPI tiles beside it.
+--
+-- cost_usd_ticks / uncosted_* mirror GetIssueUsageSummary's split: the
+-- provider's own charge plus the tokens from rows it did not price.
+SELECT
+    atq.issue_id,
+    i.number,
+    i.title,
+    LOWER(tu.provider) AS provider,
+    tu.model,
+    SUM(tu.input_tokens)::bigint        AS input_tokens,
+    SUM(tu.output_tokens)::bigint       AS output_tokens,
+    SUM(tu.cache_read_tokens)::bigint   AS cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint  AS cache_write_tokens,
+    COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS cost_usd_ticks,
+    COALESCE(SUM(tu.input_tokens)       FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_input_tokens,
+    COALESCE(SUM(tu.output_tokens)      FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_output_tokens,
+    COALESCE(SUM(tu.cache_read_tokens)  FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_cache_read_tokens,
+    COALESCE(SUM(tu.cache_write_tokens) FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_cache_write_tokens
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+JOIN agent a ON a.id = atq.agent_id
+JOIN issue i ON i.id = atq.issue_id
+WHERE a.workspace_id = $1
+  AND tu.created_at >= @since::timestamptz
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+GROUP BY atq.issue_id, i.number, i.title, LOWER(tu.provider), tu.model
+ORDER BY atq.issue_id, LOWER(tu.provider), tu.model;
+
 -- name: ListDashboardRunTimeDaily :many
 -- Daily per-date run time + task counts for the workspace, optionally
 -- scoped to a single project. Powers the workspace dashboard's "Time"

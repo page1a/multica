@@ -28,6 +28,14 @@ describe("failureClassOf", () => {
     // not hand its own stored thread back — so this reads as an agent-side
     // failure, not a runtime one.
     expect(failureClassOf("codex_resume_oversized")).toBe("agent");
+    // DENE-724: Antigravity's long-session token expiry reads as a 401 but must
+    // NOT land in "auth" — that class tells the operator to go re-auth, and the
+    // account here is fine. It is the CLI's own token lifetime that failed.
+    expect(failureClassOf("antigravity_session_token_expired")).toBe("agent");
+    // DENE-724's other half is the opposite call on purpose: the CLI's own
+    // logged-out notice can mean the account really is signed out, so it stays
+    // in "auth" where an operator will actually look.
+    expect(failureClassOf("antigravity_not_logged_in")).toBe("auth");
   });
 
   it("keeps pre-MUL-1949 coarse reasons countable", () => {

@@ -1,6 +1,7 @@
 import type {
   DashboardUsageDaily,
   DashboardUsageByAgent,
+  DashboardUsageByIssue,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   DashboardFailureDaily,
@@ -195,6 +196,42 @@ export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRo
     entry.cost += estimateCost(r);
     entry.taskCount += r.task_count;
     map.set(r.agent_id, entry);
+  }
+  return Array.from(map.values()).toSorted((a, b) => b.cost - a.cost);
+}
+
+export interface IssueCostRow {
+  issueId: string;
+  identifier: string;
+  title: string;
+  tokens: number;
+  cost: number;
+}
+
+// Fold per-(issue, model) rows into one row per issue. Same arithmetic as
+// `aggregateAgentTokens` — tokens summed across the issue's models, cost
+// summed from `estimateCost` so the provider-priced and client-estimated
+// halves stay on one account — with the issue's identifier/title carried
+// through for the row label and link.
+//
+// Sorted by cost desc: the card answers "which issue is burning the money",
+// and an issue whose runs all predate usage reporting contributes nothing to
+// that question (its rows would sum to 0 anyway, since the server only emits
+// a row when a task_usage row exists).
+export function aggregateIssueTokens(rows: DashboardUsageByIssue[]): IssueCostRow[] {
+  const map = new Map<string, IssueCostRow>();
+  for (const r of rows) {
+    const entry = map.get(r.issue_id) ?? {
+      issueId: r.issue_id,
+      identifier: r.identifier,
+      title: r.title,
+      tokens: 0,
+      cost: 0,
+    };
+    entry.tokens +=
+      r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens;
+    entry.cost += estimateCost(r);
+    map.set(r.issue_id, entry);
   }
   return Array.from(map.values()).toSorted((a, b) => b.cost - a.cost);
 }

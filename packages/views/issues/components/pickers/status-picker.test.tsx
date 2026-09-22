@@ -4,7 +4,9 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildIssueStatusCatalog } from "@multica/core/issue-statuses";
 import type { IssueStatusEntry } from "@multica/core/types";
+import { fireEvent, screen } from "@testing-library/react";
 import { renderWithI18n } from "../../../test/i18n";
+import { GuestReadOnlyScope } from "../../../layout/guest-readonly";
 import { StatusPicker } from "./status-picker";
 
 // The catalog is server state; this suite is about what the picker PAINTS with
@@ -28,7 +30,7 @@ function entry(overrides: Partial<IssueStatusEntry>): IssueStatusEntry {
     key: "custom",
     name: "Custom",
     description: "",
-    category: "in_review",
+    category: "started",
     // Seeded per status by the server — including for the built-ins, which
     // are not recolorable and must ignore it.
     color: "#22c55e",
@@ -73,13 +75,27 @@ afterEach(() => {
   catalogEntries = undefined;
 });
 
+describe("StatusPicker guest read-only", () => {
+  it("stays in place and does not open for a guest", () => {
+    catalogEntries = [IN_REVIEW, QA];
+    renderWithI18n(
+      <GuestReadOnlyScope isGuest>
+        <StatusPicker status="in_review" onUpdate={() => {}} />
+      </GuestReadOnlyScope>,
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+    expect(document.querySelector("button[data-picker-item]")).toBeNull();
+  });
+});
+
 describe("StatusPicker trigger color", () => {
   // The bug: the trigger read the catalog entry's raw color while the list read
   // the resolved one, so a built-in rendered as the server's seeded #22c55e in
   // one and as the `text-success` token in the other — the same status in two
   // visibly different greens, side by side. (MUL-6440)
   it("paints a built-in from the token, exactly like its row in the list", () => {
-    catalogEntries = [IN_REVIEW, QA];
+    catalogEntries = [IN_REVIEW, { ...QA, icon: "slash" }];
     const { container } = renderWithI18n(
       <StatusPicker status="in_review" onUpdate={() => {}} open onOpenChange={() => {}} />,
     );
@@ -98,7 +114,7 @@ describe("StatusPicker trigger color", () => {
   // The other half of the same rule: a CUSTOM status has no token to fall back
   // on, so its own color has to reach both controls.
   it("paints a custom status from its own color in both places", () => {
-    catalogEntries = [IN_REVIEW, QA];
+    catalogEntries = [IN_REVIEW, { ...QA, icon: "slash" }];
     const { container } = renderWithI18n(
       <StatusPicker status="qa" onUpdate={() => {}} open onOpenChange={() => {}} />,
     );
@@ -108,5 +124,7 @@ describe("StatusPicker trigger color", () => {
 
     expect(trigger?.style.color).toBe("rgb(236, 122, 45)");
     expect(row?.style.color).toBe(trigger?.style.color);
+    expect(trigger?.querySelector("line")).not.toBeNull();
+    expect(row?.innerHTML).toBe(trigger?.innerHTML);
   });
 });

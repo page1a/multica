@@ -135,6 +135,36 @@ describe("findDuplicateSources", () => {
   it("does not flag a directory whose name cannot be read", () => {
     expect(findDuplicateSources([remote("r1", "https://github.com/o/r"), local("l1", "")])).toEqual([]);
   });
+
+  it("matches by repo_key even when the folder name differs", () => {
+    const groups = findDuplicateSources([
+      remote("r1", "https://github.com/jeff-kunkun/multica"),
+      local("l1", "/Users/me/code/app", { repo_key: "github.com/jeff-kunkun/multica" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.local.id).toBe("l1");
+    expect(groups[0]!.remotes.map((r) => r.id)).toEqual(["r1"]);
+  });
+
+  it("does not name-match when repo_key proves they are different repositories", () => {
+    expect(
+      findDuplicateSources([
+        remote("r1", "https://github.com/jeff-kunkun/multica"),
+        local("l1", "/Users/me/code/multica", { repo_key: "github.com/other/tool" }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("uses a stored github_repo repo_key without re-reading the URL", () => {
+    const stored = remote("r1", "https://github.com/unrelated/name");
+    (stored.resource_ref as { repo_key?: string }).repo_key = "github.com/jeff-kunkun/multica";
+    const groups = findDuplicateSources([
+      stored,
+      local("l1", "/Users/me/code/app", { repo_key: "github.com/jeff-kunkun/multica" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.remotes.map((r) => r.id)).toEqual(["r1"]);
+  });
 });
 
 describe("resolveTaskCodeSource", () => {

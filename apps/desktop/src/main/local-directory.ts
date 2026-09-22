@@ -4,6 +4,7 @@ import { access, realpath, stat } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import { basename, dirname, isAbsolute, join } from "path";
 import { promisify } from "util";
+import { normalizeRepoUrl } from "@multica/core/projects/source-rule";
 import { activeDaemonProfileDir } from "./daemon-manager";
 import {
   localDirectoryOverridesPath,
@@ -108,38 +109,8 @@ async function repoKeyOf(gitRoot: string): Promise<string> {
   }
 }
 
-export function normalizeRepoKey(raw: string): string {
-  let s = (raw ?? "").trim();
-  if (!s) return "";
-  // A filesystem path is a location on one machine, not a repository identity.
-  if (/^([/.~]|\\\\|[a-zA-Z]:[\\/]|file:\/\/)/.test(s)) return "";
-  const scheme = /^(https?|ssh|git|git\+ssh):\/\//i.exec(s);
-  if (scheme) {
-    s = s.slice(scheme[0].length);
-  } else {
-    // scp-like `user@host:owner/repo` — one colon separates host from path.
-    const colon = s.indexOf(":");
-    if (colon >= 0 && !s.slice(0, colon).includes("/")) {
-      s = `${s.slice(0, colon)}/${s.slice(colon + 1).replace(/^\/+/, "")}`;
-    }
-  }
-  // Credentials are not identity: one repo cloned by two users is one repo.
-  const at = s.lastIndexOf("@");
-  const firstSlash = s.indexOf("/");
-  if (at >= 0 && (firstSlash < 0 || at < firstSlash)) s = s.slice(at + 1);
-  s = s.replace(/^\/+/, "").replace(/\/+$/, "");
-  const slash = s.indexOf("/");
-  if (slash < 0) return "";
-  const host = s.slice(0, slash).split(":")[0]!.trim().toLowerCase();
-  const rest = s
-    .slice(slash + 1)
-    .replace(/\/+$/, "")
-    .replace(/\.git$/i, "")
-    .replace(/^\/+|\/+$/g, "")
-    .toLowerCase();
-  if (!host || !rest) return "";
-  return `${host}/${rest}`;
-}
+/** One TypeScript copy: packages/core/projects/source-rule.ts. */
+export const normalizeRepoKey = normalizeRepoUrl;
 
 /**
  * The default landing place for parallel-mode working copies: the
@@ -176,8 +147,14 @@ async function validateLocalDirectory(
   } catch {
     return { ok: false, reason: "not_writable" };
   }
-  const isGitRepo = await isInsideGitWorkTree(path);
-  const result: ValidateLocalDirectoryResult = { ok: true, is_git_repo: isGitRepo };
+  const gitRoot = await gitTopLevel(path);
+  const hasCommit = gitRoot ? await gitHasCommit(gitRoot) : false;
+  // Parallel mode needs a git working tree WITH at least one commit. An empty
+  // repository cannot produce a worktree, so it is reported as not-a-repo.
+  const result: ValidateLocalDirectoryResult = {
+    ok: true,
+    is_git_repo: hasCommit,
+  };
   try {
     result.real_path = await realpath(path);
   } catch {
@@ -185,40 +162,46 @@ async function validateLocalDirectory(
     // server falls back to local_path, which is what it compared before this
     // field existed.
   }
-  if (isGitRepo) {
-    const gitRoot = await gitTopLevel(path);
-    if (gitRoot) {
-      result.git_root = gitRoot;
-      result.default_worktree_root = defaultWorktreeRoot(gitRoot);
-      const key = await repoKeyOf(gitRoot);
-      if (key) result.repo_key = key;
-    }
+  if (gitRoot) {
+    result.git_root = gitRoot;
+    result.default_worktree_root = defaultWorktreeRoot(gitRoot);
+    const key = await repoKeyOf(gitRoot);
+    if (key) result.repo_key = key;
   }
   return result;
 }
 
-/**
- * Walks up from `path` looking for a `.git` entry, mirroring how git itself
- * resolves a working tree — so a subdirectory of a repo reports true, matching
- * what the daemon does with `rev-parse --show-toplevel` at task time.
- *
- * `.git` is accepted as either a directory (ordinary clone) or a file (a linked
- * worktree, where it holds a gitdir pointer). Any error means "can't tell",
- * which is reported as not-a-repo: this only drives a UI hint, and the daemon
- * re-checks authoritatively before running anything.
- */
-async function isInsideGitWorkTree(path: string): Promise<boolean> {
+async function gitHasCommit(gitRoot: string): Promise<boolean> {
+  try {
+    await run("git", ["-C", gitRoot, "rev-parse", "--verify", "HEAD"], {
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `path` exists and is writable, or (if it does not exist yet)
+ *  the nearest existing ancestor is — worktree_root is often created by the
+ *  first task, so "the parent can be written" is the check that matters. */
+async function pathIsWritableLocation(path: string): Promise<boolean> {
+  if (!path || !isAbsolute(path)) return false;
   let current = path;
   for (;;) {
     try {
-      await stat(join(current, ".git"));
+      await access(current, fsConstants.W_OK);
       return true;
     } catch {
-      // Not here — keep walking up.
+      try {
+        await stat(current);
+        return false;
+      } catch {
+        const parent = dirname(current);
+        if (parent === current) return false;
+        current = parent;
+      }
     }
-    const parent = dirname(current);
-    if (parent === current) return false;
-    current = parent;
   }
 }
 
@@ -259,6 +242,13 @@ export function setupLocalDirectory(
     "local-directory:validate",
     (_event, path: string): Promise<ValidateLocalDirectoryResult> =>
       validateLocalDirectory(path),
+  );
+
+  ipcMain.handle(
+    "local-directory:writable",
+    async (_event, path: string): Promise<{ ok: boolean }> => ({
+      ok: await pathIsWritableLocation(path),
+    }),
   );
 
   ipcMain.handle("local-directory:list-shared-overrides", async () => {

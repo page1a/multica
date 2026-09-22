@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowDown,
@@ -49,6 +49,7 @@ import {
   useLocalDaemonStatus,
   useLocalDirectorySharedOverrides,
   validateLocalDirectory,
+  validateWritablePath,
   type ValidateLocalDirectoryResult,
 } from "../../platform";
 // The source rule is pure and imported from its own module rather than the
@@ -139,6 +140,10 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const [modeDialog, setModeDialog] = useState<ModeDialogState | null>(null);
   const [modeSaving, setModeSaving] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  // A reorder is several position writes in a row. Until they land and the
+  // list refetches, every arrow on screen would compute its patch from the old
+  // order, so one is in flight for the whole list, not for one row.
+  const [reordering, setReordering] = useState(false);
 
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
@@ -189,6 +194,48 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   // Which of them a run writes is no longer ambiguous either: resources are
   // ordered, and the first local directory on this machine is the working
   // directory. The rest reach the agent read-only.
+  const boundIdentitiesForDialog = useMemo(() => {
+    return resources
+      .filter(isLocalDirectoryRef)
+      .filter((r) => r.resource_ref.daemon_id === localDaemonId)
+      .filter((r) => r.id !== modeDialog?.resource?.id)
+      .map((r) => r.resource_ref.real_path || r.resource_ref.local_path);
+  }, [resources, localDaemonId, modeDialog?.resource?.id]);
+
+  const identityBackfilled = useRef(new Set<string>());
+  useEffect(() => {
+    if (!desktopMode || !localDaemonId) return;
+    for (const r of resources) {
+      if (!isLocalDirectoryRef(r)) continue;
+      if (r.resource_ref.daemon_id !== localDaemonId) continue;
+      if (r.resource_ref.real_path) continue;
+      if (identityBackfilled.current.has(r.id)) continue;
+      identityBackfilled.current.add(r.id);
+      void (async () => {
+        try {
+          const measured = await validateLocalDirectory(r.resource_ref.local_path);
+          if (!measured?.ok || !measured.real_path) return;
+          await updateResource.mutateAsync({
+            resourceId: r.id,
+            data: {
+              resource_ref: {
+                ...r.resource_ref,
+                real_path: measured.real_path,
+                ...(measured.repo_key ? { repo_key: measured.repo_key } : {}),
+                ...(measured.is_git_repo === undefined
+                  ? {}
+                  : { is_git_repo: measured.is_git_repo }),
+              },
+            },
+          });
+        } catch {
+          // Unique conflict or a path we cannot see: leave the first row
+          // and do not fail the page.
+        }
+      })();
+    }
+  }, [resources, desktopMode, localDaemonId, updateResource]);
+
   const attachedRealPaths = new Set(
     resources
       .filter(isLocalDirectoryRef)
@@ -358,9 +405,20 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     // would arrive as a failed task, long after the dialog is gone.
     if (
       mode === "worktree" &&
-      worktreeRootProblem(worktreeRootShown ?? "", modeDialog.gitRoot) !== undefined
+      worktreeRootProblem(
+        worktreeRootShown ?? "",
+        modeDialog.gitRoot,
+        boundIdentitiesForDialog,
+      ) !== undefined
     ) {
       return;
+    }
+    if (mode === "worktree" && worktreeRootShown) {
+      const writable = await validateWritablePath(worktreeRootShown);
+      if (!writable) {
+        setModeError(t(($) => $.resources.mode_worktree_root_not_writable));
+        return;
+      }
     }
     setModeSaving(true);
     setModeError(null);
@@ -472,6 +530,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       direction,
     );
     if (patches.length === 0) return;
+    if (reordering) return;
+    setReordering(true);
     try {
       // Sequential, not concurrent: the list is a handful of rows, and two
       // position writes racing on one project would leave an order neither
@@ -490,6 +550,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
           ? err.message
           : t(($) => $.resources.toast_local_mode_update_failed),
       );
+    } finally {
+      setReordering(false);
     }
   };
 
@@ -591,6 +653,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   onMove={(direction) =>
                     void handleMoveLocalDirectory(resource, direction)
                   }
+                  movePending={reordering}
                   onRemove={() => handleRemove(resource)}
                   onRenameLocalDirectory={handleRenameLocalDirectory}
                   onEditLocalDirectoryMode={(target) => {
@@ -764,6 +827,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
           sharedUsesLocalOverride={sharedUsesLocalOverride}
           worktreeRootPreview={worktreeRootShown}
           gitRoot={modeDialog.gitRoot}
+          boundIdentities={boundIdentitiesForDialog}
           onWorktreeRootChange={(next) =>
             setModeDialog((current) =>
               current ? { ...current, worktreeRoot: next } : current,
@@ -791,6 +855,8 @@ interface ResourceRowProps {
   /** False at the ends of this machine's group, and on every other row type. */
   canMoveUp: boolean;
   canMoveDown: boolean;
+  /** True while a reorder's position writes are still in flight. */
+  movePending: boolean;
   onMove: (direction: MoveDirection) => void;
   onRemove: () => void;
   onRenameLocalDirectory: (
@@ -809,6 +875,7 @@ function ResourceRow({
   canEdit,
   canMoveUp,
   canMoveDown,
+  movePending,
   onMove,
   onRemove,
   onRenameLocalDirectory,
@@ -858,6 +925,7 @@ function ResourceRow({
         canEdit={canEdit}
         canMoveUp={canMoveUp}
         canMoveDown={canMoveDown}
+        movePending={movePending}
         onMove={onMove}
         onRemove={onRemove}
         onRename={onRenameLocalDirectory}
@@ -883,6 +951,13 @@ function ResourceRow({
   );
 }
 
+// The row's hover-reveal rule has to survive `disabled`. Written as four
+// explicit states because `disabled:opacity-30` alone is MORE specific than
+// `group-hover:opacity-100`: a disabled arrow stayed visible without hovering
+// the row, while the one the user could actually click was the hidden one.
+const MOVE_ARROW_CLASS =
+  "opacity-0 disabled:opacity-0 group-hover:opacity-100 group-hover:disabled:opacity-30 transition-opacity rounded-sm p-0.5 hover:bg-accent disabled:hover:bg-transparent";
+
 interface LocalDirectoryRowProps {
   resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef };
   localDaemonId: string | null;
@@ -890,6 +965,7 @@ interface LocalDirectoryRowProps {
   canEdit: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  movePending: boolean;
   onMove: (direction: MoveDirection) => void;
   onRemove: () => void;
   onRename: (
@@ -908,6 +984,7 @@ function LocalDirectoryRow({
   canEdit,
   canMoveUp,
   canMoveDown,
+  movePending,
   onMove,
   onRemove,
   onRename,
@@ -1031,9 +1108,9 @@ function LocalDirectoryRow({
         <>
           <button
             type="button"
-            disabled={!canMoveUp}
+            disabled={!canMoveUp || movePending}
             onClick={() => onMove("up")}
-            className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent disabled:opacity-30 disabled:hover:bg-transparent"
+            className={MOVE_ARROW_CLASS}
             title={t(($) => $.resources.local_directory_move_up_tooltip)}
             aria-label={t(($) => $.resources.local_directory_move_up_tooltip)}
           >
@@ -1041,9 +1118,9 @@ function LocalDirectoryRow({
           </button>
           <button
             type="button"
-            disabled={!canMoveDown}
+            disabled={!canMoveDown || movePending}
             onClick={() => onMove("down")}
-            className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent disabled:opacity-30 disabled:hover:bg-transparent"
+            className={MOVE_ARROW_CLASS}
             title={t(($) => $.resources.local_directory_move_down_tooltip)}
             aria-label={t(($) => $.resources.local_directory_move_down_tooltip)}
           >

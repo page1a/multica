@@ -103,6 +103,20 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		for i, a := range result.ArchivedAgents {
 			archivedAgentIDs[i] = a.ID
 		}
+		// Same release as ArchiveAgent, inside this revocation's transaction:
+		// an acceptance slot is a plain reference, so archiving its target here
+		// would otherwise leave tickets pointing at an agent that can never
+		// accept them. (DENE-633)
+		for _, agentID := range archivedAgentIDs {
+			if _, err = qtx.ClearIssueReviewer(ctx, db.ClearIssueReviewerParams{
+				WorkspaceID:  workspaceID,
+				ReviewerType: "agent",
+				ReviewerID:   agentID,
+			}); err != nil {
+				return empty, err
+			}
+		}
+
 		result.CancelledTasks, err = qtx.CancelAgentTasksByRuntimeOrAgent(ctx, db.CancelAgentTasksByRuntimeOrAgentParams{
 			RuntimeIds: runtimeIDs,
 			AgentIds:   archivedAgentIDs,
@@ -153,6 +167,18 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	if err := qtx.DeleteAgentInvocationTargetsByMember(ctx, db.DeleteAgentInvocationTargetsByMemberParams{
 		WorkspaceID: workspaceID,
 		TargetID:    userID,
+	}); err != nil {
+		return empty, err
+	}
+
+	// An acceptance slot naming this member is a reference too, and a person
+	// who is no longer in the workspace can no longer accept anything. Release
+	// it in the same tx as the member-row delete, for the same reason the
+	// grants above are pruned here. (DENE-633)
+	if _, err := qtx.ClearIssueReviewer(ctx, db.ClearIssueReviewerParams{
+		WorkspaceID:  workspaceID,
+		ReviewerType: "member",
+		ReviewerID:   userID,
 	}); err != nil {
 		return empty, err
 	}

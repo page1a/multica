@@ -22,7 +22,7 @@ SET assignee_type = $1::text,
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND assignee_id IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type AssignIssueIfUnassignedParams struct {
@@ -80,6 +80,100 @@ func (q *Queries) AssignIssueIfUnassigned(ctx context.Context, arg AssignIssueIf
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
+const clearIssueReviewer = `-- name: ClearIssueReviewer :execrows
+UPDATE issue
+SET reviewer_type = NULL,
+    reviewer_id = NULL,
+    updated_at = now()
+WHERE workspace_id = $1::uuid
+  AND reviewer_type = $2::text
+  AND reviewer_id = $3::uuid
+`
+
+type ClearIssueReviewerParams struct {
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ReviewerType string      `json:"reviewer_type"`
+	ReviewerID   pgtype.UUID `json:"reviewer_id"`
+}
+
+// Drops a reviewer reference that no longer points at anybody. The reviewer
+// pair is a reference, not a copy of a name, so the one thing it needs from
+// the rest of the server is to be released when its target is archived — the
+// same cleanup the no-foreign-keys rule requires for every other reference.
+func (q *Queries) ClearIssueReviewer(ctx context.Context, arg ClearIssueReviewerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearIssueReviewer, arg.WorkspaceID, arg.ReviewerType, arg.ReviewerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeIssueFromReview = `-- name: CompleteIssueFromReview :one
+UPDATE issue
+SET status = 'done',
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = $1::uuid
+  AND workspace_id = $2::uuid
+  AND status = ANY($3::text[])
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+`
+
+type CompleteIssueFromReviewParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Statuses    []string    `json:"statuses"`
+}
+
+// The one status write this package performs, and the only conditional write
+// here whose guard is a status rather than an empty slot. Returning no row
+// means the ticket left the in-review category between the decision and the
+// write — somebody else moved it, and their answer wins.
+func (q *Queries) CompleteIssueFromReview(ctx context.Context, arg CompleteIssueFromReviewParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, completeIssueFromReview, arg.ID, arg.WorkspaceID, arg.Statuses)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -164,6 +258,180 @@ func (q *Queries) HasRoutingComment(ctx context.Context, arg HasRoutingCommentPa
 	return column_1, err
 }
 
+const lastEnteredReviewAt = `-- name: LastEnteredReviewAt :one
+SELECT created_at FROM activity_log
+WHERE issue_id = $1::uuid
+  AND workspace_id = $2::uuid
+  AND action = 'status_changed'
+  AND details->>'to' = ANY($3::text[])
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type LastEnteredReviewAtParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Statuses    []string    `json:"statuses"`
+}
+
+// When this ticket last ENTERED the awaiting-acceptance category.
+//
+// It bounds the completion gate to the current review round. A ticket can go
+// through review more than once — reviewer passes it, a person sends it back,
+// the executor redoes the work, it returns to in_review — and the pass verdict
+// from the first round is still sitting on the thread. Without this boundary
+// the stale sweep would read that stale verdict as acceptance of work nobody
+// has looked at, which is exactly the thing this package must never do: align
+// to a fact, not to an expired one.
+//
+// No row means the entry moment is unknown (the activity row is written by a
+// best-effort bus listener, and tickets that entered review before that
+// listener existed have none). Callers read that as "no verdict in this
+// round", which routes to the wake — the safe direction.
+func (q *Queries) LastEnteredReviewAt(ctx context.Context, arg LastEnteredReviewAtParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lastEnteredReviewAt, arg.IssueID, arg.WorkspaceID, arg.Statuses)
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
+const listReviewerCommentsForIssue = `-- name: ListReviewerCommentsForIssue :many
+SELECT content FROM comment
+WHERE issue_id = $1::uuid
+  AND workspace_id = $2::uuid
+  AND author_type = $3::text
+  AND author_id = $4::uuid
+  AND created_at >= $5::timestamptz
+  AND deleted_at IS NULL
+ORDER BY created_at ASC
+`
+
+type ListReviewerCommentsForIssueParams struct {
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AuthorType  string             `json:"author_type"`
+	AuthorID    pgtype.UUID        `json:"author_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+// What the reviewer themselves said on this ticket IN THE CURRENT REVIEW
+// ROUND, oldest first. It is the deterministic half of the completion gate: no
+// remark from this author since the ticket last entered review means there is
+// no acceptance for a status to be aligned to, whatever a model answers.
+// Deleted comments are excluded — a retracted verdict is not a verdict.
+func (q *Queries) ListReviewerCommentsForIssue(ctx context.Context, arg ListReviewerCommentsForIssueParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listReviewerCommentsForIssue,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.AuthorType,
+		arg.AuthorID,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, err
+		}
+		items = append(items, content)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRoutingEnabledWorkspaces = `-- name: ListRoutingEnabledWorkspaces :many
+SELECT id FROM workspace
+WHERE settings -> 'routing' ->> 'enabled' = 'true'
+ORDER BY id
+`
+
+// Every workspace whose routing switch is on. The stale-review sweep has no
+// request to hang off and no workspace to be told about, so it starts here;
+// the flag is read again through the settings parser before anything is
+// written, and this query is only the cheap way to skip the rest.
+func (q *Queries) ListRoutingEnabledWorkspaces(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listRoutingEnabledWorkspaces)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleReviewIssues = `-- name: ListStaleReviewIssues :many
+SELECT i.id FROM issue i
+WHERE i.workspace_id = $1::uuid
+  AND i.status = ANY($2::text[])
+  AND COALESCE(i.last_activity_at, i.updated_at) < $3::timestamptz
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue q
+      WHERE q.issue_id = i.id
+        AND q.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY COALESCE(i.last_activity_at, i.updated_at) ASC
+LIMIT $4::int
+`
+
+type ListStaleReviewIssuesParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Statuses    []string           `json:"statuses"`
+	Before      pgtype.Timestamptz `json:"before"`
+	Lim         int32              `json:"lim"`
+}
+
+// Tickets awaiting acceptance that nothing has happened to, and that no run is
+// working on right now.
+//
+// The quiet clock is last_activity_at, not "when it entered review": the row
+// exists for tickets nobody will move again, and a ticket commented on an hour
+// ago is not one of them whatever its entry time. A ticket with no
+// last_activity_at falls back to updated_at rather than counting as infinitely
+// stale.
+//
+// The NOT EXISTS is the other half of "stalled": a queued or running task means
+// the seat is going to speak, and waking it would be a second dispatcher.
+func (q *Queries) ListStaleReviewIssues(ctx context.Context, arg ListStaleReviewIssuesParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listStaleReviewIssues,
+		arg.WorkspaceID,
+		arg.Statuses,
+		arg.Before,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reassignIssue = `-- name: ReassignIssue :one
 UPDATE issue
 SET assignee_type = $1::text,
@@ -173,7 +441,7 @@ SET assignee_type = $1::text,
     updated_at = now()
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type ReassignIssueParams struct {
@@ -224,6 +492,10 @@ func (q *Queries) ReassignIssue(ctx context.Context, arg ReassignIssueParams) (I
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -237,7 +509,7 @@ SET properties = jsonb_set(properties, ARRAY[$1::text], $2::jsonb, true),
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND NOT (properties ? $1::text)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type SetIssuePropertyValueIfUnsetParams struct {
@@ -287,6 +559,79 @@ func (q *Queries) SetIssuePropertyValueIfUnset(ctx context.Context, arg SetIssue
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
+const setIssueReviewerIfUnset = `-- name: SetIssueReviewerIfUnset :one
+UPDATE issue
+SET reviewer_type = $1::text,
+    reviewer_id = $2::uuid,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = $3::uuid
+  AND workspace_id = $4::uuid
+  AND reviewer_type IS NULL
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+`
+
+type SetIssueReviewerIfUnsetParams struct {
+	ReviewerType string      `json:"reviewer_type"`
+	ReviewerID   pgtype.UUID `json:"reviewer_id"`
+	ID           pgtype.UUID `json:"id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+}
+
+// Fills the reviewer slot only while it is still empty. reviewer_type IS NULL
+// is the empty slot; 'none' ("needs no acceptance pass") is a written value
+// and blocks this write exactly like a named reviewer does. Returns no row
+// when the slot already held an answer.
+func (q *Queries) SetIssueReviewerIfUnset(ctx context.Context, arg SetIssueReviewerIfUnsetParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, setIssueReviewerIfUnset,
+		arg.ReviewerType,
+		arg.ReviewerID,
+		arg.ID,
+		arg.WorkspaceID,
+	)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }

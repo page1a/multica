@@ -1134,6 +1134,8 @@ func TestProjectResourceLocalDirectoryIdentityConflict(t *testing.T) {
 	testHandler.CreateProjectResource(w, req)
 	if w.Code != http.StatusConflict {
 		t.Errorf("same daemon same path create: expected 409, got %d: %s", w.Code, w.Body.String())
+	} else if !strings.Contains(w.Body.String(), localPath) {
+		t.Errorf("409 body %q does not name the conflicting directory %q", w.Body.String(), localPath)
 	}
 
 	// A second row on the same daemon at a DIFFERENT path is now allowed: a
@@ -1171,6 +1173,8 @@ func TestProjectResourceLocalDirectoryIdentityConflict(t *testing.T) {
 	testHandler.CreateProjectResource(w, req)
 	if w.Code != http.StatusConflict {
 		t.Errorf("symlink to an attached directory: expected 409, got %d: %s", w.Code, w.Body.String())
+	} else if !strings.Contains(w.Body.String(), localPath) {
+		t.Errorf("409 body %q does not name the already-bound directory %q", w.Body.String(), localPath)
 	}
 
 	// The same path on a DIFFERENT machine is a different directory: two
@@ -1418,6 +1422,9 @@ func TestValidateLocalDirectoryRefExecutionMode(t *testing.T) {
 			if tc.mode != "" {
 				ref["execution_mode"] = tc.mode
 			}
+			if strings.TrimSpace(tc.mode) == "worktree" {
+				ref["is_git_repo"] = true
+			}
 			raw, err := json.Marshal(ref)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
@@ -1551,6 +1558,7 @@ func TestCreateProjectGatesWorktreeLocalDirectory(t *testing.T) {
 					"local_path":     "/Users/dev/work/game-client",
 					"daemon_id":      "daemon-with-no-runtime-row",
 					"execution_mode": "worktree",
+					"is_git_repo":    true,
 				},
 			},
 		},

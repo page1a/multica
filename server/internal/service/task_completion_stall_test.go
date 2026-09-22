@@ -190,9 +190,16 @@ func TestHandleCompletedTasksSkipsStatusesThatAreNotInProgress(t *testing.T) {
 }
 
 // TestHandleCompletedTasksHonoursCustomStatusCategory pins the issuestatus
-// guard: a custom status is judged by the canonical behavior it inherits, so a
-// custom review gate is excluded for the same reason In Review is, while a
-// custom in-progress status still signals.
+// guard for custom rows.
+//
+// MUL-7365 replaced the seven-key category table with four lifecycle
+// categories and made issuestatus.Effective inherit ONLY terminal semantics:
+// a custom row in `done` reads as Done and one in `closed` reads as Cancelled,
+// while every nonterminal key stays distinct. There is therefore no longer a
+// category that means "in progress", so a custom active status can never read
+// as InProgress and never signals — the fork's old table (in_progress →
+// signals, in_review → does not) is not expressible in the new vocabulary.
+// This test pins the merged rule rather than the pre-merge one.
 func TestHandleCompletedTasksHonoursCustomStatusCategory(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
@@ -200,8 +207,11 @@ func TestHandleCompletedTasksHonoursCustomStatusCategory(t *testing.T) {
 		category string
 		want     int
 	}{
-		{key: "qa_gate", category: "in_review", want: 0},
-		{key: "building", category: "in_progress", want: 1},
+		// A nonterminal custom key stays distinct, so it is not "in progress".
+		{key: "qa_gate", category: "started", want: 0},
+		{key: "building", category: "started", want: 0},
+		// A terminal custom key inherits Done, which is not a stall either.
+		{key: "shipped", category: "done", want: 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key, func(t *testing.T) {

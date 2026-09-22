@@ -88,7 +88,10 @@ type issueTableFiltersRequest struct {
 	Creators          []issueTableActorRef `json:"creators,omitempty"`
 	ProjectIDs        []string             `json:"project_ids,omitempty"`
 	IncludeNoProject  bool                 `json:"include_no_project,omitempty"`
-	LabelIDs          []string             `json:"label_ids,omitempty"`
+	// ProjectStatuses filters on the parent project's lifecycle status
+	// (`validProjectStatuses`), independently of ProjectIDs.
+	ProjectStatuses []string `json:"project_statuses,omitempty"`
+	LabelIDs        []string `json:"label_ids,omitempty"`
 	// Members are raw JSON so operator objects ({op, value}) and plain
 	// strings both survive the round-trip into parsePropertiesFilterParam.
 	Properties       map[string][]json.RawMessage `json:"properties,omitempty"`
@@ -121,6 +124,8 @@ type issueTableQuerySpec struct {
 }
 
 type issueTableGroupSpec struct {
+	// Empty preserves the seven-value protocol used by installed clients.
+	CategoryFormat  string   `json:"category_format,omitempty"`
 	Kind            string   `json:"kind"`
 	PropertyID      string   `json:"property_id,omitempty"`
 	IncludeEmpty    bool     `json:"include_empty,omitempty"`
@@ -298,6 +303,7 @@ func canonicalIssueTableFingerprint(workspaceID string, spec issueTableQuerySpec
 	normalized.Filters.Statuses = sortedUniqueStrings(normalized.Filters.Statuses)
 	normalized.Filters.Priorities = sortedUniqueStrings(normalized.Filters.Priorities)
 	normalized.Filters.ProjectIDs = sortedUniqueStrings(normalized.Filters.ProjectIDs)
+	normalized.Filters.ProjectStatuses = sortedUniqueStrings(normalized.Filters.ProjectStatuses)
 	normalized.Filters.LabelIDs = sortedUniqueStrings(normalized.Filters.LabelIDs)
 	normalized.Filters.Assignees = sortedUniqueActors(normalized.Filters.Assignees)
 	normalized.Filters.WorkingIssueIDs = sortedUniqueStrings(normalized.Filters.WorkingIssueIDs)
@@ -483,6 +489,18 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		return "$" + strconv.Itoa(len(args))
 	}
 
+	// Sharing scope (DENE-698). Every table surface — rows, groups, facet
+	// counts — compiles through here, so one predicate keeps them consistent:
+	// a facet cannot count an issue the rows below it will not show.
+	tableViewer, viewerErr := h.visibilityViewerFor(r, workspaceUUID)
+	if viewerErr != nil {
+		// Unestablished sharing facts mean "sees nothing", never an
+		// unfiltered scan. FALSE keeps the surface shaped correctly (empty
+		// rows, zeroed facets) instead of erroring the whole table.
+		tableViewer = visibilityViewer{}
+	}
+	where = append(where, tableViewer.issueVisibilitySQL("i", addArg))
+
 	// Any non-empty status KEY, not just the 7 built-ins. A status filter names
 	// the exact statuses the user picked, and since MUL-6243 those can be custom
 	// — rejecting them here 400'd the entire request, so filtering a board by a
@@ -639,6 +657,24 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 			ors = append(ors, "i.project_id IS NULL")
 		}
 		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+
+	if len(spec.Filters.ProjectStatuses) > 0 {
+		for _, status := range spec.Filters.ProjectStatuses {
+			if !validateProjectEnum(w, "filters.project_statuses", status, validProjectStatuses) {
+				return issueTableSQL{}, false
+			}
+		}
+		// A projectless issue has no row to match, so EXISTS is false and the
+		// issue drops out — "no project" is deliberately not a project status.
+		// `p.workspace_id = i.workspace_id` is not redundant: the schema has no
+		// foreign keys by design, so a stale or corrupt `issue.project_id` can
+		// name a project in another workspace. Without the bound, that
+		// tenant's project status would decide this row's membership.
+		where = append(where, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM project p WHERE p.id = i.project_id AND p.workspace_id = i.workspace_id AND p.status = ANY(%s::text[]))",
+			addArg(spec.Filters.ProjectStatuses),
+		))
 	}
 
 	labelIDs, ok := parseIssueTableUUIDList(w, spec.Filters.LabelIDs, "filters.label_ids")

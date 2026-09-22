@@ -11,6 +11,59 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applyProjectVisibilityToIssues = `-- name: ApplyProjectVisibilityToIssues :many
+WITH snapshot AS (
+    SELECT i.id, i.visibility FROM issue AS i
+    WHERE i.workspace_id = $1 AND i.project_id = $2
+    FOR UPDATE
+), updated AS (
+    UPDATE issue AS u SET visibility = $3, updated_at = now()
+    WHERE u.id IN (SELECT snapshot.id FROM snapshot)
+    RETURNING u.id
+)
+SELECT snapshot.id, snapshot.visibility AS previous_visibility
+FROM snapshot
+WHERE snapshot.id IN (SELECT updated.id FROM updated)
+`
+
+type ApplyProjectVisibilityToIssuesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+	Visibility  string      `json:"visibility"`
+}
+
+type ApplyProjectVisibilityToIssuesRow struct {
+	ID                 pgtype.UUID `json:"id"`
+	PreviousVisibility string      `json:"previous_visibility"`
+}
+
+// A project's scope change swept over the issues it currently holds. The
+// snapshot is taken FOR UPDATE so what this reports is what was written, even
+// against a concurrent single-issue change.
+//
+// It returns a row per issue, carrying the scope that was overwritten, because
+// the audit trail has to say what each issue moved from — a count cannot. The
+// caller derives affected_count and previously_private_count from these rows.
+func (q *Queries) ApplyProjectVisibilityToIssues(ctx context.Context, arg ApplyProjectVisibilityToIssuesParams) ([]ApplyProjectVisibilityToIssuesRow, error) {
+	rows, err := q.db.Query(ctx, applyProjectVisibilityToIssues, arg.WorkspaceID, arg.ProjectID, arg.Visibility)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplyProjectVisibilityToIssuesRow{}
+	for rows.Next() {
+		var i ApplyProjectVisibilityToIssuesRow
+		if err := rows.Scan(&i.ID, &i.PreviousVisibility); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const childIssueProgress = `-- name: ChildIssueProgress :many
 SELECT parent_issue_id,
        COUNT(*)::bigint AS total,
@@ -198,6 +251,27 @@ func (q *Queries) CountIssues(ctx context.Context, arg CountIssuesParams) (int64
 	return count, err
 }
 
+const countIssuesInTriage = `-- name: CountIssuesInTriage :one
+SELECT count(*) FROM issue
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+  AND triage_state IS NOT NULL
+`
+
+type CountIssuesInTriageParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	IssueIds    []pgtype.UUID `json:"issue_ids"`
+}
+
+// How many of these issues are in Triage. The batch parent-write guard only
+// needs "any", and a count keeps the check one round trip regardless of size.
+func (q *Queries) CountIssuesInTriage(ctx context.Context, arg CountIssuesInTriageParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countIssuesInTriage, arg.WorkspaceID, arg.IssueIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countIssuesUpTo = `-- name: CountIssuesUpTo :one
 SELECT COUNT(*)::bigint
 FROM (
@@ -223,16 +297,46 @@ func (q *Queries) CountIssuesUpTo(ctx context.Context, arg CountIssuesUpToParams
 	return column_1, err
 }
 
+const countProjectIssueVisibility = `-- name: CountProjectIssueVisibility :one
+SELECT
+    count(*)::bigint AS affected_count,
+    count(*) FILTER (WHERE visibility = 'private')::bigint AS previously_private_count
+FROM issue
+WHERE workspace_id = $1 AND project_id = $2
+`
+
+type CountProjectIssueVisibilityParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+type CountProjectIssueVisibilityRow struct {
+	AffectedCount          int64 `json:"affected_count"`
+	PreviouslyPrivateCount int64 `json:"previously_private_count"`
+}
+
+// Dry run of ApplyProjectVisibilityToIssues, for the confirm dialog.
+func (q *Queries) CountProjectIssueVisibility(ctx context.Context, arg CountProjectIssueVisibilityParams) (CountProjectIssueVisibilityRow, error) {
+	row := q.db.QueryRow(ctx, countProjectIssueVisibility, arg.WorkspaceID, arg.ProjectID)
+	var i CountProjectIssueVisibilityRow
+	err := row.Scan(&i.AffectedCount, &i.PreviouslyPrivateCount)
+	return i, err
+}
+
 const createIssue = `-- name: CreateIssue :one
 INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage, last_activity_at, id
+    stage, reviewer_type, reviewer_id, last_activity_at, id, visibility
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    $16, now(), COALESCE($17::uuid, gen_random_uuid())
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+    $16, $17::text, $18::uuid,
+    now(), COALESCE($19::uuid, gen_random_uuid()),
+    -- Zero trust by default. A create that lands in a project passes the
+    -- project's current scope here instead (DENE-698).
+    COALESCE($20::text, 'private')
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type CreateIssueParams struct {
@@ -252,7 +356,10 @@ type CreateIssueParams struct {
 	Number        int32       `json:"number"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	Stage         pgtype.Int4 `json:"stage"`
+	ReviewerType  pgtype.Text `json:"reviewer_type"`
+	ReviewerID    pgtype.UUID `json:"reviewer_id"`
 	ID            pgtype.UUID `json:"id"`
+	Visibility    pgtype.Text `json:"visibility"`
 }
 
 func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue, error) {
@@ -273,7 +380,10 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		arg.Number,
 		arg.ProjectID,
 		arg.Stage,
+		arg.ReviewerType,
+		arg.ReviewerID,
 		arg.ID,
+		arg.Visibility,
 	)
 	var i Issue
 	err := row.Scan(
@@ -305,6 +415,10 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -314,11 +428,12 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage, last_activity_at, id
+    origin_type, origin_id, stage, last_activity_at, id, visibility
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    $16, $17, $18, now(), COALESCE($19::uuid, gen_random_uuid())
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+    $16, $17, $18, now(), COALESCE($19::uuid, gen_random_uuid()),
+    COALESCE($20::text, 'private')
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type CreateIssueWithOriginParams struct {
@@ -341,6 +456,7 @@ type CreateIssueWithOriginParams struct {
 	OriginID      pgtype.UUID `json:"origin_id"`
 	Stage         pgtype.Int4 `json:"stage"`
 	ID            pgtype.UUID `json:"id"`
+	Visibility    pgtype.Text `json:"visibility"`
 }
 
 func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWithOriginParams) (Issue, error) {
@@ -364,6 +480,7 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		arg.OriginID,
 		arg.Stage,
 		arg.ID,
+		arg.Visibility,
 	)
 	var i Issue
 	err := row.Scan(
@@ -395,6 +512,10 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -473,6 +594,28 @@ func (q *Queries) DeleteIssueMetadataKey(ctx context.Context, arg DeleteIssueMet
 	return i, err
 }
 
+const demoteProjectScopedIssues = `-- name: DemoteProjectScopedIssues :execrows
+UPDATE issue SET visibility = 'private', updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND visibility = 'project'
+`
+
+type DemoteProjectScopedIssuesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// issue.project_id is ON DELETE SET NULL, so deleting a project would leave
+// its project-scoped issues violating issue_project_visibility_pairing. The
+// delete path runs this first: losing the project means losing the audience,
+// and tightening to private is the only answer that shows nobody more.
+func (q *Queries) DemoteProjectScopedIssues(ctx context.Context, arg DemoteProjectScopedIssuesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, demoteProjectScopedIssues, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const detachDirectChildIssues = `-- name: DetachDirectChildIssues :many
 UPDATE issue
 SET parent_issue_id = NULL,
@@ -483,7 +626,7 @@ SET parent_issue_id = NULL,
 WHERE workspace_id = $1
   AND parent_issue_id = $2
   AND NOT COALESCE(id = ANY($3::uuid[]), false)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type DetachDirectChildIssuesParams struct {
@@ -530,6 +673,10 @@ func (q *Queries) DetachDirectChildIssues(ctx context.Context, arg DetachDirectC
 			&i.Properties,
 			&i.Revision,
 			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -542,10 +689,14 @@ func (q *Queries) DetachDirectChildIssues(ctx context.Context, arg DetachDirectC
 }
 
 const findActiveDuplicateIssue = `-- name: FindActiveDuplicateIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains active.
   AND NOT (status = ANY($2::text[]))
+  -- An entry waiting in Triage has not been taken on, so it never blocks
+  -- someone filing the same work; a duplicate there is resolved by merging
+  -- it out of Triage (MUL-7189 §2.6).
+  AND triage_state IS NULL
   AND project_id IS NOT DISTINCT FROM $3::uuid
   AND parent_issue_id IS NOT DISTINCT FROM $4::uuid
   AND lower(btrim(regexp_replace(title, '[[:space:]]+', ' ', 'g'))) = $5
@@ -599,15 +750,23 @@ func (q *Queries) FindActiveDuplicateIssue(ctx context.Context, arg FindActiveDu
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const findRecentAutopilotDuplicateIssue = `-- name: FindRecentAutopilotDuplicateIssue :one
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at FROM issue i
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.reviewer_type, i.reviewer_id, i.visibility FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains active.
   AND NOT (i.status = ANY($3::text[]))
+  -- An entry waiting in Triage has not been taken on, so it never blocks
+  -- someone filing the same work; a duplicate there is resolved by merging
+  -- it out of Triage (MUL-7189 §2.6).
+  AND i.triage_state IS NULL
   AND i.origin_type = 'autopilot'
   AND i.origin_id = $2
   AND i.project_id IS NOT DISTINCT FROM $4::uuid
@@ -672,12 +831,16 @@ func (q *Queries) FindRecentAutopilotDuplicateIssue(ctx context.Context, arg Fin
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE id = $1
 `
 
@@ -713,12 +876,16 @@ func (q *Queries) GetIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getIssueByNumber = `-- name: GetIssueByNumber :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE workspace_id = $1 AND number = $2
 `
 
@@ -759,12 +926,16 @@ func (q *Queries) GetIssueByNumber(ctx context.Context, arg GetIssueByNumberPara
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getIssueByOrigin = `-- name: GetIssueByOrigin :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
@@ -814,6 +985,10 @@ func (q *Queries) GetIssueByOrigin(ctx context.Context, arg GetIssueByOriginPara
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -838,7 +1013,7 @@ func (q *Queries) GetIssueGCStatus(ctx context.Context, id pgtype.UUID) (GetIssu
 }
 
 const getIssueInWorkspace = `-- name: GetIssueInWorkspace :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -879,6 +1054,10 @@ func (q *Queries) GetIssueInWorkspace(ctx context.Context, arg GetIssueInWorkspa
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -907,8 +1086,22 @@ func (q *Queries) GetIssueMetadataInWorkspace(ctx context.Context, arg GetIssueM
 	return i, err
 }
 
+const getIssueTriageState = `-- name: GetIssueTriageState :one
+SELECT triage_state FROM issue WHERE id = $1
+`
+
+// Answers "is this issue in Triage" for the queue door, which runs immediately
+// before an INSERT and must see the status its own transaction wrote. NULL is
+// an ordinary issue.
+func (q *Queries) GetIssueTriageState(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getIssueTriageState, id)
+	var triage_state pgtype.Text
+	err := row.Scan(&triage_state)
+	return triage_state, err
+}
+
 const listChildIssues = `-- name: ListChildIssues :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE parent_issue_id = $1
 ORDER BY number ASC
 `
@@ -957,6 +1150,10 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 			&i.Properties,
 			&i.Revision,
 			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -969,7 +1166,7 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 }
 
 const listChildrenByParents = `-- name: ListChildrenByParents :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id = ANY($2::uuid[])
 ORDER BY parent_issue_id, number ASC
@@ -1025,6 +1222,10 @@ func (q *Queries) ListChildrenByParents(ctx context.Context, arg ListChildrenByP
 			&i.Properties,
 			&i.Revision,
 			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -1076,9 +1277,10 @@ func (q *Queries) ListIssueGCStatuses(ctx context.Context, arg ListIssueGCStatus
 
 const listIssues = `-- name: ListIssues :many
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id,
+       i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.visibility
 FROM issue i
 WHERE i.workspace_id = $1
   AND ($4::text IS NULL OR i.status = $4)
@@ -1157,6 +1359,8 @@ type ListIssuesRow struct {
 	Priority       string             `json:"priority"`
 	AssigneeType   pgtype.Text        `json:"assignee_type"`
 	AssigneeID     pgtype.UUID        `json:"assignee_id"`
+	ReviewerType   pgtype.Text        `json:"reviewer_type"`
+	ReviewerID     pgtype.UUID        `json:"reviewer_id"`
 	CreatorType    string             `json:"creator_type"`
 	CreatorID      pgtype.UUID        `json:"creator_id"`
 	ParentIssueID  pgtype.UUID        `json:"parent_issue_id"`
@@ -1172,6 +1376,7 @@ type ListIssuesRow struct {
 	Stage          pgtype.Int4        `json:"stage"`
 	Properties     []byte             `json:"properties"`
 	Revision       int64              `json:"revision"`
+	Visibility     string             `json:"visibility"`
 }
 
 // involves_user_id widens the assignee filter to surface issues where the user
@@ -1211,6 +1416,8 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 			&i.Priority,
 			&i.AssigneeType,
 			&i.AssigneeID,
+			&i.ReviewerType,
+			&i.ReviewerID,
 			&i.CreatorType,
 			&i.CreatorID,
 			&i.ParentIssueID,
@@ -1226,6 +1433,7 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 			&i.Stage,
 			&i.Properties,
 			&i.Revision,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -1238,7 +1446,7 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 }
 
 const listIssuesByOrigins = `-- name: ListIssuesByOrigins :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = ANY($3::uuid[])
@@ -1294,6 +1502,10 @@ func (q *Queries) ListIssuesByOrigins(ctx context.Context, arg ListIssuesByOrigi
 			&i.Properties,
 			&i.Revision,
 			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -1306,7 +1518,7 @@ func (q *Queries) ListIssuesByOrigins(ctx context.Context, arg ListIssuesByOrigi
 }
 
 const listIssuesWaitingOn = `-- name: ListIssuesWaitingOn :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE workspace_id = $1
   AND (
     metadata @> $2::jsonb
@@ -1362,6 +1574,10 @@ func (q *Queries) ListIssuesWaitingOn(ctx context.Context, arg ListIssuesWaiting
 			&i.Properties,
 			&i.Revision,
 			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -1375,9 +1591,10 @@ func (q *Queries) ListIssuesWaitingOn(ctx context.Context, arg ListIssuesWaiting
 
 const listOpenIssues = `-- name: ListOpenIssues :many
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id,
+       i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.visibility
 FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains visible.
@@ -1502,6 +1719,8 @@ type ListOpenIssuesRow struct {
 	Priority       string             `json:"priority"`
 	AssigneeType   pgtype.Text        `json:"assignee_type"`
 	AssigneeID     pgtype.UUID        `json:"assignee_id"`
+	ReviewerType   pgtype.Text        `json:"reviewer_type"`
+	ReviewerID     pgtype.UUID        `json:"reviewer_id"`
 	CreatorType    string             `json:"creator_type"`
 	CreatorID      pgtype.UUID        `json:"creator_id"`
 	ParentIssueID  pgtype.UUID        `json:"parent_issue_id"`
@@ -1517,6 +1736,7 @@ type ListOpenIssuesRow struct {
 	Stage          pgtype.Int4        `json:"stage"`
 	Properties     []byte             `json:"properties"`
 	Revision       int64              `json:"revision"`
+	Visibility     string             `json:"visibility"`
 }
 
 // See ListIssues for the semantics of involves_user_id (mirrors the 4-branch
@@ -1550,6 +1770,8 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 			&i.Priority,
 			&i.AssigneeType,
 			&i.AssigneeID,
+			&i.ReviewerType,
+			&i.ReviewerID,
 			&i.CreatorType,
 			&i.CreatorID,
 			&i.ParentIssueID,
@@ -1565,6 +1787,7 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 			&i.Stage,
 			&i.Properties,
 			&i.Revision,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -1658,7 +1881,7 @@ func (q *Queries) LockIssueForDelete(ctx context.Context, arg LockIssueForDelete
 }
 
 const lockIssueForDescriptionUpdate = `-- name: LockIssueForDescriptionUpdate :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -1704,6 +1927,10 @@ func (q *Queries) LockIssueForDescriptionUpdate(ctx context.Context, arg LockIss
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -1753,7 +1980,7 @@ SET description = CASE
     updated_at = now()
 WHERE id = $4
   AND workspace_id = $5
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type MaterializeIssueChannelMediaMarkdownParams struct {
@@ -1809,6 +2036,10 @@ func (q *Queries) MaterializeIssueChannelMediaMarkdown(ctx context.Context, arg 
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -1862,21 +2093,84 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 	return i, err
 }
 
+const setIssueVisibility = `-- name: SetIssueVisibility :one
+UPDATE issue SET
+    visibility = $3,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+`
+
+type SetIssueVisibilityParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Visibility  string      `json:"visibility"`
+}
+
+// The one writer of issue.visibility for a single issue (DENE-698). It is
+// deliberately not folded into UpdateIssue: changing a scope is its own action
+// with its own tier rule and its own audit row, and threading it through
+// UpdateIssue's revision/activity bookkeeping would make an ordinary edit and
+// a sharing change indistinguishable in the timeline.
+func (q *Queries) SetIssueVisibility(ctx context.Context, arg SetIssueVisibilityParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, setIssueVisibility, arg.ID, arg.WorkspaceID, arg.Visibility)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
 const updateIssue = `-- name: UpdateIssue :one
 WITH candidate AS (
     SELECT
-        i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at,
+        i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.reviewer_type, i.reviewer_id, i.visibility,
         COALESCE($3::text, i.title) AS next_title,
         COALESCE($4::text, i.description) AS next_description,
         COALESCE($5::text, i.status) AS next_status,
         COALESCE($6::text, i.priority) AS next_priority,
         $7::text AS next_assignee_type,
         $8::uuid AS next_assignee_id,
+        -- Same tri-state convention as the assignee pair: the caller passes the
+        -- current value to leave it alone, and NULL to clear the slot.
+        $9::text AS next_reviewer_type,
+        $10::uuid AS next_reviewer_id,
         CASE
             -- An explicit position wins. Cross-column drag-and-drop sends
             -- status and position together and means the slot it dropped on.
-            WHEN $9::double precision IS NOT NULL
-                THEN $9::double precision
+            WHEN $11::double precision IS NOT NULL
+                THEN $11::double precision
             -- position ranks an issue *within* its (workspace, status)
             -- column, so it stops meaning anything the moment the column
             -- changes: the value that put the issue on top of Todo lands it
@@ -1900,31 +2194,51 @@ WITH candidate AS (
                 )
             ELSE i.position
         END AS next_position,
-        $10::date AS next_start_date,
-        $11::date AS next_due_date,
-        $12::uuid AS next_parent_issue_id,
-        $13::uuid AS next_project_id,
-        $14::integer AS next_stage
+        $12::date AS next_start_date,
+        $13::date AS next_due_date,
+        $14::uuid AS next_parent_issue_id,
+        $15::uuid AS next_project_id,
+        $16::integer AS next_stage,
+        -- Sharing scope rides along with the project move (DENE-698).
+        -- An explicit value wins: that is an issue joining a project and
+        -- taking its current scope. Otherwise the only change made here is
+        -- the pairing rule's, which the CHECK constraint would enforce as a
+        -- 500 rather than a demotion: an issue leaving every project cannot
+        -- stay 'project'-scoped, so it falls back to 'private'. Widening is
+        -- never automatic.
+        CASE
+            WHEN $17::text IS NOT NULL
+                THEN $17::text
+            WHEN $15::uuid IS NULL AND i.visibility = 'project'
+                THEN 'private'
+            ELSE i.visibility
+        END AS next_visibility
     FROM issue AS i
     WHERE i.id = $1
       AND ($2::bigint IS NULL OR i.revision = $2::bigint)
 ), changed AS (
     SELECT
-        candidate.id, candidate.workspace_id, candidate.title, candidate.description, candidate.status, candidate.priority, candidate.assignee_type, candidate.assignee_id, candidate.creator_type, candidate.creator_id, candidate.parent_issue_id, candidate.acceptance_criteria, candidate.context_refs, candidate.position, candidate.due_date, candidate.created_at, candidate.updated_at, candidate.number, candidate.project_id, candidate.origin_type, candidate.origin_id, candidate.first_executed_at, candidate.start_date, candidate.metadata, candidate.stage, candidate.properties, candidate.revision, candidate.last_activity_at, candidate.next_title, candidate.next_description, candidate.next_status, candidate.next_priority, candidate.next_assignee_type, candidate.next_assignee_id, candidate.next_position, candidate.next_start_date, candidate.next_due_date, candidate.next_parent_issue_id, candidate.next_project_id, candidate.next_stage,
+        candidate.id, candidate.workspace_id, candidate.title, candidate.description, candidate.status, candidate.priority, candidate.assignee_type, candidate.assignee_id, candidate.creator_type, candidate.creator_id, candidate.parent_issue_id, candidate.acceptance_criteria, candidate.context_refs, candidate.position, candidate.due_date, candidate.created_at, candidate.updated_at, candidate.number, candidate.project_id, candidate.origin_type, candidate.origin_id, candidate.first_executed_at, candidate.start_date, candidate.metadata, candidate.stage, candidate.properties, candidate.revision, candidate.last_activity_at, candidate.triage_state, candidate.reviewer_type, candidate.reviewer_id, candidate.visibility, candidate.next_title, candidate.next_description, candidate.next_status, candidate.next_priority, candidate.next_assignee_type, candidate.next_assignee_id, candidate.next_reviewer_type, candidate.next_reviewer_id, candidate.next_position, candidate.next_start_date, candidate.next_due_date, candidate.next_parent_issue_id, candidate.next_project_id, candidate.next_stage, candidate.next_visibility,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
+            reviewer_type, reviewer_id,
             position, start_date, due_date, parent_issue_id, project_id, stage
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
-            next_assignee_type, next_assignee_id, next_position, next_start_date,
+            next_assignee_type, next_assignee_id,
+            next_reviewer_type, next_reviewer_id,
+            next_position, next_start_date,
             next_due_date, next_parent_issue_id, next_project_id, next_stage
         ) AS did_change,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
+            reviewer_type, reviewer_id,
             start_date, due_date, parent_issue_id, project_id, stage
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
-            next_assignee_type, next_assignee_id, next_start_date, next_due_date,
+            next_assignee_type, next_assignee_id,
+            next_reviewer_type, next_reviewer_id,
+            next_start_date, next_due_date,
             next_parent_issue_id, next_project_id, next_stage
         ) AS did_activity
     FROM candidate
@@ -1936,12 +2250,15 @@ UPDATE issue AS i SET
     priority = changed.next_priority,
     assignee_type = changed.next_assignee_type,
     assignee_id = changed.next_assignee_id,
+    reviewer_type = changed.next_reviewer_type,
+    reviewer_id = changed.next_reviewer_id,
     position = changed.next_position,
     start_date = changed.next_start_date,
     due_date = changed.next_due_date,
     parent_issue_id = changed.next_parent_issue_id,
     project_id = changed.next_project_id,
     stage = changed.next_stage,
+    visibility = changed.next_visibility,
     revision = i.revision + changed.did_change::integer,
     last_activity_at = CASE WHEN changed.did_activity
         THEN GREATEST(COALESCE(i.last_activity_at, i.updated_at), now())
@@ -1955,7 +2272,7 @@ WHERE i.id = changed.id
   -- from the same snapshot; EvalPlanQual re-evaluates this target-row predicate
   -- after waiting for the first writer, leaving the stale writer with 0 rows.
   AND ($2::bigint IS NULL OR i.revision = $2::bigint)
-RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at
+RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.reviewer_type, i.reviewer_id, i.visibility
 `
 
 type UpdateIssueParams struct {
@@ -1967,12 +2284,15 @@ type UpdateIssueParams struct {
 	Priority         pgtype.Text   `json:"priority"`
 	AssigneeType     pgtype.Text   `json:"assignee_type"`
 	AssigneeID       pgtype.UUID   `json:"assignee_id"`
+	ReviewerType     pgtype.Text   `json:"reviewer_type"`
+	ReviewerID       pgtype.UUID   `json:"reviewer_id"`
 	Position         pgtype.Float8 `json:"position"`
 	StartDate        pgtype.Date   `json:"start_date"`
 	DueDate          pgtype.Date   `json:"due_date"`
 	ParentIssueID    pgtype.UUID   `json:"parent_issue_id"`
 	ProjectID        pgtype.UUID   `json:"project_id"`
 	Stage            pgtype.Int4   `json:"stage"`
+	Visibility       pgtype.Text   `json:"visibility"`
 }
 
 func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue, error) {
@@ -1985,12 +2305,15 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		arg.Priority,
 		arg.AssigneeType,
 		arg.AssigneeID,
+		arg.ReviewerType,
+		arg.ReviewerID,
 		arg.Position,
 		arg.StartDate,
 		arg.DueDate,
 		arg.ParentIssueID,
 		arg.ProjectID,
 		arg.Stage,
+		arg.Visibility,
 	)
 	var i Issue
 	err := row.Scan(
@@ -2022,6 +2345,10 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -2042,7 +2369,7 @@ UPDATE issue AS i SET
     END,
     updated_at = now()
 WHERE i.id = $1 AND i.workspace_id = $3
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
 `
 
 type UpdateIssueStatusParams struct {
@@ -2088,6 +2415,10 @@ func (q *Queries) UpdateIssueStatus(ctx context.Context, arg UpdateIssueStatusPa
 		&i.Properties,
 		&i.Revision,
 		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
 	)
 	return i, err
 }

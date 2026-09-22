@@ -27,6 +27,7 @@ export type DecisionReason =
   | "not_resource_owner"
   | "last_owner"
   | "private_visibility"
+  | "guest_readonly"
   | "unknown";
 
 export interface Decision {

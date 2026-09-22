@@ -46,6 +46,7 @@ export {
   findIssueDraft,
   issueDraftIsContinuation,
   issueDraftIsRecord,
+  issueDraftAssigneeSuggestionsOptions,
   issueDraftKeys,
   issueDraftListOptions,
   issueDraftRound,
@@ -83,3 +84,14 @@ export {
   issueDraftStageIndex,
   type IssueDraftStage,
 } from "./stage";
+
+export { readIssueDraftCapabilityPreference, writeIssueDraftCapabilityPreference } from "./capability-preference";
+
+export {
+  ISSUE_DRAFT_ROOT_ROW,
+  applyIssueDraftAssigneeSuggestions,
+  issueDraftSuggestionRequest,
+  type DraftAssigneeSuggestion,
+  type DraftAssigneeSuggestionRequest,
+  type DraftAssigneeSuggestionRow,
+} from "./assignee-suggestions";

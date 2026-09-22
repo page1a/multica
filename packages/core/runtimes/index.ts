@@ -11,4 +11,5 @@ export * from "./display";
 export * from "./use-runtime-health";
 export * from "./cli-version";
 export * from "./custom-pricing-store";
+export * from "./quota-source-store";
 export * from "./cloud-runtime";

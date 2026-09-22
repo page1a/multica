@@ -114,7 +114,7 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 		Instructions: agentBuilderInstructions,
 		Model:        pgtype.Text{String: model, Valid: model != ""},
 		SystemKey: pgtype.Text{
-			String: fmt.Sprintf("agent_builder:%s", flowID),
+			String: agentBuilderSystemKeyPrefix + flowID,
 			Valid:  true,
 		},
 	})
@@ -400,7 +400,12 @@ func (h *Handler) resolveSessionCarrierRuntime(w http.ResponseWriter, r *http.Re
 //
 // An empty level means "let the local CLI decide" and is always accepted — it
 // is the picker's own empty option, not a missing value.
-func (h *Handler) thinkingLevelAcceptedForRuntime(w http.ResponseWriter, r *http.Request, runtime db.AgentRuntime, level string) bool {
+//
+// model is the model the row will actually carry. A level that is valid for the
+// provider but paired with no pinned model is not storable for runtimes that
+// resolve their own default model out of sight: it would save cleanly, show as
+// set, and then run at a different level (MUL-7412).
+func (h *Handler) thinkingLevelAcceptedForRuntime(w http.ResponseWriter, r *http.Request, runtime db.AgentRuntime, level string, model string) bool {
 	if !agent.IsKnownThinkingValue(runtime.Provider, level) {
 		writeError(w, http.StatusBadRequest, thinkingLevelRejection(runtime.Provider, level))
 		return false
@@ -414,6 +419,10 @@ func (h *Handler) thinkingLevelAcceptedForRuntime(w http.ResponseWriter, r *http
 		return false
 	case acpEffortUnknown:
 		writeError(w, http.StatusBadRequest, thinkingCapabilityUnknownRejection(runtime.Provider))
+		return false
+	}
+	if agent.ThinkingLevelRejectedWithoutModel(runtime.Provider) && strings.TrimSpace(model) == "" {
+		writeError(w, http.StatusBadRequest, thinkingNeedsExplicitModelRejection(runtime.Provider))
 		return false
 	}
 	return true
@@ -554,5 +563,5 @@ func (h *Handler) SwitchAgentBuilderRuntime(w http.ResponseWriter, r *http.Reque
 func isAgentBuilderCarrier(agent db.Agent) bool {
 	return agent.Kind == "system" &&
 		agent.SystemKey.Valid &&
-		strings.HasPrefix(agent.SystemKey.String, "agent_builder:")
+		strings.HasPrefix(agent.SystemKey.String, agentBuilderSystemKeyPrefix)
 }

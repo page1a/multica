@@ -44,7 +44,7 @@ func assertScopePath(t *testing.T, queries *db.Queries, method, path, token stri
 	req := httptest.NewRequest(method, path, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
-	Auth(queries, nil, nil)(next).ServeHTTP(rec, req)
+	Auth(queries, nil, nil, nil)(next).ServeHTTP(rec, req)
 	return rec.Code, seen
 }
 
@@ -334,7 +334,7 @@ func TestIssueDraftScopeHeaderIsServerSet(t *testing.T) {
 	// A carrier trying to shed its own scope so the handler stops restricting it.
 	req.Header.Set(IssueDraftScopeHeader, "")
 	rec := httptest.NewRecorder()
-	Auth(rig.queries, nil, nil)(next).ServeHTTP(rec, req)
+	Auth(rig.queries, nil, nil, nil)(next).ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("carrier upload: status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
@@ -348,7 +348,7 @@ func TestIssueDraftScopeHeaderIsServerSet(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+ordinary)
 	req.Header.Set(IssueDraftScopeHeader, IssueDraftScopeValue)
 	rec = httptest.NewRecorder()
-	Auth(rig.queries, nil, nil)(next).ServeHTTP(rec, req)
+	Auth(rig.queries, nil, nil, nil)(next).ServeHTTP(rec, req)
 	if got := seen.Get(IssueDraftScopeHeader); got != "" {
 		t.Fatalf("a client-supplied %s survived on an ordinary token: %q", IssueDraftScopeHeader, got)
 	}

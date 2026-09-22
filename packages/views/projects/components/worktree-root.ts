@@ -10,7 +10,10 @@
  * repository working tree.
  */
 
-export type WorktreeRootProblem = "not_absolute" | "inside_repo";
+export type WorktreeRootProblem =
+  | "not_absolute"
+  | "inside_repo"
+  | "conflicts_with_binding";
 
 /** Absolute on POSIX, on a Windows drive, or a UNC path — the union, because
  *  the directory lives on a machine whose OS this code does not know. */
@@ -55,12 +58,28 @@ export function isInsideRepo(candidate: string, gitRoot: string): boolean {
 export function worktreeRootProblem(
   path: string,
   gitRoot: string | undefined,
+  boundIdentities: string[] = [],
 ): WorktreeRootProblem | undefined {
   const value = (path ?? "").trim();
   if (!value) return undefined;
   if (!isAbsolutePath(value)) return "not_absolute";
   if (gitRoot && isInsideRepo(value, gitRoot)) return "inside_repo";
+  if (worktreeRootConflictsWith(value, boundIdentities)) {
+    return "conflicts_with_binding";
+  }
   return undefined;
+}
+
+/** True when `root` is (or contains, or lives inside) another bound directory. */
+export function worktreeRootConflictsWith(
+  root: string,
+  boundIdentities: string[],
+): boolean {
+  const value = (root ?? "").trim();
+  if (!value) return false;
+  return boundIdentities.some(
+    (bound) => isInsideRepo(value, bound) || isInsideRepo(bound, value),
+  );
 }
 
 /**

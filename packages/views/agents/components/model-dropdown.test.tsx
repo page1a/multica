@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,7 +47,9 @@ vi.mock("@multica/core/runtimes", () => ({
 // Bumped per test so React Query cannot serve a previous case's cached result.
 let discoveryKey = 0;
 
-function renderDropdown() {
+function renderDropdown(
+  props: Partial<ComponentProps<typeof ModelDropdown>> = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -59,6 +62,7 @@ function renderDropdown() {
           runtimeOnline
           value=""
           onChange={onChange}
+          {...props}
         />
       </QueryClientProvider>
     </I18nProvider>,
@@ -216,6 +220,82 @@ describe("ModelDropdown", () => {
         screen.queryByRole("button", { name: /cc-update-required-1$/ }),
       ).toBeNull();
       expect(onChange).not.toHaveBeenCalled();
+    });
+  });
+
+  // DENE-684. This dropdown and the inspector's ModelPicker are two renderers
+  // over one catalog, and a DSH catalog id IS the seat model string
+  // (`preset/encodeURIComponent(modelId)`). Teaching only one of them to decode
+  // is the asymmetry MUL-6961 already cost us once.
+  describe("a catalog id carrying an escaped slash", () => {
+    const DSH_SEAT = "command-code2/deepseek%2Fdeepseek-v4.1-flash";
+    const DSH_DISPLAY = "command-code2 · deepseek/deepseek-v4.1-flash";
+    const DSH_CATALOG: RuntimeModelsResult = {
+      models: [
+        {
+          id: DSH_SEAT,
+          label: "DeepSeek V4.1 Flash",
+          provider: "command-code2",
+        },
+      ],
+      supported: true,
+    };
+
+    it("shows the row as preset · model and puts no escape on screen", async () => {
+      discovery = async () => DSH_CATALOG;
+      const { container } = renderDropdown();
+      openDropdown(container);
+
+      expect(await screen.findByText("DeepSeek V4.1 Flash")).toBeTruthy();
+      expect(screen.getByText(DSH_DISPLAY)).toBeTruthy();
+      // The popover renders through a portal, so the whole body is the screen.
+      expect(document.body.textContent ?? "").not.toContain("%2F");
+    });
+
+    it("finds the row by the decoded id the user remembers", async () => {
+      discovery = async () => DSH_CATALOG;
+      const { container } = renderDropdown();
+      openDropdown(container);
+      await screen.findByText("DeepSeek V4.1 Flash");
+
+      const input = screen.getByPlaceholderText(
+        enAgents.pickers.model_search_placeholder,
+      );
+      fireEvent.change(input, { target: { value: "deepseek/deepseek-v4.1-flash" } });
+
+      expect(screen.getByText("DeepSeek V4.1 Flash")).toBeTruthy();
+    });
+
+    // The search above teaches the user this spelling; the custom-model row
+    // must not then offer to save it verbatim. `deepseek/deepseek-v4.1-flash`
+    // stored raw splits at the first slash into provider `deepseek` — the
+    // DENE-680 400.
+    it("does not offer to save the decoded spelling as a custom model", async () => {
+      discovery = async () => DSH_CATALOG;
+      const { container } = renderDropdown();
+      openDropdown(container);
+      await screen.findByText("DeepSeek V4.1 Flash");
+
+      const input = screen.getByPlaceholderText(
+        enAgents.pickers.model_search_placeholder,
+      );
+      fireEvent.change(input, { target: { value: "deepseek/deepseek-v4.1-flash" } });
+
+      expect(
+        screen.queryByText(
+          enAgents.pickers.model_custom_use.replace(
+            "{{value}}",
+            "deepseek/deepseek-v4.1-flash",
+          ),
+        ),
+      ).toBeNull();
+    });
+
+    it("shows the selected seat model decoded on the trigger", async () => {
+      const { container } = renderDropdown({ value: DSH_SEAT });
+
+      expect(screen.getByText(DSH_DISPLAY)).toBeTruthy();
+      expect(container.textContent ?? "").not.toContain("%2F");
     });
   });
 });

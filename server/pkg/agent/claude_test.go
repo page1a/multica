@@ -66,7 +66,7 @@ func TestClaudeHandleAssistantText(t *testing.T) {
 		}),
 	}
 
-	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage))
+	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[string]struct{}))
 	output, tools := turn.text, turn.toolUses
 
 	if output != "Hello world" {
@@ -106,7 +106,7 @@ func TestClaudeHandleAssistantToolUse(t *testing.T) {
 		}),
 	}
 
-	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage))
+	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[string]struct{}))
 	output, tools := turn.text, turn.toolUses
 
 	if output != "" {
@@ -317,7 +317,7 @@ func TestClaudeHandleAssistantInvalidJSON(t *testing.T) {
 	}
 
 	// Should not panic
-	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage))
+	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[string]struct{}))
 	output, tools := turn.text, turn.toolUses
 
 	if output != "" {

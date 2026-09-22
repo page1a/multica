@@ -13,6 +13,7 @@ export const FAILURE_REASON_I18N_KEYS = {
   runtime_reconnect_timeout: "runtime_reconnect_timeout",
   runtime_recovery: "runtime_recovery",
   timeout: "timeout",
+  task_time_limit: "task_time_limit",
   iteration_limit: "iteration_limit",
   agent_blocked: "agent_blocked",
   api_invalid_request: "api_invalid_request",
@@ -20,6 +21,7 @@ export const FAILURE_REASON_I18N_KEYS = {
   runtime_cli_timeout: "runtime_cli_timeout",
   environment_prepare_failed: "environment_prepare_failed",
   invalid_task_identity: "invalid_task_identity",
+  runtime_access_denied: "runtime_access_denied",
 
   // Agent process side — provider.
   "agent_error.provider_auth_or_access":
@@ -49,6 +51,8 @@ export const FAILURE_REASON_I18N_KEYS = {
   agent_fallback_message: "agent_fallback_message",
   codex_semantic_inactivity: "codex_semantic_inactivity",
   codex_resume_oversized: "codex_resume_oversized",
+  antigravity_session_token_expired: "antigravity_session_token_expired",
+  antigravity_not_logged_in: "antigravity_not_logged_in",
   idle_watchdog: "idle_watchdog",
   local_directory_error: "local_directory_error",
   cancelled: "cancelled",

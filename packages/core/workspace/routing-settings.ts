@@ -15,7 +15,21 @@ export const ROUTING_SETTINGS_KEY = "routing";
  * DefaultConfidenceThreshold on the server; a client that guessed a different
  * default would show a threshold the server does not apply.
  */
-export const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
+export const DEFAULT_CONFIDENCE_THRESHOLD = 0.6;
+
+/**
+ * How long a ticket may sit awaiting acceptance before the stale sweep looks
+ * at it, when settings carry no explicit value. Mirrors
+ * DefaultStaleReviewHours on the server (DENE-712).
+ */
+export const DEFAULT_STALE_REVIEW_HOURS = 24;
+
+/**
+ * The largest threshold worth storing. A year of silence is already far past
+ * "nobody is coming back to this"; anything beyond it is a typo, and a typo
+ * that silently disables the sweep is worse than one the form rejects.
+ */
+export const MAX_STALE_REVIEW_HOURS = 24 * 365;
 
 export interface RoutingSettings {
   enabled: boolean;
@@ -26,6 +40,15 @@ export interface RoutingSettings {
   model: string;
   /** Confidence floor in (0, 1]. */
   confidence_threshold: number;
+  /**
+   * How long a ticket must sit in review with nothing happening on it before
+   * the stale sweep looks at it, in hours.
+   *
+   * Deliberately not paired with its own switch: the sweep runs only while
+   * `enabled` is true, exactly like every other routing behaviour, so there
+   * is one answer to "is routing touching my tickets" and not two.
+   */
+  stale_review_hours: number;
   /**
    * This workspace's own OpenAI-compatible endpoint. Empty means the
    * deployment's, which is all this section could ever use before.
@@ -73,6 +96,7 @@ export const DEFAULT_ROUTING_SETTINGS: RoutingSettings = {
   enabled: false,
   model: "",
   confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
+  stale_review_hours: DEFAULT_STALE_REVIEW_HOURS,
   base_url: "",
 };
 
@@ -96,6 +120,7 @@ export function parseRoutingSettings(
     enabled: block.enabled === true,
     model: typeof block.model === "string" ? block.model : "",
     confidence_threshold: normalizeThreshold(block.confidence_threshold),
+    stale_review_hours: normalizeStaleReviewHours(block.stale_review_hours),
     base_url: typeof block.base_url === "string" ? block.base_url : "",
   };
 }
@@ -110,6 +135,22 @@ export function normalizeThreshold(value: unknown): number {
     return DEFAULT_CONFIDENCE_THRESHOLD;
   }
   if (value <= 0 || value > 1) return DEFAULT_CONFIDENCE_THRESHOLD;
+  return value;
+}
+
+/**
+ * Clamp a stored or typed stall threshold. Zero, negative, non-finite and
+ * absurd values all fall back to the default: the fallback direction for a
+ * row that can write a status is "look at fewer tickets, later", never
+ * "sweep everything now".
+ */
+export function normalizeStaleReviewHours(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_STALE_REVIEW_HOURS;
+  }
+  if (value <= 0 || value > MAX_STALE_REVIEW_HOURS) {
+    return DEFAULT_STALE_REVIEW_HOURS;
+  }
   return value;
 }
 
@@ -162,10 +203,17 @@ export function withRoutingSettings(
    */
   apiKey?: string,
 ): Record<string, unknown> {
+  // Fields this form does not own — the project -> direction table the CLI
+  // writes (`projects`), and anything a newer server adds — are carried
+  // through. Rebuilding the block from the four form fields alone would erase
+  // them on every unrelated save.
+  const stored = settings?.[ROUTING_SETTINGS_KEY];
   const block: Record<string, unknown> = {
+    ...(isRecord(stored) ? stored : {}),
     enabled: next.enabled,
     model: next.model.trim(),
     confidence_threshold: normalizeThreshold(next.confidence_threshold),
+    stale_review_hours: normalizeStaleReviewHours(next.stale_review_hours),
     base_url: next.base_url.trim(),
   };
   if (apiKey !== undefined) {

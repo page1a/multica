@@ -353,6 +353,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 	// autopilot", never as "Core model".
 	triggerWords := map[string]string{
 		"references/issues.md":          "issue",
+		"references/routing.md":         "routing",
 		"references/close-protocol.md":  "close protocol",
 		"references/mentions.md":        "mention",
 		"references/agents.md":          "agent",
@@ -442,10 +443,15 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"A name is not an id",
 				"`--output json` writes to stdout",
 				"`--no-start` when you are only recording",
-				"Status is a category, not a literal",
+				"categories describe lifecycle only",
+				"Custom statuses do not inherit built-in automation behavior",
 				"Comment reads stay bounded",
 				"--roots-only --summary --compact",
 				"--thread <thread-id> --tail 30",
+				// MUL-7344: the per-turn `--since` delta IS a bounded read, so
+				// the bounded-reads rule must name it rather than leave an
+				// agent choosing between two contradicting instructions.
+				"that read is the bounded scan",
 			},
 			notWant: []string{
 				// The singular forms this replaced.
@@ -652,6 +658,8 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"multica squad member set-role",
 				"mention://squad/<squad-id>",
 				"recording squad activity",
+				"four ordered blocks",
+				"Leader Identity Reminder, always last",
 				// The debugging entry point must stay a bounded two-step read
 				// (MUL-5442): a roots-only scan alone never returns reply
 				// bodies, where mention triggers and failure reasons live.
@@ -753,13 +761,14 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			if !ok {
 				t.Fatalf("platform skill does not ship %q", tc.file)
 			}
+			unwrapped := collapseSpace(content)
 			for _, want := range tc.want {
-				if !containsUnwrapped(content, want) {
+				if !containsUnwrapped(unwrapped, want) {
 					t.Errorf("%s missing %q", tc.file, want)
 				}
 			}
 			for _, forbidden := range tc.notWant {
-				if containsUnwrapped(content, forbidden) {
+				if containsUnwrapped(unwrapped, forbidden) {
 					t.Errorf("%s carries banned content %q", tc.file, forbidden)
 				}
 			}
@@ -874,8 +883,12 @@ func TestOnboardingSkillIsScopedToMika(t *testing.T) {
 // wrapped. These anchors pin a claim, not a line layout — matching raw bytes
 // made every reflow of a paragraph look like a deleted contract, which trains
 // authors to fix the test instead of the text.
-func containsUnwrapped(content, want string) bool {
-	return strings.Contains(collapseSpace(content), collapseSpace(want))
+//
+// unwrapped is content already passed through collapseSpace: callers collapse
+// each file once, because re-collapsing a whole reference per anchor made this
+// the slowest test in the package.
+func containsUnwrapped(unwrapped, want string) bool {
+	return strings.Contains(unwrapped, collapseSpace(want))
 }
 
 var whitespaceRun = regexp.MustCompile(`\s+`)

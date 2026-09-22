@@ -25,7 +25,12 @@ vi.mock("@multica/core/issues/stores", () => ({
 vi.mock("@multica/core/modals", () => ({
   useModalStore: { getState: () => ({ modal: null }) },
 }));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return { ...actual, useQuery: () => ({ data: undefined }) };
+});
 vi.mock("@multica/core/paths", () => ({
+  useCurrentWorkspace: () => ({ id: "ws-1", slug: "acme" }),
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     chat: () => "/acme/chat",

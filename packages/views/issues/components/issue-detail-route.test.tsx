@@ -101,6 +101,33 @@ describe("useCanonicalIssueUrl", () => {
     );
     expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7");
   });
+
+  // DENE-709: the workspace usage page links to an issue with `?usage=1` to
+  // open its Token cost view. The rewrite must carry that param across, or a
+  // UUID-shaped link would land on the issue with the view it asked for
+  // already closed.
+  it("carries the usage deep link across the canonical rewrite", () => {
+    function usageWrapper({ children }: { children: ReactNode }) {
+      const adapter: NavigationAdapter = {
+        push,
+        replace,
+        back: vi.fn(),
+        pathname: "/acme/issues/cb240efb-154c-42a8-ae92-42b02676feca",
+        searchParams: new URLSearchParams("usage=1"),
+        hash: "",
+        getShareableUrl: (p: string) => `https://app.multica.com${p}`,
+      };
+      return <NavigationProvider value={adapter}>{children}</NavigationProvider>;
+    }
+
+    renderHook(
+      () =>
+        useCanonicalIssueUrl("cb240efb-154c-42a8-ae92-42b02676feca", "TRS-134"),
+      { wrapper: usageWrapper },
+    );
+
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134?usage=1");
+  });
 });
 
 describe("parseCommentHighlightHash", () => {

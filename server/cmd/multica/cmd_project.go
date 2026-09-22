@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/localdir"
 )
 
 var projectCmd = &cobra.Command{
@@ -585,6 +586,9 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 	if ref, ok, err := buildResourceRefFromRefFlag(cmd, resourceType, nil); err != nil {
 		return err
 	} else if ok {
+		if err := enrichLocalDirectoryRef(resourceType, ref); err != nil {
+			return err
+		}
 		body["resource_ref"] = ref
 	} else {
 		switch resourceType {
@@ -611,6 +615,10 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 			}
 			if mode, _ := cmd.Flags().GetString("execution-mode"); strings.TrimSpace(mode) != "" {
 				ref["execution_mode"] = strings.TrimSpace(mode)
+			}
+			fillLocalDirectoryIdentity(ref, pathVal)
+			if err := rejectUnwritableWorktreeRoot(ref); err != nil {
+				return err
 			}
 			body["resource_ref"] = ref
 		default:
@@ -704,6 +712,9 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 	if ref, ok, err := buildResourceRefFromRefFlag(cmd, resourceType, existingRef); err != nil {
 		return err
 	} else if ok {
+		if err := enrichLocalDirectoryRef(resourceType, ref); err != nil {
+			return err
+		}
 		body["resource_ref"] = ref
 	} else {
 		ref, has, err := buildResourceRefFromFlags(cmd, resourceType, existingRef)
@@ -711,6 +722,9 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if has {
+			if err := enrichLocalDirectoryRef(resourceType, ref); err != nil {
+				return err
+			}
 			body["resource_ref"] = ref
 		}
 	}
@@ -806,16 +820,12 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 		}
 		ref := map[string]any{}
 		// Seed from the existing row so a `--default-branch-hint` edit doesn't
-		// clobber the `url` (server overwrites resource_ref wholesale).
+		// clobber the `url` (server overwrites resource_ref wholesale). Copy
+		// every key — including repo_key — so a partial edit cannot drop
+		// identity the server stored.
 		if existingRef != nil {
-			if u, ok := existingRef["url"].(string); ok && strings.TrimSpace(u) != "" {
-				ref["url"] = strings.TrimSpace(u)
-			}
-			if h, ok := existingRef["default_branch_hint"].(string); ok && strings.TrimSpace(h) != "" {
-				ref["default_branch_hint"] = strings.TrimSpace(h)
-			}
-			if checkoutRef, ok := existingRef["ref"].(string); ok && strings.TrimSpace(checkoutRef) != "" {
-				ref["ref"] = strings.TrimSpace(checkoutRef)
+			for k, v := range existingRef {
+				ref[k] = v
 			}
 		}
 		if urlSet {
@@ -855,18 +865,12 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 			return nil, false, nil
 		}
 		ref := map[string]any{}
+		// Copy every stored key first. The server replaces resource_ref
+		// wholesale, so rebuilding from four fields was wiping real_path /
+		// repo_key / worktree_root on a mode or label edit (DENE-618).
 		if existingRef != nil {
-			if p, ok := existingRef["local_path"].(string); ok && strings.TrimSpace(p) != "" {
-				ref["local_path"] = strings.TrimSpace(p)
-			}
-			if d, ok := existingRef["daemon_id"].(string); ok && strings.TrimSpace(d) != "" {
-				ref["daemon_id"] = strings.TrimSpace(d)
-			}
-			if l, ok := existingRef["label"].(string); ok && strings.TrimSpace(l) != "" {
-				ref["label"] = strings.TrimSpace(l)
-			}
-			if m, ok := existingRef["execution_mode"].(string); ok && strings.TrimSpace(m) != "" {
-				ref["execution_mode"] = strings.TrimSpace(m)
+			for k, v := range existingRef {
+				ref[k] = v
 			}
 		}
 		if pathSet {
@@ -875,6 +879,15 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 				return nil, false, fmt.Errorf("--local-path cannot be empty")
 			}
 			ref["local_path"] = pathVal
+			// Identity belongs to the directory. A new path invalidates the
+			// previous real_path / repo_key / worktree_root; re-measure when
+			// the path exists on this machine, otherwise drop them so a
+			// stale identity cannot follow a moved folder.
+			delete(ref, "real_path")
+			delete(ref, "repo_key")
+			delete(ref, "is_git_repo")
+			delete(ref, "worktree_root")
+			fillLocalDirectoryIdentity(ref, pathVal)
 		}
 		if daemonSet {
 			daemonVal := strings.TrimSpace(mustString(cmd, "daemon-id"))
@@ -907,6 +920,11 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 		if v, ok := ref["daemon_id"].(string); !ok || v == "" {
 			return nil, false, fmt.Errorf("local_directory: --daemon-id is required (no existing daemon_id to merge with)")
 		}
+		if path, ok := ref["local_path"].(string); ok && !pathSet {
+			// A mode/label edit of a row that never received identity fields
+			// can fill them now, without changing the path.
+			fillLocalDirectoryIdentity(ref, path)
+		}
 		return ref, true, nil
 	default:
 		// Unknown type or empty (resource not found) — caller must use --ref.
@@ -922,6 +940,64 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 func mustString(cmd *cobra.Command, name string) string {
 	v, _ := cmd.Flags().GetString(name)
 	return v
+}
+
+// fillLocalDirectoryIdentity writes real_path / repo_key / is_git_repo when
+// the path exists on THIS machine. A path that belongs to another daemon is
+// left alone — inventing an identity for a directory we cannot see would
+// collide with the machine that actually holds it.
+func fillLocalDirectoryIdentity(ref map[string]any, path string) {
+	probe := localdir.Probe(path)
+	if !probe.Exists {
+		return
+	}
+	if probe.RealPath != "" {
+		if _, present := ref["real_path"]; !present {
+			ref["real_path"] = probe.RealPath
+		}
+	}
+	if probe.RepoKey != "" {
+		if _, present := ref["repo_key"]; !present {
+			ref["repo_key"] = probe.RepoKey
+		}
+	}
+	if _, present := ref["is_git_repo"]; !present {
+		ref["is_git_repo"] = probe.IsGitRepo
+	}
+}
+
+func rejectUnwritableWorktreeRoot(ref map[string]any) error {
+	raw, ok := ref["worktree_root"].(string)
+	if !ok {
+		return nil
+	}
+	root := strings.TrimSpace(raw)
+	if root == "" {
+		return nil
+	}
+	path, _ := ref["local_path"].(string)
+	// A path that does not exist here belongs to another machine — this
+	// process cannot speak to that disk, so it must not fail the save.
+	if !localdir.Probe(path).Exists {
+		return nil
+	}
+	if !localdir.WritableLocation(root) {
+		return fmt.Errorf("local_directory: worktree_root %q is not writable", root)
+	}
+	return nil
+}
+
+func enrichLocalDirectoryRef(resourceType string, ref any) error {
+	if resourceType != "local_directory" {
+		return nil
+	}
+	m, ok := ref.(map[string]any)
+	if !ok {
+		return nil
+	}
+	path, _ := m["local_path"].(string)
+	fillLocalDirectoryIdentity(m, path)
+	return rejectUnwritableWorktreeRoot(m)
 }
 
 func runProjectResourceRemove(cmd *cobra.Command, args []string) error {

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { RotateCcw } from "lucide-react";
 import type { AgentTask } from "@multica/core/types";
 import {
   Dialog,
@@ -23,6 +24,9 @@ import {
   type TaskUsageSummary,
 } from "../../runtimes/utils";
 import { KpiCard } from "../../runtimes/components/shared";
+import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { RunCostBreakdown } from "./run-cost-breakdown";
+import { defaultSelectedRunId } from "./run-cost";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 import { TaskStatusIcon } from "./task-status-icon";
 
@@ -42,11 +46,19 @@ export function IssueUsageDialog({
   onOpenChange,
   identifier,
   tasks,
+  isPending = false,
+  isError = false,
+  onRetry,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   identifier: string;
   tasks: AgentTask[];
+  /** The run list is still loading — render the skeleton, not "no usage". */
+  isPending?: boolean;
+  /** The run list failed to load — render the error, not "no usage". */
+  isError?: boolean;
+  onRetry?: () => void;
 }) {
   const { t } = useT("issues");
   // `estimateCost` reads custom rates imperatively out of the Zustand store,
@@ -56,6 +68,12 @@ export function IssueUsageDialog({
   // showing the old price until the task list happens to refetch. Same reason
   // the runtime usage page subscribes in usage-section.tsx.
   const pricings = useCustomPricingStore((s) => s.pricings);
+  // `null` means "no explicit pick yet" and defers to the most expensive run,
+  // which is recomputed as the list refreshes. Seeding state from the tasks
+  // instead would pin the panel to whichever run was dearest when the dialog
+  // first opened, and a run that finishes while it is open would never take
+  // the slot it just earned.
+  const [pickedRunId, setPickedRunId] = useState<string | null>(null);
 
   // Only runs that actually recorded usage earn a row: a run with no figure
   // contributes nothing to compare and would just add an all-em-dash line.
@@ -93,6 +111,17 @@ export function IssueUsageDialog({
       ? Math.floor((total.cacheRead / (total.input + total.cacheRead)) * 100)
       : 0;
 
+  // Whichever run the reader picked, falling back to the dearest one. A pick
+  // that is no longer in the list (the run list refreshed past it) falls back
+  // too, rather than leaving the panel blank under a table that still has rows.
+  const selectedId = useMemo(() => {
+    if (pickedRunId && priced.some((task) => task.id === pickedRunId)) {
+      return pickedRunId;
+    }
+    return defaultSelectedRunId(priced);
+  }, [pickedRunId, priced, pricings]);
+  const selected = priced.find((task) => task.id === selectedId) ?? null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* DialogContent's base is `sm:max-w-sm`, which the same-specificity
@@ -112,10 +141,12 @@ export function IssueUsageDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {total == null ? (
-          <p className="py-8 text-center text-body text-muted-foreground">
-            {t(($) => $.usage_detail.empty)}
-          </p>
+        {isError ? (
+          <UsageLoadFailed onRetry={onRetry} />
+        ) : isPending ? (
+          <UsageSkeleton />
+        ) : total == null ? (
+          <UsageEmpty />
         ) : (
           /* `min-w-0`: DialogContent is a grid, and a grid item defaults to
              `min-width: auto` — it sizes to its content's minimum rather than
@@ -153,7 +184,16 @@ export function IssueUsageDialog({
               <CostByAgent tasks={priced} agentIds={agentIds} total={total} />
             )}
 
-            <RunTable tasks={priced} total={total} />
+            <RunTable
+              tasks={priced}
+              total={total}
+              selectedId={selectedId}
+              onSelect={setPickedRunId}
+            />
+
+            {selected && (
+              <RunCostBreakdown task={selected} issueCost={total.cost} />
+            )}
 
             <div className="space-y-1 text-micro text-muted-foreground">
               {unpricedCount > 0 && (
@@ -170,6 +210,78 @@ export function IssueUsageDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── The three load states ─────────────────────────────────────────────────
+
+// Nothing on this issue has a usage figure. Two very different situations
+// share this branch — every run predates usage reporting, or the daemon is
+// not reporting — and the reader can act on neither without being told which
+// way to look, so the empty state says where reporting comes from instead of
+// just stating the absence.
+function UsageEmpty() {
+  const { t } = useT("issues");
+  return (
+    <div className="py-10 text-center">
+      <p className="text-body text-muted-foreground">
+        {t(($) => $.usage_detail.empty)}
+      </p>
+      <p className="mx-auto mt-2 max-w-md text-caption text-muted-foreground">
+        {t(($) => $.usage_detail.empty_hint)}
+      </p>
+    </div>
+  );
+}
+
+// Shaped like the content it replaces — three KPI tiles over a run table — so
+// the dialog does not resize the instant the data lands. A spinner here would
+// be less work and would make the box jump.
+function UsageSkeleton() {
+  const { t } = useT("issues");
+  return (
+    <div className="flex min-w-0 flex-col gap-5" aria-busy="true">
+      <span className="sr-only">{t(($) => $.usage_detail.loading)}</span>
+      <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex flex-col gap-2 p-5">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-7 w-full" />
+        ))}
+      </div>
+      <Skeleton className="h-40 w-full rounded-lg" />
+    </div>
+  );
+}
+
+// The run list failed to load. Retry is the whole point of this branch: the
+// dialog has no other way back to the data, and closing and reopening it
+// would hit the same cached rejection.
+function UsageLoadFailed({ onRetry }: { onRetry?: () => void }) {
+  const { t } = useT("issues");
+  return (
+    <div className="py-10 text-center">
+      <p className="text-body text-muted-foreground">
+        {t(($) => $.usage_detail.load_failed)}
+      </p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-caption transition-colors hover:bg-accent"
+        >
+          <RotateCcw className="!size-3.5" />
+          {t(($) => $.usage_detail.retry)}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -270,7 +382,17 @@ function CostByAgent({
   );
 }
 
-function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummary }) {
+function RunTable({
+  tasks,
+  total,
+  selectedId,
+  onSelect,
+}: {
+  tasks: AgentTask[];
+  total: TaskUsageSummary;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
   const { t } = useT("issues");
   const maxTokens = tasks.reduce(
     (m, task) => Math.max(m, summarizeTaskUsage(task.usage)?.tokens ?? 0),
@@ -303,7 +425,13 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
         </thead>
         <tbody>
           {tasks.map((task) => (
-            <RunRow key={task.id} task={task} maxTokens={maxTokens} />
+            <RunRow
+              key={task.id}
+              task={task}
+              maxTokens={maxTokens}
+              selected={task.id === selectedId}
+              onSelect={onSelect}
+            />
           ))}
         </tbody>
         <tfoot>
@@ -323,7 +451,17 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
   );
 }
 
-function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
+function RunRow({
+  task,
+  maxTokens,
+  selected,
+  onSelect,
+}: {
+  task: AgentTask;
+  maxTokens: number;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
   const { t } = useT("issues");
   const trigger = useTriggerText(task);
   const statusLabel = useStatusLabel(task.status);
@@ -336,7 +474,29 @@ function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
       : "";
 
   return (
-    <tr className="text-caption tabular-nums transition-colors hover:bg-accent/40 [&>td]:whitespace-nowrap [&>td]:border-t [&>td]:px-2 [&>td]:py-1.5 [&>td]:text-right">
+    // Selecting a row drives the breakdown panel below, so the row is a
+    // control: keyboard-reachable, and `aria-selected` rather than colour
+    // alone. Selection is carried by font WEIGHT as well as background, and
+    // the selected row pins its own hover background — hover only changes the
+    // background, so without both the pointer landing on the selected row
+    // would visually demote it to "just hovered".
+    <tr
+      role="button"
+      tabIndex={0}
+      aria-selected={selected}
+      onClick={() => onSelect(task.id)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(task.id);
+        }
+      }}
+      className={`cursor-pointer text-caption tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring [&>td]:whitespace-nowrap [&>td]:border-t [&>td]:px-2 [&>td]:py-1.5 [&>td]:text-right ${
+        selected
+          ? "bg-accent/70 font-medium text-foreground hover:bg-accent/70"
+          : "hover:bg-accent/40"
+      }`}
+    >
       <td className="!pl-0 !text-left">
         <div className="flex items-center gap-2">
           <ActorAvatar actorType="agent" actorId={task.agent_id} size="sm" enableHoverCard />

@@ -312,6 +312,12 @@ deleted_stage_wakeup_failures AS (
 deleted_attachments AS (
     DELETE FROM attachment WHERE workspace_id = $1
 ),
+deleted_visibility_audits AS (
+    DELETE FROM visibility_audit WHERE workspace_id = $1
+),
+deleted_module_visibility AS (
+    DELETE FROM workspace_module_visibility WHERE workspace_id = $1
+),
 deleted_transfer_attachment_chunks AS (
     DELETE FROM transfer_attachment_upload_chunk WHERE workspace_id = $1
 ),
@@ -510,6 +516,9 @@ WHERE channel_media_pending_object.workspace_id = $1
 // nothing else removes them. The Stage 4 writer was removed in DENE-520, but the
 // table and migrations stay for self-hosted workspaces that already applied
 // them, so the teardown keeps sweeping whatever a pre-removal build left behind.
+// Sharing-scope history (DENE-698) is workspace-keyed and has no foreign key,
+// so the audit rows outlive every resource they describe unless swept here.
+// Module-level sharing (DENE-699) is workspace-keyed with no foreign key.
 // Same no-FK chore for the resumable attachment staging (DENE-443). Both
 // tables are keyed by workspace_id, so the teardown never has to assemble the
 // (sha256, offset) pairs it is dropping first.

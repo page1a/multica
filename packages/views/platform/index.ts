@@ -6,6 +6,7 @@ export {
   isDesktopShell,
   pickDirectory,
   validateLocalDirectory,
+  validateWritablePath,
   canSetLocalDirectorySharedOverride,
   listLocalDirectorySharedOverrides,
   setLocalDirectorySharedOverride,

@@ -74,7 +74,7 @@
     "description_placeholder": "説明を追加...",
     "description_hint": "このプロジェクトのすべての実行で、コンテキストとしてエージェントに共有されます。",
     "empty_issues_title": "リンクされたタスクはありません",
-    "empty_issues_hint": "新しいタスクを作成するか、既存のタスクをこのプロジェクトに割り当ててください。",
+    "empty_issues_hint": "既存のタスクをこのプロジェクトに追加することもできます。",
     "empty_issues_new_button": "新規タスク",
     "no_issues_yet": "タスクはまだありません",
     "toast_link_copied": "リンクをコピーしました",
@@ -156,7 +156,11 @@
     "local_directory_move_down_tooltip": "下に移動",
     "mode_worktree_root_label": "作業コピーの作成先",
     "mode_worktree_root_not_absolute": "絶対パスを指定してください。相対パスでは、そのときデーモンがいるディレクトリに作られてしまいます。",
-    "mode_worktree_root_inside_repo": "リポジトリの内部です。そこに作るとあなた自身の git status に現れ、.gitignore への追加も必要になります。リポジトリの隣のフォルダを選んでください。"
+    "mode_worktree_root_inside_repo": "リポジトリの内部です。そこに作るとあなた自身の git status に現れ、.gitignore への追加も必要になります。リポジトリの隣のフォルダを選んでください。",
+    "mode_worktree_root_not_writable": "このフォルダには書き込めません。このマシンでファイルを作成できる場所を選んでください。",
+    "mode_worktree_root_conflicts": "プロジェクトに既に紐づいているディレクトリと重なっています。別のフォルダを選んでください。",
+    "local_daemon_already_attached_hint": "このマシンにはすでにローカルディレクトリが添付されています。新しく追加するには、先に既存のものを削除してください。",
+    "toast_local_daemon_already_attached": "このマシンにはすでにこのプロジェクトのローカルディレクトリが添付されています。新しく追加するには、先に既存のものを削除してください。"
   },
   "members": {
     "section_header": "メンバー",

@@ -352,18 +352,31 @@ func mergeAgentEnv(existing, request map[string]string) (map[string]string, envA
 // map, returning an empty (never nil) map so callers can iterate
 // safely.
 func unmarshalCustomEnv(a db.Agent) map[string]string {
-	out := map[string]string{}
-	if len(a.CustomEnv) == 0 {
-		return out
-	}
-	if err := json.Unmarshal(a.CustomEnv, &out); err != nil {
+	out, err := unmarshalCustomEnvChecked(a)
+	if err != nil {
 		slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(a.ID), "error", err)
-		return map[string]string{}
-	}
-	if out == nil {
-		return map[string]string{}
 	}
 	return out
+}
+
+// unmarshalCustomEnvChecked is unmarshalCustomEnv with the decode error kept.
+// Most callers only want the map and treat an undecodable environment as
+// empty, but a caller that must not silently proceed without it — log export
+// redaction builds its value deny-list from this map — needs to know the
+// decode failed rather than see an empty map it cannot tell apart from "this
+// agent has no secret variables".
+func unmarshalCustomEnvChecked(a db.Agent) (map[string]string, error) {
+	out := map[string]string{}
+	if len(a.CustomEnv) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(a.CustomEnv, &out); err != nil {
+		return map[string]string{}, err
+	}
+	if out == nil {
+		return map[string]string{}, nil
+	}
+	return out, nil
 }
 
 func sortedKeys(m map[string]string) []string {

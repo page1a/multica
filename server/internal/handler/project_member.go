@@ -146,6 +146,11 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Joining a project is a sharing change for the person who joined: every
+	// 'project'-scoped resource this project holds becomes visible to them
+	// now, not when a cache expires (DENE-698).
+	h.invalidateSharingCaches(r.Context(), project.WorkspaceID, memberUUID)
+
 	h.publish(protocol.EventProjectUpdated, uuidToString(project.WorkspaceID), "member", uuidToString(actor.UserID), map[string]any{
 		"project_id": uuidToString(project.ID),
 	})
@@ -174,6 +179,9 @@ func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project member not found")
 		return
 	}
+	// Leaving a project narrows what this person can see; the same caches have
+	// to drop for the narrowing to take effect immediately.
+	h.invalidateSharingCaches(r.Context(), project.WorkspaceID, memberUUID)
 	h.publish(protocol.EventProjectUpdated, uuidToString(project.WorkspaceID), "member", uuidToString(actor.UserID), map[string]any{
 		"project_id": uuidToString(project.ID),
 	})

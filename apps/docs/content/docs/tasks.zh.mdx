@@ -103,6 +103,8 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `agent_blocked` | 智能体主动报告无法继续 | 按它在评论中的说明补充信息 |
 | `api_invalid_request` | 平台 API 拒绝了非法请求 | 重试；反复出现时报告问题 |
 | `codex_semantic_inactivity` | Codex 长时间无有效输出被判停滞 | 重试，或调整 Codex 停滞超时 |
+| `antigravity_session_token_expired` | Antigravity CLI（agy）跑得比它启动时载入的 OAuth access token 更久，被 Google 以 401 拒绝。本机登录仍然有效，只是该 CLI 在运行中途不会刷新这颗 token | 重试即可：下一轮会开新会话并重新读取本机登录态。若立刻又失败，再检查那台机器上 Antigravity 是否还处于登录状态 |
+| `antigravity_not_logged_in` | Antigravity CLI（agy）报告：执行智能体的那台机器没有登录。与上面的凭据过期不同，这里的本机登录可能真的已经失效 | 先在那台机器上跑一次 `agy -p ping`：能通就重试，下一轮会开新会话；立刻又失败，就去重新登录 Antigravity |
 
 **工具侧（`agent_error.*`，前缀省略）**
 

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+	"time"
 )
 
 // SettingsKey is the key under which routing configuration lives inside the
@@ -34,9 +35,21 @@ import (
 const SettingsKey = "routing"
 
 // DefaultConfidenceThreshold is the threshold applied when settings carry no
-// explicit one. Below it, the corresponding slot is left empty rather than
-// filled with a guess.
-const DefaultConfidenceThreshold = 0.70
+// explicit one. It no longer decides whether a slot gets filled — routing
+// always dispatches — only whether the judge's own pick is used or the
+// ladder's fallback rung is. Measured verdicts on real tickets cluster in the
+// 0.5-0.7 band, so a floor above that band sent every ticket to the fallback
+// and threw the judge's answer away.
+const DefaultConfidenceThreshold = 0.60
+
+// DefaultStaleReviewHours is how long a ticket may sit awaiting acceptance
+// before the stale sweep looks at it, when settings carry no explicit value.
+//
+// A day rather than an hour on purpose. The sweep exists for tickets nobody
+// will move again, and a reviewer seat that is simply queued behind other work
+// is not one of them; a short floor would wake seats that were about to run
+// anyway and turn a safety net into a second dispatcher.
+const DefaultStaleReviewHours = 24
 
 // Settings is the whole routing configuration: an on/off switch, the model the
 // judge runs on, the confidence threshold, and — optionally — the endpoint and
@@ -65,6 +78,11 @@ type Settings struct {
 	// is written to a slot. Zero or out of range means "unset" and yields
 	// DefaultConfidenceThreshold; it is never treated as "accept everything".
 	ConfidenceThreshold float64 `json:"confidence_threshold"`
+	// StaleReviewHours is the stall threshold for the in-review sweep, in
+	// hours. Zero or out of range means "unset" and yields
+	// DefaultStaleReviewHours; it is deliberately not a second on/off switch —
+	// the sweep runs only while Enabled is true, exactly like every other row.
+	StaleReviewHours float64 `json:"stale_review_hours"`
 	// BaseURL is this workspace's own OpenAI-compatible endpoint for the
 	// judge. Empty means "use the deployment's MULTICA_LLM_BASE_URL", which is
 	// the only thing that existed before a workspace could bring its own.
@@ -86,6 +104,12 @@ type Settings struct {
 	// after decryption and is never serialised — `json:"-"` is load-bearing,
 	// because this struct is marshalled back into the settings column.
 	APIKey string `json:"-"`
+	// Projects is this workspace's project -> direction table: project name
+	// (exact, or `prefix*`) to one of the ladder's directions, or "通用" for a
+	// project that is deliberately general-purpose. Rows here are laid over
+	// the shipped defaults in ladder.json and win, so classifying a project is
+	// a settings write and never a release.
+	Projects map[string]string `json:"projects,omitempty"`
 }
 
 // Target is where one judge call is sent: which model, on whose endpoint,
@@ -183,4 +207,23 @@ func (s Settings) Threshold() float64 {
 		return DefaultConfidenceThreshold
 	}
 	return t
+}
+
+// maxStaleReviewHours caps the stored value. A year is already far past the
+// point where the sweep would ever fire, and the cap is what keeps a typo or a
+// hostile settings write from producing a duration that overflows into the
+// past.
+const maxStaleReviewHours = 24 * 365
+
+// StaleAfter returns how long a ticket must have been quiet in the in-review
+// category before the stale sweep may act on it. Out-of-range values fall back
+// to the default rather than being clamped to zero, because zero here would
+// mean "sweep every ticket the moment it enters review" — the one reading that
+// turns the safety net into a loop.
+func (s Settings) StaleAfter() time.Duration {
+	h := s.StaleReviewHours
+	if math.IsNaN(h) || math.IsInf(h, 0) || h <= 0 || h > maxStaleReviewHours {
+		return DefaultStaleReviewHours * time.Hour
+	}
+	return time.Duration(h * float64(time.Hour))
 }

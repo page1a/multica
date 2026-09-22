@@ -71,9 +71,11 @@ type localDirectoryRef struct {
 // absolute path; the path mutex keys on it so two different routes to the
 // same directory are serialised.
 type localDirectoryAssignment struct {
-	Ref      localDirectoryRef
-	AbsPath  string // user-provided path, cleaned but not symlink-resolved
-	RealPath string // canonical key for the path mutex
+	Ref        localDirectoryRef
+	AbsPath    string // user-provided path, cleaned but not symlink-resolved
+	RealPath   string // canonical key for the path mutex
+	ResourceID string // project_resource id, for identity backfill
+	ProjectID  string
 }
 
 // UsesWorktree reports whether this assignment runs each task in its own git
@@ -205,6 +207,15 @@ func localDirectoryPlanForTask(task Task, daemonID string) (chosen *localDirecto
 		if err != nil {
 			return nil, nil, err
 		}
+		stampProjectID := func(list []*localDirectoryAssignment) {
+			for _, a := range list {
+				if a != nil {
+					a.ProjectID = project.ID
+				}
+			}
+		}
+		stampProjectID([]*localDirectoryAssignment{picked})
+		stampProjectID(rest)
 		if chosen == nil && picked != nil {
 			chosen = picked
 			readOnly = append(readOnly, rest...)
@@ -302,7 +313,7 @@ func resolveLocalDirectories(resources []ProjectResourceData, daemonID string) (
 		if err != nil {
 			return nil, nil, err
 		}
-		entry := &localDirectoryAssignment{Ref: ref, AbsPath: absPath, RealPath: realPath}
+		entry := &localDirectoryAssignment{Ref: ref, AbsPath: absPath, RealPath: realPath, ResourceID: r.ID}
 		if chosen == nil {
 			chosen = entry
 			continue

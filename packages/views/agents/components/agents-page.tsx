@@ -21,6 +21,7 @@ import {
   agentRunCounts30dOptions,
   effectiveAccessScope,
   isAgentRuntimeBound,
+  isAgentWorkEnabled,
   useWorkspaceActivityMap,
   useWorkspacePresenceMap,
   VISIBILITY_TOOLTIP,
@@ -106,8 +107,8 @@ import {
 // the TWO-LINE form: avatar left, name + description right, 64px tall —
 // the documented exception to the single-line management-list rule.
 const GRID_COLS =
-  "grid-cols-[0.75rem_minmax(120px,1fr)_var(--agc-status-mobile)_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--agc-status-desktop)_var(--agc-owner)_var(--agc-access)_var(--agc-runtime)_var(--agc-lastactive)_var(--agc-runs)_var(--agc-model)_var(--agc-created)_1.75rem_0.75rem]";
+  "grid-cols-[0.75rem_minmax(120px,1fr)_var(--agc-status-mobile)_3.75rem_0.75rem] " +
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--agc-status-desktop)_var(--agc-owner)_var(--agc-access)_var(--agc-runtime)_var(--agc-lastactive)_var(--agc-runs)_var(--agc-model)_var(--agc-created)_3.75rem_0.75rem]";
 
 // Two-line rows; the virtualizer's fixed-size contract.
 const ROW_HEIGHT = 64;
@@ -128,10 +129,10 @@ const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
   created: 104,
 };
 
-// Fixed tracks (edges 12+12, checkbox 16, name min 200, kebab 28) plus the
-// 11 gap-x-3 gaps between the wide template's 12 tracks (zero-width tracks
-// still carry gaps).
-const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
+// Fixed tracks (edges 12+12, checkbox 16, name min 200, switch+kebab 60)
+// plus the 11 gap-x-3 gaps between the wide template's 12 tracks
+// (zero-width tracks still carry gaps).
+const FIXED_TRACKS_WIDTH = 300 + 11 * 12;
 
 function columnTrackVars(
   isVisible: (key: AgentColumnKey) => boolean,
@@ -517,6 +518,7 @@ function NameCell({
   const { t } = useT("agents");
   const { agent, isOwnedByMe } = row;
   const isArchived = !!agent.archived_at;
+  const isDisabled = !isAgentWorkEnabled(agent);
   const isPrivate = agent.visibility === "private";
   const isChild = isSpecialization(agent);
   return (
@@ -560,14 +562,14 @@ function NameCell({
         actorType="agent"
         actorId={agent.id}
         size="lg"
-        className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
+        className={`shrink-0 ${isArchived || isDisabled ? "opacity-50" : ""} ${isArchived ? "grayscale" : ""}`}
         showStatusDot
       />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span
             className={`min-w-0 truncate text-body font-medium ${
-              isArchived ? "text-muted-foreground" : ""
+              isArchived || isDisabled ? "text-muted-foreground" : ""
             }`}
           >
             {agent.name}
@@ -1577,7 +1579,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       <ListGridCell className="justify-end px-0">
                         <span
                           onClick={(e) => e.stopPropagation()}
-                          className="flex items-center"
+                          className="flex items-center gap-1"
                         >
                           <AgentRowActions
                             agent={row.agent}

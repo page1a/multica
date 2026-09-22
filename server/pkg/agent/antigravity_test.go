@@ -233,6 +233,30 @@ func TestBuildAntigravityArgsResume(t *testing.T) {
 	}
 }
 
+// TestBuildAntigravityArgsWithoutResumeHasNoConversation is the argv half of
+// DENE-724: once the session is retired, the next run's command line must carry
+// no `--conversation` at all. That is what makes agy start a NEW process-level
+// conversation — and therefore reload the OAuth token from the login store —
+// instead of resuming the one whose token already expired. The retirement
+// itself happens server-side (GetLastTaskSession excludes the row), so this
+// pins the other end of the contract: an empty resume id really does leave the
+// flag off the command line.
+func TestBuildAntigravityArgsWithoutResumeHasNoConversation(t *testing.T) {
+	t.Parallel()
+
+	args := buildAntigravityArgs(
+		"go",
+		"/tmp/agy.log",
+		20*time.Minute,
+		ExecOptions{},
+		quietAntigravityLogger(),
+	)
+
+	if strings.Contains(strings.Join(args, " "), "--conversation") {
+		t.Fatalf("a run with no resume id must not carry --conversation; got %v", args)
+	}
+}
+
 func TestBuildAntigravityArgsFiltersBlockedCustomArgs(t *testing.T) {
 	t.Parallel()
 

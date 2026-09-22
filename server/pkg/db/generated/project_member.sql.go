@@ -46,6 +46,37 @@ func (q *Queries) AddProjectMember(ctx context.Context, arg AddProjectMemberPara
 	return i, err
 }
 
+const countProjectAudience = `-- name: CountProjectAudience :one
+SELECT (
+    SELECT count(*) FROM project_member AS pm
+    WHERE pm.workspace_id = $1 AND pm.project_id = $2
+)::bigint + (
+    SELECT count(*) FROM project p
+    WHERE p.id = $2 AND p.workspace_id = $1
+      AND p.lead_type = 'member' AND p.lead_id IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM project_member pm
+          WHERE pm.project_id = p.id AND pm.member_id = p.lead_id
+      )
+)::bigint AS audience_size
+`
+
+type CountProjectAudienceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// How many people a 'project'-scoped resource reaches: the project's explicit
+// members plus a member lead who has no row of their own. Workspace
+// owners/admins reach it too through the management fallback, but they are not
+// who this number is about — it answers "who did I just share this with".
+func (q *Queries) CountProjectAudience(ctx context.Context, arg CountProjectAudienceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countProjectAudience, arg.WorkspaceID, arg.ProjectID)
+	var audience_size int32
+	err := row.Scan(&audience_size)
+	return audience_size, err
+}
+
 const deleteProjectMembersByMember = `-- name: DeleteProjectMembersByMember :exec
 DELETE FROM project_member
 WHERE workspace_id = $1 AND member_id = $2

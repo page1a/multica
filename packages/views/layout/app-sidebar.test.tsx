@@ -1,16 +1,29 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildIssueStatusCatalog } from "@multica/core/issue-statuses/queries";
+
+vi.mock("@multica/core/issue-statuses/hooks", () => ({
+  useIssueStatuses: () => buildIssueStatusCatalog([]),
+}));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { renderWithI18n } from "../test/i18n";
 import { AppSidebar } from "./app-sidebar";
 
-const { appForeground, chatSessions, chatStore, detail, deletePin, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
+const { appForeground, chatSessions, chatStore, detail, deletePin, invitationApi, modules, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   appForeground: { current: true },
   sidebarState: { setOpenMobile: vi.fn() },
   chatSessions: { current: [] as { id?: string; unread_count?: number }[] },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
+  // Captures the sidebar's invitation accept/decline mutations so the
+  // self-heal wiring (error → invalidate the pending list) is observable.
+  invitationApi: {
+    accept: vi.fn(),
+    decline: vi.fn(),
+    invalidateQueries: vi.fn(),
+    mutations: [] as Array<Record<string, unknown>>,
+  },
   navigation: { current: { pathname: "/acme/issues" } },
   summary: { current: [] as { workspace_id: string; count: number }[] },
   workspaces: {
@@ -28,6 +41,11 @@ const { appForeground, chatSessions, chatStore, detail, deletePin, navigation, p
         created_at: "2026-05-06T00:00:00Z",
       },
     ],
+  },
+  modules: {
+    current: undefined as
+      | { key: string; visibility: string; project_id: string | null; allowed: boolean }[]
+      | undefined,
   },
 }));
 
@@ -146,6 +164,8 @@ vi.mock("@multica/core/api", async (importOriginal) => {
     api: {
       ...actual.api,
       getBaseUrl: () => "http://127.0.0.1:8080",
+      acceptInvitation: invitationApi.accept,
+      declineInvitation: invitationApi.decline,
     },
   };
 });
@@ -176,19 +196,24 @@ vi.mock("@multica/core/workspace/queries", () => ({
   myInvitationListOptions: () => ({ queryKey: ["invitations"] }),
   workspaceKeys: { myInvitations: () => ["invitations"] },
   workspaceListOptions: () => ({ queryKey: ["workspaces"] }),
+  moduleVisibilityOptions: (wsId: string) => ({ queryKey: ["workspaces", wsId, "modules"] }),
 }));
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-query")>()),
-  useMutation: () => ({ isPending: false, mutate: vi.fn() }),
+  useMutation: (options: Record<string, unknown> = {}) => {
+    invitationApi.mutations.push(options);
+    return { isPending: false, mutate: vi.fn() };
+  },
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "pins") return { data: pins.current };
     if (queryKey[0] === "issue") return detail.current;
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
+    if (queryKey[0] === "workspaces" && queryKey[2] === "modules") return { data: modules.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
     if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current };
     return { data: [] };
   },
-  useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: invitationApi.invalidateQueries }),
 }));
 
 describe("PinRow", () => {
@@ -198,6 +223,7 @@ describe("PinRow", () => {
     detail.current = { isPending: false, isError: false, data: null, error: null };
     summary.current = [];
     workspaces.current = [];
+    modules.current = undefined;
   });
 
   it("unpins missing details", async () => {
@@ -301,6 +327,30 @@ describe("mobile sheet dismissal", () => {
     rerender(<AppSidebar />);
 
     expect(sidebarState.setOpenMobile).not.toHaveBeenCalled();
+  });
+});
+
+describe("module-level nav visibility", () => {
+  beforeEach(() => {
+    modules.current = [
+      { key: "issues", visibility: "private", project_id: null, allowed: false },
+      { key: "projects", visibility: "workspace", project_id: null, allowed: true },
+      { key: "repos", visibility: "workspace", project_id: null, allowed: true },
+      { key: "runtimes", visibility: "private", project_id: null, allowed: false },
+    ];
+  });
+  afterEach(() => {
+    modules.current = undefined;
+  });
+
+  it("hides Issues and Runtimes but keeps Agents and Squads", () => {
+    const { container } = renderWithI18n(<AppSidebar />);
+    expect(container.querySelector('button[data-href="/acme/issues"]')).not.toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/my-issues"]')).not.toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/runtimes"]')).not.toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/agents"]')).toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/squads"]')).toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/projects"]')).toBeInTheDocument();
   });
 });
 
@@ -482,5 +532,41 @@ describe("personal nav — Chat", () => {
     appForeground.current = false;
     const { container } = render(<AppSidebar />);
     expect(chatBadge(container)).toHaveAttribute("aria-label", "5");
+  });
+});
+
+describe("Pending invitation self-heal", () => {
+  beforeEach(() => {
+    invitationApi.accept.mockReset();
+    invitationApi.decline.mockReset();
+    invitationApi.invalidateQueries.mockClear();
+    invitationApi.mutations.length = 0;
+    invitationApi.accept.mockRejectedValue(new Error("invitation is not pending"));
+    invitationApi.decline.mockRejectedValue(new Error("invitation is not pending"));
+    navigation.current.pathname = "/acme/issues";
+    workspaces.current = [];
+  });
+
+  // "invitation is not pending" means the row on screen was concluded from
+  // another surface. Both mutations must invalidate the pending list on
+  // failure so the stale row drops instead of surviving until restart.
+  it("invalidates the pending-invitations list when accept or decline fails", async () => {
+    render(<AppSidebar />);
+    expect(invitationApi.mutations).toHaveLength(2);
+
+    for (const options of invitationApi.mutations as Array<{
+      mutationFn: (id: string) => Promise<unknown>;
+      onError?: (...args: unknown[]) => unknown;
+      onSettled?: (...args: unknown[]) => unknown;
+    }>) {
+      const settle = options.onError ?? options.onSettled;
+      expect(settle).toBeTypeOf("function");
+      invitationApi.invalidateQueries.mockClear();
+      await expect(options.mutationFn("inv-1")).rejects.toThrow("invitation is not pending");
+      await settle!(new Error("invitation is not pending"), "inv-1", undefined, undefined);
+      expect(invitationApi.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["invitations"] });
+    }
+    expect(invitationApi.accept).toHaveBeenCalledTimes(1);
+    expect(invitationApi.decline).toHaveBeenCalledTimes(1);
   });
 });

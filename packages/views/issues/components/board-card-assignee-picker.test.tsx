@@ -126,6 +126,8 @@ function makeIssue(assigneeType: IssueAssigneeType): Issue {
     priority: "none",
     assignee_type: assigneeType,
     assignee_id: `${assigneeType}-1`,
+    reviewer_type: null,
+    reviewer_id: null,
     creator_type: "member",
     creator_id: "member-1",
     parent_issue_id: null,

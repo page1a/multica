@@ -83,6 +83,7 @@ vi.mock("../../platform/local-directory", () => ({
   isDesktopShell: () => true,
   pickDirectory: vi.fn(),
   validateLocalDirectory: vi.fn(),
+  validateWritablePath: async () => true,
 }));
 vi.mock("../../platform/use-local-daemon-status", () => ({
   useLocalDaemonStatus: () => ({
@@ -148,6 +149,52 @@ describe("ProjectResourcesSection — choosing which directory tasks write in", 
     expect(promoted!.position).toBeLessThan(
       demoted ? demoted.position : existing[0]!.position,
     );
+  });
+
+  // A reorder is several sequential position writes. A second click landing
+  // mid-flight computes its patch from the pre-refresh list, which writes a
+  // half-set of new numbers (DENE-648).
+  it("locks every arrow while the reorder's writes are in flight", async () => {
+    let release: (() => void) | undefined;
+    updateMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        }),
+    );
+    renderWithI18n(<ProjectResourcesSection projectId="p1" />);
+
+    const arrows = () => [
+      ...screen.getAllByRole("button", { name: /move up/i }),
+      ...screen.getAllByRole("button", { name: /move down/i }),
+    ];
+    const moveUp = arrows().find(
+      (b) => /move up/i.test(b.getAttribute("aria-label") ?? "") && !b.hasAttribute("disabled"),
+    );
+    fireEvent.click(moveUp!);
+
+    await waitFor(() =>
+      expect(arrows().every((b) => b.hasAttribute("disabled"))).toBe(true),
+    );
+
+    release!();
+    await waitFor(() =>
+      expect(arrows().some((b) => !b.hasAttribute("disabled"))).toBe(true),
+    );
+  });
+
+  // `disabled:opacity-30` outranks `group-hover:opacity-100`, so the arrow at
+  // the end of the list sat visible without hovering while the usable one was
+  // the hidden one — exactly backwards (DENE-648).
+  it("keeps a disabled arrow hidden until the row is hovered", () => {
+    renderWithI18n(<ProjectResourcesSection projectId="p1" />);
+    const disabled = screen
+      .getAllByRole("button", { name: /move up/i })
+      .find((b) => b.hasAttribute("disabled"));
+    expect(disabled).toBeDefined();
+    const className = disabled!.className;
+    expect(className).toContain("disabled:opacity-0");
+    expect(className).toContain("group-hover:disabled:opacity-30");
   });
 
   // The hint promises the first directory is the one tasks write in. It must

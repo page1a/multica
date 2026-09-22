@@ -48,3 +48,21 @@ WHERE workspace_id = $1 AND project_id = $2;
 -- name: DeleteProjectMembersByMember :exec
 DELETE FROM project_member
 WHERE workspace_id = $1 AND member_id = $2;
+
+-- name: CountProjectAudience :one
+-- How many people a 'project'-scoped resource reaches: the project's explicit
+-- members plus a member lead who has no row of their own. Workspace
+-- owners/admins reach it too through the management fallback, but they are not
+-- who this number is about — it answers "who did I just share this with".
+SELECT (
+    SELECT count(*) FROM project_member AS pm
+    WHERE pm.workspace_id = $1 AND pm.project_id = $2
+)::bigint + (
+    SELECT count(*) FROM project p
+    WHERE p.id = $2 AND p.workspace_id = $1
+      AND p.lead_type = 'member' AND p.lead_id IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM project_member pm
+          WHERE pm.project_id = p.id AND pm.member_id = p.lead_id
+      )
+)::bigint AS audience_size;

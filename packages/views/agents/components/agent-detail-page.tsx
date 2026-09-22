@@ -537,7 +537,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       {blockedByChildren && (
         <SolidifyUnbindDialog
           parent={agent}
-          children={childAgents}
+          childAgents={childAgents}
           serverChildNames={refusedChildNames}
           onClose={() => setBlockedByChildren(false)}
           onArchived={() => navigation.push(paths.agents())}

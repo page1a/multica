@@ -263,6 +263,7 @@ func (p ProjectResourceForEnv) MarshalJSON() ([]byte, error) {
 		ResourceType string          `json:"resource_type"`
 		ResourceRef  json.RawMessage `json:"resource_ref"`
 		Label        string          `json:"label,omitempty"`
+		Access       string          `json:"access,omitempty"`
 	}
 	ref := p.ResourceRef
 	if len(ref) == 0 {
@@ -273,6 +274,7 @@ func (p ProjectResourceForEnv) MarshalJSON() ([]byte, error) {
 		ResourceType: p.ResourceType,
 		ResourceRef:  ref,
 		Label:        p.Label,
+		Access:       p.Access,
 	})
 }
 

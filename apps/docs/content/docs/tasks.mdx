@@ -103,6 +103,8 @@ The failure reasons shown in the execution log and usage stats fall into two gro
 | `agent_blocked` | The agent reported it cannot proceed | Provide what its comment asked for |
 | `api_invalid_request` | The platform API rejected an invalid request | Retry; report the problem if it recurs |
 | `codex_semantic_inactivity` | Codex produced no meaningful output for too long and was judged stalled | Retry, or adjust the Codex inactivity timeout |
+| `antigravity_session_token_expired` | The Antigravity CLI (agy) ran longer than the OAuth access token it loaded at startup, so Google rejected the run with a 401. The saved login is still valid — the CLI just never refreshes that token mid-run | Retry: the next run starts a fresh session and reloads the saved login. If it fails immediately instead, check that Antigravity is still signed in on that machine |
+| `antigravity_not_logged_in` | The Antigravity CLI (agy) reported that the machine running the agent is not signed in. Unlike the token expiry above, the saved login here may genuinely be gone | Run `agy -p ping` on that machine: if it answers, retry — the next run starts a fresh session. If it fails at once, sign in to Antigravity again |
 
 **Tool side (`agent_error.*`, prefix omitted)**
 

@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   Clock,
   Copy,
   Crown,
+  Eye,
   Link,
   Loader2,
   Mail,
@@ -52,11 +54,8 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
 } from "@multica/ui/components/ui/dropdown-menu";
+import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -73,6 +72,13 @@ import {
   shareLinkListOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
+import {
+  asMemberRole,
+  roleChangeImpact,
+  roleOptions,
+  type RoleCapability,
+  type RoleOption,
+} from "@multica/core/workspace/member-roles";
 import { api, errorCode } from "@multica/core/api";
 import { useLocale, useT } from "../../i18n";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
@@ -111,6 +117,7 @@ const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   owner: Crown,
   admin: Shield,
   member: User,
+  guest: Eye,
 };
 
 // Builds the shareable URL for a share-link invite. Prefers the navigation
@@ -125,6 +132,11 @@ function buildShareLinkUrl(
     return navigation.getShareableUrl(joinPath);
   }
   return `${typeof window !== "undefined" ? window.location.origin : ""}${joinPath}`;
+}
+
+/** Joins capability phrases the way the locale joins list items. */
+function listSeparator(locale: string): string {
+  return locale.startsWith("zh") || locale.startsWith("ja") ? "\u3001" : ", ";
 }
 
 function useRoleLabels() {
@@ -145,7 +157,39 @@ function useRoleLabels() {
       description: t(($) => $.members.roles.member.description),
       icon: ROLE_ICONS.member,
     },
+    guest: {
+      label: t(($) => $.members.roles.guest.label),
+      description: t(($) => $.members.roles.guest.description),
+      icon: ROLE_ICONS.guest,
+    },
   } as const;
+}
+
+/** Why a tier is not selectable, in the words shown under it in the picker. */
+function useRoleBlockLabels(): Record<
+  NonNullable<RoleOption["block"]>,
+  string
+> {
+  const { t } = useT("settings");
+  return {
+    last_owner: t(($) => $.members.cannot_demote_last_owner),
+    owner_requires_owner: t(($) => $.members.role_blocked.owner_requires_owner),
+  };
+}
+
+/** Capability phrases for the "what this change affects" summary. */
+function useCapabilityLabels(): Record<RoleCapability, string> {
+  const { t } = useT("settings");
+  return {
+    view_shared: t(($) => $.members.capabilities.view_shared),
+    see_workspace_scope: t(($) => $.members.capabilities.see_workspace_scope),
+    create_resources: t(($) => $.members.capabilities.create_resources),
+    comment_and_edit: t(($) => $.members.capabilities.comment_and_edit),
+    be_assigned: t(($) => $.members.capabilities.be_assigned),
+    manage_members: t(($) => $.members.capabilities.manage_members),
+    workspace_settings: t(($) => $.members.capabilities.workspace_settings),
+    billing_and_transfer: t(($) => $.members.capabilities.billing_and_transfer),
+  };
 }
 
 function MemberRow({
@@ -155,6 +199,7 @@ function MemberRow({
   ownerCount,
   isSelf,
   busy,
+  error,
   onRoleChange,
   onRemove,
 }: {
@@ -166,17 +211,32 @@ function MemberRow({
   ownerCount: number;
   isSelf: boolean;
   busy: boolean;
+  /** Inline message for a save this row just failed, shown next to the
+   *  picker that rolled back. */
+  error: string | null;
   onRoleChange: (role: MemberRole) => void;
   onRemove: () => void;
 }) {
   const { t } = useT("settings");
   const roleConfig = useRoleLabels();
-  const rc = roleConfig[member.role];
-  const RoleIcon = rc.icon;
-  const canEditRole = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
-  const canRemove = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
-  const isLastOwner = member.role === "owner" && ownerCount <= 1;
-  const showMenu = canEditRole || canRemove;
+  const blockLabels = useRoleBlockLabels();
+  // The server's role enum is parsed leniently, so a backend that grows a
+  // fifth tier reaches us as a string we cannot place on the ladder. Show it
+  // as-is and refuse to edit rather than guess a tier for a real person.
+  const role = asMemberRole(member.role);
+  const rc = role ? roleConfig[role] : null;
+  const RoleIcon = rc?.icon ?? User;
+  const canEditRole =
+    canManage && !isSelf && role !== null && (role !== "owner" || canManageOwners);
+  const canRemove =
+    canManage && !isSelf && (role !== "owner" || canManageOwners);
+  const options = role
+    ? roleOptions({
+        current: role,
+        actorIsOwner: canManageOwners,
+        isLastOwner: role === "owner" && ownerCount <= 1,
+      })
+    : [];
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -184,8 +244,73 @@ function MemberRow({
       <div className="min-w-0 flex-1">
         <div className="text-body font-medium truncate">{member.name}</div>
         <div className="text-caption text-muted-foreground truncate">{member.email}</div>
+        {error && (
+          <div className="mt-1 flex items-start gap-1 text-caption text-destructive">
+            <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+            <span className="min-w-0">{error}</span>
+          </div>
+        )}
       </div>
-      {showMenu && (
+      {canEditRole && role ? (
+        <Select
+          items={options.map((option) => ({
+            value: option.role,
+            label: roleConfig[option.role].label,
+          }))}
+          value={role}
+          disabled={busy}
+          onValueChange={(value) => {
+            const next = asMemberRole(value);
+            if (next && next !== role) onRoleChange(next);
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            className="w-36"
+            aria-label={t(($) => $.members.role_select_label, { name: member.name })}
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            ) : (
+              <RoleIcon className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+            {/* The label stays on the optimistic tier while the write is in
+                flight — swapping it for "saving" would hide the very change
+                the row was just told to make. The spinner carries that. */}
+            <SelectValue>{() => roleConfig[role].label}</SelectValue>
+          </SelectTrigger>
+          <SelectContent className="w-auto">
+            {options.map((option) => {
+              const config = roleConfig[option.role];
+              const Icon = config.icon;
+              return (
+                <SelectItem
+                  key={option.role}
+                  value={option.role}
+                  disabled={option.disabled}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <div className="flex flex-col items-start">
+                    <span>{config.label}</span>
+                    <span className="text-caption text-muted-foreground font-normal">
+                      {option.block ? blockLabels[option.block] : config.description}
+                    </span>
+                  </div>
+                </SelectItem>
+              );
+            })}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Badge
+          variant="secondary"
+          title={role ? undefined : t(($) => $.members.unknown_role_title)}
+        >
+          <RoleIcon className="h-3 w-3" />
+          {rc ? rc.label : t(($) => $.members.unknown_role)}
+        </Badge>
+      )}
+      {canRemove && (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -195,65 +320,55 @@ function MemberRow({
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
-            {canEditRole && (
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <Shield className="h-3.5 w-3.5" />
-                  {t(($) => $.members.change_role)}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-auto">
-                  {(Object.entries(roleConfig) as [MemberRole, (typeof roleConfig)[MemberRole]][]).map(
-                    ([role, config]) => {
-                      if (role === "owner" && !canManageOwners) return null;
-                      const Icon = config.icon;
-                      const wouldDemoteLastOwner =
-                        isLastOwner && role !== "owner";
-                      return (
-                        <DropdownMenuItem
-                          key={role}
-                          onClick={() =>
-                            wouldDemoteLastOwner ? undefined : onRoleChange(role)
-                          }
-                          disabled={wouldDemoteLastOwner}
-                          title={
-                            wouldDemoteLastOwner
-                              ? t(($) => $.members.cannot_demote_last_owner_title)
-                              : undefined
-                          }
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                          <div className="flex flex-col">
-                            <span>{config.label}</span>
-                            <span className="text-caption text-muted-foreground font-normal">
-                              {wouldDemoteLastOwner
-                                ? t(($) => $.members.cannot_demote_last_owner)
-                                : config.description}
-                            </span>
-                          </div>
-                          {member.role === role && (
-                            <span className="ml-auto text-caption text-muted-foreground">{"✓"}</span>
-                          )}
-                        </DropdownMenuItem>
-                      );
-                    }
-                  )}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            )}
-            {canEditRole && canRemove && <DropdownMenuSeparator />}
-            {canRemove && (
-              <DropdownMenuItem variant="destructive" onClick={onRemove}>
-                <UserMinus className="h-3.5 w-3.5" />
-                {t(($) => $.members.remove_action)}
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem variant="destructive" onClick={onRemove}>
+              <UserMinus className="h-3.5 w-3.5" />
+              {t(($) => $.members.remove_action)}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      <Badge variant="secondary">
-        <RoleIcon className="h-3 w-3" />
-        {rc.label}
-      </Badge>
+    </div>
+  );
+}
+
+/**
+ * "Nobody here yet" prompt with the invite entry.
+ *
+ * The roster is never literally empty for the person reading it — you are
+ * always in your own workspace — so the state that actually ships is "only
+ * you", shown under your row. The truly-empty branch is kept for a roster
+ * the API could not give us, where we also cannot prove the reader may
+ * invite anyone.
+ */
+function MembersInvitePrompt({ onInvite }: { onInvite: () => void }) {
+  const { t } = useT("settings");
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-center gap-2 py-8 text-center">
+        <div className="text-body font-medium">{t(($) => $.members.empty_title)}</div>
+        <p className="text-caption text-muted-foreground">
+          {t(($) => $.members.empty_description)}
+        </p>
+        <Button variant="outline" className="mt-2" onClick={onInvite}>
+          <Plus className="h-4 w-4" />
+          {t(($) => $.members.empty_action)}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Placeholder rows while the roster loads, so the section keeps its height
+ *  instead of collapsing and then jumping. */
+function MemberRowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <Skeleton className="h-8 w-8 rounded-full" />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <Skeleton className="h-3.5 w-32" />
+        <Skeleton className="h-3 w-48" />
+      </div>
+      <Skeleton className="h-7 w-36 rounded-md" />
     </div>
   );
 }
@@ -367,21 +482,28 @@ export function MembersTab() {
   const { t: billingT } = useT("billing");
   const locale = useLocale();
   const roleConfig = useRoleLabels();
+  const capabilityLabels = useCapabilityLabels();
   const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const navigation = useOptionalNavigation();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: members = [], isPending: membersLoading } = useQuery(
+    memberListOptions(wsId),
+  );
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
 
   const [inviteEmail, setInviteEmail] = useState("");
+  const inviteEmailRef = useRef<HTMLInputElement>(null);
   const [inviteRole, setInviteRole] = useState<MemberRole>("member");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteSeatPurchase, setInviteSeatPurchase] =
     useState<InviteSeatPurchase | null>(null);
   const dispatchedInvitePurchaseKey = useRef<string | null>(null);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
+  /** Per-row save error, cleared when that row is retried. Keyed by member id
+   *  so one failed save never blanks another row's message. */
+  const [roleErrors, setRoleErrors] = useState<Record<string, string>>({});
   const [invitationActionId, setInvitationActionId] = useState<string | null>(null);
   const [shareLinkActionId, setShareLinkActionId] = useState<string | null>(null);
   const [shareLinkLoading, setShareLinkLoading] = useState(false);
@@ -409,6 +531,11 @@ export function MembersTab() {
   const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
   const isOwner = currentMember?.role === "owner";
   const ownerCount = members.filter((m) => m.role === "owner").length;
+  // "No members" as a person experiences it: the roster holds nobody but
+  // them. A literally empty roster carries no evidence about the reader's
+  // own tier, so it cannot offer an invite it may not be allowed to make.
+  const rosterIsJustYou =
+    !membersLoading && members.every((m) => m.user_id === user?.id);
   // Only owners/admins may list share links; skip the request for plain
   // members (the server would 403) once the current member's role is known.
   const { data: shareLinks = [] } = useQuery(shareLinkListOptions(wsId, canManageWorkspace));
@@ -695,15 +822,67 @@ export function MembersTab() {
     });
   };
 
-  const handleRoleChange = async (memberId: string, role: MemberRole) => {
+  /** Sentence naming what a tier change opened or closed, so the person
+   *  making it sees the consequence and not just "saved". */
+  const describeRoleImpact = (from: MemberRole, to: MemberRole): string => {
+    const { gained, lost } = roleChangeImpact(from, to);
+    const phrase = (caps: RoleCapability[]) =>
+      caps.map((c) => capabilityLabels[c]).join(listSeparator(locale));
+    const parts: string[] = [];
+    if (gained.length > 0) {
+      parts.push(t(($) => $.members.role_impact_gained, { items: phrase(gained) }));
+    }
+    if (lost.length > 0) {
+      parts.push(t(($) => $.members.role_impact_lost, { items: phrase(lost) }));
+    }
+    return parts.length > 0
+      ? parts.join(" ")
+      : t(($) => $.members.role_impact_none);
+  };
+
+  const handleRoleChange = async (member: MemberWithUser, role: MemberRole) => {
     if (!workspace) return;
-    setMemberActionId(memberId);
+    const previousRole = asMemberRole(member.role);
+    const key = workspaceKeys.members(wsId);
+    const snapshot = qc.getQueryData<MemberWithUser[]>(key);
+    // Optimistic per CLAUDE.md's field-patch rule: the new tier is what the
+    // row will show, nobody navigates away, and the rollback is this one
+    // field. Patch first so the picker never sits on the old value.
+    qc.setQueryData<MemberWithUser[]>(key, (old) =>
+      old?.map((m) => (m.id === member.id ? { ...m, role } : m)),
+    );
+    setRoleErrors((prev) => {
+      if (!(member.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[member.id];
+      return next;
+    });
+    setMemberActionId(member.id);
     try {
-      await api.updateMember(workspace.id, memberId, { role });
-      qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
-      toast.success(t(($) => $.members.toast_role_updated));
+      await api.updateMember(workspace.id, member.id, { role });
+      toast.success(
+        t(($) => $.members.role_impact_title, {
+          name: member.name,
+          role: roleConfig[role].label,
+        }),
+        {
+          description: previousRole
+            ? describeRoleImpact(previousRole, role)
+            : undefined,
+        },
+      );
+      qc.invalidateQueries({ queryKey: key });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_role_failed));
+      // Roll the row back to exactly what the list held before the patch —
+      // re-deriving it from `member` would lose a concurrent update that
+      // arrived on the same list.
+      if (snapshot) qc.setQueryData(key, snapshot);
+      else qc.invalidateQueries({ queryKey: key });
+      setRoleErrors((prev) => ({
+        ...prev,
+        [member.id]:
+          e instanceof Error ? e.message : t(($) => $.members.toast_role_failed),
+      }));
     } finally {
       setMemberActionId(null);
     }
@@ -797,6 +976,7 @@ export function MembersTab() {
               </div>
               <div className="grid gap-3 sm:grid-cols-[1fr_120px_auto]">
                 <Input
+                  ref={inviteEmailRef}
                   type="email"
                   name="invite-email"
                   autoComplete="email"
@@ -836,7 +1016,15 @@ export function MembersTab() {
           </Card>
         )}
 
-        {members.length > 0 ? (
+        {membersLoading ? (
+          <div role="status" aria-label={t(($) => $.members.members_loading)}>
+            <SettingsCard>
+              {[0, 1, 2].map((i) => (
+                <MemberRowSkeleton key={i} />
+              ))}
+            </SettingsCard>
+          </div>
+        ) : members.length > 0 ? (
           <SettingsCard>
             {members.map((m) => (
               <div key={m.id}>
@@ -847,7 +1035,8 @@ export function MembersTab() {
                   ownerCount={ownerCount}
                   isSelf={m.user_id === user?.id}
                   busy={memberActionId === m.id}
-                  onRoleChange={(role) => handleRoleChange(m.id, role)}
+                  error={roleErrors[m.id] ?? null}
+                  onRoleChange={(role) => handleRoleChange(m, role)}
                   onRemove={() => handleRemoveMember(m)}
                 />
               </div>
@@ -855,6 +1044,10 @@ export function MembersTab() {
           </SettingsCard>
         ) : (
           <p className="text-body text-muted-foreground">{t(($) => $.members.no_members)}</p>
+        )}
+
+        {rosterIsJustYou && canManageWorkspace && (
+          <MembersInvitePrompt onInvite={() => inviteEmailRef.current?.focus()} />
         )}
       </SettingsSection>
 

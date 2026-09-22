@@ -99,7 +99,7 @@ function renderDialog(
       <QueryClientProvider client={queryClient}>
         <SolidifyUnbindDialog
           parent={parent}
-          children={children}
+          childAgents={children}
           serverChildNames={serverChildNames}
           onClose={onClose}
           onArchived={onArchived}

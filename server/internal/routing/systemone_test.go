@@ -319,6 +319,11 @@ func (p providerCall) Unblock(_ context.Context, _ Target, _ JudgeState) (Advice
 	return Advice{Cause: "other"}, nil
 }
 
+func (p providerCall) Stale(_ context.Context, _ Target, _ StaleState) (StaleDecision, error) {
+	*p.sawFrom = append(*p.sawFrom, p.name)
+	return StaleDecision{Action: StaleWake}, nil
+}
+
 func TestProviderJudgeRoutesByProtocol(t *testing.T) {
 	var seen []string
 	j := ProviderJudge{

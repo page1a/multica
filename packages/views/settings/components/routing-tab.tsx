@@ -16,6 +16,7 @@ import {
 } from "@multica/core/workspace/queries";
 import type { RoutingHealth } from "@multica/core/workspace/routing-health";
 import {
+  normalizeStaleReviewHours,
   normalizeThreshold,
   parseRoutingSettings,
   routingGatewayIsComplete,
@@ -82,6 +83,7 @@ export function RoutingTab() {
   const [enabled, setEnabled] = useState(saved.enabled);
   const [model, setModel] = useState(saved.model);
   const [threshold, setThreshold] = useState(String(saved.confidence_threshold));
+  const [staleHours, setStaleHours] = useState(String(saved.stale_review_hours));
   const [baseUrl, setBaseUrl] = useState(saved.base_url);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const autoDiscoverKey = useRef("");
@@ -99,6 +101,7 @@ export function RoutingTab() {
     setEnabled(next.enabled);
     setModel(next.model);
     setThreshold(String(next.confidence_threshold));
+    setStaleHours(String(next.stale_review_hours));
     setBaseUrl(next.base_url);
     setKeyInput("");
     setAvailableModels([]);
@@ -112,9 +115,10 @@ export function RoutingTab() {
       enabled,
       model,
       confidence_threshold: normalizeThreshold(Number(threshold)),
+      stale_review_hours: normalizeStaleReviewHours(Number(staleHours)),
       base_url: baseUrl,
     }),
-    [enabled, model, threshold, baseUrl],
+    [enabled, model, threshold, staleHours, baseUrl],
   );
 
   const discoverModels = useMutation({
@@ -166,6 +170,7 @@ export function RoutingTab() {
       a.enabled === b.enabled &&
       a.model.trim() === b.model.trim() &&
       a.confidence_threshold === b.confidence_threshold &&
+      a.stale_review_hours === b.stale_review_hours &&
       a.base_url.trim() === b.base_url.trim(),
   });
 
@@ -339,6 +344,25 @@ export function RoutingTab() {
               disabled={!canManage || !enabled}
               onChange={(e) => setThreshold(e.target.value)}
               aria-label={t(($) => $.routing.threshold_label)}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            label={t(($) => $.routing.stale_hours_label)}
+            description={t(($) => $.routing.stale_hours_description)}
+            size="code"
+          >
+            <Input
+              type="number"
+              min={1}
+              max={720}
+              step={1}
+              value={staleHours}
+              // Same gate as the threshold: this row runs only while routing
+              // is on, and it is deliberately not a switch of its own.
+              disabled={!canManage || !enabled}
+              onChange={(e) => setStaleHours(e.target.value)}
+              aria-label={t(($) => $.routing.stale_hours_label)}
             />
           </SettingsRow>
         </SettingsCard>

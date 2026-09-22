@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ExternalLink, FileText, Loader2, Trash2 } from "lucide-react";
 import { useWorkspacePaths } from "@multica/core/paths";
+import {
+  applyIssueDraftAssigneeSuggestions,
+  type DraftAssigneeSuggestion,
+} from "@multica/core/issue-drafts";
 import {
   maxIssueDraftChildStage,
   normalizeIssueDraftPayloadGroup,
@@ -75,6 +79,7 @@ export function IssueDraftPreviewPanel({
   runtimes,
   runtimesLoading,
   members,
+  assigneeSuggestions,
   currentUserId,
   switchingRuntime,
   pending,
@@ -104,6 +109,7 @@ export function IssueDraftPreviewPanel({
   runtimes: RuntimeDevice[];
   runtimesLoading: boolean;
   members: MemberWithUser[];
+  assigneeSuggestions?: readonly (DraftAssigneeSuggestion | null)[];
   currentUserId: string | null;
   switchingRuntime: boolean;
   /** A turn is running: nothing may be written while the carrier is replying. */
@@ -252,6 +258,27 @@ export function IssueDraftPreviewPanel({
   // path has held this line since DENE-279 (`planIssueDraftFold` never
   // downgrades `ready`).
   const saveStatus = stage === "ready" ? "ready" : "draft";
+
+  // Routing's suggested seats land in the unassigned rows, where the ordinary
+  // assignee pickers show them and can change or clear them. They are applied
+  // only to a clean editor — the suggestions are index-aligned with the draft
+  // the server holds, and unsaved row edits would misalign them — and saved
+  // straight away: the confirm creates what the SERVER holds, so a suggestion
+  // that only lived on screen would be shown and then not created. Each row is
+  // offered once (see applyIssueDraftAssigneeSuggestions).
+  const offeredRows = useRef(new Set<string>());
+  useEffect(() => {
+    if (!assigneeSuggestions || assigneeSuggestions.length === 0) return;
+    const current = editing ?? draft;
+    if (locked || saving || dirty || !current) return;
+    const suggested = applyIssueDraftAssigneeSuggestions(current, assigneeSuggestions, offeredRows.current);
+    if (suggested === current) return;
+    const next = normalizeIssueDraftPayloadGroup(suggested);
+    setEditing(next);
+    void onSave(next, saveStatus).then((savedNow) => {
+      if (savedNow) setBaseline(next);
+    });
+  }, [assigneeSuggestions, dirty, draft, editing, locked, onSave, saveStatus, saving]);
 
   const handleGenerate = () => {
     void onGenerate(value).then((persisted) => {

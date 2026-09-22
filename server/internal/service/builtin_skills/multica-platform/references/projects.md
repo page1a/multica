@@ -51,13 +51,20 @@ project under `projects[]`. Two rules follow from that:
 Common resource types:
 
 - `github_repo` — durable GitHub repo context, with `resource_ref.url`, optional
-  checkout `ref`, and optional prompt-only `default_branch_hint`;
+  checkout `ref`, optional prompt-only `default_branch_hint`, and `repo_key`
+  (the same normalized `host/owner/name` a local checkout uses, computed from
+  the URL on save);
 - `local_directory` — daemon-local path context, with `resource_ref.local_path`,
   `daemon_id`, optional label, and optional `execution_mode` (`in_place`, the
   default, `worktree`, or `shared`). It may also carry `real_path` (the
   symlink-resolved path, which is the directory's identity), `repo_key` (the
   normalized identity of the repository it holds, empty when there is none),
   `worktree_root` (where parallel mode puts working copies) and `is_git_repo`.
+  Parallel (`worktree`) mode requires `is_git_repo: true` at save — a git
+  working tree with at least one commit. A client that cannot look at the
+  disk (the web UI) must not save that mode. `worktree_root` must be absolute,
+  must not sit inside the bound directory, and must not overlap another
+  bound directory on the same machine.
 
 A project may hold SEVERAL `local_directory` resources on one machine — four
 unrelated plain folders, or a repository plus its docs checkout. Two rules,
@@ -101,7 +108,9 @@ For `github_repo`, non-JSON `--ref` sets `resource_ref.ref`, the default
 checkout branch/tag/SHA for future tasks in that project. JSON `--ref '<json>'`
 remains the escape hatch for full payloads or resource types not covered by
 shortcuts. `project resource update` merges shortcut edits with the existing
-`resource_ref`, so a partial edit does not clobber required fields.
+`resource_ref`, so a partial edit does not clobber required fields — including
+`real_path`, `repo_key`, and `worktree_root`. On this machine the CLI also
+measures those identity fields on `resource add` and sends them.
 
 `--start-date` / `--due-date` are optional calendar days (`YYYY-MM-DD`, like
 issue dates). On `project update`, pass an empty string (`--start-date ""`) to
@@ -131,8 +140,11 @@ daemon — and it stays on disk on purpose. Automatic cleanup of those is a
 machine-level setting, OFF by default (Desktop → daemon settings). When on, a
 copy is removed only if ALL of: Multica created it, no task is in it, its last
 run is older than the configured window (default 14 days), `git status
---porcelain` is empty, and its branch is already merged into trunk. Any one
-failing keeps it, and the settings screen shows which. Removal always goes
+--porcelain` is empty, and its work is already in trunk — the branch is
+contained in trunk, or its changes were squashed into it (compared by content,
+since a squashed branch is never an ancestor of trunk). A deleted remote branch
+and a merged pull request are deliberately not accepted as evidence. Any one
+condition failing keeps the copy, and the settings screen shows which. Removal always goes
 through `git worktree remove`.
 
 Parallel mode is never preselected when a directory is added: a new

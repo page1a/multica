@@ -1,10 +1,16 @@
 import { act, type ReactNode } from "react";
+import { buildIssueStatusCatalog } from "@multica/core/issue-statuses/queries";
+
+vi.mock("@multica/core/issue-statuses/hooks", () => ({
+  useIssueStatuses: () => buildIssueStatusCatalog([]),
+}));
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WORKSPACE_PAGES } from "@multica/core/paths";
 import { SearchCommand } from "./search-command";
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 import { useSearchStore } from "./search-store";
 import enCommon from "../locales/en/common.json";
 import enAuth from "../locales/en/auth.json";
@@ -831,6 +837,8 @@ describe("SearchCommand", () => {
           priority: "none",
           assignee_type: "member",
           assignee_id: "user-1",
+          reviewer_type: null,
+          reviewer_id: null,
           creator_type: "member",
           creator_id: "user-1",
           parent_issue_id: null,
@@ -903,6 +911,8 @@ describe("SearchCommand", () => {
           priority: "none",
           assignee_type: null,
           assignee_id: null,
+          reviewer_type: null,
+          reviewer_id: null,
           creator_type: "member",
           creator_id: "user-1",
           parent_issue_id: null,
@@ -1012,6 +1022,8 @@ describe("SearchCommand", () => {
       priority: "none",
       assignee_type: null,
       assignee_id: null,
+      reviewer_type: null,
+      reviewer_id: null,
       creator_type: "member",
       creator_id: "user-1",
       parent_issue_id: null,
@@ -1234,6 +1246,8 @@ describe("SearchCommand", () => {
       priority: "none",
       assignee_type: null,
       assignee_id: null,
+      reviewer_type: null,
+      reviewer_id: null,
       creator_type: "member",
       creator_id: "user-1",
       parent_issue_id: null,

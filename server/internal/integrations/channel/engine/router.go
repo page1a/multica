@@ -988,6 +988,10 @@ func (r *Router) flushChatRun(
 			r.emitFlushReply(ctx, set, inst, msg, sessionID, bindingID, routeRevision, OutcomeAgentOffline)
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
 			r.emitFlushReply(ctx, set, inst, msg, sessionID, bindingID, routeRevision, OutcomeAgentArchived)
+		case errors.Is(err, service.ErrChatTaskAgentDisabled):
+			// Channel copy for disable is not a separate outcome yet; the
+			// archived notice still tells the user the seat will not reply.
+			r.emitFlushReply(ctx, set, inst, msg, sessionID, bindingID, routeRevision, OutcomeAgentArchived)
 		default:
 			r.logger.Error("channel router: flush enqueue chat task failed",
 				"chat_session_id", uuidString(sessionID), "err", err.Error())

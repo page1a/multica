@@ -1,7 +1,13 @@
 -- name: ListInboxItems :many
 SELECT i.*,
        iss.status AS issue_status,
-       iss.priority AS issue_priority
+       iss.priority AS issue_priority,
+       COALESCE(iss.visibility, 'workspace')::text AS issue_visibility,
+       COALESCE(iss.creator_type, '')::text AS issue_creator_type,
+       iss.creator_id AS issue_creator_id,
+       iss.project_id AS issue_project_id,
+       COALESCE(iss.assignee_type, '')::text AS issue_assignee_type,
+       iss.assignee_id AS issue_assignee_id
 FROM inbox_item i
 LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3 AND i.archived = false
@@ -75,7 +81,13 @@ WITH eligible_archived AS MATERIALIZED (
 )
 SELECT i.*,
        iss.status AS issue_status,
-       iss.priority AS issue_priority
+       iss.priority AS issue_priority,
+       COALESCE(iss.visibility, 'workspace')::text AS issue_visibility,
+       COALESCE(iss.creator_type, '')::text AS issue_creator_type,
+       iss.creator_id AS issue_creator_id,
+       iss.project_id AS issue_project_id,
+       COALESCE(iss.assignee_type, '')::text AS issue_assignee_type,
+       iss.assignee_id AS issue_assignee_id
 FROM inbox_item i
 JOIN selected_ids selected ON selected.id = i.id
 LEFT JOIN issue iss ON iss.id = i.issue_id
@@ -143,8 +155,41 @@ WHERE workspace_id = $1 AND issue_id = $2 AND type = $3 AND archived = false
 RETURNING recipient_type, recipient_id;
 
 -- name: CountUnreadInbox :one
-SELECT count(*) FROM inbox_item
-WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3 AND read = false AND archived = false;
+-- Sharing scope (DENE-698). A notification about an issue the recipient
+-- cannot see must not appear in their inbox or its count. The recipient IS
+-- the viewer here, so the matrix is expressed directly against their member
+-- row rather than through the handler's visibilityViewer: creator or
+-- assignee, or workspace scope unless guest, or project scope through a
+-- project they can reach (explicit membership, a project they lead, or the
+-- owner/admin fallback over all projects). Keep in step with
+-- visibilityViewer.issueVisibilitySQL in internal/handler/visibility.go.
+SELECT count(*) FROM inbox_item i
+LEFT JOIN issue iss ON iss.id = i.issue_id
+LEFT JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
+WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
+  AND i.read = false AND i.archived = false
+  AND (
+    iss.id IS NULL
+    OR (iss.creator_type = 'member' AND iss.creator_id = i.recipient_id)
+    OR (iss.assignee_type = 'member' AND iss.assignee_id = i.recipient_id)
+    OR (iss.visibility = 'workspace' AND COALESCE(m.role, '') <> 'guest')
+    OR (iss.visibility = 'project' AND iss.project_id IS NOT NULL AND (
+          COALESCE(m.role, '') IN ('owner', 'admin')
+          OR EXISTS (
+              SELECT 1 FROM project_member pm
+              WHERE pm.workspace_id = i.workspace_id
+                AND pm.project_id = iss.project_id
+                AND pm.member_id = i.recipient_id
+          )
+          OR EXISTS (
+              SELECT 1 FROM project p
+              WHERE p.id = iss.project_id
+                AND p.workspace_id = i.workspace_id
+                AND p.lead_type = 'member'
+                AND p.lead_id = i.recipient_id
+          )
+    ))
+  );
 
 -- name: CountUnreadInboxByWorkspace :many
 -- Per-workspace unread inbox counts for a recipient member, matching the
@@ -163,9 +208,34 @@ FROM (
         i.workspace_id, i.read
     FROM inbox_item i
     JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
+    LEFT JOIN issue iss ON iss.id = i.issue_id
     WHERE i.recipient_type = 'member'
       AND i.recipient_id = $1
       AND i.archived = false
+      -- Same sharing-scope rule as CountUnreadInbox; the switcher dot must
+      -- not light for an issue the recipient cannot open (DENE-698).
+      AND (
+        iss.id IS NULL
+        OR (iss.creator_type = 'member' AND iss.creator_id = i.recipient_id)
+        OR (iss.assignee_type = 'member' AND iss.assignee_id = i.recipient_id)
+        OR (iss.visibility = 'workspace' AND m.role <> 'guest')
+        OR (iss.visibility = 'project' AND iss.project_id IS NOT NULL AND (
+              m.role IN ('owner', 'admin')
+              OR EXISTS (
+                  SELECT 1 FROM project_member pm
+                  WHERE pm.workspace_id = i.workspace_id
+                    AND pm.project_id = iss.project_id
+                    AND pm.member_id = i.recipient_id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM project p
+                  WHERE p.id = iss.project_id
+                    AND p.workspace_id = i.workspace_id
+                    AND p.lead_type = 'member'
+                    AND p.lead_id = i.recipient_id
+              )
+        ))
+      )
     ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
 ) newest
 WHERE newest.read = false

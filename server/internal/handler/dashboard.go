@@ -16,6 +16,7 @@ import (
 //
 //   GET /api/dashboard/usage/daily        per-(date, model) token rows
 //   GET /api/dashboard/usage/by-agent     per-(agent, model) token rows
+//   GET /api/dashboard/usage/by-issue     per-(issue, model) token rows
 //   GET /api/dashboard/agent-runtime      per-agent run-time + task counts
 //   GET /api/dashboard/runtime/daily      per-date run-time + task counts
 //   GET /api/dashboard/failures/daily     per-(date, failure_reason) counts
@@ -290,6 +291,85 @@ func (h *Handler) GetDashboardUsageByAgent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, foldRestrictedUsageByAgent(resp, restricted))
+}
+
+// DashboardUsageByIssueResponse is one (issue, provider, model) aggregate.
+//
+// Carries the issue's human identifier and title so the dashboard can render
+// the row and link straight into the issue's Token cost view without a second
+// request per issue. Identifier is composed in the handler because the prefix
+// lives on the workspace, not on the issue row.
+type DashboardUsageByIssueResponse struct {
+	IssueID    string `json:"issue_id"`
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	// Same cost split as the other usage rollups (see
+	// DashboardUsageByAgentResponse): the provider's own charge, plus the
+	// tokens it did not price for the client to estimate.
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadTokens          int64 `json:"cache_read_tokens"`
+	CacheWriteTokens         int64 `json:"cache_write_tokens"`
+	CostUSDTicks             int64 `json:"cost_usd_ticks"`
+	UncostedInputTokens      int64 `json:"uncosted_input_tokens"`
+	UncostedOutputTokens     int64 `json:"uncosted_output_tokens"`
+	UncostedCacheReadTokens  int64 `json:"uncosted_cache_read_tokens"`
+	UncostedCacheWriteTokens int64 `json:"uncosted_cache_write_tokens"`
+}
+
+// GetDashboardUsageByIssue returns per-(issue, model) token aggregates for the
+// workspace, optionally scoped to a project. It is the workspace-usage entry
+// point into a single issue's Token cost view.
+//
+// No agent dimension, so no per-agent visibility folding: this is the same
+// class of workspace-wide spend number as `usage/daily`. Exact N-day cutoff
+// for the same reason as the per-agent rollups — these rows carry no date, so
+// the client cannot trim the surplus day `parseSinceParamInTZ` returns.
+func (h *Handler) GetDashboardUsageByIssue(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	projectID, ok := parseProjectIDParam(w, r)
+	if !ok {
+		return
+	}
+	tz := h.resolveViewingTZ(r)
+	since := parseExactSinceParamInTZ(r, 30, tz)
+
+	rows, err := h.Queries.ListDashboardUsageByIssue(r.Context(), db.ListDashboardUsageByIssueParams{
+		WorkspaceID: parseUUID(workspaceID),
+		Since:       since,
+		ProjectID:   projectID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list usage by issue")
+		return
+	}
+
+	prefix := h.getIssuePrefix(r.Context(), parseUUID(workspaceID))
+	resp := make([]DashboardUsageByIssueResponse, len(rows))
+	for i, row := range rows {
+		resp[i] = DashboardUsageByIssueResponse{
+			IssueID:                  uuidToString(row.IssueID),
+			Identifier:               issueIdentifier(prefix, row.Number),
+			Title:                    row.Title,
+			Provider:                 row.Provider,
+			Model:                    row.Model,
+			InputTokens:              row.InputTokens,
+			OutputTokens:             row.OutputTokens,
+			CacheReadTokens:          row.CacheReadTokens,
+			CacheWriteTokens:         row.CacheWriteTokens,
+			CostUSDTicks:             row.CostUsdTicks,
+			UncostedInputTokens:      row.UncostedInputTokens,
+			UncostedOutputTokens:     row.UncostedOutputTokens,
+			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // providerModelKey keeps the restricted bucket split by (provider, model) so

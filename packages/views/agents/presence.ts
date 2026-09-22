@@ -5,6 +5,7 @@ import {
   CircleSlash,
   Clock,
   Loader2,
+  Pause,
   PlugZap,
   type LucideIcon,
 } from "lucide-react";
@@ -62,6 +63,13 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
     dotClass: "bg-muted-foreground/40",
     textClass: "text-muted-foreground",
     icon: CircleSlash,
+  },
+  // Reversible seat gate (DENE-714) — the agent is still on the list but
+  // is not taking new work. Gray like offline; labelled "Disabled".
+  disabled: {
+    dotClass: "bg-muted-foreground/40",
+    textClass: "text-muted-foreground",
+    icon: Pause,
   },
   // Lifecycle state, not a runtime state — a retired agent. Gray like
   // offline (it can't take work) but labelled distinctly (via

@@ -13,7 +13,9 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { isImeComposing } from "@multica/core/utils";
+import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../../i18n";
+import { useGuestReadOnly } from "../../../layout/guest-readonly";
 
 const HIGHLIGHT_CLASS = "bg-accent";
 const ITEM_SELECTOR = "button[data-picker-item]:not(:disabled)";
@@ -84,6 +86,10 @@ export function PropertyPicker({
   footer?: React.ReactNode;
 }) {
   const { t } = useT("issues");
+  const { t: tLayout } = useT("layout");
+  const { isGuest } = useGuestReadOnly();
+  const guestTooltip = isGuest ? tLayout(($) => $.guest.no_edit) : undefined;
+  const resolvedTooltip = guestTooltip ?? tooltip;
   const placeholder = searchPlaceholder ?? t(($) => $.filters.placeholder);
   const filterAria = t(($) => $.pickers.filter_options_aria);
   const [query, setQuery] = useState("");
@@ -93,7 +99,7 @@ export function PropertyPicker({
   // Show the tooltip only while the trigger is hovered AND the popover is
   // closed — avoids the awkward state where the tooltip floats next to (or
   // on top of) the popover that just opened on click.
-  const tooltipOpen = !!tooltip && tooltipHover && !open;
+  const tooltipOpen = !!resolvedTooltip && tooltipHover && !open;
 
   const getItems = useCallback(() => {
     if (!listRef.current) return [];
@@ -182,7 +188,10 @@ export function PropertyPicker({
 
   const popoverTrigger = (
     <PopoverTrigger
-      className={triggerRender ? undefined : PICKER_TRIGGER_CLASS}
+      className={cn(
+        triggerRender ? undefined : PICKER_TRIGGER_CLASS,
+        isGuest && "cursor-not-allowed opacity-40",
+      )}
       render={triggerRender}
     >
       {trigger}
@@ -190,11 +199,17 @@ export function PropertyPicker({
   );
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      {tooltip ? (
+    <Popover
+      open={isGuest ? false : open}
+      onOpenChange={(next) => {
+        if (isGuest) return;
+        onOpenChange(next);
+      }}
+    >
+      {resolvedTooltip ? (
         <Tooltip open={tooltipOpen} onOpenChange={setTooltipHover}>
           <TooltipTrigger render={popoverTrigger} />
-          <TooltipContent side="top">{tooltip}</TooltipContent>
+          <TooltipContent side="top">{resolvedTooltip}</TooltipContent>
         </Tooltip>
       ) : (
         popoverTrigger

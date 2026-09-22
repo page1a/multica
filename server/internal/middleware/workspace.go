@@ -16,6 +16,7 @@ type contextKey int
 const (
 	ctxKeyWorkspaceID contextKey = iota
 	ctxKeyMember
+	ctxKeyPrefetchedMember
 )
 
 // MemberFromContext returns the workspace member injected by the workspace middleware.
@@ -235,13 +236,18 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				writeError(w, http.StatusBadRequest, "invalid workspace_id")
 				return
 			}
-			member, err := queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
-				UserID:      userUUID,
-				WorkspaceID: wsUUID,
-			})
-			if err != nil {
-				writeError(w, http.StatusNotFound, "workspace not found")
-				return
+			// GuestReadOnly may have loaded this exact row already on a
+			// write request; reusing it keeps the interceptor free.
+			member, ok := prefetchedMemberFor(r.Context(), userUUID, wsUUID)
+			if !ok {
+				member, err = queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+					UserID:      userUUID,
+					WorkspaceID: wsUUID,
+				})
+				if err != nil {
+					writeError(w, http.StatusNotFound, "workspace not found")
+					return
+				}
 			}
 
 			if len(roles) > 0 {

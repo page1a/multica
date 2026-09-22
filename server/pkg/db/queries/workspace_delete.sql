@@ -327,6 +327,15 @@ deleted_stage_wakeup_failures AS (
 deleted_attachments AS (
     DELETE FROM attachment WHERE workspace_id = $1
 ),
+-- Sharing-scope history (DENE-698) is workspace-keyed and has no foreign key,
+-- so the audit rows outlive every resource they describe unless swept here.
+deleted_visibility_audits AS (
+    DELETE FROM visibility_audit WHERE workspace_id = $1
+),
+-- Module-level sharing (DENE-699) is workspace-keyed with no foreign key.
+deleted_module_visibility AS (
+    DELETE FROM workspace_module_visibility WHERE workspace_id = $1
+),
 -- Same no-FK chore for the resumable attachment staging (DENE-443). Both
 -- tables are keyed by workspace_id, so the teardown never has to assemble the
 -- (sha256, offset) pairs it is dropping first.

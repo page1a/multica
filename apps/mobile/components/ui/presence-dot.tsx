@@ -29,6 +29,7 @@ const DOT_CLASS: Record<AgentAvailability, string> = {
   online: "bg-success",
   unstable: "bg-warning",
   offline: "bg-muted-foreground/40",
+  disabled: "bg-muted-foreground/40",
   // Retired agent (agent.archived_at set) — gray, mirrors web's archived dot
   // in packages/views/agents/presence.ts.
   archived: "bg-muted-foreground/40",

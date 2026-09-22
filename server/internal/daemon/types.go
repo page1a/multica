@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/coderesolve"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -49,6 +50,11 @@ type ProjectResourceData struct {
 	ResourceType string          `json:"resource_type"`
 	ResourceRef  json.RawMessage `json:"resource_ref"`
 	Label        string          `json:"label,omitempty"`
+	// Access is "read-write" for the one directory this run writes in and
+	// "read-only" for the project's other local directories (DENE-619). Empty
+	// from a server that predates the field, and for resource types with no
+	// access dimension. Mirror field: internal/handler/agent.go, same JSON name.
+	Access string `json:"access,omitempty"`
 }
 
 // ProjectContextData mirrors handler.TaskProjectContextData — one project of
@@ -114,6 +120,12 @@ type Task struct {
 	ProjectTitle         string                `json:"project_title,omitempty"`       // human-readable project title for context injection
 	ProjectDescription   string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
 	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // project-scoped resources to expose to the agent
+	// CodeDecision is the server's answer to "which code does this run use",
+	// computed once by internal/coderesolve and shipped with the task
+	// (DENE-619). Nil from a server that predates it; the daemon still
+	// resolves the directory itself today, and DENE-621 makes this the source
+	// of truth instead. Mirror field: internal/handler/agent.go, same JSON name.
+	CodeDecision *coderesolve.Decision `json:"code_decision,omitempty"`
 	// Projects is the task's project set in priority order (DENE-523) — every
 	// project a chat attached, one for the other surfaces. The singular
 	// Project* fields above mirror its first entry, so a server predating this
@@ -136,11 +148,13 @@ type Task struct {
 	NewCommentCount               int                    `json:"new_comment_count,omitempty"`                // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
 	NewCommentsSince              string                 `json:"new_comments_since,omitempty"`               // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
 	NewCommentsDeltaKnown         bool                   `json:"new_comments_delta_known,omitempty"`         // the server actually computed the issue-wide delta this claim (both reads succeeded). A zero NewCommentCount means "nothing was said" only when this is true; otherwise the zero is a failed read, a cold start, or an old server, and the prompt must not present it as the comment scan's answer (MUL-6984)
+	IssueStateDeltaKnown          bool                   `json:"issue_state_delta_known,omitempty"`          // MUL-7344: the server compared the issue's title/description against the snapshot taken at this agent's previous run on this issue. Same contract as NewCommentsDeltaKnown — absent means NOT compared (cold start, no prior snapshot, read error, old server), and the prompt must then keep telling the agent to read the issue
+	IssueChangedFields            []string               `json:"issue_changed_fields,omitempty"`             // subset of title,description in that order; empty alongside IssueStateDeltaKnown means unchanged. Fields outside that set (status, assignee, priority, labels, parent, due, stage, project, metadata) are not compared and must never be reported as checked; status and assignee ship their current values instead
+	IssueStatus                   string                 `json:"issue_status,omitempty"`                     // the issue's status key at claim time; sent whether or not the delta is known
+	IssueAssigneeType             string                 `json:"issue_assignee_type,omitempty"`              // "agent", "member" or "squad" at claim time; empty when unassigned
+	IssueAssigneeID               string                 `json:"issue_assignee_id,omitempty"`                // assignee UUID at claim time; empty when unassigned
 	IssueTitle                    string                 `json:"issue_title,omitempty"`
 	IssueDescription              string                 `json:"issue_description,omitempty"`
-	IssueStatus                   string                 `json:"issue_status,omitempty"`
-	IssueAssigneeType             string                 `json:"issue_assignee_type,omitempty"`
-	IssueAssigneeID               string                 `json:"issue_assignee_id,omitempty"`
 	IssueCommentSummaries         []IssueContextComment  `json:"issue_comment_summaries,omitempty"`
 	IssueTriggerThread            []IssueContextComment  `json:"issue_trigger_thread,omitempty"`
 	IssueNewComments              []IssueContextComment  `json:"issue_new_comments,omitempty"`

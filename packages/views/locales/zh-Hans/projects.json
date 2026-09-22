@@ -74,7 +74,7 @@
     "description_placeholder": "添加描述...",
     "description_hint": "会作为项目上下文提供给智能体，应用于该项目下的每次运行。",
     "empty_issues_title": "还没有关联的任务",
-    "empty_issues_hint": "新建一个任务，或把已有的任务关联到这个项目。",
+    "empty_issues_hint": "也可把已有任务加入此项目。",
     "empty_issues_new_button": "新建任务",
     "no_issues_yet": "目前还没有任务",
     "toast_link_copied": "已复制链接",
@@ -156,7 +156,11 @@
     "local_directory_move_down_tooltip": "下移",
     "mode_worktree_root_label": "工作副本建在",
     "mode_worktree_root_not_absolute": "请填绝对路径 —— 相对路径会落在守护进程当时所在的目录里。",
-    "mode_worktree_root_inside_repo": "这个位置在仓库内部。副本放在那里会出现在你自己的 git status 里，还得改 .gitignore —— 换一个仓库旁边的目录。"
+    "mode_worktree_root_inside_repo": "这个位置在仓库内部。副本放在那里会出现在你自己的 git status 里，还得改 .gitignore —— 换一个仓库旁边的目录。",
+    "mode_worktree_root_not_writable": "这个目录写不进去。换一个这台机器能创建文件的位置。",
+    "mode_worktree_root_conflicts": "这里和项目里已经绑定的目录重叠了。换一个文件夹。",
+    "local_daemon_already_attached_hint": "本机已经关联了一个本地目录到该项目，先移除现有目录再添加新目录。",
+    "toast_local_daemon_already_attached": "本机已经关联了一个本地目录到该项目，先移除现有目录再添加新目录。"
   },
   "members": {
     "section_header": "成员",

@@ -62,11 +62,11 @@ describe("ManageViewsDialog visibility", () => {
     expect(screen.getByText("Project shared")).toBeInTheDocument();
     await user.click(screen.getByRole("combobox", { name: "Sharing for Sprint board" }));
 
-    expect(screen.getByRole("option", { name: "Only visible to me" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Only visible to me" })).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "Visible to workspace members" }),
+      await screen.findByRole("option", { name: "Visible to workspace members" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Project members" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Project members" })).toBeInTheDocument();
   });
 
   it("hides the project choice on a workspace-scoped view", async () => {
@@ -85,9 +85,9 @@ describe("ManageViewsDialog visibility", () => {
       screen.getByRole("combobox", { name: "Sharing for Workspace board" }),
     );
 
-    expect(screen.getByRole("option", { name: "Only visible to me" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Only visible to me" })).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "Visible to workspace members" }),
+      await screen.findByRole("option", { name: "Visible to workspace members" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Project members" })).not.toBeInTheDocument();
     expect(screen.queryByText("Project shared")).not.toBeInTheDocument();
@@ -99,7 +99,7 @@ describe("ManageViewsDialog visibility", () => {
     const onChangeVisibility = renderManager([view]);
 
     await user.click(screen.getByRole("combobox", { name: "Sharing for Sprint board" }));
-    await user.click(screen.getByRole("option", { name: "Project members" }));
+    await user.click(await screen.findByRole("option", { name: "Project members" }));
 
     expect(onChangeVisibility).toHaveBeenCalledWith(view, "project");
   });

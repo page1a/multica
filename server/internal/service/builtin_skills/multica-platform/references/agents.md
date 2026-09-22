@@ -32,6 +32,14 @@ editable, but no trigger path will run it — they all refuse with
 `agent_runtime_required` — until `agent update <id> --runtime-id <runtime-id>`
 binds it again. Unbound is orthogonal to archived.
 
+An agent can also be **disabled** (`work_enabled: false`): it stays on the
+agents list, keeps its routing tag and specialisations, and does not cancel
+running tasks, but routing will not pick it, assignment will not wake it, and
+the daemon will not claim a new run. `PUT /api/agents/{id}` with
+`work_enabled: false` turns it off; `true` turns it back on. Omitted on update
+preserves the stored value. Distinct from archive — archive is the delete
+path. Disabled is orthogonal to unbound and archived.
+
 `agent get` returns the persisted agent including `runtime_id`, `model`,
 `thinking_level`, `service_tier`, `switchable_models`, `custom_args`, `has_custom_env`,
 `custom_env_key_count`, and `skills`. It never returns plaintext `custom_env`.
@@ -150,6 +158,7 @@ the child own its runtime instead of following the base role's.
 | `mcp_config` | `mcp_config` (raw JSON) | CLI checks it is a JSON object or `null`; server stores as-is. At create, literal `null` is dropped (no-op); at update, `null` clears the field | daemon → provider (provider-specific MCP handling); redacted on read |
 | `visibility` | `visibility` | — | access control; defaults to `private`; gates who can read/route a private agent (e.g. a private squad leader) — NOT the runtime prompt |
 | `max_concurrent_tasks` | `max_concurrent_tasks` | integer from 1 through 50; out-of-range values return 400 | scheduler task cap; defaults to `6` |
+| `work_enabled` | `work_enabled` | boolean; omitted on update preserves | reversible seat gate (DENE-714). Default `true`. `false` keeps the seat in the list but routing will not pick it, assignment will not wake it, and claim will not take a new run. Running tasks are not cancelled. Distinct from archive |
 
 Defaults when omitted or explicitly `null`: `max_concurrent_tasks` → `6`.
 Other defaults when omitted: `runtime_config` → `{}`, `custom_env` → `{}`,

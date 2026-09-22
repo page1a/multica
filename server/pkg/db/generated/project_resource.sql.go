@@ -155,6 +155,76 @@ func (q *Queries) GetProjectResourceInWorkspace(ctx context.Context, arg GetProj
 	return i, err
 }
 
+const listProjectIDsForRepoURL = `-- name: ListProjectIDsForRepoURL :many
+SELECT DISTINCT project_id
+FROM project_resource
+WHERE workspace_id = $1
+  AND resource_type = 'github_repo'
+  AND resource_ref->>'url' = $2::text
+`
+
+type ListProjectIDsForRepoURLParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Url         string      `json:"url"`
+}
+
+func (q *Queries) ListProjectIDsForRepoURL(ctx context.Context, arg ListProjectIDsForRepoURLParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listProjectIDsForRepoURL, arg.WorkspaceID, arg.Url)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var project_id pgtype.UUID
+		if err := rows.Scan(&project_id); err != nil {
+			return nil, err
+		}
+		items = append(items, project_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectRepoURLs = `-- name: ListProjectRepoURLs :many
+SELECT DISTINCT (resource_ref->>'url')::text AS url
+FROM project_resource
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND resource_type = 'github_repo'
+  AND resource_ref ? 'url'
+`
+
+type ListProjectRepoURLsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// The repository URLs a project holds. A workspace repo has no row of its own
+// (it is an entry in workspace.repos, see migration 511), so this join table
+// is what "this repo belongs to that project" means.
+func (q *Queries) ListProjectRepoURLs(ctx context.Context, arg ListProjectRepoURLsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listProjectRepoURLs, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		items = append(items, url)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectResources = `-- name: ListProjectResources :many
 SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
 WHERE project_id = $1

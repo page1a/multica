@@ -103,6 +103,7 @@ import {
   CollectionPageHeaderAction,
   CollectionPageState,
 } from "../../layout/collection-page";
+import { NothingSharedEmpty, WriteAction, useGuestReadOnly } from "../../layout/guest-readonly";
 import { ProjectIcon } from "./project-icon";
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
@@ -823,7 +824,11 @@ export function ProjectsPage() {
     ...pinListOptions(wsId, currentUser?.id ?? ""),
     enabled: !!wsId && !!currentUser?.id,
   });
-  const openCreateProject = () => useModalStore.getState().open("create-project");
+  const { isGuest } = useGuestReadOnly();
+  const openCreateProject = () => {
+    if (isGuest) return;
+    useModalStore.getState().open("create-project");
+  };
 
   const isWorkspaceAdmin = useMemo(() => {
     if (!currentUser) return false;
@@ -953,15 +958,21 @@ export function ProjectsPage() {
       />
 
       {showEmpty ? (
+        isGuest ? (
+          <NothingSharedEmpty />
+        ) : (
         <CollectionPageState
           icon={FolderKanban}
           title={t(($) => $.page.empty)}
           actions={
-            <Button size="sm" variant="outline" onClick={openCreateProject}>
-              {t(($) => $.page.create_first)}
-            </Button>
+            <WriteAction>
+              <Button size="sm" variant="outline" onClick={openCreateProject}>
+                {t(($) => $.page.create_first)}
+              </Button>
+            </WriteAction>
           }
         />
+        )
       ) : (
         <>
           {/* Toolbar */}

@@ -35,6 +35,8 @@ function makeIssue(title: string): Issue {
     priority: "none",
     assignee_type: null,
     assignee_id: null,
+    reviewer_type: null,
+    reviewer_id: null,
     creator_type: "member",
     creator_id: "member-1",
     parent_issue_id: null,

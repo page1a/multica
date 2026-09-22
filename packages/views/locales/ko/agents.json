@@ -27,6 +27,7 @@
     "online": "온라인",
     "unstable": "불안정",
     "offline": "오프라인",
+    "disabled": "사용 중지",
     "archived": "보관됨"
   },
   "workload": {
@@ -106,6 +107,10 @@
     "set_access_skipped": "{{count}}개 건너뜀(본인 소유 아님).",
     "set_access_dialog_confirm": "적용",
     "set_access_bulk_partial": "{{succeeded}}개 적용, {{failed}}개 실패(현재 상태 유지).",
+    "work_enabled_aria": "새 작업 수락",
+    "agent_enabled_toast": "좌석을 사용하도록 설정했습니다",
+    "agent_disabled_toast": "좌석을 사용 중지했습니다. 새 작업을 받지 않습니다",
+    "work_toggle_failed_toast": "좌석 상태를 업데이트하지 못했습니다",
     "agent_archived_toast": "에이전트를 보관했습니다",
     "archive_failed_toast": "에이전트를 보관하지 못했습니다",
     "agent_restored_toast": "에이전트를 복원했습니다",
@@ -234,6 +239,8 @@
     "prop_speed": "속도",
     "prop_visibility": "공개 범위",
     "prop_concurrency": "동시 실행",
+    "prop_work_enabled": "작업 수락",
+    "prop_work_enabled_hint": "끄면 이 좌석은 목록에 남지만 자동 배정 대상이 되지 않고, 할당해도 깨어나지 않으며, 새 실행도 받지 않습니다. 이미 실행 중인 작업은 멈추지 않습니다.",
     "prop_auto_retry": "자동 재시도",
     "prop_auto_retry_hint": "끄면 용량 부족·네트워크 오류 같은 실패가 자동 재시도되지 않고 바로 표시됩니다. 수동으로 다시 실행할 수는 있습니다.",
     "prop_switchable_models": "전환 가능한 모델",
@@ -259,7 +266,9 @@
     "edit_description_title": "설명 수정",
     "description_placeholder": "이 에이전트는 무엇을 하나요?",
     "save": "저장",
-    "cancel": "취소"
+    "cancel": "취소",
+    "prop_routing_tier": "배정 등급",
+    "prop_routing_tier_hint": "이슈 담당을 자동으로 정할 때 이 시트가 얼마나 강한지를 나타냅니다. 강도는 모델과 사고 수준, 프롬프트가 함께 결정하므로 같은 모델이라도 다른 등급에 둘 수 있습니다. 등급이 없는 시트는 사다리에서 빠집니다."
   },
   "overview": {
     "agent_context": "에이전트",
@@ -307,7 +316,14 @@
     "service_tier_standard_description": "기본 속도 및 표준 사용량",
     "service_tier_tooltip": "속도 · {{value}}",
     "service_tier_clear": "런타임 기본값",
-    "service_tier_clear_title": "속도 재정의를 지우고 로컬 Codex 설정에 맡깁니다"
+    "service_tier_clear_title": "속도 재정의를 지우고 로컬 Codex 설정에 맡깁니다",
+    "routing_tier_strongest": "최강",
+    "routing_tier_strong": "강",
+    "routing_tier_medium": "중",
+    "routing_tier_weak": "경량",
+    "routing_tier_none": "사다리에서 제외",
+    "routing_tier_none_title": "자동 배정에서 이 시트를 고르지 않습니다. 직접 지정하는 것은 여전히 가능합니다",
+    "routing_tier_tooltip": "배정 등급 · {{value}}"
   },
   "model_dropdown": {
     "label": "모델",
@@ -438,7 +454,7 @@
       "unsaved_changes": "저장하지 않은 변경사항"
     },
     "instructions": {
-      "intro": "모든 실행에 사용할 System Prompt를 설정하세요. Markdown을 지원합니다.",
+      "intro": "모든 실행에 사용할 System Prompt를 설정하세요. 에이전트의 동작을 유도하지만 권한이나 보안 경계를 강제하지는 않습니다. Markdown을 지원합니다.",
       "system_prompt_label": "System Prompt",
       "placeholder": "이 에이전트의 역할, 전문성, 작업 방식을 정의하세요.\n\n# 예시\n당신은 React와 TypeScript에 특화된 프런트엔드 엔지니어입니다.\n\n## 작업 방식\n- 작고 집중된 PR을 작성합니다. 논리적 변경 단위마다 커밋 하나를 사용합니다\n- 상속보다 조합을 선호합니다\n- 새 컴포넌트에는 항상 단위 테스트를 추가합니다\n\n## 제약\n- 명시적인 승인 없이 shared/ 타입을 수정하지 않습니다\n- features/의 기존 컴포넌트 패턴을 따릅니다",
       "system_layer_label": "Multica가 관리",
@@ -446,7 +462,7 @@
       "system_layer_show": "보기",
       "system_layer_hide": "접기",
       "workspace_notes_label": "워크스페이스 메모",
-      "workspace_notes_intro": "팀의 컨텍스트와 선호를 아래에 추가하세요. Multica가 이 에이전트를 위해 관리하는 지침 위에 적용됩니다. Markdown을 지원합니다.",
+      "workspace_notes_intro": "팀의 컨텍스트와 선호를 아래에 추가하세요. Multica가 이 에이전트를 위해 관리하는 지침에 더해 동작을 유도하지만 권한이나 보안 경계를 강제하지는 않습니다. Markdown을 지원합니다.",
       "workspace_notes_placeholder": "이 에이전트가 항상 알아야 할 내용을 적으세요.\n\n# 예시\n메인 저장소는 github.com/acme/platform입니다.\n채팅은 한국어로 해도 태스크는 영어로 작성하세요.\n금요일에는 배포하지 않습니다."
     },
     "accounts": {
@@ -508,6 +524,10 @@
       "title": "공급자",
       "intro": "공급자는 이 CLI가 요청을 보내는 하나의 경로입니다(엔드포인트, 프로토콜, 인증에 쓰는 key). 한 번에 하나만 적용됩니다. key는 daemon이 도는 컴퓨터에 저장되며 여기에 다시 표시되지 않습니다.",
       "add_action": "공급자 추가",
+      "restore_action": "Multica에서 복원",
+      "restore_hint": "CLI를 다시 설치하거나 초기화하면 공급자 설정도 함께 사라집니다. 복원하면 Multica가 저장해 둔 내용을 다시 기록합니다. 다만 key는 제외되며, 그것만은 직접 다시 입력해야 합니다. 전체 백업은 아닙니다. CLI 설정 파일에 직접 추가한 항목은 복원되지 않습니다.",
+      "restored_toast": "이 컴퓨터의 공급자 설정을 복원했습니다.",
+      "restore_failed_toast": "공급자 설정을 복원할 수 없습니다.",
       "active_badge": "적용 중",
       "active_model": "기본 모델: {{model}}",
       "activate_action": "이걸 사용",
@@ -517,6 +537,24 @@
       "key_stored": "Key 저장됨",
       "key_absent": "Key 없음",
       "model_count_other": "모델 {{count}}개",
+      "sync_aria": "제공자 {{name}}을(를) 다른 기기에 동기화",
+      "sync_title": "{{name}}을(를) 다른 기기에 동기화",
+      "sync_description": "이 제공자 설정은 기기마다 따로 저장되고 시트의 모델은 이름만 가리킵니다. 같은 이름이라도 서로 다른 엔드포인트를 호출할 수 있습니다. 각 기기의 현재 상태는 다음과 같습니다.",
+      "sync_peer_loading": "읽는 중…",
+      "sync_peer_offline": "오프라인 — 다시 켜질 때까지 기록할 수 없습니다",
+      "sync_peer_unreadable": "읽지 못했습니다: {{reason}}",
+      "sync_peer_missing": "이 제공자가 없습니다",
+      "sync_peer_match": "같은 엔드포인트",
+      "sync_peer_drift": "다른 엔드포인트: {{base_url}}",
+      "sync_peer_synced": "동기화됨",
+      "sync_peer_failed": "실패: {{reason}}",
+      "sync_key_label": "API 키(선택)",
+      "sync_key_hint": "비워 두면 각 기기가 저장해 둔 키를 그대로 사용합니다. 이 제공자의 키가 없는 기기는 여기에 입력해야 합니다. 키는 기기에서 다시 읽어올 수 없어 대신 복사해 줄 수 없습니다.",
+      "sync_key_required": "선택한 기기 중 이 제공자의 키가 없는 기기가 있습니다. 키를 입력하세요.",
+      "sync_confirm_action_other": "{{count}}대에 동기화",
+      "sync_done_toast_other": "{{count}}대에 동기화했습니다",
+      "sync_partial_toast": "성공 {{synced}}대, 실패 {{failed}}대",
+      "sync_failed_toast": "동기화 실패",
       "loading_text": "이 컴퓨터의 공급자 설정을 읽는 중…",
       "empty_title": "설정된 공급자가 없습니다",
       "empty_description": "이 컴퓨터의 CLI에 아직 이름이 지정된 공급자가 없습니다. 하나 추가해 자신의 엔드포인트와 key로 연결하세요.",
@@ -739,7 +777,8 @@
       "invalid_json": "잘못된 JSON: {{error}}",
       "save_failed_toast": "MCP config를 저장하지 못했습니다",
       "redacted_title": "설정됨 — 보기에서 숨김",
-      "redacted_hint": "에이전트 소유자 또는 워크스페이스 관리자만 이 config를 읽을 수 있습니다."
+      "redacted_hint": "에이전트 소유자 또는 워크스페이스 관리자만 이 config를 읽을 수 있습니다.",
+      "dialog_json_help": "전체 서버 설정을 JSON으로 편집합니다."
     },
     "composio_mcp": {
       "subtitle": "툴킷을 선택하면, 본인(이 에이전트의 생성자)이 직접 또는 하위 에이전트 체인을 통해 이 에이전트를 트리거할 때만 MCP 서버로 마운트됩니다.",
@@ -876,7 +915,10 @@
       "cancel_failed_toast": "실행을 취소하지 못했습니다",
       "started_prefix": "{{when}} 시작됨",
       "dispatched_prefix": "{{when}} 디스패치됨",
-      "queued_prefix": "{{when}} 대기 시작"
+      "queued_prefix": "{{when}} 대기 시작",
+      "success_hint": "완료 및 실패한 실행 수 중 완료한 실행의 비율입니다. 취소한 실행은 제외됩니다.",
+      "success_unavailable": "이 기간에 완료하거나 실패한 실행이 없어 성공률을 계산할 수 없습니다.",
+      "cancelled_count": "{{count}}개 취소됨"
     }
   },
   "char_counter": {
@@ -1072,12 +1114,14 @@
       "runtime_reconnect_timeout": "데몬이 제시간에 다시 연결되지 않음",
       "runtime_recovery": "데몬 재시작됨",
       "timeout": "실행 시간 초과",
+      "task_time_limit": "워크스페이스 실행 시간 한도에 도달해 중지됨",
       "iteration_limit": "반복 횟수 제한에 도달함",
       "agent_blocked": "사용자 입력 대기 중",
       "api_invalid_request": "모델 API에서 요청을 거부함",
       "skill_bundle_unavailable": "에이전트 스킬을 다운로드할 수 없음",
       "runtime_cli_timeout": "로컬 런타임 CLI 시간 초과",
       "environment_prepare_failed": "실행 환경을 준비하지 못함",
+      "runtime_access_denied": "이 에이전트는 비공개 런타임에서 실행할 수 없어 답변할 수 없습니다. 런타임을 공개로 변경하거나, 소유자가 사용할 수 있는 런타임으로 에이전트를 다시 연결/복사하세요.",
       "invalid_task_identity": "실행 ID 정보가 일치하지 않음",
       "agent_error_provider_auth_or_access": "공급자 인증 실패",
       "agent_error_provider_quota_limit": "공급자 할당량 소진",
@@ -1095,6 +1139,8 @@
       "agent_error_unknown": "에이전트 실행 오류",
       "agent_fallback_message": "에이전트가 대체 메시지를 반환함",
       "codex_resume_oversized": "세션이 너무 커서 재개할 수 없음",
+      "antigravity_session_token_expired": "Antigravity 장시간 세션 토큰 만료",
+      "antigravity_not_logged_in": "Antigravity 로그인 안 됨",
       "idle_watchdog": "에이전트가 장시간 응답하지 않아 중지됨",
       "local_directory_error": "로컬 디렉터리 오류",
       "cancelled": "시스템에서 취소함",

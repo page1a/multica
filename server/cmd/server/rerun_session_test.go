@@ -280,6 +280,173 @@ func TestGetLastTaskSessionExcludesAuthResolutionFailure(t *testing.T) {
 	requireSessionExcluded(t, prior.SessionID, err)
 }
 
+// TestGetLastTaskSessionExcludesAntigravityTokenExpired is the DENE-724
+// regression, driven by the two rows the report itself produced. Both carry
+// agent_error.provider_auth_or_access — the resume-safe reason the daemon wrote
+// for this failure — so neither the failure_reason blacklist nor the
+// retired-session set can drop them: only the phrase guard stands between the
+// issue and a third run that resumes the same conversation and spends another
+// full token lifetime to fail identically. Excluding the session here is what
+// leaves the next claim's argv with no `--conversation` at all.
+//
+// The error text is verbatim from daemon.log for task
+// 01a0c372-0d6d-7d56-9c8f-9c725671e987 (29m37s) and
+// 01a0c3a3-d346-7105-8126-47e33a56f862 (35m58s, which resumed the same session
+// f25838c0-ab41-400f-bb81-d3fcb9e234aa).
+func TestGetLastTaskSessionExcludesAntigravityTokenExpired(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+	ctx := context.Background()
+
+	const antigravityAuthError = `UNAUTHENTICATED (code 401): Request had invalid authentication credentials. ` +
+		`Expected OAuth 2 access token, login cookie or other valid authentication credential. ` +
+		`See https://developers.google.com/identity/sign-in/web/devconsole-project.; ` +
+		`agy stderr: error: UNAUTHENTICATED (code 401): Request had invalid authentication credentials.`
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'AGY-EXPIRED-TOKEN', '/tmp/agy', 'agent_error.provider_auth_or_access', $4)
+	`, agentID, runtimeID, issueID, antigravityAuthError); err != nil {
+		t.Fatalf("insert antigravity token-expiry task: %v", err)
+	}
+
+	queries := db.New(testPool)
+	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
+		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
+		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+	})
+	requireSessionExcluded(t, prior.SessionID, err)
+}
+
+// TestGetLastTaskSessionExcludesAntigravityTokenExpiredReason drives the same
+// exclusion through the CURRENT daemon's write instead of the legacy row above:
+// a task classified antigravity_session_token_expired must drop out of the
+// resume lookup via the failure_reason blacklist, so the fix does not depend on
+// the raw error text arriving in the column intact.
+func TestGetLastTaskSessionExcludesAntigravityTokenExpiredReason(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+	ctx := context.Background()
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'AGY-EXPIRED-TOKEN', '/tmp/agy', 'antigravity_session_token_expired')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("insert antigravity token-expiry task: %v", err)
+	}
+
+	queries := db.New(testPool)
+	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
+		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
+		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+	})
+	requireSessionExcluded(t, prior.SessionID, err)
+}
+
+// TestGetLastTaskSessionExcludesAntigravityNotLoggedIn is the second half of
+// DENE-724's session retirement: the CLI's own logged-out notice. It retires
+// the session for the same reason the 401 does (the next run must start a fresh
+// agy process), but it is a separate reason on the wire so its copy can tell the
+// member something different. Two cases, because either half could rot alone:
+// the reason the CURRENT daemon writes, and the legacy row an older daemon wrote
+// for the same text.
+func TestGetLastTaskSessionExcludesAntigravityNotLoggedIn(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	const notLoggedInError = "error: You are not logged into Antigravity"
+
+	cases := []struct {
+		name          string
+		sessionID     string
+		failureReason string
+		errText       any
+	}{
+		{
+			name:          "reason written by the current daemon",
+			sessionID:     "AGY-NOT-LOGGED-IN",
+			failureReason: "antigravity_not_logged_in",
+			errText:       nil,
+		},
+		{
+			name:          "legacy row classified as provider auth",
+			sessionID:     "AGY-NOT-LOGGED-IN-LEGACY",
+			failureReason: "agent_error.provider_auth_or_access",
+			errText:       notLoggedInError,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issueID, agentID, runtimeID := setupRerunTestFixture(t)
+			t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+			ctx := context.Background()
+
+			if _, err := testPool.Exec(ctx, `
+				INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
+				VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', $4, '/tmp/agy', $5, $6)
+			`, agentID, runtimeID, issueID, tc.sessionID, tc.failureReason, tc.errText); err != nil {
+				t.Fatalf("insert antigravity not-logged-in task: %v", err)
+			}
+
+			queries := db.New(testPool)
+			prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
+				AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
+				IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+			})
+			requireSessionExcluded(t, prior.SessionID, err)
+		})
+	}
+}
+
+// TestGetLastTaskSessionKeepsSessionOnOrdinaryUnauthorized is the narrowness
+// half of DENE-724: the guard must match Antigravity's own wording, not any
+// 401. A plain unauthorized failure replays identically on a fresh session, so
+// retiring the conversation would cost the member their context and buy
+// nothing.
+func TestGetLastTaskSessionKeepsSessionOnOrdinaryUnauthorized(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+	ctx := context.Background()
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'HEALTHY-OTHER-401', '/tmp/healthy', 'agent_error.provider_auth_or_access',
+		        'API Error: 401 Unauthorized')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	queries := db.New(testPool)
+	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
+		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
+		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("GetLastTaskSession failed: %v", err)
+	}
+	if !prior.SessionID.Valid || prior.SessionID.String != "HEALTHY-OTHER-401" {
+		t.Fatalf("an ordinary 401 must not retire the session, got %+v", prior.SessionID)
+	}
+}
+
 // TestGetLastTaskSessionKeepsSessionOnAuthAdjacentError is the narrowness half:
 // the ILIKE guard must match the exact provider phrase, not any error that
 // merely talks about authentication. A false positive silently drops

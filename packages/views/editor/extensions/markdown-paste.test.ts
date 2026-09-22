@@ -5,7 +5,12 @@ import { Markdown } from "@tiptap/markdown";
 import {
   createMarkdownPasteExtension,
   escapeRawHtmlTagsOutsideCode,
+  LARGE_PASTE_HTML_SKIP_LINES,
+  LARGE_PASTE_HTML_THRESHOLD,
+  LARGE_PASTE_TEXT_THRESHOLD,
+  shouldSkipClipboardHtml,
 } from "./markdown-paste";
+import { MARKDOWN_CHUNK_THRESHOLD } from "../utils/parse-markdown-chunked";
 
 interface FakeClipboard {
   files: never[];
@@ -365,9 +370,135 @@ describe("markdownPaste — code block context", () => {
       { length: 1600 },
       (_, index) => `log ${index}: ${"payload".repeat(6)}`,
     ).join("\n");
-    expect(text.length).toBeGreaterThan(50_000);
+    expect(text.length).toBeGreaterThan(LARGE_PASTE_TEXT_THRESHOLD);
 
     expectLiteralPaste(editor, text);
+  });
+
+  it("does not read clipboard HTML for a large plain-text paste", () => {
+    editor = makeEditor({
+      type: "doc",
+      content: [{ type: "paragraph" }],
+    });
+
+    const text = `log 0: ${"payload".repeat(6)}\n`.repeat(1600);
+    expect(text.length).toBeGreaterThan(LARGE_PASTE_TEXT_THRESHOLD);
+    const html = `<p><strong>${"y".repeat(LARGE_PASTE_HTML_THRESHOLD)}</strong></p>`;
+    const getData = vi.fn((type: string) =>
+      type === "text/plain" ? text : type === "text/html" ? html : "",
+    );
+    const event = {
+      clipboardData: { files: [], getData },
+      preventDefault: () => {},
+    } as unknown as ClipboardEvent;
+    const parseSpy = vi.spyOn(editor.markdown!, "parse");
+    const parseHtmlSpy = vi.spyOn(DOMParser.prototype, "parseFromString");
+
+    editor.commands.setTextSelection(1);
+    const { view } = editor;
+    const handled =
+      view.someProp("handlePaste", (handler) =>
+        handler(view, event, view.state.selection.content()),
+      ) === true;
+
+    expect(handled).toBe(true);
+    expect(getData).not.toHaveBeenCalledWith("text/html");
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(parseHtmlSpy).not.toHaveBeenCalled();
+    expect(editor.getText()).toBe(text);
+  });
+
+  it("does not native-parse oversized clipboard HTML for a short paste", () => {
+    editor = makeEditor({
+      type: "doc",
+      content: [{ type: "paragraph" }],
+    });
+
+    editor.commands.setTextSelection(1);
+    const text = "Hello world";
+    const html =
+      "<p><strong>Hello world</strong></p>" +
+      `<span style="mso-fareast-font-family:Calibri">${"a".repeat(LARGE_PASTE_HTML_THRESHOLD)}</span>`;
+    const parseHtmlSpy = vi.spyOn(DOMParser.prototype, "parseFromString");
+    const parseSpy = vi.spyOn(editor.markdown!, "parse");
+
+    const handled = paste(editor, text, html);
+
+    expect(handled).toBe(true);
+    expect(parseHtmlSpy).not.toHaveBeenCalled();
+    expect(parseSpy).toHaveBeenCalled();
+    expect(editor.getText()).toContain("Hello world");
+  });
+
+  it("does not read clipboard HTML for a many-line bulk paste", () => {
+    editor = makeEditor({
+      type: "doc",
+      content: [{ type: "paragraph" }],
+    });
+
+    const text = Array.from(
+      { length: LARGE_PASTE_HTML_SKIP_LINES + 1 },
+      (_, index) => `row ${index}\tvalue ${index}`,
+    ).join("\n");
+    expect(text.length).toBeLessThan(LARGE_PASTE_TEXT_THRESHOLD);
+    const html = `<table><tr><td>${"cell".repeat(1000)}</td></tr></table>`;
+    const getData = vi.fn((type: string) =>
+      type === "text/plain" ? text : type === "text/html" ? html : "",
+    );
+    const event = {
+      clipboardData: { files: [], getData },
+      preventDefault: () => {},
+    } as unknown as ClipboardEvent;
+    const parseHtmlSpy = vi.spyOn(DOMParser.prototype, "parseFromString");
+
+    editor.commands.setTextSelection(1);
+    const { view } = editor;
+    const handled =
+      view.someProp("handlePaste", (handler) =>
+        handler(view, event, view.state.selection.content()),
+      ) === true;
+
+    expect(handled).toBe(true);
+    expect(getData).not.toHaveBeenCalledWith("text/html");
+    expect(parseHtmlSpy).not.toHaveBeenCalled();
+  });
+
+  it("parses a medium markdown paste in chunks instead of one shot", () => {
+    editor = makeEditor({
+      type: "doc",
+      content: [{ type: "paragraph" }],
+    });
+
+    const text = `# Heading\n\n${"hello world this is a paragraph\n\n".repeat(300)}`;
+    expect(text.length).toBeGreaterThan(MARKDOWN_CHUNK_THRESHOLD);
+    expect(text.length).toBeLessThan(LARGE_PASTE_TEXT_THRESHOLD);
+
+    editor.commands.setTextSelection(1);
+    const parseSpy = vi.spyOn(editor.markdown!, "parse");
+    const handled = paste(editor, text);
+
+    expect(handled).toBe(true);
+    expect(parseSpy.mock.calls.length).toBeGreaterThan(1);
+    expect(
+      Math.max(...parseSpy.mock.calls.map((call) => String(call[0]).length)),
+    ).toBeLessThan(6_000);
+    const json = editor.getJSON() as JsonNode;
+    expect((json.content ?? []).map((node) => node.type)).toContain("heading");
+  });
+
+  it("skips clipboard HTML once plain text is already a bulk paste", () => {
+    expect(shouldSkipClipboardHtml("x".repeat(MARKDOWN_CHUNK_THRESHOLD + 1))).toBe(
+      true,
+    );
+    expect(
+      shouldSkipClipboardHtml(
+        Array.from(
+          { length: LARGE_PASTE_HTML_SKIP_LINES + 1 },
+          (_, index) => `line ${index}`,
+        ).join("\n"),
+      ),
+    ).toBe(true);
+    expect(shouldSkipClipboardHtml("short rich paste")).toBe(false);
   });
 
   it("preserves single unknown HTML-like tag (e.g. <T>)", () => {
@@ -455,7 +586,7 @@ describe("markdownPaste — code block context", () => {
 
     const parseJsonSpy = vi.spyOn(JSON, "parse");
     const text = `{${"not-json".repeat(7_000)}}`;
-    expect(text.length).toBeGreaterThan(50_000);
+    expect(text.length).toBeGreaterThan(LARGE_PASTE_TEXT_THRESHOLD);
 
     expectLiteralPaste(editor, text);
     expect(parseJsonSpy).not.toHaveBeenCalled();

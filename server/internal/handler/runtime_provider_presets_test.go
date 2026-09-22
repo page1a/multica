@@ -237,10 +237,16 @@ func TestApplyProviderPresetTimeout(t *testing.T) {
 }
 
 func TestValidProviderPresetAction(t *testing.T) {
-	for _, action := range []string{"list", "models", "upsert", "delete", "activate"} {
+	for _, action := range []string{"list", "models", "upsert", "delete", "activate", "replay"} {
 		if !validProviderPresetAction(action) {
 			t.Errorf("%q should be accepted", action)
 		}
+	}
+	// Replay rewrites the owner's settings.yaml from the daemon's own record,
+	// so it is a write however little the caller supplies: the request body is
+	// empty, but the effect is the same class as an upsert's.
+	if !providerPresetActionWrites(ProviderPresetActionReplay) {
+		t.Error("replay must be owner-only — it writes the owner's configuration file")
 	}
 	// `refresh` wrote the endpoint's whole catalog into the preset, which both
 	// overwrote the user's own selection and could mix two wire protocols in

@@ -28,17 +28,22 @@
 // into `offline` with no new server data, hence the 30s presence tick on
 // the consuming hooks.
 //
-// `archived` is the one non-runtime value: it reflects the agent's lifecycle
+// `archived` is the one lifecycle value: it reflects the agent's retirement
 // (agent.archived_at is set), not its runtime. It is the top-priority state —
 // derived BEFORE runtime health in deriveAgentPresenceDetail — so a retired
 // agent with a leftover online runtime row never reads as live. Every dot /
 // label that maps from this union (availabilityConfig) renders it for free;
 // it is intentionally NOT in availabilityOrder (archived agents have their
 // own list view, not an availability filter chip).
+//
+// `disabled` is the reversible seat gate (agent.work_enabled === false). It
+// wins over runtime health but loses to archived. Disabled seats stay on
+// the active list, so the status column has to name this state.
 export type AgentAvailability =
   | "online" // 🟢 runtime online and reachable
   | "unstable" // 🟡 runtime recently_lost (< 5 min) — transient
   | "offline" // ⚫ runtime long offline / missing / never registered
+  | "disabled" // ⚫ agent.work_enabled === false — not taking new work
   | "archived"; // ⚫ agent.archived_at set — retired, wins over runtime health
 
 // Current task load on this agent. Three states — never historical,

@@ -5,7 +5,10 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundle @multica/core so main can import the canonical repo-key
+    // normalizer (source-rule.ts is pure). Externalizing it would try to
+    // require the TypeScript source at runtime.
+    plugins: [externalizeDepsPlugin({ exclude: ["@multica/core"] })],
   },
   preload: {
     // `@electron-toolkit/preload` must be bundled INTO the preload script:

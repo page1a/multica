@@ -16,6 +16,7 @@ import {
 } from "./actions-context";
 import type { IssueCreateDefaults } from "./types";
 import { useT } from "../../i18n";
+import { useDenyGuestWrite } from "../../layout/guest-readonly";
 
 export type MoveIssueUpdates = Pick<
   UpdateIssueRequest,
@@ -47,6 +48,7 @@ export function useIssueSurfaceActions({
 }): IssueSurfaceActionController {
   const { t } = useT("projects");
   const { t: tIssues } = useT("issues");
+  const denyGuestWrite = useDenyGuestWrite();
   const updateIssueMutation = useUpdateIssue();
   const batchUpdateMutation = useBatchUpdateIssues();
   const batchDeleteMutation = useBatchDeleteIssues();
@@ -57,6 +59,7 @@ export function useIssueSurfaceActions({
       updates: Partial<UpdateIssueRequest>,
       options?: IssueSurfaceMutationOptions,
     ) => {
+      if (denyGuestWrite()) return;
       updateIssueMutation.mutate(
         { id: issueId, ...updates },
         {
@@ -76,7 +79,7 @@ export function useIssueSurfaceActions({
         },
       );
     },
-    [t, tIssues, updateIssueMutation],
+    [denyGuestWrite, t, tIssues, updateIssueMutation],
   );
 
   const moveIssue = useCallback(
@@ -85,6 +88,7 @@ export function useIssueSurfaceActions({
       updates: MoveIssueUpdates,
       onSettled?: () => void,
     ) => {
+      if (denyGuestWrite()) return;
       const { before_id, after_id, ...optimisticUpdates } = updates;
       updateIssueMutation.mutate(
         {
@@ -106,16 +110,17 @@ export function useIssueSurfaceActions({
         },
       );
     },
-    [t, tIssues, updateIssueMutation],
+    [denyGuestWrite, t, tIssues, updateIssueMutation],
   );
 
   const openCreateIssue = useCallback(
     (defaults?: IssueCreateDefaults) => {
+      if (denyGuestWrite()) return;
       useModalStore
         .getState()
         .open("create-issue", { ...createDefaults, ...defaults });
     },
-    [createDefaults],
+    [createDefaults, denyGuestWrite],
   );
 
   const actions = useMemo<IssueSurfaceActions>(
@@ -132,15 +137,18 @@ export function useIssueSurfaceActions({
           ...options,
         }),
       batchUpdate: async (issueIds, updates) => {
+        if (denyGuestWrite()) return;
         await batchUpdateMutation.mutateAsync({ ids: issueIds, updates });
       },
       batchDelete: async (issueIds) => {
+        if (denyGuestWrite()) return;
         await batchDeleteMutation.mutateAsync(issueIds);
       },
     }),
     [
       batchDeleteMutation,
       batchUpdateMutation,
+      denyGuestWrite,
       openCreateIssue,
       t,
       updateIssue,

@@ -359,6 +359,28 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.capacity).toBe(3);
   });
 
+  it("reports disabled over runtime health while keeping in-flight workload", () => {
+    const detail = deriveAgentPresenceDetail({
+      agent: makeAgent({ work_enabled: false }),
+      runtime: makeRuntime(),
+      tasks: [makeTask({ status: "running" })],
+      now: NOW,
+    });
+    expect(detail.availability).toBe("disabled");
+    expect(detail.workload).toBe("working");
+    expect(detail.runningCount).toBe(1);
+  });
+
+  it("treats a missing work_enabled field as accepting work", () => {
+    const detail = deriveAgentPresenceDetail({
+      agent: makeAgent(),
+      runtime: makeRuntime(),
+      tasks: [],
+      now: NOW,
+    });
+    expect(detail.availability).toBe("online");
+  });
+
   it("reports archived over any runtime/task signal for an archived agent", () => {
     // Archived wins over presence: a leftover online runtime and a running
     // task must never make a retired agent read as live. Availability

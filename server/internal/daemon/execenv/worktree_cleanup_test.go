@@ -203,10 +203,13 @@ func TestWorktreeRecordRoundTripAndMissingRecordMeansNotOurs(t *testing.T) {
 // --- scanning --------------------------------------------------------------
 
 type stubProbe struct {
-	dirty  map[string]bool
-	merged map[string]bool
-	trunk  string
-	err    error
+	dirty map[string]bool
+	// merged is the ancestor answer; evidence names a specific signal and
+	// takes precedence, so a test can say "squash" rather than just "yes".
+	merged   map[string]bool
+	evidence map[string]WorktreeMergeEvidence
+	trunk    string
+	err      error
 }
 
 func (s stubProbe) Dirty(path string) (bool, error) {
@@ -216,9 +219,17 @@ func (s stubProbe) Dirty(path string) (bool, error) {
 	return s.dirty[filepath.Base(path)], nil
 }
 
-func (s stubProbe) MergedInto(_, branch, _ string) (bool, error) { return s.merged[branch], nil }
-func (s stubProbe) CurrentBranch(path string) (string, error)    { return filepath.Base(path), nil }
-func (s stubProbe) DefaultBranch(string) (string, error)         { return s.trunk, nil }
+func (s stubProbe) MergeEvidenceOf(_, branch, _ string) (WorktreeMergeEvidence, error) {
+	if evidence, ok := s.evidence[branch]; ok {
+		return evidence, nil
+	}
+	if s.merged[branch] {
+		return MergeEvidenceAncestor, nil
+	}
+	return MergeEvidenceNone, nil
+}
+func (s stubProbe) CurrentBranch(path string) (string, error) { return filepath.Base(path), nil }
+func (s stubProbe) DefaultBranch(string) (string, error)      { return s.trunk, nil }
 
 func TestScanWorktreeRootReportsOneVerdictPerCopy(t *testing.T) {
 	root := t.TempDir()
@@ -338,5 +349,122 @@ func TestRemoveCleanableWorktreeRefusesWhatTheCurrentStateKeeps(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Fatalf("the copy was removed anyway: %v", statErr)
+	}
+}
+
+// --- what counts as delivered (DENE-647) -----------------------------------
+
+// The squash case, end to end against real git: a branch whose commits were
+// squashed into trunk is delivered, even though `merge-base --is-ancestor`
+// says no and always will. This repository merges that way, so without this
+// the whole feature is a switch that removes nothing.
+func TestGitProbeAcceptsSquashedBranchesAsDelivered(t *testing.T) {
+	repo := newTestRepo(t)
+	probe := GitWorktreeProbe{}
+
+	gitRun(t, repo, "checkout", "-b", "feature")
+	writeFile(t, filepath.Join(repo, "feature.txt"), "delivered\n")
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-m", "first half")
+	writeFile(t, filepath.Join(repo, "feature.txt"), "delivered\nand finished\n")
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-m", "second half")
+	gitRun(t, repo, "checkout", "main")
+
+	// Before the merge there is no signal at all: the branch holds work that
+	// exists nowhere else, which is the case this rule must never get wrong.
+	if got, err := probe.MergeEvidenceOf(repo, "feature", "main"); err != nil || got != MergeEvidenceNone {
+		t.Fatalf("an unmerged branch read as %q (err %v), want no evidence", got, err)
+	}
+
+	gitRun(t, repo, "merge", "--squash", "feature")
+	gitRun(t, repo, "commit", "-m", "feat: the whole branch as one commit")
+
+	// The squash commit is not the branch, so ancestry still fails — and the
+	// content rule still has to find the work.
+	if _, err := runGit(repo, "merge-base", "--is-ancestor", "feature", "main"); err == nil {
+		t.Fatal("a squashed branch became an ancestor of trunk; this test no longer tests squash")
+	}
+	got, err := probe.MergeEvidenceOf(repo, "feature", "main")
+	if err != nil {
+		t.Fatalf("MergeEvidenceOf: %v", err)
+	}
+	if got != MergeEvidenceSquash {
+		t.Fatalf("a squashed branch read as %q, want %q", got, MergeEvidenceSquash)
+	}
+
+	// Trunk moving on afterwards must not lose the answer: the identical-trees
+	// shortcut stops applying here and only patch equivalence can still see it.
+	writeFile(t, filepath.Join(repo, "unrelated.txt"), "someone else's work\n")
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-m", "chore: unrelated")
+	if got, err := probe.MergeEvidenceOf(repo, "feature", "main"); err != nil || got != MergeEvidenceSquash {
+		t.Fatalf("after trunk moved on, a squashed branch read as %q (err %v), want %q", got, err, MergeEvidenceSquash)
+	}
+}
+
+// A plain fast-forward merge still reports ancestry, and the two signals stay
+// distinguishable: the screen tells the user WHY a copy qualifies, and "its
+// commits are in trunk" and "its content is in trunk" are different promises.
+func TestGitProbeReportsAncestryForOrdinaryMerges(t *testing.T) {
+	repo := newTestRepo(t)
+	gitRun(t, repo, "checkout", "-b", "feature")
+	writeFile(t, filepath.Join(repo, "feature.txt"), "work\n")
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-m", "work")
+	gitRun(t, repo, "checkout", "main")
+	gitRun(t, repo, "merge", "--no-ff", "-m", "merge feature", "feature")
+
+	got, err := GitWorktreeProbe{}.MergeEvidenceOf(repo, "feature", "main")
+	if err != nil {
+		t.Fatalf("MergeEvidenceOf: %v", err)
+	}
+	if got != MergeEvidenceAncestor {
+		t.Fatalf("a merged branch read as %q, want %q", got, MergeEvidenceAncestor)
+	}
+}
+
+// A trunk that does not exist is an error, not a verdict. Every answer below
+// it is relative to trunk, so guessing one would make "delivered" meaningless.
+func TestGitProbeRefusesToAnswerWithoutTrunk(t *testing.T) {
+	repo := newTestRepo(t)
+	if _, err := (GitWorktreeProbe{}).MergeEvidenceOf(repo, "main", "no-such-trunk"); err == nil {
+		t.Fatal("MergeEvidenceOf answered for a trunk that does not exist")
+	}
+}
+
+// The ticket's acceptance case, at the policy layer: a copy whose branch was
+// squash-merged, is clean, idle, ours and long finished qualifies for removal.
+func TestScanWorktreeRootClearsASquashMergedCopy(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+	path := filepath.Join(root, "squashed")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorktreeRecord(root, WorktreeRecord{
+		Path: path, GitRoot: "/repo", Branch: "squashed", CreatedAt: old, LastRunAt: old,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := ScanWorktreeRoot(root,
+		WorktreeCleanupSettings{Enabled: true, MinAgeDays: 14}, nil,
+		stubProbe{evidence: map[string]WorktreeMergeEvidence{"squashed": MergeEvidenceSquash}, trunk: "main"},
+		now)
+	if err != nil {
+		t.Fatalf("ScanWorktreeRoot: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one", items)
+	}
+	if items[0].KeepReason != "" {
+		t.Fatalf("a squash-merged, clean, idle, aged-out copy was kept because %q", items[0].KeepReason)
+	}
+	// The screen needs the signal, not just the verdict: "merged" alone would
+	// read as a lie to anyone who checks `git log main` for these commits.
+	if items[0].MergedVia != MergeEvidenceSquash || !items[0].Merged {
+		t.Fatalf("item reported merged=%v via %q, want true via %q", items[0].Merged, items[0].MergedVia, MergeEvidenceSquash)
 	}
 }

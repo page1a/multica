@@ -1,3 +1,5 @@
+import type { InboxFilters } from "../inbox/filter-store";
+import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import { configStore } from "../config";
 import type {
   Issue,
@@ -58,6 +60,8 @@ import type {
   IssueAgentGuardResponse,
   Workspace,
   WorkspaceRepo,
+  ModuleKey,
+  ModuleVisibility,
   WorkspaceMcpServer,
   MemberWithUser,
   User,
@@ -77,6 +81,7 @@ import type {
   RuntimeUsageByHour,
   DashboardUsageDaily,
   DashboardUsageByAgent,
+  DashboardUsageByIssue,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   DashboardFailureDaily,
@@ -232,6 +237,9 @@ import type {
   CreateCommentSubIssueManualRequest,
   CreateCommentSubIssueAgentRequest,
   CreateCommentSubIssueRequest,
+  TaskLogExport,
+  TaskLogExportBundle,
+  TaskLogExportScope,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -244,6 +252,10 @@ import type {
   CreateCloudRuntimeNodeRequest,
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
+import type {
+  DraftAssigneeSuggestion,
+  DraftAssigneeSuggestionRequest,
+} from "../issue-drafts/assignee-suggestions";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
@@ -266,7 +278,10 @@ import {
   type ConfigImportResult,
 } from "./config-transfer";
 import {
+  RuntimeProfileSchema,
+  RuntimeProfileListSchema,
   AgentTaskListSchema,
+  AgentActivityBucketListSchema,
   IssueAgentGuardResponseSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
@@ -294,6 +309,8 @@ import {
   IssueDraftListSchema,
   IssueDraftFinalizeSchema,
   IssueDraftRuntimeSwitchSchema,
+  IssueDraftAssigneeSuggestionsSchema,
+  EMPTY_ISSUE_DRAFT_ASSIGNEE_SUGGESTIONS,
   EMPTY_ISSUE_DRAFT,
   EMPTY_ISSUE_DRAFT_SESSION,
   EMPTY_ISSUE_DRAFT_LIST,
@@ -309,9 +326,12 @@ import {
   DashboardFailureDailyListSchema,
   DashboardFailureByAgentListSchema,
   DashboardUsageByAgentListSchema,
+  DashboardUsageByIssueListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
+  EMPTY_TASK_LOG_EXPORT_BUNDLE,
+  TaskLogExportBundleSchema,
   EMPTY_CHAT_MESSAGE_LIST,
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_CHAT_SESSION,
@@ -336,6 +356,9 @@ import {
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
+  type RefreshSessionResponse,
+  RefreshSessionResponseSchema,
+  EMPTY_REFRESH_SESSION_RESPONSE,
   GroupedIssuesResponseSchema,
   IssueTableFacetsResponseSchema,
   IssueTableGroupsResponseSchema,
@@ -423,10 +446,18 @@ import {
   InboxUnreadSummarySchema,
   EMPTY_INBOX_UNREAD_SUMMARY,
   InboxItemListSchema,
+  ArchivedInboxPageSchema,
+  ArchivedInboxFacetsSchema,
   EMPTY_INBOX_ITEMS,
   NotificationPreferenceResponseSchema,
   EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
   LabelSchema,
+  MemberWithUserSchema,
+  MemberWithUserListSchema,
+  EMPTY_MEMBER_WITH_USER,
+  ModuleVisibilityListSchema,
+  ModuleVisibilitySchema,
+  EMPTY_MODULE_VISIBILITY_LIST,
   ListLabelsResponseSchema,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
@@ -465,6 +496,8 @@ import {
   MALFORMED_RUNTIME_PROVIDER_PRESET_TICKET,
   SkillSchema,
   EMPTY_SKILL,
+  SkillSummaryListSchema,
+  EMPTY_SKILL_SUMMARY_LIST,
   SkillImportResultSchema,
   EMPTY_SKILL_IMPORT_RESULT,
   IssueViewSchema,
@@ -521,6 +554,18 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
   /** Identifies the client to the server. Sent as X-Client-* headers. */
   identity?: ApiClientIdentity;
+  /**
+   * Reads the bearer token from shared storage at request time (token mode
+   * only; omit in cookie mode).
+   *
+   * Without it the token is per-instance, and Desktop runs one ApiClient per
+   * window over one shared localStorage: a session renewed in window A would
+   * leave every other window still sending the token it happened to be
+   * holding, until that one expired and took the whole session down with it
+   * (MUL-7436). Reading through means there is one current credential, not one
+   * per window.
+   */
+  getToken?: () => string | null;
 }
 
 export interface ClientRuntimeSnapshot {
@@ -703,6 +748,22 @@ function workspaceHeader(
   return slug ? { "X-Workspace-Slug": slug } : undefined;
 }
 
+/**
+ * Read the artifact name the server put in Content-Disposition.
+ *
+ * The server owns the file name so every client writes the same one. Only the
+ * basename survives: the value crosses a trust boundary and must never steer a
+ * write outside the caller's chosen directory. Falls back to a stable default
+ * when the header is missing or not in `filename="…"` form.
+ */
+function exportFilenameFromDisposition(disposition: string | null): string {
+  if (!disposition) return "log-export.json";
+  const match = /filename="([^"]*)"/.exec(disposition);
+  const name = match?.[1] ?? "";
+  const basename = name.split(/[\\/]/).pop() ?? "";
+  return basename.trim() === "" ? "log-export.json" : basename;
+}
+
 function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
   const search = new URLSearchParams();
   if (params.activity) search.set("activity", params.activity);
@@ -711,6 +772,31 @@ function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   const encoded = search.toString();
   return encoded ? `?${encoded}` : "";
+}
+
+// The server's exact wording for a rejected CSRF token
+// (server/internal/middleware/auth.go). Matched rather than inferred from the
+// status, because 403 also covers real authorization failures that must not
+// be retried.
+const CSRF_REJECTED_ERROR = "CSRF validation failed";
+
+// One header, two possible values — see ApiClient.readCsrfValue.
+const CSRF_HEADER = "X-CSRF-Token";
+const CSRF_COOKIE = "multica_csrf";
+const SESSION_CSRF_COOKIE = "multica_csrf_session";
+
+/**
+ * Whether a request body can be sent a second time. Strings and multipart
+ * forms can; a stream cannot, and silently replaying a half-consumed one
+ * would send a truncated request.
+ */
+function isReplayableBody(body: BodyInit | null | undefined): boolean {
+  if (body === undefined || body === null) return true;
+  if (typeof body === "string") return true;
+  if (typeof FormData !== "undefined" && body instanceof FormData) return true;
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams)
+    return true;
+  return false;
 }
 
 export class ApiClient {
@@ -733,21 +819,62 @@ export class ApiClient {
     this.token = token;
   }
 
-  private readCsrfToken(): string | null {
+  /**
+   * The bearer token this client is currently using, or null in cookie mode.
+   *
+   * Prefers the shared-storage reader when one is configured, so every window
+   * agrees on the current credential rather than each trusting its own copy.
+   */
+  getToken(): string | null {
+    const shared = this.options.getToken?.();
+    if (shared !== undefined) return shared;
+    return this.token;
+  }
+
+  /**
+   * Which of the two CSRF cookies to echo (MUL-7436).
+   *
+   * The session-bound value is preferred: it survives a sliding renewal, so a
+   * request another tab built before a renewal still validates after it. The
+   * token-bound value is the fallback, and it is what a server running the
+   * PREVIOUS release can verify — after a rollback the session-bound value is
+   * meaningless to it.
+   *
+   * Both travel in the same header. A second header name would have to be in
+   * that server's CORS allowlist, and a rolled-back server allowlists only the
+   * names it shipped with: the preflight would fail and no retry could help.
+   *
+   * `csrfSessionValueRejected` records the exact session-bound value a server
+   * refused, so the fallback is used for as long as that value is current and
+   * no longer — a renewal or a new login replaces the cookie and the preferred
+   * binding is tried again. Keying on the value rather than a boolean is what
+   * stops this from oscillating once per renewal against a current server.
+   */
+  private csrfSessionValueRejected: string | null = null;
+
+  private readCsrfValue(): string | null {
+    const sessionBound = this.readCookie(SESSION_CSRF_COOKIE);
+    if (sessionBound && sessionBound !== this.csrfSessionValueRejected) {
+      return sessionBound;
+    }
+    return this.readCookie(CSRF_COOKIE) ?? sessionBound;
+  }
+
+  private readCookie(name: string): string | null {
     if (typeof document === "undefined") return null;
-    const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("multica_csrf="));
-    return match ? match.split("=")[1] ?? null : null;
+    const prefix = `${name}=`;
+    const match = document.cookie.split("; ").find((c) => c.startsWith(prefix));
+    return match ? match.slice(prefix.length) || null : null;
   }
 
   private authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {};
-    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    const token = this.getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const slug = getCurrentSlug();
     if (slug) headers["X-Workspace-Slug"] = slug;
-    const csrf = this.readCsrfToken();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
+    const csrf = this.readCsrfValue();
+    if (csrf) headers[CSRF_HEADER] = csrf;
     const id = this.options.identity;
     if (id?.platform) headers["X-Client-Platform"] = id.platform;
     if (id?.version) headers["X-Client-Version"] = id.version;
@@ -755,7 +882,23 @@ export class ApiClient {
     return headers;
   }
 
-  private handleUnauthorized() {
+  /**
+   * A 401 ends the session — unless the credential it answered has already
+   * been replaced.
+   *
+   * A request that went out just before a renewal (or from another window
+   * still finishing one) carries the previous token, and its 401 arrives
+   * AFTER the new one is in storage. Treating that as expiry would tear down
+   * a session that is demonstrably alive, clearing drafts and tabs with it
+   * (MUL-7028). Comparing against the credential in use now is what tells the
+   * two apart: a genuinely expired session still has the same token stored,
+   * so the real case is unaffected.
+   */
+  private handleUnauthorized(credentialUsed: string | null) {
+    if (credentialUsed !== null && this.getToken() !== credentialUsed) {
+      this.logger.info("ignoring 401 for a credential that has since been replaced");
+      return;
+    }
     this.token = null;
     // Workspace id is owned by the URL-driven workspace-storage singleton
     // (set by [workspaceSlug]/layout.tsx). On 401, the auth flow navigates
@@ -800,23 +943,55 @@ export class ApiClient {
     const start = Date.now();
     const method = init?.method ?? "GET";
 
-    const headers: Record<string, string> = {
+    // Rebuilt per attempt rather than captured once: authHeaders() reads the
+    // CSRF cookie at call time, and the retry below exists precisely because
+    // that cookie may have just been replaced.
+    const buildHeaders = (): Record<string, string> => ({
       "X-Request-ID": rid,
       ...this.authHeaders(),
       ...(init?.extraHeaders ?? {}),
       ...((init?.headers as Record<string, string>) ?? {}),
-    };
+    });
+
+    // Captured before the request so a late 401 can be matched against the
+    // credential it actually used, not whatever is current when it lands.
+    const credentialUsed = this.getToken();
 
     this.logger.info(`→ ${method} ${path}`, { rid });
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
+    const send = () =>
+      fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: buildHeaders(),
+        credentials: "include",
+      });
+
+    let res = await send();
+
+    // Two things can make a CSRF value the server refuses, and one retry
+    // covers both (MUL-7436):
+    //
+    //   - It went stale. The first renewal of a session that predates the
+    //     session-bound binding rotates the cookie the old value was keyed to,
+    //     and a request another tab had already built carries the previous
+    //     one. Rebuilding the headers re-reads the cookie.
+    //   - The server does not understand it. After a rollback, the previous
+    //     release can only verify the token-bound binding. Recording the
+    //     rejected value switches this client to that binding until the cookie
+    //     changes again.
+    //
+    // Neither is an attack, and neither should surface as a failed write.
+    if (res.status === 403 && isReplayableBody(init?.body)) {
+      const { message } = await this.parseErrorBody(res.clone(), "");
+      if (message === CSRF_REJECTED_ERROR) {
+        this.csrfSessionValueRejected = this.readCookie(SESSION_CSRF_COOKIE);
+        this.logger.info(`↻ ${method} ${path} (CSRF token rejected, retrying once)`, { rid });
+        res = await send();
+      }
+    }
 
     if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
       const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
       const logLevel = res.status === 404 ? "warn" : "error";
       this.logger[logLevel](`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
@@ -892,6 +1067,27 @@ export class ApiClient {
 
   async issueCliToken(): Promise<{ token: string }> {
     return this.fetch("/api/cli-token", { method: "POST" });
+  }
+
+  /**
+   * Ask the server to extend this session if it has entered its renewal
+   * window. The server owns that decision — no client reads `exp` or
+   * compares it against a local clock, which is what keeps clock skew out of
+   * the picture entirely.
+   *
+   * Cookie-mode callers never need this: middleware.Auth re-issues their
+   * cookie inline on any authenticated safe request.
+   */
+  async refreshSession(): Promise<RefreshSessionResponse> {
+    const raw = await this.fetch<unknown>("/api/auth/refresh", {
+      method: "POST",
+    });
+    return parseWithFallback<RefreshSessionResponse>(
+      raw,
+      RefreshSessionResponseSchema,
+      EMPTY_REFRESH_SESSION_RESPONSE,
+      { endpoint: "POST /api/auth/refresh" },
+    );
   }
 
   async getMe(): Promise<User> {
@@ -1799,6 +1995,27 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Which seat routing would put on each issue of a draft, root first. Reads
+   * only: nothing is created or assigned. Advisory, so an unparseable body is
+   * "no suggestions" rather than an error on the confirm panel.
+   */
+  async suggestIssueDraftAssignees(
+    sessionId: string,
+    data: DraftAssigneeSuggestionRequest,
+  ): Promise<(DraftAssigneeSuggestion | null)[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/issue-drafts/${sessionId}/assignee-suggestions`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      IssueDraftAssigneeSuggestionsSchema,
+      EMPTY_ISSUE_DRAFT_ASSIGNEE_SUGGESTIONS,
+      { endpoint: "POST /api/issue-drafts/{id}/assignee-suggestions" },
+    ).suggestions;
+  }
+
   /** Discards a draft. The conversation itself is left alone. */
   async abandonIssueDraft(sessionId: string): Promise<IssueDraft> {
     const raw = await this.fetch<unknown>(
@@ -2337,25 +2554,39 @@ export class ApiClient {
     const res = await this.fetch<{ runtime_profiles?: RuntimeProfile[] }>(
       `/api/workspaces/${workspaceId}/runtime-profiles`,
     );
-    return res.runtime_profiles ?? [];
+    return parseWithFallback(
+      res.runtime_profiles ?? [],
+      RuntimeProfileListSchema,
+      [] as RuntimeProfile[],
+      { endpoint: "listRuntimeProfiles" },
+    );
   }
 
   async getRuntimeProfile(
     workspaceId: string,
     profileId: string,
   ): Promise<RuntimeProfile> {
-    return this.fetch(
+    const result = await this.fetch<RuntimeProfile>(
       `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
     );
+    return parseWithFallback(result, RuntimeProfileSchema, result, {
+      endpoint: "runtimeProfile",
+    });
   }
 
   async createRuntimeProfile(
     workspaceId: string,
     body: CreateRuntimeProfileRequest,
   ): Promise<RuntimeProfile> {
-    return this.fetch(`/api/workspaces/${workspaceId}/runtime-profiles`, {
-      method: "POST",
-      body: JSON.stringify(body),
+    const result = await this.fetch<RuntimeProfile>(
+      `/api/workspaces/${workspaceId}/runtime-profiles`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    return parseWithFallback(result, RuntimeProfileSchema, result, {
+      endpoint: "runtimeProfile",
     });
   }
 
@@ -2364,13 +2595,16 @@ export class ApiClient {
     profileId: string,
     patch: UpdateRuntimeProfileRequest,
   ): Promise<RuntimeProfile> {
-    return this.fetch(
+    const result = await this.fetch<RuntimeProfile>(
       `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
       {
         method: "PATCH",
         body: JSON.stringify(patch),
       },
     );
+    return parseWithFallback(result, RuntimeProfileSchema, result, {
+      endpoint: "runtimeProfile",
+    });
   }
 
   async deleteRuntimeProfile(
@@ -2492,6 +2726,22 @@ export class ApiClient {
       DashboardUsageByAgentListSchema,
       [],
       { endpoint: "GET /api/dashboard/usage/by-agent" },
+    );
+  }
+
+  async getDashboardUsageByIssue(
+    params: { days?: number; project_id?: string | null; tz?: string },
+  ): Promise<DashboardUsageByIssue[]> {
+    const search = new URLSearchParams();
+    if (params.days) search.set("days", String(params.days));
+    if (params.project_id) search.set("project_id", params.project_id);
+    if (params.tz) search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(`/api/dashboard/usage/by-issue?${search}`);
+    return parseWithFallback<DashboardUsageByIssue[]>(
+      raw,
+      DashboardUsageByIssueListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/usage/by-issue" },
     );
   }
 
@@ -2753,7 +3003,10 @@ export class ApiClient {
   // sparkline (uses trailing 7 buckets) and the agent detail "Last 30
   // days" panel (uses all 30).
   async getWorkspaceAgentActivity30d(): Promise<AgentActivityBucket[]> {
-    return this.fetch(`/api/agent-activity-30d`);
+    const raw = await this.fetch<unknown>(`/api/agent-activity-30d`);
+    return parseWithFallback<AgentActivityBucket[]>(raw, AgentActivityBucketListSchema, [], {
+      endpoint: "GET /api/agent-activity-30d",
+    });
   }
 
   // Per-agent 30-day total run count for the Agents-list RUNS column.
@@ -2863,6 +3116,39 @@ export class ApiClient {
     });
   }
 
+  private archivedInboxParams(filters: InboxFilters): URLSearchParams {
+    const params = new URLSearchParams();
+    if (filters.statuses.length) params.set("statuses", [...filters.statuses].sort().join(","));
+    if (filters.priorities.length) params.set("priorities", [...filters.priorities].sort().join(","));
+    if (filters.actors.length) params.set("actors", [...filters.actors].sort().join(","));
+    if (filters.unreadOnly) params.set("unread_only", "true");
+    return params;
+  }
+
+  async listArchivedInboxPage(filters: InboxFilters, options: {
+    cursor?: string | null; groupId?: string; signal?: AbortSignal;
+  } = {}): Promise<ArchivedInboxPage> {
+    const params = this.archivedInboxParams(filters);
+    params.set("limit", "50");
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (options.groupId) params.set("group_id", options.groupId);
+    const raw = await this.fetch<unknown>(`/api/inbox/archived/page?${params}`, { signal: options.signal });
+    const page = parseWithFallback<ArchivedInboxPage | null>(raw, ArchivedInboxPageSchema, null, {
+      endpoint: "GET /api/inbox/archived/page",
+    });
+    if (!page) throw new Error("Invalid archived inbox page response");
+    return page;
+  }
+
+  async getArchivedInboxFacets(filters: InboxFilters, signal?: AbortSignal): Promise<ArchivedInboxFacets> {
+    const raw = await this.fetch<unknown>(`/api/inbox/archived/facets?${this.archivedInboxParams(filters)}`, { signal });
+    const facets = parseWithFallback<ArchivedInboxFacets | null>(raw, ArchivedInboxFacetsSchema, null, {
+      endpoint: "GET /api/inbox/archived/facets",
+    });
+    if (!facets) throw new Error("Invalid archived inbox facets response");
+    return facets;
+  }
+
   async unarchiveInbox(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/unarchive`, { method: "POST" });
   }
@@ -2955,6 +3241,38 @@ export class ApiClient {
 
   async getWorkspace(id: string): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`);
+  }
+
+  async listModuleVisibility(): Promise<ModuleVisibility[]> {
+    const raw = await this.fetch<unknown>("/api/modules");
+    const parsed = parseWithFallback(
+      raw,
+      ModuleVisibilityListSchema,
+      EMPTY_MODULE_VISIBILITY_LIST,
+      { endpoint: "GET /api/modules" },
+    );
+    return parsed.modules as ModuleVisibility[];
+  }
+
+  async setModuleVisibility(
+    module: ModuleKey,
+    data: { visibility: string; project_id?: string | null },
+  ): Promise<ModuleVisibility> {
+    const raw = await this.fetch<unknown>(
+      `/api/modules/${encodeURIComponent(module)}/visibility`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      ModuleVisibilitySchema,
+      {
+        key: module,
+        visibility: data.visibility,
+        project_id: data.project_id ?? null,
+        allowed: true,
+      },
+      { endpoint: "PUT /api/modules/{module}/visibility" },
+    ) as ModuleVisibility;
   }
 
   async createWorkspace(data: { name: string; slug: string; description?: string; context?: string; issue_prefix?: string }): Promise<Workspace> {
@@ -3178,6 +3496,7 @@ export class ApiClient {
     const formData = new FormData();
     formData.append("bundle", bundle);
 
+    const credentialUsed = this.getToken();
     const res = await fetch(`${this.baseUrl}/api/workspaces/${workspaceId}/plugins/packages`, {
       method: "POST",
       headers: this.authHeaders(),
@@ -3185,7 +3504,7 @@ export class ApiClient {
       credentials: "include",
     });
     if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
       throw new Error(await this.parseErrorMessage(res, `Publishing failed: ${res.status}`));
     }
     const raw = (await res.json()) as unknown;
@@ -3384,7 +3703,10 @@ export class ApiClient {
 
   // Members
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`);
+    return parseWithFallback(raw, MemberWithUserListSchema, [] as MemberWithUser[], {
+      endpoint: "GET /api/workspaces/{id}/members",
+    });
   }
 
   async createMember(workspaceId: string, data: CreateMemberRequest): Promise<Invitation> {
@@ -3395,9 +3717,12 @@ export class ApiClient {
   }
 
   async updateMember(workspaceId: string, memberId: string, data: UpdateMemberRequest): Promise<MemberWithUser> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+      endpoint: "PATCH /api/workspaces/{id}/members/{memberId}",
     });
   }
 
@@ -3492,7 +3817,10 @@ export class ApiClient {
 
   // Skills
   async listSkills(): Promise<SkillSummary[]> {
-    return this.fetch("/api/skills");
+    const raw = await this.fetch<unknown>("/api/skills");
+    return parseWithFallback(raw, SkillSummaryListSchema, EMPTY_SKILL_SUMMARY_LIST, {
+      endpoint: "GET /api/skills",
+    });
   }
 
   async getSkill(id: string): Promise<Skill> {
@@ -3646,6 +3974,7 @@ export class ApiClient {
     const start = Date.now();
     this.logger.info("→ POST /api/upload-file", { rid });
 
+    const credentialUsed = this.getToken();
     const res = await fetch(`${this.baseUrl}/api/upload-file`, {
       method: "POST",
       headers: this.authHeaders(),
@@ -3655,7 +3984,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
       const message = await this.parseErrorMessage(res, `Upload failed: ${res.status}`);
       this.logger.error(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms`, error: message });
       throw new Error(message);
@@ -3666,6 +3995,72 @@ export class ApiClient {
     return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
       endpoint: "POST /api/upload-file",
     });
+  }
+
+  // Task log export (DENE-599)
+
+  /**
+   * Fetch the server-rendered log export bundle for a task run.
+   *
+   * Returns the verbatim artifact alongside its parsed view. Callers that
+   * report the export must upload `artifact` (or use
+   * `useReportTaskLogExport`), never a re-encoded `bundle`: the server owns
+   * the artifact's bytes so `multica logs export` and the dialogs hand the
+   * user the identical file.
+   */
+  async exportTaskLogs(
+    taskId: string,
+    opts?: { scope?: TaskLogExportScope; hours?: number; signal?: AbortSignal },
+  ): Promise<TaskLogExport> {
+    const params = new URLSearchParams();
+    if (opts?.scope) params.set("scope", opts.scope);
+    if (typeof opts?.hours === "number") params.set("hours", String(opts.hours));
+    const query = params.toString();
+    const path = `/api/tasks/${taskId}/logs/export${query ? `?${query}` : ""}`;
+
+    const rid = createRequestId();
+    const start = Date.now();
+    this.logger.info(`→ GET ${path}`, { rid });
+
+    // Not routed through `this.fetch` for the same reason uploadFile is not:
+    // the artifact is a document to hand to the caller untouched, and the
+    // generic JSON helper would decode and drop the exact bytes.
+    const credentialUsed = this.getToken();
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: this.authHeaders(),
+      credentials: "include",
+      signal: opts?.signal,
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
+      const message = await this.parseErrorMessage(res, `Export failed: ${res.status}`);
+      this.logger.error(`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
+      throw new Error(message);
+    }
+
+    const artifact = await res.text();
+    this.logger.info(`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms` });
+
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(artifact);
+    } catch {
+      // Fall through to the fallback bundle: a malformed body must degrade to
+      // an empty card, not throw past the caller's error handling.
+      raw = null;
+    }
+    const bundle = parseWithFallback<TaskLogExportBundle>(
+      raw,
+      TaskLogExportBundleSchema,
+      EMPTY_TASK_LOG_EXPORT_BUNDLE,
+      { endpoint: "GET /api/tasks/:id/logs/export" },
+    );
+    return {
+      bundle,
+      artifact,
+      filename: exportFilenameFromDisposition(res.headers.get("content-disposition")),
+    };
   }
 
   // Chat Sessions
@@ -4210,7 +4605,7 @@ export class ApiClient {
   }
 
   /**
-   * Rewrites one category's custom-status order in a single server-side
+   * Rewrites one category's status order in a single server-side
    * statement. Not expressible as a sequence of `updateIssueStatus` calls: a
    * row rejected mid-sequence would leave the earlier rows already reordered
    * while the caller sees a failure. (MUL-6243)
@@ -4218,10 +4613,11 @@ export class ApiClient {
   async reorderIssueStatuses(
     category: IssueStatusCategory,
     ids: string[],
+    includeSystem = false,
   ): Promise<ListIssueStatusesResponse> {
     const raw = await this.fetch<unknown>(`/api/issue-statuses/reorder`, {
       method: "PATCH",
-      body: JSON.stringify({ category, ids }),
+      body: JSON.stringify({ category, ids, include_system: includeSystem }),
     });
     return parseWithFallback(raw, ListIssueStatusesResponseSchema, EMPTY_LIST_ISSUE_STATUSES_RESPONSE, {
       endpoint: "PATCH /api/issue-statuses/reorder",

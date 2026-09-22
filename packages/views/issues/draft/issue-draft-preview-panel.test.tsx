@@ -924,3 +924,37 @@ describe("IssueDraftPreviewPanel carried files", () => {
     expect(screen.queryByText("Reference files")).toBeNull();
   });
 });
+
+// The pure fill rules (once per row, never over a picked assignee) are covered
+// in packages/core/issue-drafts/assignee-suggestions.test.ts. This suite keeps
+// the wiring: a suggestion has to reach the SERVER draft, because the confirm
+// creates what the server holds (DENE-691).
+describe("assignee suggestions", () => {
+  const READY: IssueDraftPayload = {
+    title: "Ship it",
+    description: "",
+    status: "",
+    priority: "",
+    children: [{ key: "c1", title: "backend", description: "", status: "todo", priority: "" }],
+  };
+  const SEAT = { assignee_type: "agent" as const, assignee_id: "agent-1", name: "孙悟空", tier: "strong" };
+
+  it("saves the suggested seats into the draft instead of only showing them", async () => {
+    const onSave = vi.fn().mockResolvedValue(true);
+    renderPanel({ stage: "ready", draft: READY, onSave, assigneeSuggestions: [SEAT, null] });
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const [saved, status] = onSave.mock.calls[0] as [IssueDraftPayload, string];
+    expect(status).toBe("ready");
+    expect(saved.assignee_id).toBe("agent-1");
+    // Routing had no confident seat for the child: it stays unassigned.
+    expect(saved.children?.[0]?.assignee_id ?? null).toBeNull();
+  });
+
+  it("does not touch the draft while a turn is running", async () => {
+    const onSave = vi.fn().mockResolvedValue(true);
+    renderPanel({ stage: "ready", draft: READY, onSave, pending: true, assigneeSuggestions: [SEAT, SEAT] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});

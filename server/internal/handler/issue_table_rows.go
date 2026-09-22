@@ -415,7 +415,14 @@ func (h *Handler) ListIssueTableRows(w http.ResponseWriter, r *http.Request) {
 		group.primary != nil &&
 		group.primary.kind == "parent" &&
 		group.secondaryFiltered {
-		visibleRef := addArg(group.secondaryValues)
+		visibleKeys := group.secondaryValues
+		if group.secondaryCategory {
+			visibleKeys = nil
+			for _, category := range group.secondaryValues {
+				visibleKeys = append(visibleKeys, group.categoryKeysFor(category)...)
+			}
+		}
+		visibleRef := addArg(visibleKeys)
 		ctePrefix += fmt.Sprintf(`membership AS NOT MATERIALIZED (
   SELECT i.*
   FROM issue i
@@ -495,7 +502,7 @@ func (h *Handler) ListIssueTableRows(w http.ResponseWriter, r *http.Request) {
 
 	query := fmt.Sprintf(`%s
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at,
 	       i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
 	       i.revision,
@@ -529,6 +536,8 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 			&row.issue.Priority,
 			&row.issue.AssigneeType,
 			&row.issue.AssigneeID,
+			&row.issue.ReviewerType,
+			&row.issue.ReviewerID,
 			&row.issue.CreatorType,
 			&row.issue.CreatorID,
 			&row.issue.ParentIssueID,

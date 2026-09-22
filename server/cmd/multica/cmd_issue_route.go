@@ -24,7 +24,7 @@ empty.
 What it can change:
 
   - the assignee, but only while that slot is empty
-  - the workspace's 验收席 property, but only while that slot is empty
+  - the issue's 验收席 (reviewer), but only while that slot is empty
   - one routing comment per kind, and the subscriber needed for its @ to notify
 
 What it never changes: the status. Status is a fact about the work, and only

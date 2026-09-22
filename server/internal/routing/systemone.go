@@ -162,6 +162,7 @@ const (
 	qReviewerTier = "reviewer_tier"
 	qCause        = "cause"
 	qSuggested    = "suggested_tier"
+	qStaleAction  = "stale_action"
 )
 
 const (
@@ -170,6 +171,7 @@ const (
 	reviewerTierInstr   = "Assuming another AI seat checks this work, which tier should check it? Reviewing is a judgement task: it is normally at least as demanding as doing the work."
 	causeInstruction    = "This ticket is blocked. What is the most likely reason it cannot move?"
 	suggestedInstr      = "If the assigned seat is not strong enough, which tier should take this ticket instead?"
+	staleInstruction    = "This ticket has been sitting in review with nothing happening on it. Looking ONLY at review_remarks — what the reviewer themselves said on the ticket — has the reviewer already accepted this work?"
 )
 
 // tierCriteria describes each rung for the model. The ladder itself carries
@@ -296,6 +298,42 @@ func (j SystemOneJudge) Unblock(ctx context.Context, target Target, st JudgeStat
 	}
 	a.Reason = systemOneAdviceReason(resp.Model, a, cause.Confidence)
 	return a, nil
+}
+
+// Stale asks the stale-review question. The branch set is two values, and the
+// question is deliberately about what the reviewer ALREADY said rather than
+// about the work: a model that could answer "the work is done" would be
+// writing status from its own opinion.
+func (j SystemOneJudge) Stale(ctx context.Context, target Target, st StaleState) (StaleDecision, error) {
+	req := systemOneRequest{
+		State: st,
+		Model: target.Model,
+		Questions: map[string]systemOneQuestion{
+			qStaleAction: {Type: "choice", Instructions: staleInstruction, Criteria: map[string]any{
+				string(StaleComplete): "The reviewer has explicitly passed this work in their own remarks on the ticket; only the status never followed.",
+				string(StaleWake):     "Everything else: the reviewer never spoke, asked for changes, asked a question, or the remarks are unclear.",
+			}},
+		},
+	}
+	resp, err := j.evaluate(ctx, target, req)
+	if err != nil {
+		return StaleDecision{}, err
+	}
+	answer, ok := resp.Answers[qStaleAction]
+	if !ok || answer.Choice == "" {
+		return StaleDecision{}, fmt.Errorf("%w: no stale answer in the reply", ErrJudgeUnavailable)
+	}
+	action := StaleAction(strings.ToLower(strings.TrimSpace(answer.Choice)))
+	switch action {
+	case StaleWake, StaleComplete:
+	default:
+		return StaleDecision{}, fmt.Errorf("%w: unknown stale action %q", ErrJudgeUnavailable, answer.Choice)
+	}
+	return StaleDecision{
+		Action:     action,
+		Confidence: answer.Confidence,
+		Reason:     modelLabel(resp.Model) + "判为「" + string(action) + "」，置信度 " + percent(answer.Confidence),
+	}, nil
 }
 
 // systemOneReason writes the sentence a person reads in the decision comment.
@@ -509,6 +547,14 @@ func (p ProviderJudge) Assign(ctx context.Context, t Target, st JudgeState) (Ver
 		return Verdict{}, ErrJudgeUnavailable
 	}
 	return j.Assign(ctx, t, st)
+}
+
+func (p ProviderJudge) Stale(ctx context.Context, t Target, st StaleState) (StaleDecision, error) {
+	j := p.pick(t)
+	if j == nil {
+		return StaleDecision{}, ErrJudgeUnavailable
+	}
+	return j.Stale(ctx, t, st)
 }
 
 func (p ProviderJudge) Unblock(ctx context.Context, t Target, st JudgeState) (Advice, error) {

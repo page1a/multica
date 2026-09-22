@@ -45,6 +45,17 @@ const (
 	// it then behaves exactly as it does today, rather than appearing to honour
 	// a setting it cannot implement.
 	DaemonCapabilityLocalWorktreeUserRootV1 = "local-worktree-user-root-v1"
+	// DaemonCapabilityLocalDirectoryMultiV1 advertises that the daemon can
+	// receive more than one local_directory for a project and treat all but
+	// the one it runs in as read-only reference material (DENE-619).
+	//
+	// Separate from the user-root capability because the two promises are
+	// independent: one is about WHERE a parallel copy lands, the other about
+	// HOW MANY directories a daemon can be told about. A daemon that does not
+	// declare it is sent at most one directory per machine, because it has no
+	// concept of a chosen directory among several — it would treat every row
+	// it received as a place it may write.
+	DaemonCapabilityLocalDirectoryMultiV1 = "local-directory-multi-v1"
 	// DaemonCapabilitySourceContextQuickCreateV1 advertises support for the
 	// two-section quick-create prompt that keeps a new instruction separate
 	// from immutable historical source context.
@@ -225,6 +236,8 @@ type ChatQuickActionsPayload struct {
 
 // TaskMessagePayload represents a single agent execution message (tool call, text, etc.)
 type TaskMessagePayload struct {
+	// CallID is an opaque tool-call identity scoped to one backend execution.
+	CallID  string         `json:"call_id,omitempty"`
 	TaskID  string         `json:"task_id"`
 	IssueID string         `json:"issue_id,omitempty"`
 	Seq     int            `json:"seq"`

@@ -306,10 +306,16 @@ func (s *worktreeCleanupState) knownRoot(dir string) bool {
 // all when the policy is off. Returns how many were removed and how many bytes
 // that reclaimed, for the GC log.
 func (s *worktreeCleanupState) RunAutomatic() (removed int, bytes int64, errs []error) {
-	report := s.Scan()
-	if !report.Settings.Enabled {
+	// The switch is read BEFORE the scan, not after it. Scanning means sizing
+	// every working copy on disk and running a git probe in each — several
+	// gigabytes' worth of IO per cycle on a machine whose owner never turned
+	// cleanup on. The settings screen's preview deliberately scans while the
+	// policy is off (invariant 6); this scheduled path must not.
+	settings := s.Settings()
+	if !settings.Enabled {
 		return 0, 0, nil
 	}
+	report := s.Scan()
 	for _, item := range report.Items {
 		if !item.Eligible() {
 			continue

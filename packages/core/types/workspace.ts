@@ -1,4 +1,23 @@
-export type MemberRole = "owner" | "admin" | "member";
+/**
+ * Workspace tier. `guest` is read-only: the server rejects every guest write
+ * in one interception layer (DENE-697), so the tier is safe to hand out.
+ */
+export type MemberRole = "owner" | "admin" | "member" | "guest";
+
+/** Product areas that can be shared independently of any one resource (DENE-699). */
+export const MODULE_KEYS = ["issues", "projects", "repos", "runtimes"] as const;
+export type ModuleKey = (typeof MODULE_KEYS)[number];
+
+export interface ModuleVisibility {
+  key: ModuleKey;
+  visibility: "private" | "project" | "workspace";
+  project_id: string | null;
+  allowed: boolean;
+}
+
+export interface ModuleVisibilityList {
+  modules: ModuleVisibility[];
+}
 
 export interface WorkspaceRepo {
   url: string;

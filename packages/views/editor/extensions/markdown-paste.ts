@@ -33,8 +33,32 @@ import {
   Slice,
   type Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
+import {
+  MARKDOWN_CHUNK_THRESHOLD,
+  parseMarkdownChunked,
+} from "../utils/parse-markdown-chunked";
 
-const LARGE_PASTE_TEXT_THRESHOLD = 50_000;
+/**
+ * Above this, skip Markdown / JSON / HTML parsers and insert the plain text.
+ * Not a product cap — `marked` and DOMParser on a wall of clipboard data freeze
+ * the desktop renderer long enough for the unresponsive watchdog (DENE-725).
+ */
+export const LARGE_PASTE_TEXT_THRESHOLD = 50_000;
+
+/**
+ * Windows Office / Excel / Chrome clipboard HTML is often 10–100× the plain
+ * text. DOMParser on a megabyte of `text/html` blocks the renderer, so once
+ * the HTML flavor itself is this large we ignore it and use text/plain.
+ */
+export const LARGE_PASTE_HTML_THRESHOLD = 100_000;
+
+/**
+ * Skip *reading* `text/html` once the plain text already looks like a bulk
+ * paste. On Windows Electron, `clipboard.getData("text/html")` copies the
+ * whole CF_HTML payload into the renderer — that IPC can hang before JS
+ * even classifies the paste.
+ */
+export const LARGE_PASTE_HTML_SKIP_LINES = 80;
 const SEMANTIC_RICH_HTML_SELECTOR = [
   "a[href]",
   "b",
@@ -336,6 +360,29 @@ function hasSemanticRichHtml(html: string, text: string): boolean {
   return false;
 }
 
+function exceedsNewlineCount(text: string, threshold: number): boolean {
+  let seen = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) {
+      seen++;
+      if (seen >= threshold) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True when reading `text/html` is not worth the Windows clipboard cost:
+ * the plain text is already large enough that we will not take the native
+ * HTML path, or it has enough lines to be a bulk data paste (logs, TSV).
+ */
+export function shouldSkipClipboardHtml(text: string): boolean {
+  return (
+    text.length > MARKDOWN_CHUNK_THRESHOLD ||
+    exceedsNewlineCount(text, LARGE_PASTE_HTML_SKIP_LINES)
+  );
+}
+
 function classifyPaste({
   text,
   html,
@@ -346,8 +393,15 @@ function classifyPaste({
   if (!text) return "native";
   if (isInsideCodeBlock) return "literal";
   if (html && html.includes("data-pm-slice")) return "native";
-  if (html && hasSemanticRichHtml(html, text)) return "native";
+  // Size guards MUST run before DOMParser / JSON.parse / marked. Windows
+  // clipboard HTML is classified first on the old path, so a short TSV from
+  // Excel still froze the renderer on a megabyte of CF_HTML (DENE-725).
   if (text.length > LARGE_PASTE_TEXT_THRESHOLD) return "literal";
+  if (html.length > LARGE_PASTE_HTML_THRESHOLD) {
+    if (isStructuredPlainText(text)) return "literal";
+    return "markdown";
+  }
+  if (html && hasSemanticRichHtml(html, text)) return "native";
   if (isStructuredPlainText(text)) return "literal";
   return "markdown";
 }
@@ -443,13 +497,21 @@ export function createMarkdownPasteExtension() {
               if (!clipboard) return false;
 
               const text = clipboard.getData("text/plain");
-              const html = clipboard.getData("text/html");
               const { $from } = view.state.selection;
+              const isInsideCodeBlock = $from.parent.type.name === "codeBlock";
+              const hasFiles = Boolean(clipboard.files?.length);
+              // Do not pull `text/html` when we already know we will not use
+              // it — on Windows the HTML flavor can be megabytes and getData
+              // itself blocks the renderer (DENE-725).
+              const html =
+                hasFiles || isInsideCodeBlock || shouldSkipClipboardHtml(text)
+                  ? ""
+                  : (clipboard.getData("text/html") ?? "");
               const mode = classifyPaste({
                 text,
                 html,
-                hasFiles: Boolean(clipboard.files?.length),
-                isInsideCodeBlock: $from.parent.type.name === "codeBlock",
+                hasFiles,
+                isInsideCodeBlock,
               });
 
               if (mode === "native") {
@@ -475,9 +537,14 @@ export function createMarkdownPasteExtension() {
               }
 
               // Everything else (VS Code, text editors, .md files, terminals,
-              // web pages): parse text/plain as Markdown.
+              // web pages): parse text/plain as Markdown. Chunk above the
+              // same threshold ContentEditor uses on load — one-shot marked
+              // is O(n²) and a 50k paste is enough to trip the watchdog.
               const preprocessed = escapeRawHtmlTagsOutsideCode(text);
-              const json = editor.markdown.parse(preprocessed);
+              const json =
+                preprocessed.length > MARKDOWN_CHUNK_THRESHOLD
+                  ? parseMarkdownChunked(editor.markdown, preprocessed)
+                  : editor.markdown.parse(preprocessed);
               const node = editor.schema.nodeFromJSON(json);
 
               // Safety net: if parsing still produces an empty doc despite

@@ -1,4 +1,5 @@
 import type { ChatSession } from "./chat";
+import type { Label } from "./label";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
@@ -191,6 +192,12 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
 export type RuntimeProtocolFamily =
   (typeof RUNTIME_PROFILE_PROTOCOL_FAMILIES)[number];
 
+export const RUNTIME_PROFILE_RUNTIME_TYPES = [
+  ...RUNTIME_PROFILE_PROTOCOL_FAMILIES,
+  "omp",
+] as const;
+export type RuntimeProfileType = (typeof RUNTIME_PROFILE_RUNTIME_TYPES)[number];
+
 // Profile visibility mirrors RuntimeVisibility's vocabulary but uses the
 // workspace/private axis the server documents for profiles.
 export type RuntimeProfileVisibility = "workspace" | "private";
@@ -200,6 +207,7 @@ export interface RuntimeProfile {
   workspace_id: string;
   display_name: string;
   protocol_family: RuntimeProtocolFamily;
+  runtime_type?: RuntimeProfileType;
   command_name: string;
   description: string | null;
   fixed_args: string[];
@@ -210,12 +218,14 @@ export interface RuntimeProfile {
   updated_at: string;
 }
 
-// POST body. `protocol_family` is required and immutable after creation.
+// POST body. runtime_type is the immutable compatibility target; the server
+// derives protocol_family. Older clients may still send protocol_family alone.
 // Optional fields are omitted entirely when unset (never sent as null/empty)
 // so the server applies its own defaults.
 export interface CreateRuntimeProfileRequest {
   display_name: string;
-  protocol_family: RuntimeProtocolFamily;
+  protocol_family?: RuntimeProtocolFamily;
+  runtime_type?: RuntimeProfileType;
   command_name: string;
   description?: string;
   fixed_args?: string[];
@@ -256,6 +266,10 @@ export interface AgentActivityBucket {
   bucket_at: string;
   task_count: number;
   failed_count: number;
+  // task_count = completed_count + failed_count + cancelled_count; the
+  // back-end always reports all three.
+  completed_count: number;
+  cancelled_count: number;
 }
 
 // 30-day total run count per agent, drives the Agents-list RUNS column.
@@ -335,6 +349,34 @@ export interface TaskCancellationActor {
   type: string;
   id?: string;
   name?: string;
+}
+
+/**
+ * Server-side answer to "which code does this run use". Shipped with the task
+ * and stored on it, so a later read reports where the run actually went rather
+ * than where a run starting now would go.
+ */
+export interface CodeDecision {
+  kind: string;
+  /** Absolute directory the agent works in. Empty for remote_cache. */
+  path?: string;
+  /** For local_worktree: the repository the parallel copy is made from. */
+  repo_path?: string;
+  /** For local_worktree: where parallel copies are placed. */
+  worktree_root?: string;
+  execution_mode?: string;
+  /** Label to show instead of the absolute path, which leaks the account name. */
+  display_name?: string;
+  resource_id?: string;
+  project_id?: string;
+  /** For remote_cache: the repository URL that will be checked out. */
+  url?: string;
+  /** For shared_scratch: the session whose scratch directory is reused. */
+  session_id?: string;
+  /** For unresolvable: the machine-readable failure code. */
+  code?: string;
+  /** For unresolvable: a sentence naming what could not be resolved. */
+  reason?: string;
 }
 
 export interface AgentTask {
@@ -471,6 +513,17 @@ export interface AgentTask {
    */
   branch_name?: string;
   /**
+   * Where this run's code lives, decided on the server so the daemon, the
+   * desktop app and the web app all show one answer (DENE-619).
+   *
+   * `kind` is a closed set server-side — local_in_place / local_shared /
+   * local_worktree / remote_cache / shared_scratch / unresolvable — but switch
+   * on it with a default branch: a newer backend may add one. `unresolvable`
+   * is a value, not a missing field; `code` and `reason` say why. Older
+   * backends omit the whole object — render conditionally.
+   */
+  code_decision?: CodeDecision;
+  /**
    * Resolved accountable-human provenance of this run (MUL-4302 §9): who it ran
    * "on behalf of", how that was resolved, and the evidence/lineage. Present on
    * user-facing task surfaces; older backends omit it — render conditionally.
@@ -511,6 +564,25 @@ export interface TaskUsage {
   cache_read_tokens: number;
   cache_write_tokens: number;
   cost_usd_ticks?: number;
+  // Run-level metadata the daemon reports alongside the token counters
+  // (DENE-666). It describes the RUN, not the (provider, model) slice, so the
+  // same values repeat on every slice of a run that spilled across models —
+  // read it with `runMetadata`, which takes the first slice that carries each
+  // field rather than summing.
+  //
+  // `TaskUsageSchema` has parsed these since they landed; this interface had
+  // not caught up, so the fields arrived on the wire and were invisible to
+  // TypeScript. Every one stays optional: a pre-DENE-666 server sends none.
+  num_turns?: number;
+  resumed?: boolean;
+  session_id?: string;
+  last_context_tokens?: number;
+  queue_to_claim_ms?: number;
+  prepare_ms?: number;
+  spawn_to_first_output_ms?: number;
+  total_ms?: number;
+  attribution_source?: string;
+  trigger_evidence_kind?: string;
 }
 
 /**
@@ -686,11 +758,26 @@ export interface Agent {
    */
   service_tier?: string;
   /**
+   * Seat strength on the automatic-dispatch ladder (DENE-633): one of the
+   * routing tier keys, or empty for a seat that is not on the ladder. A
+   * person tags it; it is deliberately NOT derived from `model`, because the
+   * same model at another thinking level is another rung.
+   */
+  routing_tier?: string;
+  /**
    * Platform auto-retry switch (DENE-217). When `false`, FailTask /
    * MaybeRetryFailedTask never spawn a retry child. Older backends omit
    * the field; treat `undefined` as enabled. Only `=== false` is off.
    */
   auto_retry_enabled?: boolean;
+  /**
+   * Reversible seat gate (DENE-714). When `false` the seat stays in the
+   * list but does not take new work: routing will not pick it, assignment
+   * will not wake it, and the daemon will not claim a new run. Running
+   * tasks are not cancelled. Older backends omit the field; treat
+   * `undefined` as enabled. Only `=== false` is off.
+   */
+  work_enabled?: boolean;
   /**
    * Display-only model lineup (kun fork, DENE-200): the default model, the
    * ordered fallback chain and models borrowable for batch work. Never used
@@ -928,6 +1015,11 @@ export interface UpdateAgentRequest {
    * clears it, and a non-empty value stores a runtime-catalog ID.
    */
   service_tier?: string;
+  /**
+   * Seat strength on the dispatch ladder. Omitted preserves the saved value,
+   * `""` takes the seat off the ladder, and a tier key sets the rung.
+   */
+  routing_tier?: string;
   /** Replaces the display-only model lineup wholesale; `[]` clears it. */
   switchable_models?: AgentSwitchableModel[];
   /**
@@ -935,6 +1027,11 @@ export interface UpdateAgentRequest {
    * turns platform auto-retry off without affecting manual rerun.
    */
   auto_retry_enabled?: boolean;
+  /**
+   * Reversible seat gate. Omitted preserves the saved value; `false`
+   * stops the seat taking new work without archiving it.
+   */
+  work_enabled?: boolean;
   /**
    * Re-parents this agent (DENE-301). Tri-state semantics:
    *   - field omitted → no change
@@ -1008,8 +1105,10 @@ export interface SkillSummary {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-	/** Present only when returned from an agent-scoped assignment endpoint. */
-	enabled?: boolean;
+  /** Present only when returned from an agent-scoped assignment endpoint. */
+  enabled?: boolean;
+  /** Present on workspace skill lists after a backend that bulk-attaches labels. */
+  labels?: Label[];
 }
 
 export interface Skill extends SkillSummary {
@@ -1213,6 +1312,29 @@ export interface DashboardUsageByAgent {
   uncosted_cache_read_tokens?: number;
   uncosted_cache_write_tokens?: number;
   task_count: number;
+}
+
+// Per-(issue, model) token totals for the workspace dashboard's per-issue
+// cost list — the entry point into one issue's Token cost view.
+//
+// `identifier` and `title` ride along so the row can be rendered and linked
+// without an extra request per issue; the identifier is what the issue route
+// canonicalizes to, so a copied link reads as "DENE-42", not a UUID.
+export interface DashboardUsageByIssue {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd_ticks?: number;
+  uncosted_input_tokens?: number;
+  uncosted_output_tokens?: number;
+  uncosted_cache_read_tokens?: number;
+  uncosted_cache_write_tokens?: number;
 }
 
 // Per-agent total terminal-task run-time + counts. Powers the workspace
@@ -1530,7 +1652,8 @@ export type RuntimeProviderPresetAction =
   | "models"
   | "upsert"
   | "delete"
-  | "activate";
+  | "activate"
+  | "replay";
 
 export type RuntimeProviderPresetStatus =
   | "pending"

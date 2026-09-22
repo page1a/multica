@@ -64,5 +64,13 @@
       "title": "Join our Discord",
       "dismiss": "Dismiss"
     }
+  },
+  "guest": {
+    "badge": "You're a guest — view only",
+    "no_edit": "Guests can't edit",
+    "nothing_shared_title": "Nothing has been shared with you yet",
+    "nothing_shared_description": "Once someone in this workspace adds you to a project, what you can see will show up here.",
+    "not_found_title": "Page not found",
+    "not_found_description": "It may have been deleted, or it hasn't been shared with you."
   }
 }

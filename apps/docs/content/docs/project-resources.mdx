@@ -104,7 +104,7 @@ With the switch on, a copy is removed only when **all** of these hold:
 2. no run is using it;
 3. its last run finished longer ago than the window you set (14 days by default);
 4. `git status --porcelain` in it is empty — files your `.gitignore` covers, such as `node_modules`, do not count;
-5. its branch is already merged into the trunk branch.
+5. its work is already in the trunk branch — either the branch is contained in trunk, or its changes were squashed into it. A squash merge rewrites the work as a new commit, so the branch itself is never an ancestor of trunk; comparing content rather than ancestry is what makes this rule reachable at all in a squash-merge repository. "The remote branch is gone" and "the pull request is merged" are deliberately *not* accepted: the first cannot tell a merged branch from one that was never pushed, and the second would make cleaning your own disk depend on a network and on GitHub.
 
 Any one of those failing keeps the copy, and the settings screen says which one. Rule 4 is the important one: a merged branch says nothing about what is still sitting in the directory uncommitted, and that is exactly what a failed run leaves behind. Removal always goes through `git worktree remove`, so your repository is never left with a stale `.git/worktrees` entry that would block that name later.
 

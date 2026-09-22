@@ -188,8 +188,10 @@ function SubIssueRow({ issue }: { issue: Issue }) {
   const paths = useWorkspacePaths();
   const router = useNavigation();
   const category = issueStatusCategory(issue);
-  const blocked = category === "blocked";
-  const terminal = category === "done" || category === "cancelled";
+  // `blocked` stayed a STATUS key when MUL-7365 split the four lifecycle
+  // categories out of the seven built-ins, so it is a key comparison now.
+  const blocked = issue.status === "blocked";
+  const terminal = category === "done" || category === "closed";
 
   return (
     <li>

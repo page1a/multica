@@ -19,8 +19,10 @@
 import {
   PROVIDER_PRESET_APIS,
   PROVIDER_PRESET_DEFAULT_API,
+  runtimeDisplayName,
 } from "@multica/core/runtimes";
 import type {
+  RuntimeDevice,
   RuntimeProviderPreset,
   RuntimeProviderPresetModel,
   RuntimeProviderPresetUpsertInput,
@@ -330,13 +332,6 @@ export function providerPresetContextWindow(
     : null;
 }
 
-/** The display name for a model row: its name when it has one, else its id. */
-export function providerPresetModelLabel(
-  model: RuntimeProviderPresetModel,
-): string {
-  return model.name?.trim() || model.id;
-}
-
 /**
  * Whether the form can ask the endpoint for its catalog.
  *
@@ -348,87 +343,6 @@ export function canFetchProviderPresetModels(form: ProviderPresetForm): boolean 
   if (!form.baseUrl.trim()) return false;
   if (form.apiKey.trim() !== "") return true;
   return form.editingId !== "" && form.hasKey;
-}
-
-// ---------------------------------------------------------------------------
-// Seat model strings
-// ---------------------------------------------------------------------------
-
-// A seat's model is `providerId/modelId`, and Multica splits it at the FIRST
-// slash. A gateway's own model id may contain slashes, so each part is
-// percent-encoded and the pair is joined by a literal slash. That makes
-// `command-code2/deepseek%2Fdeepseek-v4.1-flash` mean provider `command-code2`
-// and model `deepseek/deepseek-v4.1-flash`, where the unescaped
-// `command-code2/deepseek/deepseek-v4.1-flash` would be read as provider
-// `command-code2` and model `deepseek` — the exact 400 that cost five seats
-// two days (DENE-680).
-//
-// The escaping is a WRITE-time transform this module owns. Nothing rendered on
-// screen may show the encoded form: a user who sees `%2F` is invited to type
-// it themselves, and typing it by hand is how the prefix went missing. Display
-// always goes through `providerSeatModelDisplay`, which resolves the pair back
-// to `provider · modelName`.
-
-export interface ParsedSeatModelString {
-  providerId: string;
-  modelId: string;
-}
-
-function decodeSeatModelSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    // A literal `%` that is not an escape sequence. Returning it unchanged
-    // keeps an unencodable id round-tripping instead of throwing on display.
-    return segment;
-  }
-}
-
-/** The encoded seat model string for one preset + the gateway's own model id. */
-export function providerSeatModelString(
-  providerId: string,
-  modelId: string,
-): string {
-  const provider = providerId.trim();
-  const model = modelId.trim();
-  if (!provider || !model) return "";
-  return `${provider}/${encodeURIComponent(model)}`;
-}
-
-/**
- * Read a seat model string back into its provider and the gateway's raw model
- * id. Null when the value cannot be one — no slash, or an empty side — so a
- * caller renders it verbatim rather than inventing a pair.
- */
-export function parseProviderSeatModelString(
-  seatModel: string,
-): ParsedSeatModelString | null {
-  const raw = seatModel.trim();
-  const cut = raw.indexOf("/");
-  if (cut <= 0 || cut === raw.length - 1) return null;
-  const providerId = decodeSeatModelSegment(raw.slice(0, cut));
-  const modelId = decodeSeatModelSegment(raw.slice(cut + 1));
-  if (!providerId || !modelId) return null;
-  return { providerId, modelId };
-}
-
-/**
- * Render a seat model string for the screen as `provider · model name`.
- *
- * `presets` is what turns the encoded model id back into the name the user
- * picked; without the preset in hand the raw id is the honest fallback. The
- * returned string never contains the escape — that is the whole point.
- */
-export function providerSeatModelDisplay(
-  seatModel: string,
-  presets: readonly RuntimeProviderPreset[],
-): string {
-  const parsed = parseProviderSeatModelString(seatModel);
-  if (!parsed) return seatModel;
-  const preset = presets.find((candidate) => candidate.id === parsed.providerId);
-  const model = preset?.models.find((entry) => entry.id === parsed.modelId);
-  const name = model ? providerPresetModelLabel(model) : parsed.modelId;
-  return `${parsed.providerId} · ${name}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,4 +506,156 @@ export function reduceProviderPresetSave(
         ? { phase: "failed", failure: event.failure }
         : state;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Syncing one preset across machines (DENE-335)
+// ---------------------------------------------------------------------------
+//
+// A seat's model string is `<preset id>/<model>`, and that id is resolved
+// against the files of whichever machine happens to run the seat. Two runtimes
+// with the same preset id pointing at different endpoints is therefore a
+// working configuration that silently routes the same agent two different
+// ways. This half of the model answers the two questions that follow from it:
+// which machines could hold a copy, and what does each of them hold now.
+
+/** One machine this preset can be pushed to. */
+export interface ProviderPresetSyncTarget {
+  runtimeId: string;
+  /** The runtime's own display name, as the runtimes page spells it. */
+  label: string;
+  online: boolean;
+}
+
+/**
+ * The other preset-capable machines in this workspace, online first.
+ *
+ * Offline machines are listed rather than hidden: "the desktop is off, so it
+ * still has the old endpoint" is exactly the drift this surface exists to make
+ * visible, and a hidden row would read as "everything is in sync".
+ */
+export function providerPresetSyncTargets(
+  runtimes: readonly Pick<
+    RuntimeDevice,
+    "id" | "name" | "custom_name" | "provider" | "status"
+  >[],
+  currentRuntimeId: string,
+): ProviderPresetSyncTarget[] {
+  return runtimes
+    .filter(
+      (runtime) =>
+        runtime.id !== currentRuntimeId && supportsProviderPresets(runtime.provider),
+    )
+    .map((runtime) => ({
+      runtimeId: runtime.id,
+      label: runtimeDisplayName(runtime),
+      online: runtime.status === "online",
+    }))
+    .sort((a, b) =>
+      a.online === b.online ? a.label.localeCompare(b.label) : a.online ? -1 : 1,
+    );
+}
+
+/**
+ * What one target machine holds for this preset id.
+ *
+ * `unreadable` and `offline` are kept apart because they lead somewhere
+ * different: an offline machine will take the write the next time it is on,
+ * an unreadable one has a problem on disk right now. Neither may be drawn as
+ * "in sync" — an unknown state is not a match.
+ */
+export type ProviderPresetPeerStatus =
+  | "loading"
+  | "offline"
+  | "unreadable"
+  | "missing"
+  | "match"
+  | "drift";
+
+export interface ProviderPresetPeerState {
+  status: ProviderPresetPeerStatus;
+  /** The target's own copy of the preset, when it reported one. */
+  preset: RuntimeProviderPreset | null;
+  /** The read failure's sentence, empty unless `unreadable`. */
+  message: string;
+}
+
+export interface ProviderPresetPeerInput {
+  target: ProviderPresetSyncTarget;
+  /** The target's preset list, or undefined while it has not answered. */
+  presets: RuntimeProviderPreset[] | undefined;
+  loading: boolean;
+  error: string;
+  /** The preset being synced, as it exists on the source machine. */
+  source: RuntimeProviderPreset;
+}
+
+export function providerPresetPeerState(
+  input: ProviderPresetPeerInput,
+): ProviderPresetPeerState {
+  const blank: ProviderPresetPeerState = { status: "loading", preset: null, message: "" };
+  // An offline machine cannot be read at all, so its state is settled before
+  // anything else is considered — a poll against it would only time out.
+  if (!input.target.online) return { ...blank, status: "offline" };
+  if (input.error) {
+    return { ...blank, status: "unreadable", message: input.error };
+  }
+  if (input.loading || !input.presets) return blank;
+  const peer = input.presets.find((preset) => preset.id === input.source.id) ?? null;
+  if (!peer) return { ...blank, status: "missing" };
+  // Endpoint and protocol together decide "same route": the same URL spoken in
+  // two protocols is two different requests. The model list and the credential
+  // are deliberately not part of the comparison — a machine may legitimately
+  // hold its own key for the same gateway.
+  const same =
+    (peer.base_url ?? "").trim() === (input.source.base_url ?? "").trim() &&
+    (peer.api ?? "").trim() === (input.source.api ?? "").trim();
+  return { status: same ? "match" : "drift", preset: peer, message: "" };
+}
+
+/**
+ * Whether the user has to type the key for this sync to be usable.
+ *
+ * A blank key box means "leave each machine's stored credential alone", which
+ * is right for a machine that already has one and useless for a machine that
+ * does not: it would land an endpoint with nothing to authenticate it, and the
+ * failure would only show up at the next run. The key cannot be copied from
+ * the source machine — it is write-only and never leaves that daemon — so the
+ * only way to fill a target that has none is for the user to type it.
+ */
+export function providerPresetSyncNeedsKey(
+  states: readonly ProviderPresetPeerState[],
+  typedKey: string,
+): boolean {
+  if (typedKey.trim()) return false;
+  return states.some(
+    (state) =>
+      state.status === "missing" ||
+      (state.preset !== null && state.preset.has_key !== true),
+  );
+}
+
+/**
+ * The upsert body for a sync: the source preset's route, plus the key only
+ * when one was typed. Same write-only rule as the edit form — the source's
+ * mask is never a credential and never travels.
+ */
+export function providerPresetSyncInput(
+  source: RuntimeProviderPreset,
+  typedKey: string,
+): RuntimeProviderPresetUpsertInput {
+  const input: RuntimeProviderPresetUpsertInput = {
+    id: source.id,
+    api: knownPresetApi(source.api),
+    base_url: (source.base_url ?? "").trim(),
+    api_key_env: (source.api_key_env ?? "").trim(),
+    models: source.models.map((model) => ({
+      id: model.id,
+      ...(model.name ? { name: model.name } : {}),
+      ...(model.context_window ? { context_window: model.context_window } : {}),
+    })),
+  };
+  const key = typedKey.trim();
+  if (key) input.api_key = key;
+  return input;
 }

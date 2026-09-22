@@ -44,6 +44,7 @@ const REASON_CLASS: Record<string, FailureClass> = {
   // Ran too long. Platform-side sweeper timeout and the agent's own hard
   // timeout land together — from the dashboard both read as "this run hung".
   timeout: "timeout",
+  task_time_limit: "timeout",
   "agent_error.agent_timeout": "timeout",
   codex_semantic_inactivity: "timeout",
 
@@ -83,6 +84,22 @@ const REASON_CLASS: Record<string, FailureClass> = {
   // "agent" rather than "runtime": the daemon is healthy and the provider is
   // fine — it is this backend's own resume path that could not complete.
   codex_resume_oversized: "agent",
+  // DENE-724: the Antigravity CLI's in-process OAuth token expired mid-run.
+  // Read as a 401, but deliberately NOT the "auth" class: that class's operator
+  // response is "go re-auth", and nothing here is wrong with the account — the
+  // CLI simply never refreshes the token it loaded at startup, so every run
+  // longer than the token's remaining lifetime ends this way no matter how
+  // healthy the credentials are. The response is to let the next run start a
+  // fresh session, which is what the backend already does.
+  antigravity_session_token_expired: "agent",
+  // DENE-724's other half: the Antigravity CLI's own "You are not logged into
+  // Antigravity" notice. This one DOES belong in "auth" — unlike the token
+  // expiry above it can mean the account is genuinely signed out on that
+  // machine, and the operator's first move (check the login there) is exactly
+  // what the auth class says. Same session retirement either way; only the
+  // reason and the copy differ, so the two buckets do not hide the account
+  // problem behind the session-lifetime one.
+  antigravity_not_logged_in: "auth",
   "agent_error.empty_or_unparseable_output": "agent",
   "agent_error.context_overflow": "agent",
   iteration_limit: "agent",

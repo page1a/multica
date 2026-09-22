@@ -6145,10 +6145,16 @@ func TestInjectRuntimeConfigAssignmentTriggerScansRootsFirst(t *testing.T) {
 
 	// Mandatory comment catch-up must stay, but the required first read is
 	// bounded to recent active threads instead of the full flat timeline.
+	//
+	// The anchor used to be "Skipping this step is the most common cause".
+	// DENE-667 (#223) rewrote step 2 around the server-supplied issue-context
+	// block and that sentence went with it; "this is mandatory, not optional"
+	// and "never one bulk pull" are the two clauses that still carry the
+	// contract this test exists to pin.
 	for _, want := range []string{
 		"scan every thread cheaply (`--roots-only --summary --compact`)",
 		"this is mandatory, not optional",
-		"Skipping this step is the most common cause",
+		"never one bulk pull",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("assignment Workflow regressed mandatory scan-first catch-up, missing %q\n---\n%s", want, s)
@@ -6240,9 +6246,10 @@ func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
 
 	// The catch-up stays mandatory — this change is about payload shape, not
 	// about letting agents skip context and act on stale instructions.
+	// See the sibling assignment test for why the old third anchor is gone.
 	for _, want := range []string{
 		"this is mandatory, not optional",
-		"Skipping this step is the most common cause",
+		"never one bulk pull",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("step 3 must stay mandatory, missing %q\n---\n%s", want, s)

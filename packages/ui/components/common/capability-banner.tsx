@@ -12,6 +12,7 @@ type Reason =
   | "not_resource_owner"
   | "last_owner"
   | "private_visibility"
+  | "guest_readonly"
   | "unknown";
 
 const RESOURCE_NOUN: Record<Resource, string> = {
@@ -78,6 +79,8 @@ function getCopy(reason: Reason, noun: string, ownerName?: string): string {
       return `View only — only the ${noun} owner and workspace admins can edit this ${noun}.`;
     case "last_owner":
       return `A workspace must keep at least one owner — promote another member first.`;
+    case "guest_readonly":
+      return `View only — guests can't edit.`;
     case "private_visibility":
       if (ownerName) {
         return `Personal ${noun} — only ${ownerName} and workspace admins can use this.`;

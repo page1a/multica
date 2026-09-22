@@ -198,6 +198,11 @@ function providerPresetPayload(
     }
     case "delete":
       return { id: input.id };
+    // Replay names nothing: what it restores is whatever this machine already
+    // recorded for its own DSH home. It carries no key — the credential is the
+    // one thing a replay cannot put back.
+    case "replay":
+      return {};
     case "activate":
       // An empty model asks the daemon for the preset's first model, which is
       // what "use this provider" means when the user did not pick one.
@@ -233,6 +238,7 @@ export type ProviderPresetActionInput =
   | { action: "upsert"; preset: RuntimeProviderPresetUpsertInput }
   | { action: "delete"; id: string }
   | { action: "activate"; id: string; model?: string }
+  | { action: "replay" }
   | ({ action: "models" } & ProviderPresetModelsQuery);
 
 /**
@@ -389,4 +395,122 @@ export function activeProviderPreset(
   presets: readonly RuntimeProviderPreset[],
 ): RuntimeProviderPreset | null {
   return presets.find((preset) => preset.active === true) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-machine sync (DENE-335)
+// ---------------------------------------------------------------------------
+//
+// A preset lives in the files of ONE machine, and a seat's model string names
+// the preset by id — so the same agent running on a second runtime resolves
+// that id against that machine's own files. Two runtimes therefore drift
+// silently: editing the endpoint on the laptop leaves the desktop calling the
+// old gateway, and nothing on either screen says so.
+//
+// The fix is a fan-out, not a server-side copy of the configuration. The
+// per-runtime request store is deliberately transient and never persists a
+// credential (see the note in `runtime_provider_presets.go`), and a
+// workspace-level provider record would have to hold the key to be able to
+// replay it onto a machine that joins later. Sending the same upsert to each
+// selected runtime keeps the key on exactly the path it already travels.
+//
+// Consequences the callers must respect:
+//
+//   - one machine per outcome. A fan-out that rejected on the first failure
+//     would hide which machines DID take the write, which is the one fact the
+//     user needs to know what is still drifting.
+//   - the key is per-machine. Each runtime holds its own credentials file, so
+//     an upsert with no `api_key` leaves the target's stored key alone — and
+//     creates a keyless preset on a target that had none. The caller decides
+//     whether a key is required; this layer only carries what it is given.
+
+/** What one machine did with a synced preset. */
+export interface ProviderPresetSyncOutcome {
+  runtimeId: string;
+  status: "synced" | "failed";
+  /** The daemon's sentence, empty on success. */
+  error: string;
+  /** Machine-readable classification of `error`, for localized copy. */
+  errorKind: string;
+}
+
+export interface ProviderPresetSyncResult {
+  /** One entry per requested runtime, in the order they were requested. */
+  outcomes: ProviderPresetSyncOutcome[];
+  /** The refreshed configuration of each runtime that accepted the write. */
+  configs: Record<string, RuntimeProviderPresetsResult>;
+}
+
+export interface ProviderPresetSyncInput {
+  runtimeIds: readonly string[];
+  preset: RuntimeProviderPresetUpsertInput;
+}
+
+/** How many machines took the write and how many did not. */
+export function providerPresetSyncSummary(
+  outcomes: readonly ProviderPresetSyncOutcome[],
+): { synced: number; failed: number } {
+  let synced = 0;
+  for (const outcome of outcomes) if (outcome.status === "synced") synced += 1;
+  return { synced, failed: outcomes.length - synced };
+}
+
+/**
+ * Write one preset to several machines at once.
+ *
+ * Runs in parallel — each target is an independent park-then-poll round trip
+ * against a different daemon, and doing them in sequence would multiply a
+ * 90-second worst case by the number of machines.
+ *
+ * Never rejects: a target that failed is a reported outcome, not an exception,
+ * so a partial sync stays legible. Only an empty target list short-circuits.
+ */
+export async function syncProviderPresetToRuntimes(
+  input: ProviderPresetSyncInput,
+): Promise<ProviderPresetSyncResult> {
+  const configs: Record<string, RuntimeProviderPresetsResult> = {};
+  const outcomes = await Promise.all(
+    input.runtimeIds.map(async (runtimeId): Promise<ProviderPresetSyncOutcome> => {
+      try {
+        configs[runtimeId] = await runProviderPresetAction(runtimeId, {
+          action: "upsert",
+          preset: input.preset,
+        });
+        return { runtimeId, status: "synced", error: "", errorKind: "" };
+      } catch (error) {
+        return {
+          runtimeId,
+          status: "failed",
+          error:
+            error instanceof Error && error.message
+              ? error.message
+              : "provider preset sync failed",
+          errorKind: providerPresetErrorKind(error),
+        };
+      }
+    }),
+  );
+  return { outcomes, configs };
+}
+
+/**
+ * The sync mutation. Each machine that answered refreshes its own cache entry
+ * straight from its reply — the same "the receipt IS the refresh" rule as the
+ * single-runtime mutation, applied per target so a half-successful sync leaves
+ * every list showing what its own machine really holds.
+ */
+export function useProviderPresetSyncMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ProviderPresetSyncInput) =>
+      syncProviderPresetToRuntimes(input),
+    onSuccess: (result) => {
+      for (const [runtimeId, config] of Object.entries(result.configs)) {
+        queryClient.setQueryData(
+          runtimeProviderPresetsKeys.forRuntime(runtimeId),
+          config,
+        );
+      }
+    },
+  });
 }

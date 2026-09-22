@@ -99,7 +99,6 @@ export function DaemonSettingsTab() {
   return (
     <SettingsTab
       title={t(($) => $.desktop.daemon.title)}
-      description={t(($) => $.desktop.daemon.description)}
     >
 
       {status.state === "auth_expired" && (
@@ -197,7 +196,6 @@ export function DaemonSettingsTab() {
           not for everyday use. */}
       <SettingsSection
         title={t(($) => $.desktop.daemon.diagnostics_title)}
-        description={t(($) => $.desktop.daemon.diagnostics_description)}
       >
         <SettingsCard>
           <div className="px-4 py-2">

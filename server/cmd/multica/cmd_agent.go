@@ -178,6 +178,7 @@ func init() {
 	agentCreateCmd.Flags().String("runtime-config", "", "Runtime config as JSON string")
 	agentCreateCmd.Flags().String("model", "", "Model identifier (e.g. claude-sonnet-4-6, openai/gpt-4o). Prefer this over passing --model in --custom-args.")
 	agentCreateCmd.Flags().String("thinking-level", "", "Reasoning/effort level for the agent's runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Empty = runtime default.")
+	agentCreateCmd.Flags().String("routing-tier", "", "Seat strength for automatic dispatch: strongest|strong|medium|weak (the Chinese labels 最强/强/中/弱 are accepted too). Empty leaves the seat off the routing ladder; a specialisation with no value inherits its base role's tier.")
 	agentCreateCmd.Flags().String("service-tier", "", "Codex execution speed: empty = inherit local Codex configuration; default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast.")
 	agentCreateCmd.Flags().String("custom-args", "", "Custom CLI arguments as JSON array. For model selection prefer --model; some providers (codex app-server, openclaw) reject --model in custom_args.")
 	agentCreateCmd.Flags().String("custom-env", "", "Custom environment variables as JSON object, e.g. '{\"KEY\":\"value\"}'. Treated as secret material — never logged by the CLI, but values passed on the command line are visible to shell history and 'ps'; prefer --custom-env-stdin or --custom-env-file for real secrets. Pass '{}' to set an empty map.")
@@ -204,6 +205,7 @@ func init() {
 	agentUpdateCmd.Flags().String("runtime-config", "", "New runtime config as JSON string")
 	agentUpdateCmd.Flags().String("model", "", "New model identifier. Pass an empty string to clear and fall back to the runtime default.")
 	agentUpdateCmd.Flags().String("thinking-level", "", "New reasoning/effort level for the agent's runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Pass an empty string to clear and fall back to the runtime default.")
+	agentUpdateCmd.Flags().String("routing-tier", "", "New seat strength for automatic dispatch: strongest|strong|medium|weak (the Chinese labels 最强/强/中/弱 are accepted too). Pass an empty string to take the seat off the routing ladder.")
 	agentUpdateCmd.Flags().String("service-tier", "", "New Codex execution speed: default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast. Pass an empty string to clear and inherit local Codex configuration.")
 	agentUpdateCmd.Flags().String("custom-args", "", "New custom CLI arguments as JSON array. For model selection prefer --model; some providers (codex app-server, openclaw) reject --model in custom_args.")
 	agentUpdateCmd.Flags().String("switchable-models", "", "Display-only model lineup as a JSON array of {\"model\",\"role\",\"note\"} objects; role is default, fallback (ordered degrade chain) or batch. Not used for routing. Pass '[]' to clear.")
@@ -741,6 +743,10 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		v, _ := cmd.Flags().GetString("service-tier")
 		body["service_tier"] = v
 	}
+	if cmd.Flags().Changed("routing-tier") {
+		v, _ := cmd.Flags().GetString("routing-tier")
+		body["routing_tier"] = v
+	}
 	if cmd.Flags().Changed("visibility") {
 		v, _ := cmd.Flags().GetString("visibility")
 		body["visibility"] = v
@@ -834,6 +840,10 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetString("service-tier")
 		body["service_tier"] = v
 	}
+	if cmd.Flags().Changed("routing-tier") {
+		v, _ := cmd.Flags().GetString("routing-tier")
+		body["routing_tier"] = v
+	}
 	if err := applySwitchableModelsFlag(cmd, body); err != nil {
 		return err
 	}
@@ -876,7 +886,7 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --switchable-models, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, or --runtime-inherited (env vars now live behind `multica agent env set <id>`)")
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --switchable-models, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, or --runtime-inherited (env vars now live behind `multica agent env set <id>`)")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())

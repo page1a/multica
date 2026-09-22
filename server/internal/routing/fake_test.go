@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 // fakeStore records every write so a test can assert not just the result but
@@ -15,13 +16,18 @@ type fakeStore struct {
 	settings Settings
 	issue    Issue
 	roster   map[string]Agent
-	prop     ReviewerProperty
-	hasProp  bool
 	target   Member
 
 	// slot occupancy, as the database would enforce it
 	assigneeTaken bool
 	reviewerTaken bool
+
+	// stale-review row
+	workspaces    []string
+	staleIDs      []string
+	remarks       []string
+	statusWritten []string
+	completeLost  bool
 
 	comments map[CommentKind][]string
 	subs     []string
@@ -53,12 +59,6 @@ func newFakeStore() *fakeStore {
 			"贝吉塔游戏": {ID: "a-vegeta-g", Name: "贝吉塔游戏"},
 			"比克游戏":  {ID: "a-piccolo-g", Name: "比克游戏"},
 		},
-		prop: ReviewerProperty{ID: "prop-1", Options: map[string]string{
-			"布尔玛游戏": "o-bulma-g", "孙悟空游戏": "o-goku-g",
-			"贝吉塔游戏": "o-vegeta-g", "比克游戏": "o-piccolo-g",
-			OptionNoReview: "o-none", OptionHuman: "o-human",
-		}},
-		hasProp:  true,
 		target:   Member{UserID: "user-1", Name: "Kun"},
 		comments: map[CommentKind][]string{},
 		errOn:    map[string]error{},
@@ -76,10 +76,6 @@ func (f *fakeStore) Issue(context.Context, string, string) (Issue, error) {
 func (f *fakeStore) Roster(context.Context, string) (map[string]Agent, error) {
 	return f.roster, f.fail("roster")
 }
-func (f *fakeStore) Reviewer(context.Context, string) (ReviewerProperty, bool, error) {
-	return f.prop, f.hasProp, f.fail("reviewer")
-}
-
 func (f *fakeStore) AssignAgentIfUnassigned(_ context.Context, _, _ string, seat Seat) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -94,17 +90,19 @@ func (f *fakeStore) AssignAgentIfUnassigned(_ context.Context, _, _ string, seat
 	return true, nil
 }
 
-func (f *fakeStore) SetReviewerIfUnset(_ context.Context, _, _, _, optionID string) (bool, error) {
+func (f *fakeStore) SetReviewerIfUnset(_ context.Context, _, _ string, ref ReviewerRef) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.fail("set_reviewer"); err != nil {
 		return false, err
 	}
-	if f.reviewerTaken || f.issue.Reviewer != "" {
+	if f.reviewerTaken || !f.issue.Reviewer.Empty() {
 		return false, nil
 	}
 	f.reviewerTaken = true
-	f.reviewer = append(f.reviewer, optionID)
+	// Records the LABEL, not the id: every assertion in this package is about
+	// who was chosen, and an id would make each one restate the fixture.
+	f.reviewer = append(f.reviewer, ref.Label())
 	return true, nil
 }
 
@@ -149,6 +147,33 @@ func (f *fakeStore) Subscribe(_ context.Context, _, _, userID string) error {
 	return nil
 }
 
+func (f *fakeStore) EnabledWorkspaces(context.Context) ([]string, error) {
+	return f.workspaces, f.fail("enabled_workspaces")
+}
+
+func (f *fakeStore) StaleReviews(_ context.Context, _ string, _ time.Time, _ int) ([]string, error) {
+	return f.staleIDs, f.fail("stale_reviews")
+}
+
+func (f *fakeStore) ReviewRemarks(_ context.Context, _, _ string, _ ReviewerRef) ([]string, error) {
+	return f.remarks, f.fail("review_remarks")
+}
+
+func (f *fakeStore) CompleteFromReview(_ context.Context, _, issueID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail("complete"); err != nil {
+		return false, err
+	}
+	// The conditional write losing its race: the ticket left in_review between
+	// the decision and the write.
+	if f.completeLost {
+		return false, nil
+	}
+	f.statusWritten = append(f.statusWritten, issueID)
+	return true, nil
+}
+
 func (f *fakeStore) NotifyTarget(context.Context, string, Issue) (Member, error) {
 	return f.target, f.fail("notify_target")
 }
@@ -158,7 +183,8 @@ func (f *fakeStore) NotifyTarget(context.Context, string, Issue) (Member, error)
 func (f *fakeStore) wrote() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.assigns) > 0 || len(f.reviewer) > 0 || len(f.handoffs) > 0
+	return len(f.assigns) > 0 || len(f.reviewer) > 0 || len(f.handoffs) > 0 ||
+		len(f.statusWritten) > 0
 }
 
 func (f *fakeStore) commentCount() int {
@@ -177,6 +203,7 @@ type fakeJudge struct {
 	mu      sync.Mutex
 	verdict Verdict
 	advice  Advice
+	stale   StaleDecision
 	err     error
 	calls   int
 }
@@ -193,6 +220,13 @@ func (j *fakeJudge) Unblock(context.Context, Target, JudgeState) (Advice, error)
 	defer j.mu.Unlock()
 	j.calls++
 	return j.advice, j.err
+}
+
+func (j *fakeJudge) Stale(context.Context, Target, StaleState) (StaleDecision, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.calls++
+	return j.stale, j.err
 }
 
 func (j *fakeJudge) callCount() int {

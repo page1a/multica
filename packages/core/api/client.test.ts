@@ -111,6 +111,8 @@ describe("ApiClient edit guards", () => {
       priority: "none",
       assignee_type: null,
       assignee_id: null,
+      reviewer_type: null,
+      reviewer_id: null,
       creator_type: "member",
       creator_id: "user-1",
       parent_issue_id: null,
@@ -717,6 +719,65 @@ describe("ApiClient label response schemas", () => {
     ).resolves.toEqual({ labels: [] });
 
     expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+});
+
+describe("ApiClient member response schemas", () => {
+  const jsonResponse = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  it("falls back to an empty roster when the member list is not an array", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ members: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listMembers("ws-1")).resolves.toEqual([]);
+  });
+
+  it("drops the whole roster rather than render a member with no id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse([{ workspace_id: "ws-1", user_id: "u-1", role: "admin" }]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listMembers("ws-1")).resolves.toEqual([]);
+  });
+
+  it("keeps a tier string this build does not know instead of discarding the row", async () => {
+    // The role enum is deliberately lenient: a backend that grows a fifth
+    // tier must still render its roster. The members table is what refuses
+    // to edit the unknown row — see asMemberRole.
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse([
+        {
+          id: "m-1",
+          workspace_id: "ws-1",
+          user_id: "u-1",
+          role: "superadmin",
+        },
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    const members = await client.listMembers("ws-1");
+    expect(members).toHaveLength(1);
+    expect(members[0]).toMatchObject({ id: "m-1", role: "superadmin", name: "", email: "" });
+  });
+
+  it("falls back to the least privileged tier when a role write reply is malformed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    // A garbled write reply must never paint the row as an owner.
+    await expect(
+      client.updateMember("ws-1", "m-1", { role: "admin" }),
+    ).resolves.toMatchObject({ id: "", role: "guest" });
   });
 });
 
@@ -2903,6 +2964,35 @@ describe("ApiClient issue drafts", () => {
     ).rejects.toThrow();
   });
 
+  it("reads assignee suggestions row by row and survives a malformed body", async () => {
+    const seat = { assignee_type: "agent", assignee_id: "agent-1", name: "孙悟空", tier: "strong" };
+    const fetchMock = vi
+      .fn()
+      // A row the client cannot use (a member, a missing id) is "no
+      // suggestion" for that row only; its neighbours keep their seats.
+      .mockResolvedValueOnce(
+        jsonResponse({ suggestions: [seat, null, { assignee_type: "member", assignee_id: "u" }, { name: "x" }] }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ suggestions: "not a list" }))
+      .mockResolvedValueOnce(jsonResponse(null));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const request = { project_id: null, rows: [{ title: "a", description: "", has_children: false }] };
+    await expect(client.suggestIssueDraftAssignees("session-1", request)).resolves.toEqual([
+      seat,
+      null,
+      null,
+      null,
+    ]);
+    await expect(client.suggestIssueDraftAssignees("session-1", request)).resolves.toEqual([]);
+    await expect(client.suggestIssueDraftAssignees("session-1", request)).resolves.toEqual([]);
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toContain("/api/issue-drafts/session-1/assignee-suggestions");
+    expect(JSON.parse(String(call[1].body))).toEqual(request);
+  });
+
   it("degrades a malformed draft body to an empty draft instead of throwing", async () => {
     const fetchMock = vi
       .fn()
@@ -3211,5 +3301,162 @@ describe("ApiClient agent specialisation reads (DENE-304)", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(agent?.id).toBe("agent-child");
+  });
+});
+
+describe("ApiClient exportTaskLogs", () => {
+  const bundleBody = {
+    format: "multica.log-export",
+    version: 1,
+    generated_at: "2026-09-21T12:00:00Z",
+    task: {
+      id: "task-1",
+      issue_id: "issue-9",
+      issue_identifier: "DENE-599",
+      agent_name: "孙悟饭",
+      status: "failed",
+      exit_code: 1,
+      scope: { kind: "run" },
+      window: { from: "2026-09-21T11:59:00Z", to: "2026-09-21T12:00:00Z" },
+    },
+    run_count: 1,
+    entry_count: 2,
+    truncated: false,
+    runs: [],
+    entries: [],
+    summary_markdown: "## AI 摘要",
+  };
+
+  const exportResponse = (body: string, filename: string | null = "log-export-DENE-599.json") => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (filename !== null) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
+    return new Response(body, { status: 200, headers });
+  };
+
+  it("returns the artifact verbatim and parses the bundle", async () => {
+    // Pretty-printed with a trailing newline: the CLI writes these exact bytes,
+    // so the client must not normalise them away.
+    const artifact = `${JSON.stringify(bundleBody, null, 2)}\n`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(exportResponse(artifact)));
+
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1");
+
+    expect(exported.artifact).toBe(artifact);
+    expect(exported.bundle.task.issue_identifier).toBe("DENE-599");
+    expect(exported.bundle.entry_count).toBe(2);
+    expect(exported.filename).toBe("log-export-DENE-599.json");
+  });
+
+  it("exposes the redaction completeness marker", async () => {
+    const body = JSON.stringify({
+      ...bundleBody,
+      redaction: {
+        pattern_rules: true,
+        env_deny_list: false,
+        complete: false,
+        note: "部分 agent 记录不存在",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(exportResponse(body)));
+
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1");
+
+    expect(exported.bundle.redaction?.complete).toBe(false);
+    expect(exported.bundle.redaction?.env_deny_list).toBe(false);
+    expect(exported.bundle.redaction?.note).toBe("部分 agent 记录不存在");
+  });
+
+  it("leaves the redaction marker unknown for a server that predates it", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(exportResponse(JSON.stringify(bundleBody))));
+
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1");
+
+    expect(exported.bundle.redaction).toBeUndefined();
+  });
+
+  it("never fills a half-stated redaction marker with true", async () => {
+    const client = new ApiClient("https://api.example.test");
+
+    // An empty object and a note-only object both parse, but neither states
+    // whether masking completed. That is "unknown", and unknown must fail
+    // closed: it can never read as safe to forward.
+    for (const redaction of [{}, { note: "只有说明，没有布尔字段" }]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(exportResponse(JSON.stringify({ ...bundleBody, redaction }))),
+      );
+
+      const exported = await client.exportTaskLogs("task-1");
+
+      expect(exported.bundle.redaction?.complete).toBe(false);
+      expect(exported.bundle.redaction?.env_deny_list).toBe(false);
+      expect(exported.bundle.redaction?.pattern_rules).toBe(false);
+    }
+  });
+
+  it("sends the scope and window as query parameters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(exportResponse(JSON.stringify(bundleBody)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.exportTaskLogs("task-1", { scope: "hours", hours: 6 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/tasks/task-1/logs/export?scope=hours&hours=6",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("degrades to an empty bundle when the body is not JSON, keeping the artifact", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(exportResponse("not json at all")));
+
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1");
+
+    expect(exported.artifact).toBe("not json at all");
+    expect(exported.bundle.entry_count).toBe(0);
+    expect(exported.bundle.task.scope.kind).toBe("run");
+  });
+
+  it("reduces the server filename to its basename", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(exportResponse(JSON.stringify(bundleBody), "../../etc/passwd")),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1");
+
+    expect(exported.filename).toBe("passwd");
+  });
+
+  it("falls back to a stable filename when the header is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(exportResponse(JSON.stringify(bundleBody), null)),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1");
+
+    expect(exported.filename).toBe("log-export.json");
+  });
+
+  it("surfaces the server error message on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "task not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.exportTaskLogs("task-1")).rejects.toThrow(/task not found/);
   });
 });

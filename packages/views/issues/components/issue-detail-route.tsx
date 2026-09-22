@@ -31,7 +31,14 @@ export function useCanonicalIssueUrl(
 ) {
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
-  const canonicalHref = identifier ? `${paths.issueDetail(identifier)}${hash}` : null;
+  // Carry the query string across the rewrite. The usage deep link
+  // (`?usage=1`) is the reason: a UUID URL that opens the Token cost view must
+  // not lose that view when the address bar canonicalizes to `MUL-123`, or the
+  // page the user is looking at and the URL they copy would disagree.
+  const search = navigation.searchParams.toString();
+  const canonicalHref = identifier
+    ? `${paths.issueDetail(identifier)}${search ? `?${search}` : ""}${hash}`
+    : null;
   // `useWorkspacePaths()` and the navigation adapter are both rebuilt on
   // render, so this ref — not the dependency array — is what guarantees the
   // replace runs once per target instead of on every commit.
@@ -94,6 +101,9 @@ export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
       issueId={canonicalId}
       onDelete={onDelete}
       highlightCommentId={highlight.commentId}
+      // This route owns the address bar, so it — and not the inbox's side
+      // panel — is where the usage dialog may mirror itself into `?usage=1`.
+      deepLinkUsage
     />
   );
 }

@@ -2,9 +2,9 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,14 +16,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
-
-// ReviewerPropertyName is the workspace property the routing layer fills.
-//
-// It is a `select`, not an `actor`. Actor values are members only today (see
-// actorPropertyKinds), so an actor slot cannot name a seat at all — and it
-// could not hold "needs no review" either, which has to be a written value
-// rather than an empty slot for the fill-only-empty-slots rule to ever close.
-const ReviewerPropertyName = "验收席"
 
 // routingStore binds the routing module to this server. Everything the module
 // is allowed to touch passes through here, which is also why the module cannot
@@ -84,6 +76,14 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 		CreatorType:  row.CreatorType,
 		CreatorID:    util.UUIDToString(row.CreatorID),
 	}
+	// Falls back to updated_at exactly as ListStaleReviewIssues does, so the
+	// single-issue re-check cannot disagree with the query that selected it.
+	switch {
+	case row.LastActivityAt.Valid:
+		out.LastActivityAt = row.LastActivityAt.Time
+	case row.UpdatedAt.Valid:
+		out.LastActivityAt = row.UpdatedAt.Time
+	}
 	if !row.AssigneeType.Valid {
 		out.AssigneeType = ""
 	}
@@ -113,42 +113,45 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 			}
 		}
 	}
-	prop, ok, err := s.Reviewer(ctx, util.UUIDToString(row.WorkspaceID))
-	if err != nil {
-		return out, err
-	}
-	if ok {
-		out.Reviewer = reviewerOptionName(prop, row.Properties)
-	}
+	out.Reviewer = s.reviewerRef(ctx, row)
 	return out, nil
 }
 
-// reviewerOptionName resolves the stored option id back to its name. The
-// routing module addresses options by name, so option ids never leave here.
-// An unknown id reads as an empty slot on purpose: a value this server cannot
-// interpret is not something the module should hand off to.
-func reviewerOptionName(prop routing.ReviewerProperty, properties []byte) string {
-	if len(properties) == 0 {
-		return ""
+// reviewerRef reads the reviewer pair off the issue and resolves the display
+// name from the roster. The name is resolved on every read and stored nowhere,
+// which is what a reference buys over the old select option: renaming a seat
+// renames it on every ticket, and archiving one is visible instead of leaving
+// a ticket holding a word that no longer means anybody.
+func (s routingStore) reviewerRef(ctx context.Context, row db.Issue) routing.ReviewerRef {
+	if !row.ReviewerType.Valid || row.ReviewerType.String == "" {
+		return routing.ReviewerRef{}
 	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(properties, &values); err != nil {
-		return ""
+	ref := routing.ReviewerRef{Kind: routing.ReviewerTarget(row.ReviewerType.String)}
+	if ref.Kind == routing.ReviewerNoReview {
+		return ref
 	}
-	raw, ok := values[prop.ID]
-	if !ok {
-		return ""
+	if !row.ReviewerID.Valid {
+		// A pair with a type but no id is not a reviewer. Reporting it as an
+		// empty slot lets routing decide again rather than hand off to
+		// nobody.
+		return routing.ReviewerRef{}
 	}
-	var optionID string
-	if err := json.Unmarshal(raw, &optionID); err != nil {
-		return ""
-	}
-	for name, id := range prop.Options {
-		if id == optionID {
-			return name
+	ref.ID = util.UUIDToString(row.ReviewerID)
+	switch ref.Kind {
+	case routing.ReviewerAgent:
+		if agent, err := s.h.Queries.GetAgent(ctx, row.ReviewerID); err == nil {
+			ref.Name = agent.Name
 		}
+	case routing.ReviewerMember:
+		if u, err := s.h.Queries.GetUser(ctx, row.ReviewerID); err == nil {
+			ref.Name = u.Name
+		}
+	default:
+		// An unknown reviewer_type is not something this server can hand off
+		// to. Fail closed: read it as empty.
+		return routing.ReviewerRef{}
 	}
-	return ""
+	return ref
 }
 
 func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[string]routing.Agent, error) {
@@ -162,39 +165,18 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 	}
 	out := make(map[string]routing.Agent, len(agents))
 	for _, a := range agents {
-		out[a.Name] = routing.Agent{ID: util.UUIDToString(a.ID), Name: a.Name}
-	}
-	return out, nil
-}
-
-func (s routingStore) Reviewer(ctx context.Context, workspaceID string) (routing.ReviewerProperty, bool, error) {
-	wsID, err := util.ParseUUID(workspaceID)
-	if err != nil {
-		return routing.ReviewerProperty{}, false, err
-	}
-	props, err := s.h.Queries.ListIssueProperties(ctx, db.ListIssuePropertiesParams{
-		WorkspaceID: wsID,
-		// Archived definitions are excluded, which is also how the switch
-		// hides the slot: archiving the property takes it out of the picker
-		// and out of routing's reach while keeping every value already
-		// written. No frontend change, no data loss.
-		IncludeArchived: false,
-	})
-	if err != nil {
-		return routing.ReviewerProperty{}, false, err
-	}
-	for _, p := range props {
-		if p.Name != ReviewerPropertyName || p.Type != "select" {
+		// Disabled seats stay on the agents list but are not routing
+		// candidates (DENE-714). Archive is already excluded by ListAgents.
+		if !a.WorkEnabled {
 			continue
 		}
-		cfg := parsePropertyConfig(p.Config)
-		options := make(map[string]string, len(cfg.Options))
-		for _, o := range cfg.Options {
-			options[o.Name] = o.ID
+		out[a.Name] = routing.Agent{
+			ID:   util.UUIDToString(a.ID),
+			Name: a.Name,
+			Tier: a.RoutingTier.String,
 		}
-		return routing.ReviewerProperty{ID: util.UUIDToString(p.ID), Options: options}, true, nil
 	}
-	return routing.ReviewerProperty{}, false, nil
+	return out, nil
 }
 
 func (s routingStore) AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat routing.Seat) (bool, error) {
@@ -234,7 +216,7 @@ func (s routingStore) AssignAgentIfUnassigned(ctx context.Context, workspaceID, 
 	return true, nil
 }
 
-func (s routingStore) SetReviewerIfUnset(ctx context.Context, workspaceID, issueID, propertyID, optionID string) (bool, error) {
+func (s routingStore) SetReviewerIfUnset(ctx context.Context, workspaceID, issueID string, ref routing.ReviewerRef) (bool, error) {
 	wsID, err := util.ParseUUID(workspaceID)
 	if err != nil {
 		return false, err
@@ -243,20 +225,29 @@ func (s routingStore) SetReviewerIfUnset(ctx context.Context, workspaceID, issue
 	if err != nil {
 		return false, err
 	}
-	value, err := json.Marshal(optionID)
-	if err != nil {
-		return false, err
+	if ref.Empty() {
+		// Routing never writes an empty slot: an empty slot is what it writes
+		// INTO. A caller that reaches here has nothing to say.
+		return false, nil
 	}
-	issue, err := s.h.Queries.SetIssuePropertyValueIfUnset(ctx, db.SetIssuePropertyValueIfUnsetParams{
-		ID: id, WorkspaceID: wsID, Key: propertyID, Value: value,
-	})
+	params := db.SetIssueReviewerIfUnsetParams{
+		ID: id, WorkspaceID: wsID, ReviewerType: string(ref.Kind),
+	}
+	if ref.Kind != routing.ReviewerNoReview {
+		refID, err := util.ParseUUID(ref.ID)
+		if err != nil {
+			return false, err
+		}
+		params.ReviewerID = refID
+	}
+	issue, err := s.h.Queries.SetIssueReviewerIfUnset(ctx, params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	// A property write, not an assignment: prev == next on the assignee pair,
+	// A reviewer write, not an assignment: prev == next on the assignee pair,
 	// so assignee_changed comes out false and no spurious owner-change lands
 	// in the timeline.
 	s.publishIssueUpdated(issue, issue)
@@ -487,11 +478,183 @@ func RoutingIssueUpdatedPayload(prev, issue db.Issue) map[string]any {
 	return map[string]any{
 		"issue":              issueToResponse(issue, ""),
 		"assignee_changed":   assigneeChanged,
+		"status_changed":     prev.Status != issue.Status,
+		"prev_status":        prev.Status,
 		"prev_assignee_type": textToPtr(prev.AssigneeType),
 		"prev_assignee_id":   uuidToPtr(prev.AssigneeID),
 		"creator_type":       issue.CreatorType,
 		"creator_id":         uuidToString(issue.CreatorID),
 	}
+}
+
+// inReviewCategory is the one category the stale-review sweep looks at,
+// expanded to this workspace's concrete status keys so a workspace that
+// renamed or added an awaiting-acceptance status sweeps identically to one
+// that did not.
+func (s routingStore) inReviewKeys(ctx context.Context, wsID pgtype.UUID) ([]string, error) {
+	return issuestatus.ExpandCategories(ctx, s.h.Queries, wsID, []string{"in_review"})
+}
+
+// EnabledWorkspaces lists the workspaces the sweep should visit at all.
+func (s routingStore) EnabledWorkspaces(ctx context.Context) ([]string, error) {
+	ids, err := s.h.Queries.ListRoutingEnabledWorkspaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, util.UUIDToString(id))
+	}
+	return out, nil
+}
+
+// StaleReviews lists tickets awaiting acceptance that have been quiet since
+// before the given instant and have no run working on them.
+func (s routingStore) StaleReviews(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := s.inReviewKeys(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	rows, err := s.h.Queries.ListStaleReviewIssues(ctx, db.ListStaleReviewIssuesParams{
+		WorkspaceID: wsID,
+		Statuses:    keys,
+		Before:      pgtype.Timestamptz{Time: before, Valid: true},
+		Lim:         int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, id := range rows {
+		out = append(out, util.UUIDToString(id))
+	}
+	return out, nil
+}
+
+// ReviewRemarks returns what the reviewer themselves wrote on this ticket in
+// the CURRENT review round — since the last time the ticket entered the
+// awaiting-acceptance category.
+//
+// The round boundary is the point of this method, not a refinement of it. A
+// ticket can be reviewed more than once: the reviewer passes it, a person
+// sends it back, the executor redoes the work, and it returns to in_review
+// with the first round's "looks good" still sitting on the thread. Reading
+// that remark as acceptance of the second round's work would align the status
+// to an expired fact — the one failure the completion gate exists to prevent.
+//
+// A ticket whose entry moment cannot be established yields nothing rather than
+// its whole history. That is the same safe direction the rest of this gate
+// takes: no remark means no acceptance, which means the sweep wakes the
+// reviewer instead of closing the ticket.
+//
+// "none" and an empty slot have no author, so they return nothing and can
+// never unlock a completion — which is the correct reading of both: a ticket
+// nobody was asked to accept carries no acceptance.
+func (s routingStore) ReviewRemarks(ctx context.Context, workspaceID, issueID string, reviewer routing.ReviewerRef) ([]string, error) {
+	if reviewer.Kind != routing.ReviewerAgent && reviewer.Kind != routing.ReviewerMember {
+		return nil, nil
+	}
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return nil, err
+	}
+	authorID, err := util.ParseUUID(reviewer.ID)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := s.inReviewKeys(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	since, err := s.h.Queries.LastEnteredReviewAt(ctx, db.LastEnteredReviewAtParams{
+		IssueID:     id,
+		WorkspaceID: wsID,
+		Statuses:    keys,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !since.Valid {
+		return nil, nil
+	}
+	rows, err := s.h.Queries.ListReviewerCommentsForIssue(ctx, db.ListReviewerCommentsForIssueParams{
+		IssueID:     id,
+		WorkspaceID: wsID,
+		AuthorType:  string(reviewer.Kind),
+		AuthorID:    authorID,
+		Since:       since,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// CompleteFromReview moves a ticket out of the awaiting-acceptance category.
+// It is conditional on the ticket still being there, so a ticket somebody else
+// moved in the meantime reports written=false and the caller says nothing.
+func (s routingStore) CompleteFromReview(ctx context.Context, workspaceID, issueID string) (bool, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return false, err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return false, err
+	}
+	keys, err := s.inReviewKeys(ctx, wsID)
+	if err != nil {
+		return false, err
+	}
+	if len(keys) == 0 {
+		return false, nil
+	}
+	prev, err := s.h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: id, WorkspaceID: wsID})
+	if err != nil {
+		return false, err
+	}
+	issue, err := s.h.Queries.CompleteIssueFromReview(ctx, db.CompleteIssueFromReviewParams{
+		ID: id, WorkspaceID: wsID, Statuses: keys,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	s.publishIssueUpdated(prev, issue)
+	// A status write is not finished when the row is written. Everything that
+	// depends on a ticket reaching a terminal status — the parent's child-done
+	// comment, the stage barrier that wakes the next stage, the cross-family
+	// waiters — hangs off these two helpers, which the request path calls on
+	// every status change (see UpdateIssue). Leaving them out here would trade
+	// one stall for a quieter one: an agent cannot set done itself, so "the
+	// reviewer passed it and the status never moved" is the commonest way a
+	// SUB-issue stalls, and closing it without telling the parent would stop
+	// the next stage from ever waking.
+	//
+	// Both are best-effort and guard on the transition themselves; the status
+	// write has already committed, so neither can undo it.
+	s.h.notifyParentOfChildDone(ctx, prev, issue)
+	s.h.notifyWaitersOfIssueDone(ctx, prev, issue)
+	return true, nil
 }
 
 func clipRunes(s string, limit int) string {

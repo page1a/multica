@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/permission"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -725,6 +726,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// connection badge refreshes on every workspace client, not just
 					// the tab that polls the install status to success.
 					regSvc.SetEventBus(bus)
+					// In-flight bind sessions must be readable by every
+					// replica: the dialog polls the status endpoint every
+					// ~5s and any replica can receive that poll. With the
+					// state in one process's memory, a poll routed
+					// elsewhere 404'd and the dialog reported "session
+					// lost" ~5s after the QR rendered (MUL-7340).
+					//
+					// Without Redis the service keeps its in-process
+					// store. That is correct for local development and a
+					// single replica, and wrong for a multi-replica deploy
+					// — which is why this says so out loud instead of
+					// failing quietly at the first status poll.
+					if rdb != nil {
+						regSvc.SetInstallSessionStore(lark.NewRedisInstallSessionStore(rdb))
+					} else {
+						slog.Warn("lark device-flow install: no Redis; bind sessions are per-process and will not survive a multi-replica deployment")
+					}
 					h.LarkRegistration = regSvc
 					slog.Info("lark device-flow install enabled")
 				}
@@ -859,7 +877,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				AppURL:  appURLFromEnv(),
 				Logger:  slog.Default(),
 			})
-			ack := dingtalk.NewAckNotifier(dingtalkClient, box.Open, slog.Default())
+			ack := dingtalk.NewAckNotifier(dingtalkClient, box.Open, slog.Default(), queries)
 			var media engine.MediaResolver
 			if store != nil {
 				media = dingtalk.NewMediaResolver(
@@ -872,7 +890,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			botNames := dingtalk.NewBotNameResolver(dingtalkClient, box.Open)
 			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media, botNames))
-			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, slog.Default()).Register(bus)
+			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, ack, slog.Default()).Register(bus)
 			dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 				Decrypt:  box.Open,
 				Client:   dingtalkClient,
@@ -1511,6 +1529,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
+		r.Post("/project-resources/{resourceId}/identity", h.BackfillLocalDirectoryIdentity)
 	})
 
 	// Public Plugin Action API. This is the stable, globally versioned contract
@@ -1532,7 +1551,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// signed-in user's session and the installation header. Keeping it outside
 	// /v1 prevents the Public API from accepting session cookies.
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Route(pluginBridgePrefix, func(r chi.Router) {
 			registerPluginActionRoutes(r, h)
 			// ui / manual only. `event` is dispatched by the host off the event
@@ -1542,8 +1561,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
+		// Guests are the read-only tier (DENE-695). One interceptor in
+		// front of every authenticated route, rather than a check
+		// repeated in each of the ~250 write handlers below — the rule
+		// then holds for routes nobody has written yet. See
+		// internal/middleware/guest.go for what a guest still may write.
+		r.Use(middleware.GuestReadOnly(queries))
 
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
@@ -1568,6 +1593,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.Post("/api/cli-token", h.IssueCliToken)
+		// Sliding session renewal for clients that hold the session as a
+		// string (Desktop, mobile). Browsers get theirs re-issued inline by
+		// middleware.Auth and never call this (MUL-7436).
+		r.Post("/api/auth/refresh", h.RefreshSession)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
@@ -1911,8 +1940,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
+			// Module-level sharing (DENE-699). These endpoints are themselves
+			// not behind RequireModule: the caller needs them to learn which
+			// areas they may enter, and only owner/admin can write.
+			r.Get("/api/modules", h.ListModuleVisibility)
+			r.Put("/api/modules/{module}/visibility", h.SetModuleVisibility)
+
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleIssues))
 				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
 				r.Post("/table/rows", h.ListIssueTableRows)
@@ -1933,6 +1969,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
 					r.Put("/", h.UpdateIssue)
+					// Sharing scope is its own action, not a field on the
+					// ordinary edit: it has its own tier rule and its own
+					// audit row (DENE-698).
+					r.Put("/visibility", h.SetIssueVisibility)
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
@@ -1975,6 +2015,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			// Log export bundle. One generator for the web dialog, the
+			// desktop dialog, and `multica logs export`, so all three hand
+			// the user the same artifact.
+			r.Get("/api/tasks/{taskId}/logs/export", h.ExportTaskLogs)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick actions (definitions; running one lives under
@@ -2013,6 +2057,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// every client needs the catalog to render a status. Writes are
 			// gated to workspace owner/admin inside the handlers.
 			r.Route("/api/issue-statuses", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleIssues))
 				r.Get("/", h.ListIssueStatuses)
 				r.Post("/", h.CreateIssueStatus)
 				r.Patch("/reorder", h.ReorderIssueStatuses)
@@ -2023,7 +2068,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// Projects
+			// Repositories are JSONB entries in workspace.repos, not rows, so
+			// their scope is keyed by URL in the body rather than by path id.
+			r.With(h.RequireModule(permission.ModuleRepos)).Put("/api/repos/visibility", h.SetRepoVisibility)
+
 			r.Route("/api/projects", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleProjects))
 				r.Get("/search", h.SearchProjects)
 				r.Get("/", h.ListProjects)
 				r.Post("/", h.CreateProject)
@@ -2031,6 +2081,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetProject)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
+					// A project's scope change sweeps every resource it
+					// holds, so the frontend asks what it would sweep first.
+					r.Get("/visibility/preview", h.PreviewProjectVisibility)
+					r.Put("/visibility", h.SetProjectVisibility)
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)
@@ -2058,7 +2112,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// Squad leader evaluation (writes to activity_log)
-			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
+			r.With(h.RequireModule(permission.ModuleIssues)).Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
 
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {
@@ -2097,9 +2151,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// Saved issue views (MUL-4796).
-			r.Get("/api/issue-view-preferences", h.GetIssueViewPreference)
-			r.Put("/api/issue-view-preferences", h.PutIssueViewPreference)
+			r.With(h.RequireModule(permission.ModuleIssues)).Get("/api/issue-view-preferences", h.GetIssueViewPreference)
+			r.With(h.RequireModule(permission.ModuleIssues)).Put("/api/issue-view-preferences", h.PutIssueViewPreference)
 			r.Route("/api/issue-views", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleIssues))
 				r.Get("/", h.ListIssueViews)
 				r.Post("/", h.CreateIssueView)
 				r.Route("/{id}", func(r chi.Router) {
@@ -2121,6 +2176,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Comments
 			r.Route("/api/comments/{commentId}", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleIssues))
 				r.With(handler.RequireHumanActor).Get("/sub-issue-preview", h.PreviewCommentSubIssue)
 				r.With(handler.RequireHumanActor).Post("/sub-issues", h.CreateCommentSubIssue)
 				r.Put("/", h.UpdateComment)
@@ -2205,6 +2261,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// writes only the draft, and POST /finalize is the single
 			// transition that produces an issue.
 			r.Route("/api/issue-drafts", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleIssues))
 				// Alignment conversations are invisible to every chat list
 				// (their carrier is kind='system'), so this is the only route
 				// back to one. `?status=all` widens it from "the ones I can
@@ -2219,6 +2276,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// carrier's prompt and records which policy version is
 					// running; the draft's content is untouched.
 					r.Patch("/policy", h.SwitchIssueDraftPolicy)
+					// Read-only: which seat routing would put on each issue
+					// of the draft, shown in the confirm panel before create.
+					r.Post("/assignee-suggestions", h.SuggestIssueDraftAssignees)
 					r.Post("/finalize", h.FinalizeIssueDraft)
 					// Starts another round on an alignment that already
 					// produced its group: same session, same draft row, and
@@ -2255,6 +2315,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/dashboard", func(r chi.Router) {
 				r.Get("/usage/daily", h.GetDashboardUsageDaily)
 				r.Get("/usage/by-agent", h.GetDashboardUsageByAgent)
+				r.Get("/usage/by-issue", h.GetDashboardUsageByIssue)
 				r.Get("/agent-runtime", h.GetDashboardAgentRunTime)
 				r.Get("/runtime/daily", h.GetDashboardRunTimeDaily)
 				r.Get("/failures/daily", h.GetDashboardFailuresDaily)
@@ -2263,6 +2324,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Runtimes
 			r.Route("/api/runtimes", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleRuntimes))
 				r.Get("/", h.ListAgentRuntimes)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)
@@ -2299,6 +2361,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Cloud Runtime fleet proxy. The remote service URL is configured
 			// on SaaS API nodes only; self-hosted deployments return 503.
 			r.Route("/api/cloud-runtime", func(r chi.Router) {
+				r.Use(h.RequireModule(permission.ModuleRuntimes))
 				r.Get("/", h.GetCloudRuntimeService)
 				r.Get("/healthz", h.GetCloudRuntimeHealth)
 				r.Get("/readyz", h.GetCloudRuntimeReady)
@@ -2380,6 +2443,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Separate from "/" so the main list keeps its contract and
 				// never carries the unbounded archive.
 				r.Get("/archived", h.ListArchivedInbox)
+				r.Get("/archived/page", h.ListArchivedInboxPage)
+				r.Get("/archived/facets", h.GetArchivedInboxFacets)
 				r.Get("/unread-count", h.CountUnreadInbox)
 				// Cross-workspace unread summary: account-level, keyed on the
 				// user. Backs the workspace-switcher dot for OTHER workspaces.
