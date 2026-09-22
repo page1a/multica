@@ -327,7 +327,7 @@ func TestWorkspaceConfigRoundTripAndConflicts(t *testing.T) {
 	})
 	dbfx.Insert(t, "issue_status", testutil.Cols{
 		"workspace_id": src, "key": statusKey, "name": "Verifying", "description": "",
-		"category": "in_review", "color": "#a855f7", "is_system": false, "position": 4.5,
+		"category": "started", "color": "#a855f7", "is_system": false, "position": 4.5,
 	})
 
 	bundle := exportBundle(t, src)

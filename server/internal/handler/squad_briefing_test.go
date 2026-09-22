@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -484,19 +485,26 @@ RETURNING id
 // TestClaimTask_LeaderGetsBriefing — when the squad leader claims a task on
 // a squad-assigned issue, the response's agent.instructions must include
 // the Operating Protocol + Roster + user instructions.
+//
+// The leader gets its OWN runtime rather than the workspace's shared oldest
+// one. That shared runtime accumulates queued tasks from unrelated tests
+// (autopilot enqueues land on the oldest agent), and the claim below would
+// then hand back one of those instead of the leader task this test just
+// queued — which is exactly how it read as "briefing not injected" while
+// passing in isolation (DENE-730).
 func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
 
-	var leaderID, runtimeID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&leaderID, &runtimeID); err != nil {
-		t.Fatalf("get leader agent: %v", err)
-	}
+	runtimeID := dbfx.Runtime(t, "squad briefing claim runtime")
+	leaderID := dbfx.Agent(t, "Briefing Claim Leader", runtimeID, testutil.Cols{
+		"visibility":      "workspace",
+		"permission_mode": "public_to",
+		"custom_env":      testutil.Raw("'{}'::jsonb"),
+		"custom_args":     testutil.Raw("'[]'::jsonb"),
+		"mcp_config":      []byte("[]"),
+	})
 
 	squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
 

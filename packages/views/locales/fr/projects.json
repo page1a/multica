@@ -159,7 +159,9 @@
     "local_directory_move_down_tooltip": "Déplacer vers le bas",
     "mode_worktree_root_label": "Emplacement des copies de travail",
     "mode_worktree_root_not_absolute": "Utilisez un chemin absolu — un chemin relatif atterrirait là où le daemon se trouve en cours d'exécution.",
-    "mode_worktree_root_inside_repo": "Ce chemin se trouve à l'intérieur du dépôt. Les copies qui y seraient créées apparaîtraient dans votre propre git status et nécessiteraient une entrée .gitignore — choisissez plutôt un dossier à côté."
+    "mode_worktree_root_inside_repo": "Ce chemin se trouve à l'intérieur du dépôt. Les copies qui y seraient créées apparaîtraient dans votre propre git status et nécessiteraient une entrée .gitignore — choisissez plutôt un dossier à côté.",
+    "mode_worktree_root_not_writable": "Ce dossier n'est pas accessible en écriture. Choisissez un emplacement où cette machine peut créer des fichiers.",
+    "mode_worktree_root_conflicts": "Ce chemin chevauche un dossier déjà associé au projet. Choisissez un autre dossier."
   },
   "delete_dialog": {
     "title": "Supprimer le projet",

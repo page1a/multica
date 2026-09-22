@@ -43,9 +43,9 @@ func TestRunTaskPreservesProviderCostWithoutTokens(t *testing.T) {
 		input, cost int64
 		want        []TaskUsageEntry
 	}{
-		{"cost_only", 0, 100000000, []TaskUsageEntry{{Provider: "grok", Model: "grok-4.6", CostUSDTicks: 100000000}}},
-		{"tokens_and_cost", 10, 100000000, []TaskUsageEntry{{Provider: "grok", Model: "grok-4.6", InputTokens: 10, CostUSDTicks: 100000000}}},
-		{"tokens_only", 10, 0, []TaskUsageEntry{{Provider: "grok", Model: "grok-4.6", InputTokens: 10}}},
+		{"cost_only", 0, 100000000, []TaskUsageEntry{{Provider: "grok", Model: "grok-4.6", CostUSDTicks: 100000000, SessionID: "test-session"}}},
+		{"tokens_and_cost", 10, 100000000, []TaskUsageEntry{{Provider: "grok", Model: "grok-4.6", InputTokens: 10, CostUSDTicks: 100000000, SessionID: "test-session"}}},
+		{"tokens_only", 10, 0, []TaskUsageEntry{{Provider: "grok", Model: "grok-4.6", InputTokens: 10, SessionID: "test-session"}}},
 		{"empty", 0, 0, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,6 +77,18 @@ func TestRunTaskPreservesProviderCostWithoutTokens(t *testing.T) {
 			}
 			if result.Status != "completed" || result.Comment != "done" {
 				t.Fatalf("unexpected result: %+v", result)
+			}
+			// DENE-666 stamps each entry with the run's wall-clock timings on
+			// top of the provider-reported usage. They are by nature not fixed
+			// values, so they are neutralised here rather than asserted; the
+			// session id (deterministic for this fixture) stays in `want`, and
+			// the persisted timing columns are pinned by the server-side
+			// round-trip test instead.
+			for i := range result.Usage {
+				result.Usage[i].QueueToClaimMS = nil
+				result.Usage[i].PrepareMS = nil
+				result.Usage[i].SpawnToFirstOutputMS = nil
+				result.Usage[i].TotalMS = nil
 			}
 			if !reflect.DeepEqual(result.Usage, tc.want) {
 				t.Fatalf("usage = %+v, want %+v", result.Usage, tc.want)
