@@ -124,8 +124,10 @@ func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	}
 	// The routing gateway key lives in this column and must never leave the
 	// server. Stripped here, in the one function every workspace response goes
-	// through, rather than at each of its call sites.
+	// through, rather than at each of its call sites. The log-export git token
+	// sits in the same column under its own key and obeys the same rule.
 	settings = redactRoutingSettings(settings)
+	settings = redactLogExportSettings(settings)
 	var repos any
 	if w.Repos != nil {
 		json.Unmarshal(w.Repos, &repos)
@@ -352,6 +354,10 @@ type workspaceRepoRef struct {
 	Description string `json:"description,omitempty"`
 	Visibility  string `json:"visibility,omitempty"`
 	CreatedBy   string `json:"created_by,omitempty"`
+	// ProjectID is response-only metadata used by the sharing dialog. It is
+	// cleared before workspace.repos is persisted because project membership
+	// lives in project_resource, not in the workspace JSON blob.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // validateAndNormalizeWorkspaceRepos validates the caller's repo list and
@@ -381,6 +387,7 @@ func validateAndNormalizeWorkspaceRepos(value any, stored []byte, actorUserID st
 	for i, repo := range repos {
 		repo.URL = strings.TrimSpace(repo.URL)
 		repo.Description = strings.TrimSpace(repo.Description)
+		repo.ProjectID = ""
 		if repo.URL == "" {
 			return nil, fmt.Errorf("repos[%d]: url is required", i)
 		}
@@ -466,9 +473,10 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.Context = pgtype.Text{String: *req.Context, Valid: true}
 	}
 	if req.Settings != nil {
-		// The client cannot echo back the routing key it was never sent, so
-		// the stored one is carried forward unless this write explicitly sets
-		// or clears it. Without this, any unrelated settings save wipes it.
+		// The client cannot echo back the routing key or the log-export git
+		// token it was never sent, so the stored ones are carried forward
+		// unless this write explicitly sets or clears them. Without this, any
+		// unrelated settings save wipes them.
 		var stored []byte
 		if existing, err := h.Queries.GetWorkspace(r.Context(), idUUID); err == nil {
 			stored = existing.Settings
@@ -477,6 +485,15 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			writeError(w, http.StatusServiceUnavailable,
 				"this deployment cannot store a routing key (no MULTICA_ROUTING_SECRET_KEY or JWT_SECRET)")
+			return
+		}
+		// Chain the log-export merge onto the already-merged value: the two
+		// blocks coexist in the same column, and running one must not discard
+		// the other's carried-forward secret.
+		merged, ok = h.applyLogExportToken(merged, stored)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable,
+				"this deployment cannot store a log export git token (no MULTICA_LOG_EXPORT_SECRET_KEY or JWT_SECRET)")
 			return
 		}
 		s, _ := json.Marshal(merged)

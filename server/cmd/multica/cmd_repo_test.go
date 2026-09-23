@@ -246,6 +246,7 @@ func TestRepoCheckoutSummary(t *testing.T) {
 		name   string
 		result repoCheckoutResult
 		want   []string
+		absent []string
 	}{
 		{
 			name:   "new branch",
@@ -271,12 +272,35 @@ func TestRepoCheckoutSummary(t *testing.T) {
 			result: repoCheckoutResult{Path: "/work/repo", Kept: "local_work", UnpushedCommits: 3},
 			want:   []string{"(branch: detached HEAD; 0 uncommitted files, 3 unpushed commits)"},
 		},
+		{
+			name:   "kept sparse checkout restored to the whole tree",
+			result: repoCheckoutResult{Path: "/work/repo", BranchName: "agent/test/task", Kept: "task_branch", SparseSkipped: "restored"},
+			want: []string{
+				"sparse checkout was turned off so the whole repository is on disk again",
+				"every file in the repository is on disk now",
+			},
+			absent: []string{"only remote refs were fetched"},
+		},
+		{
+			name:   "kept sparse checkout widened",
+			result: repoCheckoutResult{Path: "/work/repo", BranchName: "agent/test/task", Kept: "task_branch", SparsePaths: "apps/web,server", SparseSkipped: "widened"},
+			want: []string{
+				"the sparse checkout was widened",
+				"Sparse checkout now includes apps/web,server",
+			},
+			absent: []string{"only remote refs were fetched"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := repoCheckoutSummary(repoURL, tc.result)
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("summary missing %q:\n%s", want, got)
+				}
+			}
+			for _, phrase := range tc.absent {
+				if strings.Contains(got, phrase) {
+					t.Fatalf("summary still says %q:\n%s", phrase, got)
 				}
 			}
 			if kept := strings.HasPrefix(got, "Kept "); kept != (tc.result.Kept != "") {

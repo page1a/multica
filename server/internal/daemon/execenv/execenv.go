@@ -159,6 +159,13 @@ type PrepareParams struct {
 	// Mutually exclusive with LocalWorkDir — the daemon picks one based on the
 	// resource's execution_mode.
 	LocalWorktree *LocalWorktreeParams
+	// SharedScratchDir, when set, is the session folder this run works in
+	// (DENE-622). There is no per-task env root: RootDir and the workdir's
+	// parent are this directory, it is not emptied, and a later turn of the
+	// same session finds the previous turn's files. The caller must already
+	// hold the claim (EnvRootPreclaimed). Mutually exclusive with
+	// LocalWorkDir and LocalWorktree.
+	SharedScratchDir string
 	// HermesSourceHome is the shared Hermes home the per-task overlay is seeded
 	// from — resolved by the daemon via execenv.ResolveHermesProfile so it honors
 	// the agent's custom_env HERMES_HOME and any -p/--profile or sticky selection.
@@ -396,6 +403,11 @@ type Environment struct {
 	// scratch that the GC should reclaim on the normal schedule, and the
 	// sidecar rollback that protects a user's directory is unnecessary.
 	LocalDirectory bool
+	// SharedScratch is true when RootDir is the machine's shared session
+	// folder rather than a per-task env root. Cleanup must not delete it;
+	// the shared-scratch GC is the only thing that reclaims it, and only
+	// under that GC's own rules.
+	SharedScratch bool
 	// SidecarRoot is the per-task directory holding the files Prepare kept
 	// out of a shared-mode workdir (PrepareParams.IsolateSidecars): the task
 	// marker, project resources, provider skills and, once the daemon injects
@@ -541,15 +553,34 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		return nil, fmt.Errorf("execenv: task ID is required")
 	}
 
-	envRoot, err := ResolveRootDir(RootDirParams{
-		WorkspacesRoot:  params.WorkspacesRoot,
-		WorkspaceID:     params.WorkspaceID,
-		WorkspaceSlug:   params.WorkspaceSlug,
-		TaskID:          params.TaskID,
-		IssueIdentifier: params.IssueIdentifier,
-	})
-	if err != nil {
-		return nil, err
+	var envRoot string
+	if params.SharedScratchDir != "" {
+		if params.LocalWorkDir != "" || params.LocalWorktree != nil {
+			return nil, fmt.Errorf("execenv: shared scratch cannot be combined with a local directory")
+		}
+		if !params.EnvRootPreclaimed {
+			return nil, fmt.Errorf("execenv: shared scratch directory must already be claimed by the caller")
+		}
+		info, statErr := os.Lstat(params.SharedScratchDir)
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("execenv: shared scratch directory %s is not a real directory", params.SharedScratchDir)
+		}
+		// The session folder already exists and already holds this
+		// conversation. Do not resolve a per-task env root and do not empty
+		// this one: both are how a question used to mint a new directory.
+		envRoot = params.SharedScratchDir
+	} else {
+		var err error
+		envRoot, err = ResolveRootDir(RootDirParams{
+			WorkspacesRoot:  params.WorkspacesRoot,
+			WorkspaceID:     params.WorkspaceID,
+			WorkspaceSlug:   params.WorkspaceSlug,
+			TaskID:          params.TaskID,
+			IssueIdentifier: params.IssueIdentifier,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Self-heal the root-level daemon marker on every task start so a marker
@@ -692,6 +723,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		RootDir:           envRoot,
 		WorkDir:           workDir,
 		LocalDirectory:    params.LocalWorkDir != "",
+		SharedScratch:     params.SharedScratchDir != "",
 		SidecarRoot:       sidecarRoot,
 		LocalWorktree:     localWorktree,
 		MulticaConfigRoot: multicaConfigRoot,
@@ -1385,6 +1417,13 @@ func (env *Environment) Cleanup(removeAll bool) error {
 	// rerun fail closed. The daemon also defers ReleaseLock for the task run;
 	// both paths are idempotent.
 	env.ReleaseLock()
+
+	// The session folder outlives the turn. Removing it here would delete the
+	// conversation the next turn is supposed to come back to, and it would
+	// do so on a path Cleanup's caller thinks of as an env root.
+	if env.SharedScratch {
+		return nil
+	}
 
 	if env.LocalDirectory {
 		// Never touch the user's directory. RootDir is the daemon's own

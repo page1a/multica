@@ -19,7 +19,15 @@ import { useT, useTimeAgo } from "../../i18n";
  * exception states are never silent: missing close.* keys, and close.status
  * drifting from issue.status.
  */
-export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
+export function SubIssueCloseStrip({
+  issue,
+  parentStatus = "in_progress",
+  hasStagedSibling = issue.stage != null,
+}: {
+  issue: Issue;
+  parentStatus?: Issue["status"];
+  hasStagedSibling?: boolean;
+}) {
   const { t } = useT("issues");
   const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
@@ -31,7 +39,12 @@ export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
     close.nextOwnerId,
   );
 
-  const state = !close.complete
+  const needsCloseRecord =
+    (issue.status === "done" || issue.status === "cancelled") &&
+    issue.parent_issue_id != null &&
+    hasStagedSibling &&
+    (parentStatus === "in_progress" || parentStatus === "in_review" || parentStatus === "blocked");
+  const state = !close.complete && needsCloseRecord
     ? "missing"
     : close.statusDrift
       ? "drift"
@@ -57,7 +70,7 @@ export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
       data-stuck={stuck ? "true" : "false"}
       className={cn(
         "flex min-w-0 flex-wrap items-center gap-1 pl-11",
-        state === "missing" && "text-destructive",
+        state === "missing" && "text-muted-foreground",
         state === "drift" && "text-warning",
       )}
     >
@@ -70,7 +83,7 @@ export function SubIssueCloseStrip({ issue }: { issue: Issue }) {
           : t(($) => $.stage.value, { n: issue.stage })}
       </Chip>
       {state === "missing" && (
-        <Chip kind="close.missing" tone="missing">
+        <Chip kind="close.missing" tone="muted">
           {t(($) => $.close_protocol.missing)}
         </Chip>
       )}

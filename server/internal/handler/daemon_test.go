@@ -3257,6 +3257,7 @@ type claimRuntimeGuardTask struct {
 	PriorSessionID                string          `json:"prior_session_id"`
 	PriorWorkDir                  string          `json:"prior_work_dir"`
 	PriorSessionResumeUnavailable bool            `json:"prior_session_resume_unavailable"`
+	ContinueInterruptedSession    bool            `json:"continue_interrupted_session"`
 	ChatMessage                   string          `json:"chat_message"`
 	ThreadName                    string          `json:"thread_name"`
 	QuickCreateAttachmentIDs      []string        `json:"quick_create_attachment_ids"`
@@ -3818,7 +3819,49 @@ func TestClaimTask_AutoRetryFreshSessionReusesParentWorkdir(t *testing.T) {
 			if !task.PriorSessionResumeUnavailable {
 				t.Fatal("auto-retry must disclose that the failed attempt's context did not come back")
 			}
+			if task.ContinueInterruptedSession {
+				t.Fatal("poisoned auto-retry must not ask the daemon to continue the interrupted session")
+			}
 		})
+	}
+}
+
+// TestClaimTask_AutoRetryContinueInterruptedSession pins DENE-727: a
+// resume-safe automatic retry that inherited the parent's session must tell
+// the daemon to continue that session instead of re-injecting the original
+// task. Contrast the poisoned path above, which starts fresh.
+func TestClaimTask_AutoRetryContinueInterruptedSession(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+	issueID := dbfx.Issue(t, "auto-retry continue-session fixture", testutil.Cols{"status": "in_progress"})
+
+	parentID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id":     runtimeID,
+		"issue_id":       issueID,
+		"status":         "failed",
+		"failure_reason": "agent_error.provider_network",
+		"error":          "TRANSPORT: Connection error.",
+		"started_at":     testutil.Raw("now() - interval '6 minutes'"),
+		"completed_at":   testutil.Raw("now() - interval '1 minute'"),
+		"session_id":     "halfway-session",
+		"work_dir":       "/tmp/halfway-workdir",
+		"attempt":        1,
+		"max_attempts":   3,
+	})
+	createAutoRetryForTest(t, ctx, parentID)
+
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if task.PriorSessionID != "halfway-session" {
+		t.Fatalf("PriorSessionID = %q, want halfway-session (resume-safe retry continues the parent session)", task.PriorSessionID)
+	}
+	if !task.ContinueInterruptedSession {
+		t.Fatal("resume-safe auto-retry that inherited a session must set continue_interrupted_session")
+	}
+	if task.PriorSessionResumeUnavailable {
+		t.Fatal("resume-safe auto-retry must not disclose a continuity gap")
 	}
 }
 

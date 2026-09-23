@@ -228,6 +228,16 @@ UPDATE agent SET
 WHERE id = $1
 RETURNING *;
 
+-- name: DisableAgentSpecialisations :many
+-- Turning off a base role also turns off its direct specialisations. This is
+-- intentionally one-way: re-enabling the base role must not override a
+-- specialisation's own work setting.
+UPDATE agent
+SET work_enabled = FALSE, updated_at = now()
+WHERE parent_agent_id = $1
+  AND work_enabled = TRUE
+RETURNING *;
+
 -- name: SetAgentParentAgent :one
 -- The ONLY writer of agent.parent_agent_id. COALESCE-based UpdateAgent cannot
 -- express "clear the column" (a NULL argument there means "leave it alone"),

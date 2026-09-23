@@ -85,6 +85,43 @@ type AgentMcpServer struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type AgentQuotaBreaker struct {
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	AgentID                pgtype.UUID        `json:"agent_id"`
+	Scope                  string             `json:"scope"`
+	ModelKey               string             `json:"model_key"`
+	Reason                 string             `json:"reason"`
+	SourceTaskID           pgtype.UUID        `json:"source_task_id"`
+	Detail                 string             `json:"detail"`
+	OpenedAt               pgtype.Timestamptz `json:"opened_at"`
+	RecoverAt              pgtype.Timestamptz `json:"recover_at"`
+	RecoverCondition       string             `json:"recover_condition"`
+	RecoveredAt            pgtype.Timestamptz `json:"recovered_at"`
+	SuppressedWork         bool               `json:"suppressed_work"`
+	SuppressAgentUpdatedAt pgtype.Timestamptz `json:"suppress_agent_updated_at"`
+}
+
+type AgentQuotaRelay struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	SourceTaskID     pgtype.UUID        `json:"source_task_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	FromAgentID      pgtype.UUID        `json:"from_agent_id"`
+	ToAgentID        pgtype.UUID        `json:"to_agent_id"`
+	Scope            string             `json:"scope"`
+	ModelKey         string             `json:"model_key"`
+	Outcome          string             `json:"outcome"`
+	TierFrom         string             `json:"tier_from"`
+	TierTo           string             `json:"tier_to"`
+	WaitReason       string             `json:"wait_reason"`
+	HandoffNote      string             `json:"handoff_note"`
+	AuditComment     string             `json:"audit_comment"`
+	TriggerCommentID pgtype.UUID        `json:"trigger_comment_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentRuntime struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

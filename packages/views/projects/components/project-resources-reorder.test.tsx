@@ -53,8 +53,20 @@ const existing = [
 ];
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: (options: { queryKey?: unknown[] }) =>
-    options?.queryKey?.[0] === "project-resources" ? { data: existing } : { data: [] },
+  useQuery: (options: { queryKey?: unknown[] }) => {
+    const key = options?.queryKey ?? [];
+    if (key[0] === "project-resources") return { data: existing };
+    if (key.includes("code-decision")) {
+      return {
+        data: {
+          kind: "local_in_place",
+          display_name: "app",
+          path: "/Users/me/code/app",
+        },
+      };
+    }
+    return { data: [] };
+  },
   queryOptions: (options: unknown) => options,
 }));
 
@@ -84,6 +96,7 @@ vi.mock("../../platform/local-directory", () => ({
   pickDirectory: vi.fn(),
   validateLocalDirectory: vi.fn(),
   validateWritablePath: async () => true,
+  initLocalGit: async () => ({ ok: false, reason: "unsupported" as const }),
 }));
 vi.mock("../../platform/use-local-daemon-status", () => ({
   useLocalDaemonStatus: () => ({
@@ -197,11 +210,13 @@ describe("ProjectResourcesSection — choosing which directory tasks write in", 
     expect(className).toContain("group-hover:disabled:opacity-30");
   });
 
-  // The hint promises the first directory is the one tasks write in. It must
-  // not promise a gesture the list does not have.
-  it("describes the reorder control the list actually offers", () => {
+  // Where tasks run is the server's sentence, shown as it arrived. The list
+  // still reorders with arrows; the sentence must not invent a gesture.
+  it("shows the server's decision and does not invent a drag gesture", () => {
     renderWithI18n(<ProjectResourcesSection projectId="p1" />);
-    const hint = screen.getByText(/run in the first directory/i);
-    expect(hint.textContent ?? "").not.toMatch(/drag/i);
+    const banner = screen.getByRole("status");
+    expect(banner.textContent ?? "").toMatch(/app/);
+    expect(banner.textContent ?? "").not.toMatch(/drag/i);
+    expect(screen.queryByText(/first directory/i)).not.toBeInTheDocument();
   });
 });

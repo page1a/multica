@@ -110,6 +110,15 @@ type Settings struct {
 	// the shipped defaults in ladder.json and win, so classifying a project is
 	// a settings write and never a release.
 	Projects map[string]string `json:"projects,omitempty"`
+	// PolicyPrompt is the workspace's own tier-preference wording. Empty
+	// means DefaultPolicyPrompt. It constrains which tier the judge picks;
+	// it is not allowed to change status or take an action, and the judge
+	// prompts say so alongside it.
+	PolicyPrompt string `json:"policy_prompt,omitempty"`
+	// WatchedProviders names whose quota summaries are attached to a judge
+	// request. Empty means DefaultWatchedProviders (claude, codex, grok).
+	// Replacing one key does not change the request shape.
+	WatchedProviders []string `json:"watched_providers,omitempty"`
 }
 
 // Target is where one judge call is sent: which model, on whose endpoint,

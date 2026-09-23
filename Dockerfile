@@ -26,7 +26,9 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_u
 # --- Runtime stage ---
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata
+# git and openssh-client are needed at runtime by the log-export pusher, which
+# shells out to `git` to commit a bundle into the workspace's configured repo.
+RUN apk add --no-cache ca-certificates tzdata git openssh-client
 
 WORKDIR /app
 

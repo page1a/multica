@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { TaskLogExportBundle } from "../types";
-import { buildLogExportReportComment, logExportOwnerMention } from "./report";
+import { buildLogExportReportComment, logExportOwnerMention, resolveLogExportMention } from "./report";
 
 function bundle(overrides: Partial<TaskLogExportBundle> = {}): TaskLogExportBundle {
   return {
@@ -73,5 +73,84 @@ describe("buildLogExportReportComment", () => {
       task: { ...bundle().task, issue_identifier: "", id: "" },
     });
     expect(buildLogExportReportComment(empty)).toBe("运行日志导出");
+  });
+
+  it("adds the repository link so the comment points at the pushed bundle", () => {
+    const body = buildLogExportReportComment(
+      bundle(),
+      undefined,
+      "https://github.com/o/r/blob/kun/logs/log-export-DENE-599.json",
+    );
+    expect(body).toContain(
+      "[https://github.com/o/r/blob/kun/logs/log-export-DENE-599.json](https://github.com/o/r/blob/kun/logs/log-export-DENE-599.json)",
+    );
+  });
+
+  it("omits the link line when the bundle was not pushed", () => {
+    expect(buildLogExportReportComment(bundle())).not.toContain("日志包：[");
+  });
+});
+
+// Mirrors the CLI's exportMention field for field. The rule that matters most
+// is the one an agent-assigned issue exercises: a default report must never
+// name an agent, because `mention://agent/<id>` enqueues a paid run and the
+// archetypal report is the log of a run that just died.
+describe("resolveLogExportMention", () => {
+  const human = { type: "member" as const, id: "user-9" };
+  const agent = { type: "agent" as const, id: "agent-3" };
+
+  it("mentions a human assignee", () => {
+    expect(
+      resolveLogExportMention({
+        assignee_type: "member",
+        assignee_id: human.id,
+        creator_type: "member",
+        creator_id: "user-1",
+      }),
+    ).toBe("[@负责人](mention://member/user-9)");
+  });
+
+  it("falls back to the human creator when the assignee is an agent", () => {
+    const mention = resolveLogExportMention({
+      assignee_type: "agent",
+      assignee_id: agent.id,
+      creator_type: "member",
+      creator_id: "user-1",
+    });
+    expect(mention).toBe("[@创建人](mention://member/user-1)");
+    expect(mention).not.toContain("mention://agent/");
+  });
+
+  it("falls back to the human creator when the assignee is a squad", () => {
+    const mention = resolveLogExportMention({
+      assignee_type: "squad",
+      assignee_id: "squad-2",
+      creator_type: "member",
+      creator_id: "user-1",
+    });
+    expect(mention).toBe("[@创建人](mention://member/user-1)");
+  });
+
+  it("mentions nobody when neither side is human", () => {
+    expect(
+      resolveLogExportMention({
+        assignee_type: "agent",
+        assignee_id: agent.id,
+        creator_type: "agent",
+        creator_id: "agent-4",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("mentions nobody when the issue has no assignee", () => {
+    expect(
+      resolveLogExportMention({
+        assignee_type: null,
+        assignee_id: null,
+        creator_type: "member",
+        creator_id: "user-1",
+      }),
+    ).toBeUndefined();
+    expect(resolveLogExportMention(null)).toBeUndefined();
   });
 });

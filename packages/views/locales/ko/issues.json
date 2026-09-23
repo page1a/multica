@@ -132,7 +132,7 @@
     "queued": "대기 중"
   },
   "close_protocol": {
-    "missing": "프로토콜로 닫히지 않음",
+    "missing": "종료 기록 없음",
     "status_drift": "close.status ≠ {{issueStatus}}",
     "next_owner": "다음: {{name}}",
     "next_owner_none": "다음: 없음",
@@ -1070,6 +1070,8 @@
     "group_summary_parent": "상위 이슈는 담당자 없이 생성되어 스스로는 아무것도 실행하지 않습니다.",
     "created_title": "이슈가 생성되었습니다",
     "created_group_title": "이슈 {{count}}개 생성됨",
+    "assignee_dropped": "'{{title}}'의 담당자를 지정하지 못해 미할당 상태로 생성되었습니다.",
+    "assignee_dropped_several": "이슈 {{count}}개의 담당자를 지정하지 못해 모두 미할당 상태로 생성되었습니다.",
     "retired_title": "이 정렬은 끝났습니다",
     "retired_description": "미완료 초안 목록에 더 이상 없습니다.",
     "load_failed": "정렬을 불러오지 못했습니다.",

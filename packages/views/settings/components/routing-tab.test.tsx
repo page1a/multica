@@ -3,7 +3,7 @@
 // business of packages/core/workspace/routing-settings.test.ts and are NOT
 // re-run through a DOM mount here.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../../test/i18n";
@@ -45,6 +45,7 @@ vi.mock("@multica/core/permissions", () => ({
 }));
 
 import { parseRoutingHealth } from "@multica/core/workspace/routing-health";
+import { DEFAULT_ROUTING_POLICY_PROMPT } from "@multica/core/workspace/routing-policy-prompt";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { RoutingTab } from "./routing-tab";
 
@@ -224,6 +225,7 @@ describe("RoutingTab", () => {
       confidence_threshold: 0.6,
       stale_review_hours: 24,
       base_url: "",
+      policy_prompt: "",
     });
   });
 
@@ -481,5 +483,34 @@ describe("RoutingTab", () => {
 
     await userEvent.click(screen.getByRole("switch"));
     expect(chip()?.getAttribute("data-state")).toBe("off");
+  });
+
+  it("shows the default routing prompt, saves an edit, restores the default, and keeps the draft when save fails", async () => {
+    const user = userEvent.setup();
+    render();
+    const box = screen.getByLabelText(/routing prompt/i);
+    expect(box).toHaveValue(DEFAULT_ROUTING_POLICY_PROMPT);
+
+    fireEvent.change(box, { target: { value: "Use the weak tier for copy edits." } });
+    await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
+    const saved = updateWorkspace.mock.calls.at(-1)?.[1] as {
+      settings: { routing: { policy_prompt: string } };
+    };
+    expect(saved.settings.routing.policy_prompt).toBe("Use the weak tier for copy edits.");
+
+    updateWorkspace.mockClear();
+    await user.click(screen.getByRole("button", { name: /restore the default prompt/i }));
+    expect(box).toHaveValue(DEFAULT_ROUTING_POLICY_PROMPT);
+    await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
+    const restored = updateWorkspace.mock.calls.at(-1)?.[1] as {
+      settings: { routing: { policy_prompt: string } };
+    };
+    expect(restored.settings.routing.policy_prompt).toBe("");
+
+    updateWorkspace.mockReset();
+    updateWorkspace.mockRejectedValue(new Error("offline"));
+    fireEvent.change(box, { target: { value: "Keep this draft." } });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(box).toHaveValue("Keep this draft.");
   });
 });

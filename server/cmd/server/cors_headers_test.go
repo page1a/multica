@@ -48,6 +48,9 @@ func TestRouterCORSContract(t *testing.T) {
 			handler.HeaderCommentsTruncated,
 			handler.HeaderTimelineTruncated,
 			handler.HeaderActiveRunsTruncated,
+			// The log-export dialog reads the artifact's file name off this
+			// one; unexposed, every download is labelled "log-export.json".
+			handler.HeaderLogExportFilename,
 		} {
 			if !headerListContains(rec.Header().Get("Access-Control-Expose-Headers"), want) {
 				t.Errorf("Access-Control-Expose-Headers = %q, missing %q", rec.Header().Get("Access-Control-Expose-Headers"), want)

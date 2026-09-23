@@ -979,7 +979,7 @@
     "surface_navigated": "{{name}} a tenté de remplacer son panneau par une page chargée depuis une autre source. Il a été arrêté et déconnecté : prévenez l'administrateur de votre espace de travail."
   },
   "close_protocol": {
-    "missing": "Non clôturée selon le protocole",
+    "missing": "Aucun enregistrement de clôture",
     "status_drift": "close.status ≠ {{issueStatus}}",
     "next_owner": "Suivant : {{name}}",
     "next_owner_none": "Suivant : aucun",
@@ -1102,6 +1102,8 @@
     "group_summary_parent": "La tâche parente est créée sans assigné : elle ne démarre donc rien toute seule.",
     "created_title": "Tâche créée",
     "created_group_title": "{{count}} tâches créées",
+    "assignee_dropped": "« {{title}} » n’a pas pu être assignée et a été créée sans assignation.",
+    "assignee_dropped_several": "{{count}} tâches n’ont pas pu être assignées et ont été créées sans assignation.",
     "retired_title": "Cet alignement est terminé",
     "retired_description": "Il ne fait plus partie de vos brouillons inachevés.",
     "load_failed": "Impossible de charger cet alignement.",

@@ -567,6 +567,11 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 	if !maps.Equal(env, want) {
 		t.Fatalf("taskMulticaEnvironment() = %#v, want %#v", env, want)
 	}
+	task.CheckoutPaths = "apps/web"
+	withPaths := taskMulticaEnvironment(task, "agent-name", fakeToken, taskRoot, workspacesRoot, "https://task.example", 19514, 3, "/task/tmp")
+	if withPaths["MULTICA_CHECKOUT_PATHS"] != "apps/web" {
+		t.Fatalf("MULTICA_CHECKOUT_PATHS = %q", withPaths["MULTICA_CHECKOUT_PATHS"])
+	}
 
 	layerCustomEnvAndHermesHome(env, map[string]string{
 		"MULTICA_TASK_CONFIG_ROOT":     "/owner/config",

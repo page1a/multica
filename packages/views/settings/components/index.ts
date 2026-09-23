@@ -1,4 +1,5 @@
 export { SettingsPage } from "./settings-page";
+export { ProjectSharingTab } from "./project-sharing-tab";
 export type { ExtraSettingsTab } from "./settings-page";
 export { PluginsTab } from "./plugins-tab";
 export { McpTab } from "./mcp-tab";

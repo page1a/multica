@@ -4,6 +4,7 @@ import type { IssueDraftPayload } from "../types";
 import {
   ISSUE_DRAFT_ROOT_ROW,
   applyIssueDraftAssigneeSuggestions,
+  issueDraftSuggestionPhase,
   issueDraftSuggestionRequest,
   type DraftAssigneeSuggestion,
 } from "./assignee-suggestions";
@@ -78,10 +79,103 @@ describe("applyIssueDraftAssigneeSuggestions", () => {
     expect(again).toBe(cleared);
   });
 
-  it("ignores suggestions past the rows that exist", () => {
+  it("refuses an answer that does not line up with the rows", () => {
+    // The rows are read by index, so a short or padded array would put a seat
+    // on a row the answer never described. Refusing it whole is the only safe
+    // reading — "apply what we can" would silently assign the wrong row.
     const single = draft({ children: [] });
-    const next = applyIssueDraftAssigneeSuggestions(single, [seat("root-seat"), seat("ghost")], new Set());
+    const tooLong = applyIssueDraftAssigneeSuggestions(
+      single,
+      [seat("root-seat"), seat("ghost")],
+      new Set(),
+    );
+    expect(tooLong).toBe(single);
+    expect(tooLong.assignee_id).toBeNull();
+
+    const tooShort = applyIssueDraftAssigneeSuggestions(
+      draft(),
+      [seat("root-seat")],
+      new Set(),
+    );
+    expect(tooShort.assignee_id).toBeNull();
+    expect(tooShort.children?.[0]?.assignee_id ?? null).toBeNull();
+  });
+
+  it("does not remember rows it refused to offer", () => {
+    // A refused answer is not an offer: the row must still be fillable when a
+    // well-formed answer arrives next.
+    const offered = new Set<string>();
+    applyIssueDraftAssigneeSuggestions(draft(), [seat("root-seat")], offered);
+    expect(offered.size).toBe(0);
+    const next = applyIssueDraftAssigneeSuggestions(
+      draft(),
+      [seat("root-seat"), seat("be-seat"), null],
+      offered,
+    );
     expect(next.assignee_id).toBe("root-seat");
-    expect(next.children).toEqual([]);
+  });
+});
+
+describe("issueDraftSuggestionPhase", () => {
+  const request = issueDraftSuggestionRequest(draft());
+
+  it("is idle when there is nothing to ask", () => {
+    expect(
+      issueDraftSuggestionPhase({
+        request: null,
+        data: undefined,
+        isError: false,
+        isPending: false,
+      }),
+    ).toBe("idle");
+  });
+
+  it("is loading until an answer arrives", () => {
+    expect(
+      issueDraftSuggestionPhase({
+        request,
+        data: undefined,
+        isError: false,
+        isPending: true,
+      }),
+    ).toBe("loading");
+  });
+
+  it("is failed when the ask failed", () => {
+    expect(
+      issueDraftSuggestionPhase({
+        request,
+        data: undefined,
+        isError: true,
+        isPending: false,
+      }),
+    ).toBe("failed");
+  });
+
+  it("is ready only for one answer per row", () => {
+    expect(
+      issueDraftSuggestionPhase({
+        request,
+        data: [seat("a"), null, null],
+        isError: false,
+        isPending: false,
+      }),
+    ).toBe("ready");
+    expect(
+      issueDraftSuggestionPhase({
+        request,
+        data: [seat("a"), null],
+        isError: false,
+        isPending: false,
+      }),
+    ).toBe("failed");
+    expect(
+      issueDraftSuggestionPhase({
+        request,
+        data: [],
+        isError: false,
+        isPending: false,
+      }),
+    ).toBe("failed");
   });
 });

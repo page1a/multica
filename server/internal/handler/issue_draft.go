@@ -857,6 +857,21 @@ type FinalizeIssueDraftResponse struct {
 	// "the group is the one issue named by issue_id", which is exactly what a
 	// group with no children is. See issueDraftCreatedIssues.
 	Issues []IssueDraftCreatedIssue `json:"issues"`
+	// AssignmentWarnings names the nodes that were created unassigned because
+	// the assignee the draft carried could not be applied. Omitted when every
+	// assignment landed, so a client that predates the field reads a plain
+	// successful confirm — which is what it was (DENE-694).
+	AssignmentWarnings []IssueDraftAssignmentWarning `json:"assignment_warnings,omitempty"`
+}
+
+// IssueDraftAssignmentWarning is one node of a confirmed group whose assignee
+// was dropped. The issue itself was created; it is simply unassigned. Key is
+// empty for the root, which is how a client maps the warning back onto the row
+// it shows.
+type IssueDraftAssignmentWarning struct {
+	Key    string `json:"key"`
+	Title  string `json:"title"`
+	Reason string `json:"reason"`
 }
 
 // FinalizeIssueDraft is the single point where an alignment conversation
@@ -929,11 +944,11 @@ func (h *Handler) FinalizeIssueDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	group, ok := h.issueGroupParamsFromDraft(w, r, workspaceID, session, ready, state)
+	group, warnings, ok := h.issueGroupParamsFromDraft(w, r, workspaceID, session, ready, state)
 	if !ok {
 		return
 	}
-	issues, ok := h.createIssueGroupForDraft(w, r, session, state, group)
+	issues, created, ok := h.createIssueGroupForDraft(w, r, session, state, group)
 	if !ok {
 		return
 	}
@@ -945,6 +960,11 @@ func (h *Handler) FinalizeIssueDraft(w http.ResponseWriter, r *http.Request) {
 	completed, ok := h.completeIssueDraft(w, r, session, issues)
 	if !ok {
 		return
+	}
+	// Only a confirm that wrote the rows may claim their assignees were dropped:
+	// an adopted group belongs to the confirm that created it.
+	if created {
+		completed.AssignmentWarnings = warnings
 	}
 	writeJSON(w, http.StatusOK, *completed)
 }

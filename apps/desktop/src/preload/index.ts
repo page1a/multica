@@ -243,6 +243,9 @@ const desktopAPI = {
   /** Validate that a path is an existing readable+writable directory. */
   validateLocalDirectory: (path: string) =>
     ipcRenderer.invoke("local-directory:validate", path),
+  /** Create a local Git repository in a plain folder. Nothing is uploaded. */
+  initLocalGit: (path: string) =>
+    ipcRenderer.invoke("local-directory:init-git", path),
   validateWritablePath: (path: string) =>
     ipcRenderer.invoke("local-directory:writable", path),
   /** This machine's parallel-copy cleanup: report, policy, one-off removal.
@@ -252,6 +255,14 @@ const desktopAPI = {
     ipcRenderer.invoke("worktree-cleanup:save-settings", settings),
   removeWorktreeCopy: (path: string) =>
     ipcRenderer.invoke("worktree-cleanup:remove", path),
+  /** This machine's shared session folder: where questions with no code land. */
+  sharedScratchReport: () => ipcRenderer.invoke("shared-scratch:report"),
+  saveSharedScratchSettings: (settings: unknown) =>
+    ipcRenderer.invoke("shared-scratch:save-settings", settings),
+  removeSharedSession: (path: string) =>
+    ipcRenderer.invoke("shared-scratch:remove", path),
+  cleanExpiredSharedSessions: () =>
+    ipcRenderer.invoke("shared-scratch:clean-expired"),
   listLocalDirectorySharedOverrides: () =>
     ipcRenderer.invoke("local-directory:list-shared-overrides"),
   setLocalDirectorySharedOverride: (input: {

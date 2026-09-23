@@ -35,6 +35,7 @@ describe("parseRoutingSettings", () => {
       confidence_threshold: 0.85,
       stale_review_hours: 8,
       base_url: "",
+      policy_prompt: "",
     });
   });
 
@@ -180,7 +181,7 @@ describe("withRoutingSettings", () => {
     ).toEqual({
       theme: "dark",
       other: { a: 1 },
-      routing: { enabled: true, model: "m", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "" },
+      routing: { enabled: true, model: "m", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "", policy_prompt: "" },
     });
   });
 
@@ -197,6 +198,7 @@ describe("withRoutingSettings", () => {
       confidence_threshold: 0.7,
       stale_review_hours: 24,
       base_url: "",
+      policy_prompt: "",
       projects: { tarot: "出海" },
       future: 1,
     });
@@ -258,7 +260,7 @@ describe("withRoutingSettings", () => {
   });
 
   it("round-trips through parse", () => {
-    const next = { enabled: true, model: "m", confidence_threshold: 0.42, stale_review_hours: 24, base_url: "" };
+    const next = { enabled: true, model: "m", confidence_threshold: 0.42, stale_review_hours: 24, base_url: "", policy_prompt: "" };
     expect(parseRoutingSettings(withRoutingSettings({}, next))).toEqual(next);
   });
 });

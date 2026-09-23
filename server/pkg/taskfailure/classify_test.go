@@ -147,6 +147,12 @@ func TestClassifyRules(t *testing.T) {
 		{"dsh sse payload stream ended", "SSE payload stream ended without [DONE]", ReasonAgentProviderNetwork},
 		{"dsh stream idle timeout", "DeepSeek stream idle timeout after 300000ms", ReasonAgentProviderNetwork},
 		{"dsh transport wrap after retry exhaustion", "TRANSPORT: DeepSeek API stream from https://api.deepseek.com failed", ReasonAgentProviderNetwork},
+		// DENE-727: the same TRANSPORT: adapter wrap with a generic cause.
+		// "api stream from" does not match, so this used to fall through to
+		// unknown and never auto-retry. The screenshot is this exact string.
+		{"adapter transport connection error", "TRANSPORT: Connection error.", ReasonAgentProviderNetwork},
+		{"adapter transport connection error with exit status", "TRANSPORT: Connection error.; agent exited with error: exit status 1", ReasonAgentProviderNetwork},
+		{"grok acp wrap of transport connection error", "grok session/prompt failed: session/prompt: TRANSPORT: Connection error. (code=-32603)", ReasonAgentProviderNetwork},
 		// BHD-135: Pi's OpenAI-compatible SDK wording for a dropped LiteLLM
 		// call. Bare strings, then the same strings glued to "exit status 1"
 		// after pi-print-clean-exit forces a non-zero wrap-up.
@@ -205,6 +211,7 @@ func TestClassifyRules(t *testing.T) {
 		{"local tool connection error is not provider network", "local tool connection error while opening its database", ReasonAgentUnknown},
 		{"mcp request timeout is not provider network", "MCP server request timed out while loading configuration", ReasonAgentUnknown},
 		{"local connection error with exit remains process failure", "MCP server connection error; agent exited with error: exit status 1", ReasonAgentProcessFailure},
+		{"acp transport wording without the code token stays unknown", "ACP transport over stdin/stdout failed to start", ReasonAgentUnknown},
 
 		// 15. Digit-boundary regression: 3-digit HTTP status codes must NOT
 		//     match when embedded in a longer number. Before the fix these
@@ -688,6 +695,54 @@ func TestClassifyKeepsDeadlineExceededAsProviderNetwork(t *testing.T) {
 
 	if got := Classify("post to provider: context deadline exceeded"); got != ReasonAgentProviderNetwork {
 		t.Errorf("Classify(provider deadline) = %q, want %q", got, ReasonAgentProviderNetwork)
+	}
+}
+
+// TestNormalizeDaemonReasonUpgradesAdapterTransport covers the mixed-version
+// window for DENE-727. A daemon that predates isAdapterTransportError
+// classifies "TRANSPORT: Connection error." as unknown (or process_failure
+// when an exit-status trailer is glued on). unknown is off the retry
+// allowlist, so the run dies on its first attempt. Recognising the wrap
+// upgrades it to provider_network the moment the server deploys.
+func TestNormalizeDaemonReasonUpgradesAdapterTransport(t *testing.T) {
+	t.Parallel()
+
+	const rawError = "TRANSPORT: Connection error."
+
+	for _, legacy := range []string{
+		string(ReasonAgentUnknown),
+		string(ReasonAgentProcessFailure),
+		"agent_error",
+	} {
+		if got := NormalizeDaemonReason(legacy, rawError); got != ReasonAgentProviderNetwork {
+			t.Errorf("NormalizeDaemonReason(%q, TRANSPORT wrap) = %q, want %q", legacy, got, ReasonAgentProviderNetwork)
+		}
+	}
+
+	if got := NormalizeDaemonReason(string(ReasonAgentProviderNetwork), rawError); got != ReasonAgentProviderNetwork {
+		t.Errorf("NormalizeDaemonReason(provider_network) = %q, want it preserved", got)
+	}
+
+	unrelated := map[string]struct {
+		reason   string
+		rawError string
+		want     Reason
+	}{
+		"local connection error stays unknown": {
+			reason:   string(ReasonAgentUnknown),
+			rawError: "local tool connection error while opening its database",
+			want:     ReasonAgentUnknown,
+		},
+		"mcp connection error with exit stays process_failure": {
+			reason:   string(ReasonAgentProcessFailure),
+			rawError: "MCP server connection error; agent exited with error: exit status 1",
+			want:     ReasonAgentProcessFailure,
+		},
+	}
+	for name, tc := range unrelated {
+		if got := NormalizeDaemonReason(tc.reason, tc.rawError); got != tc.want {
+			t.Errorf("%s: NormalizeDaemonReason = %q, want %q", name, got, tc.want)
+		}
 	}
 }
 

@@ -18,9 +18,19 @@ export interface Project {
   due_date: string | null;
   created_at: string;
   updated_at: string;
+  created_by?: string | null;
   issue_count: number;
   done_count: number;
   resource_count: number;
+  /** Resource sharing scope. Older servers omit this field. */
+  visibility?: "private" | "project" | "workspace";
+}
+
+export interface ProjectVisibilityPreview {
+  project_id: string;
+  visibility: "private" | "project" | "workspace";
+  affected_count: number;
+  previously_private_count: number;
 }
 
 export interface CreateProjectRequest {

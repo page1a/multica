@@ -1,0 +1,72 @@
+{
+  "button": {
+    "label": "导出日志",
+    "tooltip": "导出这次运行的日志包"
+  },
+  "dialog": {
+    "title": "导出运行日志",
+    "subtitle": "生成一份可下载、可上报的脱敏日志包",
+    "cancel": "取消"
+  },
+  "range": {
+    "section": "导出范围",
+    "run": "本次运行",
+    "run_hint": "运行 {{id}}",
+    "hours": "最近 {{hours}} 小时",
+    "hours_hint": "从 {{from}} 开始",
+    "hours_input": "回溯小时数",
+    "task": "整个任务",
+    "task_hint": "全部历史运行"
+  },
+  "action": {
+    "export": "导出日志",
+    "reexport": "重新导出",
+    "retry": "重试",
+    "partial": "只导出已收集部分",
+    "widen": "扩大到整个任务",
+    "report": "作为评论附件上报并 @负责人",
+    "retry_comment": "重新发送评论",
+    "copy_summary": "复制给 AI 的摘要",
+    "copied": "已复制",
+    "download": "下载日志包"
+  },
+  "state": {
+    "idle_title": "还没有导出",
+    "idle_body": "选一个范围，然后点「{{action}}」。日志包由服务端一次成型生成：结构化日志、运行元信息，以及一段可直接贴给 AI 的摘要。",
+    "section": "导出结果",
+    "collecting_title": "正在收集日志",
+    "collecting_body": "正在读取结构化日志、运行元信息和脱敏摘要。",
+    "collected": "已收集 {{n}} 条",
+    "received": "已接收 {{received}} / {{total}}",
+    "empty_title": "这段时间没有日志",
+    "empty_body": "没有找到符合「{{range}}」的记录。",
+    "failed_title": "导出没有完成",
+    "partial_note": "日志包由服务端一次成型生成，失败时没有半份产物可以外发；上一次成功导出的那份还在这里。",
+    "restored": "这是上一次成功导出的日志包。"
+  },
+  "card": {
+    "entries": "{{n}} 条记录",
+    "runs": "{{n}} 次运行",
+    "truncated": "已达条数上限，只有记录的前半段",
+    "redacted": "已自动脱敏",
+    "redaction_incomplete": "脱敏不完整，请勿直接外发",
+    "redaction_unknown": "脱敏状态未知，请勿直接外发",
+    "summary": "AI 摘要",
+    "no_summary": "（没有摘要文本）"
+  },
+  "report": {
+    "hint": "优先推送到工作区日志仓库，评论只留链接；仓库不可用时自动回退为评论附件。",
+    "running": "正在上报…",
+    "success_git": "已上报到 {{issue}}，日志包已推送到 {{repo}}。",
+    "success_attachment": "已上报到 {{issue}}，日志包已作为评论附件。",
+    "fallback": "已回退为评论附件：{{reason}}",
+    "push_landed": "日志包已推送到仓库，但评论没有发出：{{reason}}",
+    "failed": "上报失败：{{reason}}",
+    "link": "打开日志包"
+  },
+  "error": {
+    "export_failed": "导出失败",
+    "report_failed": "上报失败",
+    "no_issue": "这次运行没有关联 issue，无法上报。"
+  }
+}

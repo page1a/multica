@@ -16,10 +16,14 @@ import type {
  *   1. A sub-issue's status is derived from its stage, never authored. Stage 1
  *      runs the moment the group exists; stage 2 and later sit in Backlog with
  *      their assignee already bound, waiting for someone to promote the stage.
- *      This is the whole dispatch policy, and it is expressed purely as the
- *      payload's `status` — the server has no stage-to-status rule to keep in
- *      sync with (docs/design/issue-draft-group-finalize.md §6).
- *   2. The stage set is normalized before it is stored: stages are 1..N with no
+ *      The same rule is mirrored at the server's final write boundary
+ *      (issueDraftChildStatusForCreate), because the confirm sends a revision
+ *      and the server is the last place a raw payload can be caught.
+ *   2. A ROOT with sub-issues is the group's coordinator: an active status (see
+ *      ISSUE_DRAFT_COORDINATOR_STATUS) with its assignee kept, but no run of its
+ *      own at confirm time. It exists to be woken by the stage barrier, and a
+ *      backlog root would never be woken at all.
+ *   3. The stage set is normalized before it is stored: stages are 1..N with no
  *      gaps, and a group where SOME sub-issues are staged gets stage 1 for the
  *      rest. A sub-issue with no stage in a staged group falls out of the stage
  *      barrier silently, which is worse than being late.
@@ -33,6 +37,29 @@ export const ISSUE_DRAFT_MAX_CHILDREN = 20;
 
 /** What the alignment prompt asks for by default: a group a person can read. */
 export const ISSUE_DRAFT_RECOMMENDED_CHILDREN = 8;
+
+/**
+ * The status a root with sub-issues is created with.
+ *
+ * A group's root coordinates: it is the node the stage barrier wakes when a
+ * stage closes, and `notifyParentOfChildDone` skips three kinds of parent
+ * outright — `done`, `cancelled`, and `backlog` (MUL-3497, the
+ * "don't accidentally activate a parked parent" rule). A backlog coordinator
+ * would therefore never be woken, and every stage after the first would sit in
+ * Backlog forever with nobody told to promote it.
+ *
+ * So the coordinator stays ACTIVE. Backlog is deliberately not reused, and the
+ * root is kept out of the queue by the create path instead: the confirm
+ * suppresses its assignee run (`SuppressAssigneeRun`), which is a rule about
+ * this confirm rather than a state the issue is left in. Later writes to the
+ * root — a person reassigning it, a status change — behave like any other
+ * issue's.
+ *
+ * The server mirrors this value at its final write boundary
+ * (issueDraftCoordinatorStatus), because the panel's save is not the only way a
+ * payload reaches the confirm.
+ */
+export const ISSUE_DRAFT_COORDINATOR_STATUS = "in_progress";
 
 /**
  * The status a sub-issue is created with, from its stage.
@@ -163,9 +190,19 @@ export function normalizeIssueDraftPayloadGroup(
   const children = payload.children ?? [];
   if (children.length === 0) return payload;
   const normalized = normalizeIssueDraftChildren(children);
-  return sameIssueDraftChildren(children, normalized)
-    ? payload
-    : { ...payload, children: normalized };
+  const sameChildren = sameIssueDraftChildren(children, normalized);
+  // A grouped root is the coordinator, so its status is derived too — from the
+  // existence of sub-issues rather than from a stage. Normalizing the stored
+  // payload (not just the preview) is what keeps the draft the confirm reads
+  // byte-compatible with the issue the confirm creates.
+  const statusChanged =
+    (payload.status.trim() || "todo") !== ISSUE_DRAFT_COORDINATOR_STATUS;
+  if (sameChildren && !statusChanged) return payload;
+  return {
+    ...payload,
+    ...(statusChanged ? { status: ISSUE_DRAFT_COORDINATOR_STATUS } : {}),
+    ...(sameChildren ? {} : { children: normalized }),
+  };
 }
 
 /** Whether two sub-issue sets are the same, field by field. */
@@ -201,21 +238,45 @@ export interface IssueDraftNodeDispatch {
 /**
  * Whether creating this node starts an agent straight away.
  *
- * The server's rule, mirrored from `shouldEnqueueAgentTaskWithQueries`: work is
- * enqueued unless the effective status is Backlog, and there is nothing to
- * enqueue without an agent assignee. `status` is normalized the way the server
- * normalizes it — an empty string is `todo`.
+ * The server's rule, mirrored from `shouldEnqueueAgentTaskWithQueries` /
+ * `maybeEnqueueOnAssign`: work is enqueued unless the effective status is
+ * Backlog, and there is nothing to enqueue without an agent OR SQUAD assignee.
+ * `status` is normalized the way the server normalizes it — an empty string is
+ * `todo`.
  *
  * A member assignee is deliberately not "running": assigning a person enqueues
  * nothing, and saying otherwise would tell the user a human had been paged.
+ * A squad does run — the server wakes its leader — and leaving it out made the
+ * preview promise nothing for a row that starts work.
  */
 export function issueDraftNodeRunsOnCreate(
   node: IssueDraftNodeDispatch,
 ): boolean {
   const status = node.status.trim() || "todo";
   if (status === "backlog") return false;
-  return node.assignee_type === "agent" && !!node.assignee_id;
+  const type = node.assignee_type;
+  if (type !== "agent" && type !== "squad") return false;
+  return !!node.assignee_id;
 }
+
+/**
+ * What one row of the confirm preview will do.
+ *
+ * One value per row, so the panel renders a badge instead of re-deriving the
+ * rule — a second copy of the dispatch policy is what let "unassigned sub-issue"
+ * and "waits for its stage" drift apart in the first place.
+ */
+export type IssueDraftGroupRowOutcome =
+  /** An agent or squad is paged the moment the row exists. */
+  | "starts"
+  /** Created in Backlog with its assignee bound, waiting for its stage. */
+  | "parked"
+  /** Created with nobody on it; nothing is started, and it stays visible as unassigned. */
+  | "unassigned"
+  /** Assigned to a person: created, and no agent is paged. */
+  | "member"
+  /** The root of a group with sub-issues: it coordinates instead of executing. */
+  | "coordinates";
 
 /** One line of the confirm preview: a node and what confirming does with it. */
 export interface IssueDraftGroupRow {
@@ -231,6 +292,8 @@ export interface IssueDraftGroupRow {
   isRoot: boolean;
   /** Confirming creates this issue AND starts its assignee's work. */
   startsOnCreate: boolean;
+  /** Why it runs, or why nothing runs. One badge per row reads from this. */
+  outcome: IssueDraftGroupRowOutcome;
   /**
    * This node already owns an issue, so this confirm adopts it and never
    * rewrites it (DENE-414). False for every node of a first round, which is
@@ -258,9 +321,12 @@ export interface IssueDraftGroupPlan {
 /**
  * What pressing "confirm and create" will do, as one list.
  *
- * The root's status is taken as the payload carries it (the panel owns that
- * field); a sub-issue's is derived from its stage, which is what makes the
- * preview agree with the stored payload even while the user is mid-edit.
+ * A sub-issue's status is derived from its stage, which is what makes the
+ * preview agree with the stored payload even while the user is mid-edit. The
+ * root's is taken from the payload — except when the payload HAS sub-issues, in
+ * which case the root is the group's coordinator and its status is the
+ * coordinator's, whatever the payload happened to carry (see
+ * ISSUE_DRAFT_COORDINATOR_STATUS).
  *
  * `builtKeys` are the nodes a previous round already created (see
  * `issueDraftBuiltNodeKeys`); the ROOT's key is `""`, exactly as it is in the
@@ -279,16 +345,27 @@ export function planIssueDraftGroup(
   }
 
   const isBuilt = (key: string) => builtKeys?.has(key) === true;
+  const hasChildren = (payload.children?.length ?? 0) > 0;
+  const rootStatus = hasChildren
+    ? ISSUE_DRAFT_COORDINATOR_STATUS
+    : payload.status.trim() || "todo";
   const root: IssueDraftGroupRow = {
     key: "",
     title: payload.title,
     stage: null,
-    status: payload.status.trim() || "todo",
+    status: rootStatus,
     assigneeType: payload.assignee_type ?? null,
     assigneeId: payload.assignee_id ?? null,
     assigneeHint: null,
     isRoot: true,
-    startsOnCreate: issueDraftNodeRunsOnCreate(payload),
+    // A coordinator is not an executor: it never starts its own run at confirm
+    // time, however it is assigned. That is a statement about THIS confirm, not
+    // about "nobody is assigned", which is why the row carries `coordinates`
+    // rather than the unassigned badge.
+    startsOnCreate: !hasChildren && issueDraftNodeRunsOnCreate(payload),
+    outcome: hasChildren
+      ? "coordinates"
+      : issueDraftRowOutcome(rootStatus, payload.assignee_type, payload.assignee_id),
     // The root's key is "", the same key the payload and the server's node
     // model give it, so an adopted root is expressed in the same set as an
     // adopted sub-issue rather than as a second flag.
@@ -311,6 +388,11 @@ export function planIssueDraftGroup(
         assignee_type: child.assignee_type,
         assignee_id: child.assignee_id,
       }),
+      outcome: issueDraftRowOutcome(
+        status,
+        child.assignee_type,
+        child.assignee_id,
+      ),
       alreadyBuilt: isBuilt(child.key),
     };
   });
@@ -327,6 +409,33 @@ export function planIssueDraftGroup(
     parked: incoming.filter((row) => row.status === "backlog").length,
     built: rows.length - incoming.length,
   };
+}
+
+/**
+ * The one reason a row does or does not run.
+ *
+ * Status first: a row in Backlog is parked whoever holds it — that is the
+ * parking rule the server itself applies, and for a sub-issue the status is
+ * already the stage's. Saying "unassigned" about a parked row would hide the
+ * promotion it is actually waiting for. Only inside the running stage does the
+ * assignee decide: nobody at all, a person, or an agent/squad that is paged on
+ * create.
+ *
+ * An unassigned stage-1 sub-issue is created `todo` with no run: an issue the
+ * board shows as unassigned is how a person finds it and fills the seat in, and
+ * parking it in Backlog instead would hide exactly the gap the confirm warned
+ * about. Nothing is enqueued either way — `maybeEnqueueOnAssign` has no
+ * assignee to enqueue for.
+ */
+function issueDraftRowOutcome(
+  status: string,
+  assigneeType: string | null | undefined,
+  assigneeId: string | null | undefined,
+): IssueDraftGroupRowOutcome {
+  if (status === "backlog") return "parked";
+  if (!assigneeType || !assigneeId) return "unassigned";
+  if (assigneeType === "member") return "member";
+  return "starts";
 }
 
 /**

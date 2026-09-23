@@ -134,7 +134,7 @@
     "queued": "Queued"
   },
   "close_protocol": {
-    "missing": "Not closed under protocol",
+    "missing": "No close record",
     "status_drift": "close.status ≠ {{issueStatus}}",
     "next_owner": "Next: {{name}}",
     "next_owner_none": "Next: none",
@@ -1102,6 +1102,8 @@
     "group_summary_parent": "The parent is created unassigned, so it starts nothing on its own.",
     "created_title": "Issue created",
     "created_group_title": "{{count}} issues created",
+    "assignee_dropped": "“{{title}}” could not be assigned, so it was created unassigned.",
+    "assignee_dropped_several": "{{count}} issues could not be assigned, so they were created unassigned.",
     "retired_title": "This alignment has finished",
     "retired_description": "It is no longer one of your unfinished drafts.",
     "load_failed": "Could not load this alignment.",

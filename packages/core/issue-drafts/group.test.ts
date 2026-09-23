@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { IssueDraftChild, IssueDraftPayload } from "../types";
 import {
+  ISSUE_DRAFT_COORDINATOR_STATUS,
   issueDraftChildStatus,
   issueDraftCreatedGroup,
   issueDraftLandingIssueId,
@@ -206,6 +207,7 @@ describe("normalizeIssueDraftChildren", () => {
 describe("normalizeIssueDraftPayloadGroup", () => {
   it("returns the same payload when there is nothing to normalize", () => {
     const draft = payload({
+      status: ISSUE_DRAFT_COORDINATOR_STATUS,
       children: [child({ key: "a", stage: 1, status: "todo", priority: "none" })],
     });
     expect(normalizeIssueDraftPayloadGroup(draft)).toBe(draft);
@@ -214,6 +216,10 @@ describe("normalizeIssueDraftPayloadGroup", () => {
   it("leaves a payload with no children alone", () => {
     const draft = payload();
     expect(normalizeIssueDraftPayloadGroup(draft)).toBe(draft);
+    // A single issue keeps whatever status its author chose, including the
+    // parking lot: there is no group for it to coordinate.
+    const parked = payload({ status: "backlog" });
+    expect(normalizeIssueDraftPayloadGroup(parked)).toBe(parked);
   });
 
   it("normalizes the group when it needs it", () => {
@@ -221,7 +227,27 @@ describe("normalizeIssueDraftPayloadGroup", () => {
     const normalized = normalizeIssueDraftPayloadGroup(draft);
     expect(normalized.children?.[0]?.key).toBe("c1");
     expect(normalized.children?.[0]?.status).toBe("backlog");
-  });});
+  });
+
+  it("writes the coordinator status onto a root that has sub-issues", () => {
+    // The stored draft is what the confirm reads back (it sends a revision, not
+    // a payload), so a root the preview calls a coordinator has to BE one in
+    // the payload too. Backlog is the interesting input: it is what the root
+    // used to be parked in, and it is the status the stage barrier refuses to
+    // wake.
+    for (const status of ["", "todo", "backlog"]) {
+      const draft = payload({
+        status,
+        children: [child({ key: "a", status: "todo", priority: "none" })],
+      });
+      const normalized = normalizeIssueDraftPayloadGroup(draft);
+      expect(normalized.status).toBe(ISSUE_DRAFT_COORDINATOR_STATUS);
+      // The children are untouched when they were already normalized, so the
+      // root's status change alone must not rebuild them.
+      expect(normalized.children).toBe(draft.children);
+    }
+  });
+});
 
 describe("issueDraftNodeRunsOnCreate", () => {
   it("runs a todo node with an agent assignee", () => {
@@ -230,6 +256,16 @@ describe("issueDraftNodeRunsOnCreate", () => {
         status: "todo",
         assignee_type: "agent",
         assignee_id: "a1",
+      }),
+    ).toBe(true);
+  });
+
+  it("runs a todo node with a squad assignee — the server wakes its leader", () => {
+    expect(
+      issueDraftNodeRunsOnCreate({
+        status: "todo",
+        assignee_type: "squad",
+        assignee_id: "s1",
       }),
     ).toBe(true);
   });
@@ -360,6 +396,65 @@ describe("planIssueDraftGroup", () => {
     );
     expect(plan.starting).toBe(2);
     expect(plan.parked).toBe(0);
+  });
+
+  it("never counts a coordinator root as starting, even with an agent on it", () => {
+    // The root's assignee is the seat the stage barrier wakes, not an
+    // executor. Counting it would promise a run that the confirm suppresses.
+    const plan = planIssueDraftGroup(
+      payload({
+        status: "todo",
+        assignee_type: "agent",
+        assignee_id: "coord",
+        children: [
+          child({ key: "a", stage: 1, assignee_type: "agent", assignee_id: "ag1" }),
+          child({ key: "b", stage: 2, assignee_type: "agent", assignee_id: "ag2" }),
+        ],
+      }),
+    );
+    expect(plan.rows[0]?.startsOnCreate).toBe(false);
+    expect(plan.rows[0]?.outcome).toBe("coordinates");
+    expect(plan.rows[0]?.status).toBe(ISSUE_DRAFT_COORDINATOR_STATUS);
+    expect(plan.starting).toBe(1);
+    // Backlog is what "waiting for a stage" means, and the coordinator is not
+    // waiting for one: it is the node that promotes it.
+    expect(plan.parked).toBe(1);
+  });
+
+  it("still runs a single-issue root that has an agent", () => {
+    const plan = planIssueDraftGroup(
+      payload({ status: "todo", assignee_type: "agent", assignee_id: "ag1" }),
+    );
+    expect(plan.rows[0]?.outcome).toBe("starts");
+    expect(plan.starting).toBe(1);
+  });
+
+  it("names one outcome per row", () => {
+    const plan = planIssueDraftGroup(
+      payload({
+        children: [
+          child({ key: "starts", stage: 1, assignee_type: "agent", assignee_id: "ag1" }),
+          child({ key: "squad", stage: 1, assignee_type: "squad", assignee_id: "sq1" }),
+          child({ key: "parked", stage: 2, assignee_type: "agent", assignee_id: "ag2" }),
+          child({ key: "unassigned", stage: 1 }),
+          child({ key: "member", stage: 1, assignee_type: "member", assignee_id: "u1" }),
+        ],
+      }),
+    );
+    expect(plan.rows.map((row) => row.outcome)).toEqual([
+      "coordinates",
+      "starts",
+      "starts",
+      "parked",
+      "unassigned",
+      "member",
+    ]);
+    // An unassigned stage-1 sub-issue is created todo and starts nothing: it is
+    // not parked, it is a gap somebody has to fill.
+    expect(plan.rows[4]?.status).toBe("todo");
+    expect(plan.rows[4]?.startsOnCreate).toBe(false);
+    expect(plan.starting).toBe(2);
+    expect(plan.parked).toBe(1);
   });
 });
 

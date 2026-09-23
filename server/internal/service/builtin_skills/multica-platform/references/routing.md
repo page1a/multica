@@ -10,13 +10,21 @@ work is finished.
 
 What it may do, and only when the slot is still **empty**:
 
-- **`todo`** — fill the assignee with a seat from the tier ladder, and fill the
-  issue's 验收席 with a seat or 「不需要验收」. **Routing never writes a person
+- **Top-level issues only own acceptance.** An issue with `parent_issue_id` is
+  a sub-issue: it may receive an executor at `todo`, but it never gets an
+  independently routed 验收席, never enters an acceptance handoff, and is not
+  considered by the stale-review sweep. Its terminal result feeds the parent
+  stage/barrier; the parent is the single issue that later enters `in_review`
+  for a unified review of the full child tree.
+- **`todo`** — fill the assignee with a seat from the tier ladder. For a
+  top-level issue, also fill the issue's 验收席 with a seat or 「不需要验收」.
+  **Routing never writes a person
   into 验收席**: an issue a person holds is one routing never touches again, so
   a person in that slot freezes the issue there. When the judge decides the
   acceptance needs a human call, the slot still gets a seat and the decision
   comment tells that seat to @ the person instead.
-- **`in_review`** — hand the issue to the seat in 验收席 (which starts its run).
+- **`in_review` (top-level only)** — hand the issue to the seat in 验收席
+  (which starts its run).
   「不需要验收」 is left alone. A 验收席 a person filled with a **person** is
   notified with an @ and a subscription, and the issue is **not** reassigned —
   whoever is holding it keeps it, so its status can still be moved.
@@ -24,8 +32,8 @@ What it may do, and only when the slot is still **empty**:
   changed.**
 - **`in_progress` / `done` / `cancelled` / `backlog`** — nothing at all.
 
-There is a fourth trigger that is not a status change. A ticket sitting in
-`in_review` with nothing happening on it and no run working on it is **stalled**,
+There is a fourth trigger that is not a status change. A top-level ticket sitting
+in `in_review` with nothing happening on it and no run working on it is **stalled**,
 and a periodic sweep looks at it once the quiet passes the workspace's stall
 threshold (Settings → Routing, default 24 hours):
 
@@ -34,13 +42,13 @@ threshold (Settings → Routing, default 24 hours):
 - The status is moved to done **only** when the 验收席 already left a pass verdict
   on the ticket, and the comment recording it says which remark it read. With
   nothing from the reviewer on the ticket this branch cannot be taken at all.
-- A ticket that reached `in_review` before its 验收席 was ever decided gets the
+- A top-level ticket that reached `in_review` before its 验收席 was ever decided gets the
   slot filled now and is handed on — this is the same row as `in_review` above,
   and it runs even when the assignee is a person.
 - With routing switched off, the sweep does not run.
 
-验收席 is a native issue field, not a workspace property: `reviewer_type` +
-`reviewer_id` on the issue, shaped exactly like `assignee_type` +
+验收席 is a native **top-level issue** field, not a workspace property:
+`reviewer_type` + `reviewer_id` on the issue, shaped exactly like `assignee_type` +
 `assignee_id`, plus one extra type. Set it by hand with
 
 ```bash

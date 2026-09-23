@@ -6382,6 +6382,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	affectedAgents := make(map[string]pgtype.UUID)
 	processedIssues := make(map[string]bool)
 	retriedIssues := make(map[string]bool)
+	quotaHeldIssues := make(map[string]bool)
 	retried := 0
 
 	for _, t := range tasks {
@@ -6396,6 +6397,19 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			}
 		}
 		if !retryPending {
+			// Quota exhaustion is not retried (DENE-675). Break the spent seat
+			// and hand the unfinished issue to another seat before the
+			// in_progress → todo reset below looks for an active task.
+			hold, err := s.RelayQuotaFailure(ctx, t)
+			if err != nil {
+				slog.Warn("handle failed tasks: quota relay failed",
+					"task_id", util.UUIDToString(t.ID),
+					"error", err,
+				)
+			}
+			if hold && t.IssueID.Valid {
+				quotaHeldIssues[util.UUIDToString(t.IssueID)] = true
+			}
 			if _, err := s.recoverDelegatedTaskFailure(ctx, t); err != nil {
 				slog.Warn("handle failed tasks: delegated failure recovery failed",
 					"task_id", util.UUIDToString(t.ID),
@@ -6427,7 +6441,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				// projects a nonterminal custom key onto a built-in, so this is
 				// a key comparison on purpose. (MUL-6243, MUL-7240)
 				effectiveStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
-				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
+				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] && !quotaHeldIssues[issueKey] {
 					processedIssues[issueKey] = true
 					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
 					if checkErr != nil {

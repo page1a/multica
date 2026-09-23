@@ -147,14 +147,14 @@ multica issue metadata set <issue-id> --key close.at --value 2026-09-15T12:00:00
 
 ### 2.3 决策表（结论 → 状态 → 唤醒）
 
-判定条件按从上到下第一条命中执行。`needs_acceptance` = 本票 AC 要求 Reviewer / 人类验收 / 真机确认，且该验收还没发生。`is_staged_child` = `parent_issue_id` 非空且（自己有 `stage` 或父票存在任何 staged 兄弟）。
+判定条件按从上到下第一条命中执行。`needs_acceptance` = 顶层父票 AC 要求 Reviewer / 人类验收 / 真机确认，且该验收还没发生。子票不拥有验收结论：只报告执行结果并按 `delivered` 收口，由父票验收人连同整棵子票树统一检查。`is_staged_child` = `parent_issue_id` 非空且（自己有 `stage` 或父票存在任何 staged 兄弟）。
 
 | # | 结论 | 判定条件 | `issue.status` | `next_owner` | `wake_action` | 会唤醒谁 |
 | --- | --- | --- | --- | --- | --- | --- |
 | A | `delivered` | 本票 ask 已交付，**不** `needs_acceptance`，且 `is_staged_child` | `done` | 父票 assignee（agent/squad）或 `none`（父票 member/无 assignee） | `stage_done` | 仅当本完成关闭屏障时，由 **server** 唤醒父票 assignee。Agent **不要**再 mention 父票 assignee（防双发） |
 | B | `delivered` | 本票 ask 已交付，**不** `needs_acceptance`，不是 staged child | `done` | `none`，除非 AC 点名要叫醒某人 | `none` 或 `mention`（仅当 AC 点名） | 无父票屏障。需要叫醒时必须 `mention` |
-| C | `awaiting_review` | `needs_acceptance` 且验收人是 agent（Reviewer 席） | `in_review` | 该 Reviewer agent | `mention` | 证据评论里 `mention://agent/<reviewer>`。**不** `done`，屏障不关 |
-| D | `awaiting_human` | `needs_acceptance` 且验收人是人类 | `in_review` | 该 member | `none` | `mention://member/…` **不会入队**。人类靠 inbox/看板。可另 `mention` 一个 dispatcher agent 做看门，此时 `wake_action=mention` 且 next_owner 是那个 agent |
+| C | `awaiting_review` | 顶层父票 `needs_acceptance` 且验收人是 agent（Reviewer 席） | `in_review` | 该 Reviewer agent | `mention` | 证据评论里 `mention://agent/<reviewer>`。**不** `done`；子票屏障已由终态事实关闭 |
+| D | `awaiting_human` | 顶层父票 `needs_acceptance` 且验收人是人类 | `in_review` | 该 member | `none` | `mention://member/…` **不会入队**。人类靠 inbox/看板。可另 `mention` 一个 dispatcher agent 做看门，此时 `wake_action=mention` 且 next_owner 是那个 agent |
 | E | `blocked` | 缺权限 / 外人决策 / 外部依赖 | `blocked` | 能解阻塞的人：人类决策用 member；能继续跑的 agent 用 agent | `mention`（next_owner 是 agent/squad 时）或 `none`（纯人类） | 不关屏障。父票继续等 |
 | F | 本回合没有交付本票 ask（答问、旁证） | — | **不改状态** | — | — | 不写 `close.*` |
 
@@ -359,7 +359,8 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 
 | 角色 | 默认结论 | 默认状态 | 唤醒 |
 | --- | --- | --- | --- |
-| Builder（有 PR/需审） | `awaiting_review` | `in_review` | mention Reviewer。PR 标题带 identifier；**不要**在仍等 Reviewer 时 `done`。`Closes` 留给合并 |
+| Builder（父票有 PR/需审） | `awaiting_review` | `in_review` | mention Reviewer。PR 标题带 identifier；**不要**在仍等 Reviewer 时 `done`。`Closes` 留给合并 |
+| Builder（子票交付） | `delivered` | `done` | `stage_done`；不设置或触发独立 Reviewer，由父票统一验收 |
 | Builder（无验收门） | `delivered` | `done` | `stage_done`，禁止再 mention 父 assignee |
 | Reviewer 通过且尚未合并 | 不改结论 | 保持 `in_review` | 不新开 run 给 Builder，除非 `needs-work` |
 | Reviewer 通过且 Builder 已合并 / Reviewer 自合并 | `delivered` | 若 webhook 未把票打成 `done`，CLI 补 `done` | `stage_done` |

@@ -119,6 +119,33 @@ func TestStageProgressSummary(t *testing.T) {
 	}
 }
 
+func TestNestedParentBarrierDoesNotAskForIndependentReview(t *testing.T) {
+	got := stageAdvanceInstruction(0, "nested-parent", 0, false, true)
+	// Naming `in_review` in order to forbid it is the point of the guidance;
+	// what must not appear is the command that starts an acceptance chain.
+	// Only a top-level parent owns that command.
+	if strings.Contains(got, "multica issue status") {
+		t.Fatalf("nested parent guidance still hands over the acceptance command: %q", got)
+	}
+	if !strings.Contains(got, "do not move it to `in_review`") {
+		t.Fatalf("nested parent guidance must forbid the sub-issue's own review: %q", got)
+	}
+	if !strings.Contains(got, "top-level parent") {
+		t.Fatalf("nested parent guidance must point acceptance to the root parent: %q", got)
+	}
+	if !strings.Contains(got, "close protocol") {
+		t.Fatalf("nested parent guidance must close the sub-issue through the close protocol: %q", got)
+	}
+
+	// Positive control: the same row for a top-level parent does hand over
+	// the command, so the assertions above are about nested-ness rather than
+	// about the text happening to lack it.
+	top := stageAdvanceInstruction(0, "top-parent", 0, false, false)
+	if !strings.Contains(top, "multica issue status top-parent in_review") {
+		t.Fatalf("top-level parent guidance lost its acceptance command: %q", top)
+	}
+}
+
 func TestStageProgressSummary_FinalStageNoNext(t *testing.T) {
 	children := []db.Issue{
 		child(1, "done"), child(1, "done"),

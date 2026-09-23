@@ -27,6 +27,9 @@ vi.mock("./components/chat-message-list", () => ({
 vi.mock("./components/chat-input", () => ({
   ChatInput: () => <div>chat-input</div>,
 }));
+vi.mock("./components/provider-quota-strip", () => ({
+  ProviderQuotaStrip: () => null,
+}));
 vi.mock("./components/chat-thread-list", () => ({
   ChatThreadList: ({
     onSelectSession,

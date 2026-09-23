@@ -63,6 +63,7 @@ import { PillButton } from "../common/pill-button";
 import { githubShortLabel } from "../common/github-url";
 import {
   canSetLocalDirectorySharedOverride,
+  initLocalGit,
   isDesktopShell,
   pickDirectory,
   setLocalDirectorySharedOverride,
@@ -72,6 +73,8 @@ import { useLocalDaemonStatus } from "../platform/use-local-daemon-status";
 import { useConfigStore } from "@multica/core/config";
 import type { LocalDirectoryExecutionMode } from "@multica/core/types";
 import { LocalDirectoryModeOptions } from "../projects/components/local-directory-mode-dialog";
+import { PlainFolderGitOffer } from "../projects/components/plain-folder-git-offer";
+import { isPlainFolder } from "../projects/components/code-decision-view";
 import {
   apiExecutionMode,
   coerceLocalDirectoryMode,
@@ -213,8 +216,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   // undefined = could not check (older desktop build); the daemon re-checks
   // authoritatively, so unknown stays permissive.
   const [localIsGitRepo, setLocalIsGitRepo] = useState<boolean | undefined>(undefined);
+  const [localGitRoot, setLocalGitRoot] = useState<string | undefined>(undefined);
   const [localRealPath, setLocalRealPath] = useState<string | undefined>(undefined);
   const [localRepoKey, setLocalRepoKey] = useState<string | undefined>(undefined);
+  const [gitInitPending, setGitInitPending] = useState(false);
+  const [gitInitError, setGitInitError] = useState<string | null>(null);
   const [localModeOpen, setLocalModeOpen] = useState(false);
 
   // The daemon's worktree capability is no longer read here. It only ever fed
@@ -293,8 +299,10 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       setSelectedLocalPath(picked.path);
       setSelectedLocalLabel(picked.basename ?? null);
       setLocalIsGitRepo(validation.is_git_repo);
+      setLocalGitRoot(validation.git_root);
       setLocalRealPath(validation.real_path);
       setLocalRepoKey(validation.repo_key);
+      setGitInitError(null);
     } finally {
       setLocalPicking(false);
     }
@@ -305,9 +313,45 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     setSelectedLocalLabel(null);
     setLocalPickError(null);
     setLocalIsGitRepo(undefined);
+    setLocalGitRoot(undefined);
     setLocalRealPath(undefined);
     setLocalRepoKey(undefined);
+    setGitInitError(null);
     setLocalMode(null);
+  };
+
+  const handleInitLocalGit = async () => {
+    if (!selectedLocalPath || gitInitPending) return;
+    setGitInitPending(true);
+    setGitInitError(null);
+    try {
+      const result = await initLocalGit(selectedLocalPath);
+      if (!result.ok) {
+        setGitInitError(
+          result.reason === "inside_repo"
+            ? tProjects(($) => $.resources.plain_folder_inside_repo)
+            : result.error || tProjects(($) => $.resources.plain_folder_init_failed),
+        );
+        return;
+      }
+      const measured = await validateLocalDirectory(selectedLocalPath);
+      if (!measured.ok || measured.is_git_repo !== true) {
+        setGitInitError(tProjects(($) => $.resources.plain_folder_init_failed));
+        return;
+      }
+      setLocalIsGitRepo(true);
+      setLocalGitRoot(measured.git_root);
+      setLocalRealPath(measured.real_path);
+      setLocalRepoKey(measured.repo_key);
+    } catch (err) {
+      setGitInitError(
+        err instanceof Error
+          ? err.message
+          : tProjects(($) => $.resources.plain_folder_init_failed),
+      );
+    } finally {
+      setGitInitPending(false);
+    }
   };
 
   // Sync field changes to draft store
@@ -911,6 +955,13 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                           <XIcon className="size-3" />
                         </button>
                       </div>
+                      {isPlainFolder(localIsGitRepo, localGitRoot) && (
+                        <PlainFolderGitOffer
+                          onInit={() => void handleInitLocalGit()}
+                          pending={gitInitPending}
+                          error={gitInitError ?? undefined}
+                        />
+                      )}
                       <div className="flex items-center gap-1.5">
                         <Popover open={localModeOpen} onOpenChange={setLocalModeOpen}>
                           <PopoverTrigger

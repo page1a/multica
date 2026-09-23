@@ -74,6 +74,29 @@ export interface RoutingHealth {
    * will refuse it.
    */
   workspace_key_storable: boolean;
+  /** Wording used when the workspace has not saved its own prompt. */
+  default_policy_prompt: string;
+  /** Wording the next judge call will actually see. */
+  policy_prompt: string;
+  provider_quotas: ProviderQuotaSummary[];
+  seats: RoutingSeatSummary[];
+}
+
+export interface ProviderQuotaSummary {
+  provider: string;
+  status: string;
+  used_percent: number | null;
+  remaining: number | null;
+  reset_at: string | null;
+  observed_at: string | null;
+}
+
+export interface RoutingSeatSummary {
+  agent_id: string;
+  tier: string;
+  model: string;
+  availability: string;
+  observed_at: string | null;
 }
 
 /**
@@ -98,6 +121,10 @@ export const RoutingHealthSchema = z.object({
   gateway_protocol: z.string().optional(),
   gateway_key_set: z.boolean().optional(),
   workspace_key_storable: z.boolean().optional(),
+  default_policy_prompt: z.string().optional(),
+  policy_prompt: z.string().optional(),
+  provider_quotas: z.array(z.unknown()).optional(),
+  seats: z.array(z.unknown()).optional(),
 });
 
 /**
@@ -123,6 +150,10 @@ export const UNKNOWN_ROUTING_HEALTH: RoutingHealth = {
   gateway_protocol: "openai",
   gateway_key_set: false,
   workspace_key_storable: false,
+  default_policy_prompt: "",
+  policy_prompt: "",
+  provider_quotas: [],
+  seats: [],
 };
 
 const KNOWN_STATES: readonly RoutingState[] = [
@@ -179,7 +210,56 @@ export function parseRoutingHealth(raw: unknown): RoutingHealth {
       parsed.gateway_protocol === "systemone" ? "systemone" : "openai",
     gateway_key_set: parsed.gateway_key_set === true,
     workspace_key_storable: parsed.workspace_key_storable === true,
+    default_policy_prompt:
+      typeof parsed.default_policy_prompt === "string" ? parsed.default_policy_prompt : "",
+    policy_prompt: typeof parsed.policy_prompt === "string" ? parsed.policy_prompt : "",
+    provider_quotas: parseProviderQuotas(parsed.provider_quotas),
+    seats: parseSeatSummaries(parsed.seats),
   };
+}
+
+function parseProviderQuotas(value: unknown): ProviderQuotaSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isQuotaRecord(item) || typeof item.provider !== "string" || item.provider === "") {
+      return [];
+    }
+    return [{
+      provider: item.provider,
+      status: typeof item.status === "string" && item.status !== "" ? item.status : "unknown",
+      used_percent: finiteOrNull(item.used_percent),
+      remaining: finiteOrNull(item.remaining),
+      reset_at: typeof item.reset_at === "string" ? item.reset_at : null,
+      observed_at: typeof item.observed_at === "string" ? item.observed_at : null,
+    }];
+  });
+}
+
+function parseSeatSummaries(value: unknown): RoutingSeatSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isQuotaRecord(item) || typeof item.agent_id !== "string" || item.agent_id === "") {
+      return [];
+    }
+    return [{
+      agent_id: item.agent_id,
+      tier: typeof item.tier === "string" && item.tier !== "" ? item.tier : "unknown",
+      model: typeof item.model === "string" && item.model !== "" ? item.model : "unknown",
+      availability:
+        typeof item.availability === "string" && item.availability !== ""
+          ? item.availability
+          : "unknown",
+      observed_at: typeof item.observed_at === "string" ? item.observed_at : null,
+    }];
+  });
+}
+
+function isQuotaRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function toCount(value: unknown): number {

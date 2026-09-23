@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
+	"github.com/multica-ai/multica/server/internal/logexport"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/permission"
@@ -98,6 +99,9 @@ var corsExposedHeaders = []string{
 	handler.HeaderCommentsTruncated,
 	handler.HeaderTimelineTruncated,
 	handler.HeaderActiveRunsTruncated,
+	// Without this the log-export dialog never learns the artifact's name and
+	// labels every download "log-export.json" (DENE-599).
+	handler.HeaderLogExportFilename,
 }
 
 func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
@@ -1235,6 +1239,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("Workspace routing keys disabled (no MULTICA_ROUTING_SECRET_KEY and no JWT_SECRET)")
 	}
 
+	// The log-export git token follows the routing key's derivation for the
+	// same reason and with its own HMAC domain, so the two ciphertexts can
+	// never be confused. MULTICA_LOG_EXPORT_SECRET_KEY still wins when set,
+	// for a deployment that wants this credential on its own key.
+	if logExportKey, err := secretbox.LoadKey("MULTICA_LOG_EXPORT_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(logExportKey)
+		if err != nil {
+			slog.Error("log export: secretbox.New failed; workspace git tokens cannot be stored", "error", err)
+		} else {
+			h.LogExportSecrets = box
+		}
+	} else if jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET")); jwtSecret != "" {
+		box, err := handler.NewLogExportSecretBox(jwtSecret)
+		if err != nil {
+			slog.Error("log export: derived secretbox failed; workspace git tokens cannot be stored", "error", err)
+		} else {
+			h.LogExportSecrets = box
+		}
+	} else {
+		slog.Info("Workspace log export git tokens disabled (no MULTICA_LOG_EXPORT_SECRET_KEY and no JWT_SECRET)")
+	}
+	// The pusher shells out to the git binary, which the runtime image
+	// installs. It is always wired; whether a workspace has a repo to push to
+	// is a settings question the handler answers per request.
+	h.LogExportPusher = &logexport.GitCLIPusher{}
+
 	if pluginKey, err := secretbox.LoadKey("MULTICA_PLUGIN_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(pluginKey)
 		if err != nil {
@@ -2019,6 +2049,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// desktop dialog, and `multica logs export`, so all three hand
 			// the user the same artifact.
 			r.Get("/api/tasks/{taskId}/logs/export", h.ExportTaskLogs)
+			// Same bundle, committed to the workspace's configured git repo,
+			// so the issue comment carries a link instead of a large
+			// attachment.
+			r.Post("/api/tasks/{taskId}/logs/export/push", h.PushTaskLogExport)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick actions (definitions; running one lives under
@@ -2086,6 +2120,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/visibility/preview", h.PreviewProjectVisibility)
 					r.Put("/visibility", h.SetProjectVisibility)
 					r.Get("/resources", h.ListProjectResources)
+					// Where a new task on this machine would run, computed by
+					// the same function the claim path uses. The project page
+					// displays it; it does not derive a directory of its own.
+					r.Get("/code-decision", h.PreviewProjectCodeDecision)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)

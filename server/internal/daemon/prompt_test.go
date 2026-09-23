@@ -1465,6 +1465,76 @@ func TestBuildCommentPromptLabelsDelegatedFailureSignalAsPlatform(t *testing.T) 
 	}
 }
 
+// TestBuildPromptInterruptedRetryContinuesSession pins DENE-727: an automatic
+// retry that resumes a session that already ran partway must not re-inject
+// the original triggering comment as a new task. It sends a continue
+// instruction and keeps reply routing so the agent answers in the same thread.
+func TestBuildPromptInterruptedRetryContinuesSession(t *testing.T) {
+	task := Task{
+		IssueID:                    "issue-retry-1",
+		IssueTitle:                 "失败 session 自动重试",
+		IssueDescription:           "the original task the first attempt already read",
+		TriggerCommentID:           "trigger-retry-1",
+		TriggerThreadID:            "thread-retry-1",
+		TriggerCommentContent:      "please implement the retry continue path",
+		TriggerAuthorType:          "member",
+		PriorSessionID:             "sess-halfway",
+		ContinueInterruptedSession: true,
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "Continue from where you left off") {
+		t.Fatalf("interrupted retry prompt must tell the agent to continue, got:\n%s", out)
+	}
+	if strings.Contains(out, "[NEW COMMENT]") {
+		t.Fatalf("interrupted retry must not re-inject the original comment as a new task, got:\n%s", out)
+	}
+	if strings.Contains(out, "please implement the retry continue path") {
+		t.Fatalf("interrupted retry must not re-send the original comment body, got:\n%s", out)
+	}
+	if strings.Contains(out, "the original task the first attempt already read") {
+		t.Fatalf("interrupted retry must not re-attach the issue snapshot, got:\n%s", out)
+	}
+	if !strings.Contains(out, "trigger-retry-1") {
+		t.Fatalf("interrupted retry must keep reply routing to the triggering thread, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptInterruptedRetryFallsBackWhenSessionMissing(t *testing.T) {
+	task := Task{
+		IssueID:                    "issue-retry-2",
+		TriggerCommentID:           "trigger-retry-2",
+		TriggerCommentContent:      "please implement the retry continue path",
+		TriggerAuthorType:          "member",
+		ContinueInterruptedSession: true,
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "[NEW COMMENT]") {
+		t.Fatalf("without a resumable session the retry must send the original task, got:\n%s", out)
+	}
+	if strings.Contains(out, "Continue from where you left off") {
+		t.Fatalf("continue prompt must not fire when the session is missing, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptInterruptedRetrySkipsChatUserMessage(t *testing.T) {
+	task := Task{
+		ChatSessionID:              "chat-retry-1",
+		ChatMessage:                "the original user turn the first attempt already saw",
+		PriorSessionID:             "sess-chat-halfway",
+		ContinueInterruptedSession: true,
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "Continue from where you left off") {
+		t.Fatalf("interrupted chat retry must tell the agent to continue, got:\n%s", out)
+	}
+	if strings.Contains(out, "User message:") {
+		t.Fatalf("interrupted chat retry must not re-send the original user message, got:\n%s", out)
+	}
+	if strings.Contains(out, "the original user turn the first attempt already saw") {
+		t.Fatalf("interrupted chat retry must not re-send the original user turn, got:\n%s", out)
+	}
+}
+
 // TestBuildCommentPromptCoalescedIDsOnlyFallback pins the old-server fallback:
 // when only coalesced ids are shipped (no embedded detail), the prompt must
 // still NOT assume a shared thread, and must reach the ids through a BOUNDED

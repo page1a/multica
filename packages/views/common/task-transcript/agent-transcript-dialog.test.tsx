@@ -72,7 +72,12 @@ vi.mock("@multica/ui/components/ui/dialog", () => ({
   DialogContent: ({ children }: { children: ReactNode }) => (
     <div role="dialog">{children}</div>
   ),
+  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
+  // The header's export button opens the log-export dialog, which describes
+  // itself; a module mock missing pieces of the real module crashes whoever
+  // uses them.
+  DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
 }));
 
 vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {

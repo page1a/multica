@@ -134,6 +134,50 @@ func TestTodoFillsBothSlotsAndDoesNotMention(t *testing.T) {
 	}
 }
 
+func TestChildTodoDispatchesExecutorWithoutAcceptanceSeat(t *testing.T) {
+	store := newFakeStore()
+	store.issue.ParentIssueID = "parent-1"
+	judge := &fakeJudge{verdict: confidentVerdict()}
+
+	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionAssigned {
+		t.Fatalf("action = %q, want %q", out.Action, ActionAssigned)
+	}
+	if len(store.assigns) != 1 {
+		t.Fatalf("executor writes = %v, want one child dispatch", store.assigns)
+	}
+	if len(store.reviewer) != 0 || !out.ReviewerWritten.Empty() {
+		t.Fatalf("child received an acceptance seat: writes=%v outcome=%+v", store.reviewer, out.ReviewerWritten)
+	}
+	if judge.callCount() != 1 {
+		t.Fatalf("judge calls = %d, want one executor-only decision", judge.callCount())
+	}
+}
+
+func TestChildInReviewDoesNotStartAcceptanceHandoff(t *testing.T) {
+	store := newFakeStore()
+	store.issue.ParentIssueID = "parent-1"
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	store.issue.Reviewer = ReviewerRef{}
+	judge := &fakeJudge{verdict: confidentVerdict()}
+
+	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionNoop || out.Reason != "sub-issue has no acceptance route" {
+		t.Fatalf("child in_review route = %+v, want acceptance no-op", out)
+	}
+	if store.wrote() || store.commentCount() != 0 || judge.callCount() != 0 {
+		t.Fatalf("child in_review produced independent acceptance work: writes=%v comments=%d calls=%d", store.wrote(), store.commentCount(), judge.callCount())
+	}
+}
+
 func TestTodoDoesNotOverwriteSlotsSomebodyElseFilled(t *testing.T) {
 	store := newFakeStore()
 	store.issue.AssigneeType = "agent"

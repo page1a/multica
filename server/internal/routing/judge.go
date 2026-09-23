@@ -82,6 +82,18 @@ type JudgeState struct {
 	HasChildren        bool     `json:"has_children"`
 	Direction          string   `json:"direction,omitempty"`
 	Candidates         []string `json:"candidate_tiers"`
+	// RoutingPolicy and PolicyPrompt are the tier preference. Omitted on
+	// questions that do not choose a tier, so a stale-review request does
+	// not grow a blank policy object.
+	RoutingPolicy RoutingPolicy `json:"routing_policy,omitempty"`
+	PolicyPrompt  string        `json:"policy_prompt,omitempty"`
+	// Seats describes every candidate, including ones filtered out of
+	// candidate_tiers, so the request shows why a rung is missing. Latency
+	// and quota here are null when unobserved.
+	Seats []SeatSnapshot `json:"seats,omitempty"`
+	// ProviderQuotas is the subscribed provider rollup. It is not a seat's
+	// liveness: a missing provider row is unknown and does not remove seats.
+	ProviderQuotas []ProviderQuota `json:"provider_quotas,omitempty"`
 }
 
 // Judge answers the two questions Route cannot answer deterministically.
@@ -183,7 +195,9 @@ Answer three things and nothing else:
 
 Large or vague tickets default to needing review. Report calibrated confidence in [0,1] separately for the executor choice and the reviewer choice; below-threshold answers are discarded rather than used, so do not inflate them.
 
-Respond with a JSON object with keys: executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. reason is one short sentence for a human reader.`
+Respond with a JSON object with keys: executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. reason is one short sentence for a human reader.
+
+Follow policy_prompt in the user payload when choosing executor_tier. That text is the preference. You still only return the JSON object above: you do not change status, assignee, or any other ticket field, and you do not take an action. A fact marked unknown is missing: do not treat it as zero, available, or exhausted.`
 
 const unblockSystemPrompt = `A work ticket is blocked. Say only what is likely wrong.
 
@@ -191,7 +205,7 @@ cause: "tier" if the assigned seat is probably not strong enough, "human" if a p
 suggested_tier: when cause is "tier", which tier to try instead, chosen from candidate_tiers exactly.
 reason: one sentence of judgement and one of suggestion.
 
-You are not changing anything on the ticket. Respond with a JSON object with keys: cause, suggested_tier, reason.`
+You are not changing anything on the ticket. Follow policy_prompt in the user payload if you suggest a tier. Respond with a JSON object with keys: cause, suggested_tier, reason.`
 
 // Assign asks the todo-row question. Any transport, decoding, or contract
 // failure returns an error wrapping ErrJudgeUnavailable; the caller must not

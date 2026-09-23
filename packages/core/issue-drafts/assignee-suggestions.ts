@@ -58,6 +58,42 @@ export function issueDraftSuggestionRequest(
 }
 
 /**
+ * How a suggestion query reads to a surface that has to explain itself.
+ *
+ * `idle`    — there is nothing to ask about (every row already has a seat, or
+ *             the draft is not far enough along to have one);
+ * `loading` — asked, nothing back yet. The confirm stays available: the seats
+ *             that are already saved are the ones that will be created.
+ * `failed`  — the ask failed, or came back in a shape that cannot be trusted.
+ *             Same handling as "no suggestion for this row": the rows stay
+ *             unassigned and the user is told, rather than the confirm being
+ *             blocked on a suggestion nobody needs.
+ * `ready`   — one answer per row, safe to apply.
+ *
+ * An answer of the wrong length is NOT ready. The response is index-aligned
+ * with the request, so a short or padded array would silently fill the wrong
+ * rows — the one failure mode that turns a suggestion into an assignment
+ * nobody chose.
+ */
+export type IssueDraftSuggestionPhase = "idle" | "loading" | "failed" | "ready";
+
+export function issueDraftSuggestionPhase(input: {
+  request: DraftAssigneeSuggestionRequest | null;
+  data: readonly (DraftAssigneeSuggestion | null)[] | undefined;
+  isError: boolean;
+  isPending: boolean;
+}): IssueDraftSuggestionPhase {
+  if (!input.request) return "idle";
+  if (input.isError) return "failed";
+  if (input.data === undefined) {
+    // `isPending` distinguishes "still asking" from "never asked", but both
+    // read the same on screen, so the caller does not have to gate on it.
+    return "loading";
+  }
+  return input.data.length === input.request.rows.length ? "ready" : "failed";
+}
+
+/**
  * Fills unassigned rows from the suggestions, once per row.
  *
  * `offered` records the rows that have already been offered a seat, and is
@@ -65,12 +101,19 @@ export function issueDraftSuggestionRequest(
  * suggestion back to "unassigned" has answered, and re-filling it on the next
  * render would make the field impossible to empty. Returns the same object
  * when nothing changed.
+ *
+ * An array that does not line up with the payload's rows (root first, then the
+ * sub-issues in order) is refused whole rather than applied up to the point it
+ * ran out: the rows are read by index, so a partial answer would put a seat on
+ * a row the answer never described.
  */
 export function applyIssueDraftAssigneeSuggestions(
   draft: IssueDraftPayload,
   suggestions: readonly (DraftAssigneeSuggestion | null)[],
   offered: Set<string>,
 ): IssueDraftPayload {
+  const expected = 1 + (draft.children ?? []).length;
+  if (suggestions.length !== expected) return draft;
   let changed = false;
   let next = draft;
   const parent = suggestions[0];

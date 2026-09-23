@@ -330,12 +330,13 @@ func (h *Handler) visibleWorkspaceRepos(r *http.Request, ws db.Workspace) []work
 	if err != nil {
 		return []workspaceRepoRef{}
 	}
-	if viewer.bypasses() {
-		return entries
-	}
 	visible := make([]workspaceRepoRef, 0, len(entries))
 	for _, entry := range entries {
-		if viewer.canSeeRepo(entry, h.repoProjectIDs(r.Context(), ws.ID, entry.URL)) {
+		projectIDs := h.repoProjectIDs(r.Context(), ws.ID, entry.URL)
+		if len(projectIDs) > 0 {
+			entry.ProjectID = uuidToString(projectIDs[0])
+		}
+		if viewer.bypasses() || viewer.canSeeRepo(entry, projectIDs) {
 			visible = append(visible, entry)
 		}
 	}

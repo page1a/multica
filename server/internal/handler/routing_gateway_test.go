@@ -55,7 +55,7 @@ func TestRoutingHealthPayloadCarriesNoAPIKey(t *testing.T) {
 		LLMBaseURL:      "https://gateway.example/v1",
 		LLMDefaultModel: "gpt-5.6-mini",
 	}}
-	got := h.routingHealthPayload(routingHealthReportForTest())
+	got := h.routingHealthPayload(context.Background(), "", routingHealthReportForTest())
 	if got.GatewayHost != "gateway.example" {
 		t.Fatalf("GatewayHost = %q", got.GatewayHost)
 	}
@@ -72,7 +72,7 @@ func TestRoutingHealthPayloadCarriesNoAPIKey(t *testing.T) {
 func TestRoutingHealthPayloadReportsAnUnconfiguredDeployment(t *testing.T) {
 	// A key with no base URL is still unconfigured: pkg/llm needs both.
 	h := &Handler{cfg: Config{LLMAPIKey: "sk-only"}}
-	if h.routingHealthPayload(routingHealthReportForTest()).GatewayConfigured {
+	if h.routingHealthPayload(context.Background(), "", routingHealthReportForTest()).GatewayConfigured {
 		t.Fatal("GatewayConfigured = true with no base URL")
 	}
 }
@@ -90,7 +90,7 @@ func TestWorkspaceGatewayWinsInThePayload(t *testing.T) {
 	rep.KeySet = true
 	rep.UsesWorkspaceGateway = true
 
-	got := h.routingHealthPayload(rep)
+	got := h.routingHealthPayload(context.Background(), "", rep)
 	if got.GatewayHost != "workspace.example" {
 		t.Fatalf("GatewayHost = %q, want the workspace host", got.GatewayHost)
 	}
@@ -116,7 +116,7 @@ func TestWorkspaceGatewayMakesAnUnconfiguredDeploymentConfigured(t *testing.T) {
 	rep.BaseURL = "https://workspace.example/v1"
 	rep.KeySet = true
 	rep.UsesWorkspaceGateway = true
-	if !h.routingHealthPayload(rep).GatewayConfigured {
+	if !h.routingHealthPayload(context.Background(), "", rep).GatewayConfigured {
 		t.Fatal("GatewayConfigured = false for a workspace running on its own gateway")
 	}
 }
@@ -124,14 +124,14 @@ func TestWorkspaceGatewayMakesAnUnconfiguredDeploymentConfigured(t *testing.T) {
 // TestKeyStorabilityIsReported so the section can disable the key field up
 // front rather than accepting a credential it will then refuse.
 func TestKeyStorabilityIsReported(t *testing.T) {
-	if (&Handler{}).routingHealthPayload(routingHealthReportForTest()).WorkspaceKeyStorable {
+	if (&Handler{}).routingHealthPayload(context.Background(), "", routingHealthReportForTest()).WorkspaceKeyStorable {
 		t.Fatal("WorkspaceKeyStorable = true with no secretbox")
 	}
 	box, err := NewRoutingSecretBox("deployment-jwt-secret")
 	if err != nil {
 		t.Fatalf("NewRoutingSecretBox: %v", err)
 	}
-	if !(&Handler{RoutingSecrets: box}).routingHealthPayload(routingHealthReportForTest()).WorkspaceKeyStorable {
+	if !(&Handler{RoutingSecrets: box}).routingHealthPayload(context.Background(), "", routingHealthReportForTest()).WorkspaceKeyStorable {
 		t.Fatal("WorkspaceKeyStorable = false with a secretbox wired")
 	}
 }

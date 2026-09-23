@@ -166,6 +166,14 @@ type routingHealthResponse struct {
 	// whether its tickets were being judged by a System One model or by a chat
 	// model being asked to imitate one.
 	GatewayProtocol string `json:"gateway_protocol"`
+	// DefaultPolicyPrompt is the wording used when the workspace has not
+	// saved its own. PolicyPrompt is the wording the next judge call will
+	// actually see. The settings page shows both so a restore can put the
+	// default back without a second copy of the paragraph living in the UI.
+	DefaultPolicyPrompt string                  `json:"default_policy_prompt"`
+	PolicyPrompt        string                  `json:"policy_prompt"`
+	ProviderQuotas      []routing.ProviderQuota `json:"provider_quotas"`
+	Seats               []routing.SeatSnapshot  `json:"seats"`
 }
 
 // Gateway scope values. Named because the client switches on them.
@@ -174,7 +182,7 @@ const (
 	gatewayScopeDeployment = "deployment"
 )
 
-func (h *Handler) routingHealthPayload(rep routing.HealthReport) routingHealthResponse {
+func (h *Handler) routingHealthPayload(ctx context.Context, workspaceID string, rep routing.HealthReport) routingHealthResponse {
 	deploymentConfigured := h.cfg.LLMAPIKey != "" && h.cfg.LLMBaseURL != ""
 	resp := routingHealthResponse{
 		State:             string(rep.State),
@@ -197,6 +205,7 @@ func (h *Handler) routingHealthPayload(rep routing.HealthReport) routingHealthRe
 		resp.GatewayScope = gatewayScopeWorkspace
 		resp.GatewayConfigured = true
 		resp.GatewayProtocol = gatewayProtocol(rep.BaseURL)
+		h.attachRoutingContext(ctx, workspaceID, &resp)
 		return resp
 	}
 	resp.GatewayHost = gatewayHost(h.cfg.LLMBaseURL)
@@ -206,7 +215,45 @@ func (h *Handler) routingHealthPayload(rep routing.HealthReport) routingHealthRe
 	// (MULTICA_LLM_*), so it is never reported as System One even if somebody
 	// pointed it at a host that looks like one.
 	resp.GatewayProtocol = gatewayProtocolOpenAI
+	h.attachRoutingContext(ctx, workspaceID, &resp)
 	return resp
+}
+
+// attachRoutingContext adds the prompt and the quota/seat summary. A failure
+// here leaves unknown rows rather than failing the health read: the settings
+// page has to stay open when the summary query is briefly unavailable, and
+// unknown is the honest thing to show.
+func (h *Handler) attachRoutingContext(ctx context.Context, workspaceID string, resp *routingHealthResponse) {
+	resp.DefaultPolicyPrompt = routing.DefaultPolicyPrompt
+	resp.PolicyPrompt = routing.DefaultPolicyPrompt
+	keys := append([]string(nil), routing.DefaultWatchedProviders...)
+	resp.ProviderQuotas = routing.EnsureProviderQuotas(nil, keys)
+	if h == nil || h.Routing == nil || workspaceID == "" {
+		return
+	}
+	settings, err := h.RoutingStore().Settings(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+	resp.PolicyPrompt = settings.EffectivePolicyPrompt()
+	keys = settings.ProviderKeys()
+	roster, err := h.RoutingStore().Roster(ctx, workspaceID)
+	if err != nil {
+		resp.ProviderQuotas = routing.EnsureProviderQuotas(nil, keys)
+		return
+	}
+	seats := h.Routing.Ladder.WithProjects(settings.Projects).Candidates("", roster)
+	ids := make([]string, 0, len(seats))
+	for _, seat := range seats {
+		ids = append(ids, seat.ID)
+	}
+	facts, err := h.RoutingStore().RoutingFacts(ctx, workspaceID, ids, keys)
+	if err != nil {
+		resp.ProviderQuotas = routing.EnsureProviderQuotas(nil, keys)
+		return
+	}
+	resp.ProviderQuotas = routing.EnsureProviderQuotas(facts.Providers, keys)
+	resp.Seats = routing.OrderSeatViews(seats, facts.Seats)
 }
 
 // Gateway protocol values. Named because the client switches on them.
@@ -250,7 +297,7 @@ func (h *Handler) GetRoutingHealth(w http.ResponseWriter, r *http.Request) {
 		// No router wired at all: the product is the pre-routing product, and
 		// saying "off" is the honest answer rather than an error the settings
 		// page would have to interpret.
-		writeJSON(w, http.StatusOK, routingHealthResponse{State: string(routing.StateOff)})
+		writeJSON(w, http.StatusOK, offlineRoutingHealth())
 		return
 	}
 	rep, err := h.Routing.Health(r.Context(), workspaceID)
@@ -260,7 +307,7 @@ func (h *Handler) GetRoutingHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to read routing health")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.routingHealthPayload(rep))
+	writeJSON(w, http.StatusOK, h.routingHealthPayload(r.Context(), workspaceID, rep))
 }
 
 // CheckRoutingHealth backs POST /api/workspaces/{id}/routing/health/check —
@@ -269,7 +316,7 @@ func (h *Handler) GetRoutingHealth(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CheckRoutingHealth(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
 	if h.Routing == nil {
-		writeJSON(w, http.StatusOK, routingHealthResponse{State: string(routing.StateOff)})
+		writeJSON(w, http.StatusOK, offlineRoutingHealth())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
@@ -281,7 +328,16 @@ func (h *Handler) CheckRoutingHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to check the routing model")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.routingHealthPayload(rep))
+	writeJSON(w, http.StatusOK, h.routingHealthPayload(ctx, workspaceID, rep))
+}
+
+func offlineRoutingHealth() routingHealthResponse {
+	return routingHealthResponse{
+		State:               string(routing.StateOff),
+		DefaultPolicyPrompt: routing.DefaultPolicyPrompt,
+		PolicyPrompt:        routing.DefaultPolicyPrompt,
+		ProviderQuotas:      routing.EnsureProviderQuotas(nil, routing.DefaultWatchedProviders),
+	}
 }
 
 // routingModelListResponse is deliberately smaller than the OpenAI model

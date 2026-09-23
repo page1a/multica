@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/sparsecheckout"
 )
 
 // Local worktree mode gives every task on a local_directory resource its own
@@ -111,6 +113,10 @@ type LocalWorktreeParams struct {
 	WorkspaceID    string
 	AgentID        string
 	ConversationID string
+	// CheckoutPaths is the task's checkout_paths declaration. Empty checks
+	// out the whole repository. A declaration narrows only this task's
+	// worktree; the user's own checkout stays complete.
+	CheckoutPaths string
 }
 
 // owner is the identity a branch created for this task is recorded under.
@@ -412,7 +418,11 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	}
 
 	plan := resolveTaskBranch(gitRoot, params, headSHA, logger)
-	actualBranch, createdBranch, err := addLocalWorktree(gitRoot, worktreePath, plan, params.TaskID)
+	scope, scopeErr := sparsecheckout.Parse(params.CheckoutPaths)
+	if scopeErr != nil {
+		return nil, fmt.Errorf("execenv: checkout paths: %w", scopeErr)
+	}
+	actualBranch, createdBranch, err := addLocalWorktree(gitRoot, worktreePath, plan, params.TaskID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -1406,7 +1416,7 @@ func branchOwnedBy(gitRoot, branch string, owner branchOwner, logger *slog.Logge
 // git allows one worktree per branch, and refusing to run is worse than
 // delivering onto a task-scoped branch. It forks from the same base, so the
 // sibling still stands on the conversation's latest work.
-func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID string) (string, bool, error) {
+func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID string, scope sparsecheckout.Scope) (string, bool, error) {
 	var args []string
 	switch {
 	case plan.continues:
@@ -1418,18 +1428,58 @@ func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID 
 	default:
 		args = []string{"worktree", "add", "-b", plan.name, worktreePath, plan.base}
 	}
+	if scope.Active() {
+		args = append([]string{"worktree", "add", "--no-checkout"}, args[2:]...)
+	}
 	out, err := runGit(gitRoot, args...)
-	if err == nil {
-		return plan.name, !plan.continues, nil
+	if err != nil {
+		if !branchUnavailable(out) {
+			return "", false, fmt.Errorf("execenv: git worktree add: %s: %w", strings.TrimSpace(out), err)
+		}
+		alt := plan.altName(taskID)
+		args = []string{"worktree", "add", "-b", alt, worktreePath, plan.base}
+		if scope.Active() {
+			args = []string{"worktree", "add", "--no-checkout", "-b", alt, worktreePath, plan.base}
+		}
+		if out, err = runGit(gitRoot, args...); err != nil {
+			return "", false, fmt.Errorf("execenv: git worktree add: %s: %w", strings.TrimSpace(out), err)
+		}
+		plan.name = alt
+		plan.continues = false
 	}
-	if !branchUnavailable(out) {
-		return "", false, fmt.Errorf("execenv: git worktree add: %s: %w", strings.TrimSpace(out), err)
+	created := !plan.continues
+	if scope.Active() {
+		if err := materializeLocalSparse(gitRoot, worktreePath, plan.name, created, scope); err != nil {
+			return "", false, err
+		}
 	}
-	alt := plan.altName(taskID)
-	if out, err := runGit(gitRoot, "worktree", "add", "-b", alt, worktreePath, plan.base); err != nil {
-		return "", false, fmt.Errorf("execenv: git worktree add: %s: %w", strings.TrimSpace(out), err)
+	return plan.name, created, nil
+}
+
+// materializeLocalSparse checks out only the declared cone into a worktree
+// that was added with --no-checkout. Failure removes the worktree, and the
+// branch too when this call created it, so a retry does not collide with a
+// half-built checkout.
+func materializeLocalSparse(gitRoot, worktreePath, branch string, created bool, scope sparsecheckout.Scope) error {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	fail := func(err error) error {
+		removeLocalWorktreeDir(gitRoot, worktreePath, nil)
+		if created {
+			dropBranch(gitRoot, branch, nil)
+		}
+		return err
 	}
-	return alt, true, nil
+	if err := sparsecheckout.Enable(ctx, worktreePath, scope); err != nil {
+		return fail(fmt.Errorf("execenv: sparse checkout: %w", err))
+	}
+	if out, err := runGit(worktreePath, "checkout"); err != nil {
+		return fail(fmt.Errorf("execenv: sparse checkout: %s: %w", strings.TrimSpace(out), err))
+	}
+	if err := sparsecheckout.Finish(ctx, worktreePath); err != nil {
+		return fail(fmt.Errorf("execenv: sparse checkout: %w", err))
+	}
+	return nil
 }
 
 // branchUnavailable recognises git refusing a branch that another worktree
@@ -1494,6 +1544,14 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 		return replayResult{}, fmt.Errorf("execenv: could not describe your local edits for replay into the task worktree: %w", err)
 	}
 
+	// A file outside the cone is staged by cherry-pick and left off disk.
+	// Widen first so the user's edit is actually in the worktree.
+	if names, nameErr := runGit(worktreePath, "diff", "--name-only", carried, snapshot); nameErr != nil {
+		return replayResult{}, fmt.Errorf("execenv: list local edits before replay: %s: %w", strings.TrimSpace(names), nameErr)
+	} else if err := widenSparseForReplay(worktreePath, names); err != nil {
+		return replayResult{}, err
+	}
+
 	out, pickErr := runGit(worktreePath, "cherry-pick", "--no-commit", increment)
 	if pickErr == nil {
 		return replayResult{}, nil
@@ -1529,6 +1587,19 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 			"path", worktreePath, "branch", plan.name, "files", conflicts)
 	}
 	return replayResult{conflicts: conflicts}, nil
+}
+
+func widenSparseForReplay(worktreePath, diffNames string) error {
+	names := sparsecheckout.DiffNames(diffNames)
+	if len(names) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	if err := sparsecheckout.WidenToCover(ctx, worktreePath, names); err != nil {
+		return fmt.Errorf("execenv: could not include local edits that sit outside this task's sparse checkout: %w", err)
+	}
+	return nil
 }
 
 // quotedPaths renders repository paths for a human-facing message. Quoted

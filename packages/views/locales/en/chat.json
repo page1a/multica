@@ -254,5 +254,13 @@
     "archive": "Archive chat",
     "unarchive": "Unarchive chat",
     "delete": "Delete chat"
+  },
+  "provider_quota": {
+    "label": "Quota",
+    "unknown": "unknown",
+    "exhausted": "used up",
+    "used": "{{percent}}%",
+    "resets": "resets {{when}}",
+    "updated": "updated {{when}}"
   }
 }

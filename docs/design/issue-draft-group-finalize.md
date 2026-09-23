@@ -11,7 +11,7 @@
 3. **一组单一个事务。** 新增 `IssueService.CreateGroup`，把今天 `Create`（`server/internal/service/issue.go:213`）的事务内部分抽成 `createInTx`，事务外部分抽成 `afterCommit`，两个入口共用同一套规则，不复制校验。
 4. **finalize 仍然是三段短事务**，和今天的结构一模一样：锁→决策→提交 / 建组（不持锁）/ 锁→回写→提交。`LockIssueDraftInWorkspace` 依然不跨越建组过程持有。
 5. **阶段 2 需要 0 个迁移。** `issue.stage`（123）、`issue.parent_issue_id`、`origin_type` 的 CHECK（484/485）、唯一索引（486）、`idx_issue_origin`（042）、`idx_issue_parent`（001）全部已就位。需要迁移的只有阶段 3 的「重开一轮」，清单见 §7.2。
-6. **派单默认按 stage 只点着第 1 阶段**：stage 1 的子单 `status=todo`，stage ≥ 2 的子单 `status=backlog`，父单 `status=todo` 且默认不指派 agent。这是推荐值，不是既定事实——**谁负责把 stage 2 从 backlog 提上来，需要 kk zi 拍板**，见 §6.3 和 §9。
+6. **派单默认按 stage 只点着第 1 阶段**：stage 1 的子单 `status=todo`，stage ≥ 2 的子单 `status=backlog`，父单在有子单时是协调者——`status=in_progress`、保留负责人、创建时不派实现 run。**谁负责把 stage 2 从 backlog 提上来已定：父单负责人被阶段屏障叫醒后自己提**，见 §6.3。
 7. **重开的对象是同一场对齐**（同一个 `chat_session_id`、同一个 draft 行），不是新开一场。身份模型天然支持：轮次不参与节点 id 的推导，第二轮的新节点只是拿到新的 key。
 
 ## 1. 现状核对
@@ -110,7 +110,7 @@ export interface IssueDraftPayload {
 三条硬规则要写进 prompt：
 
 - `key` 一旦发出就不许改。模型每一轮都要把上一轮给过的 key 原样带回来。这是「保留已有字段」规则的延伸，现有 prompt 已经有这条精神（`Preserve good existing draft fields supplied in the user's message`）。
-- 模型**不许**写 `assignee_id`。它给 `assignee_hint`（自然语言，比如「后端实现」「前端页面」），由前端 preview 面板映射到真实的 agent id 再存进 draft。理由：模型没有工作区的 agent 名册，让它猜 UUID 是在给 `validateAssigneePair` 送垃圾；而 `issueParamsFromDraft:805` 的权限校验是拒绝而不是忽略，一个瞎猜的 id 会让整次 confirm 失败。
+- 模型**不许**写 `assignee_id`。它给 `assignee_hint`（自然语言，比如「后端实现」「前端页面」），由真实名册解析成 agent id 之后再存进 draft（DENE-691 起这一步在服务端路由里做，见 `server/internal/routing/suggest.go`）。理由：模型没有工作区的 agent 名册，让它猜 UUID 是在给 `validateAssigneePair` 送垃圾。DENE-694 起，这个 id 即使最终没通过校验，代价也只是那张单未分配——`draftAssigneeFromNode` 把失败降级成 `assignment_warnings`，不再让整次 confirm 失败。
 - 拆单数量上限写进 prompt（推荐 8，硬上限 20，见 §2.4）。
 
 `packages/core/issue-drafts/protocol.ts` 的 `parseIssueDraftBlock` 增加 `children` 解析，规则和现有字段一致：**解析失败 = 这一轮没有 children 更新**，不是清空。`mergeIssueDraftPayload` 对 `children` 用整体替换而不是逐项合并——子单集合是一个整体判断（模型可能删掉一张单），逐项合并会让删除永远不生效；被替换掉的 key 如果在新数组里还在，key 本身就保住了身份。
@@ -456,22 +456,32 @@ export const IssueDraftFinalizeSchema = z.object({
 
 ### 6.2 推荐
 
-**按 stage 只点第 1 阶段。** 具体默认值：
+**按 stage 只点第 1 阶段。** 具体默认值（DENE-755 / 758 落地后的版本）：
 
 | 节点 | status | assignee |
 | --- | --- | --- |
-| 父单 | `todo` | **不指派**（见 §6.3） |
-| stage 1 子单 | `todo` | 对齐里定下的 agent |
+| 父单（有子单时） | `in_progress`（协调状态，见 §6.3） | 对齐里定下的 agent 或小队；保留但不立即派实现 run |
+| 父单（无子单） | 载荷给什么是什么 | 走普通单票规则 |
+| stage 1 子单 | `todo` | 对齐里定下的 agent / 小队；没匹配到就留未分配 |
 | stage ≥ 2 子单 | `backlog` | 对齐里定下的 agent（先绑定，不起跑） |
 | 无 stage 的子单 | `todo` | 对齐里定下的 agent |
+
+子单的 status **由 stage 推导，不由载荷携带**：面板保存时归一化一次
+（`packages/core/issue-drafts/group.ts` 的 `issueDraftChildStatus`），服务端在最终写入处再推导一次
+（`issueDraftChildStatusForCreate`）。确认只发一个 revision，服务端是最后一个能拦住旧客户端原始载荷的地方。
+
+没有负责人 = 未分配，不是「校验失败」：子单以未分配写入、照常创建、不起任何 run，面板上显示成待分配，
+后续用普通指派补齐即可。它**不**被改写成 `backlog` —— 未分配是板上看得见的一个洞，
+停进停车场只会把这个洞藏起来（DENE-757 定稿）。DENE-694（#285）落地的「某一格指派不上就把那一格丢成未分配并回一条 warning、
+其余照常创建」正好落在同一条规则上：丢掉的格子变成一条待分配的子单加一条看得见的提示，而不是一张静默停在停车场的单。
 
 理由：
 
 1. **屏障机制本来就是为这件事造的。** `stageBarrierClosed`（`issue_child_done.go:512`）在最低未完成阶段全部终结时唤醒父单的 assignee，注释写得很直白：「The woken assignee decides whether to promote the next stage (agent-driven advancement); the server only detects the barrier and wakes.」服务端只检测和唤醒，提阶段是被唤醒的人/agent 的动作。这条设计不需要新增任何东西。
-2. **backlog 的语义正好对得上。** `123_issue_stage.up.sql` 和 `shouldEnqueueAgentTaskWithQueries:772` 都把 backlog 定义成「预先指派但不立即执行的停车场」。stage ≥ 2 的子单就是这个状态：谁做已经定了，什么时候做没到。
-3. **服务端零新增逻辑。** 策略完全由载荷里的 `status` 表达，`maybeEnqueueOnAssign` 的既有 backlog 跳过就是执行器。
+2. **backlog 的语义正好对得上。** `123_issue_stage.up.sql` 和 `shouldEnqueueAgentTaskWithQueries` 都把 backlog 定义成「预先指派但不立即执行的停车场」。stage ≥ 2 的子单就是这个状态：谁做已经定了，什么时候做没到。
+3. **服务端只多一条镜像规则。** 子单的派单仍由载荷里的 `status` 表达，`maybeEnqueueOnAssign` 的既有 backlog 跳过就是执行器；新增的只有「子单 status 从 stage 推导」和「协调父单的状态与首轮入队被镜像」两条，都写在同一个写入边界上。
 
-### 6.3 这个推荐有一个真的洞
+### 6.3 这个推荐有一个真的洞：父单必须有人能被叫醒
 
 `notifyParentOfChildDone`（`issue_child_done.go:117-133`）有三道闸，都会让屏障唤醒**整条不发生**：
 
@@ -481,13 +491,21 @@ export const IssueDraftFinalizeSchema = z.object({
 
 所以父单如果不指派、或者指派给人，stage 1 全部做完之后**不会有任何唤醒**，stage 2 就永远停在 backlog，而且是**静默地**停着——没有评论，没有 inbox 行。这不是实现 bug，是既有的产品决定（人自己看自己的时间线），但它和「拆一组单交给 agent 自动往下跑」是冲突的。
 
-三条出路，需要 kk zi 拍板（§9 第 2 条）：
+**已拍板的做法（DENE-755 / DENE-757 / DENE-758）：父单当协调者，但换一个「会醒」的状态。**
 
-- **(a) 父单指派给调度席（布尔玛）。** 屏障唤醒它，它把下一阶段从 backlog 提到 todo。链路完整，代价是每次阶段推进多一次 agent run，而且父单被创建时 `status=todo` + 有 agent assignee 会**立刻**起一次父单自己的 run（`maybeEnqueueOnAssign` 在创建时就入队）——这一次 run 是多余的。缓解：父单建成 `status=in_progress`？不行，`maybeEnqueueOnAssign` 只跳过 backlog。缓解二：父单建成 `backlog` 然后马上改 `todo`？那是两次写，而且 backlog 父单这段时间里屏障是失效的。**这条路需要在阶段 2 里想清楚，或者接受那一次多余的 run。**
-- **(b) 父单不指派，全部子单一次性 `todo`。** 回到 §6.1 的全 todo 方案，放弃阶段编排。
-- **(c) 阶段 2 只做 stage 1 自动跑 + 人工提阶段**，(a) 留到阶段 3 和「任务中动态对齐」一起做。
+- **状态用 `in_progress`，不用 `backlog`。** 有子单时服务端在写入处把父单状态镜像成
+  `ISSUE_DRAFT_COORDINATOR_STATUS`（`issue_draft_group.go` 的 `issueDraftCoordinatorStatus`）。
+  这三道闸里只有 backlog 这道能靠选状态绕开，而它正好是 §6.2 里最容易顺手选的那个。
+- **不入队由创建路径单独抑制。** 父单保留 agent / 小队负责人（那是屏障要唤醒的席位），
+  但这一次确认不给它派实现 run：`IssueCreateOpts.SuppressAssigneeRun` 只跳过 `maybeEnqueueOnAssign`，
+  issue 本身、负责人、广播、analytics 全都照常写入。这是一次创建的属性，不是 issue 被停在某个状态——
+  之后对父单的每一次普通写入（改派、改状态、阶段收口）都按普通规则入队。
+- **不新增组专用调度器。** 唤醒仍然只走 `dispatchParentAssigneeTrigger`；服务端不自动把下一阶段改成 `todo`，
+  提阶段仍是被唤醒的协调者的一次普通 status 写入。
+- **父单没有 agent / 小队负责人时仍然可以确认**，只是阶段结束后没人被叫醒；这一点由确认面板明确写出，
+  而不是靠一个永远不触发的唤醒假装链路是闭环的。
 
-**我的推荐是 (c)：** 阶段 2 按 §6.2 的默认值落地，父单不指派，stage ≥ 2 停在 backlog 等人提；同时在确认页明确写出「阶段 2 起需要手动开始」。理由是 (a) 的那次多余 run 和「谁是调度席」是产品决定，不该由一次后端实现顺手定掉；而 (b) 会把已经造好的 stage 屏障机制浪费掉。
+被否掉的两条：父单 `backlog`（屏障整段跳过，链路断在阶段 1）、以及「阶段 2 只做人工提阶段」（§9 第 2 条的旧推荐 (c)，把闭环留给了人）。
 
 ### 6.4 `IssueDraftChild.stage` 的取值
 
@@ -603,7 +621,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_issue_draft_reopened
 | 同一 payload 确认两次 | 第二次不新建，返回同一组；`issue` 表里 `origin_type='issue_draft'` 的行数不变 |
 | admit 之后、建组之前，draft 被保存成另一套 children key，再确认一次 | 只有一组（第一次那组），第二次认领它而不是建第二组（§3.3 时序 B）。这是本设计唯一一个 revision 挡不住、只有根节点 id 挡得住的用例，**不能漏** |
 | 并发两次确认 | 只有一组；两次响应的 `issue_id` 相同 |
-| 组里第 3 张的 assignee 无权调用 | 403，且**一张单都没建**（事务回滚的证据） |
+| 组里第 3 张的 assignee 无权调用 | 4 张单都建出来，第 3 张**未分配**，响应里的 `assignment_warnings` 指名它（DENE-694：校验照旧拒绝写这个 assignee，但降级成警告，不再拿整组陪葬） |
 | 配额只剩 2 张，payload 要 4 张 | `IssueLimitReachedError`，一张都没建 |
 | 重复 key | 400 `duplicate sub-issue key`，不到数据库 |
 | children 长度 21 | 400 |
@@ -617,7 +635,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_issue_draft_reopened
 | --- | --- |
 | `issue-drafts/protocol.test.ts` | `children` 块解析；坏 JSON = 不更新而不是清空；key 原样保留；`mergeIssueDraftPayload` 对 children 整体替换 |
 | `issue-drafts/group.test.ts`（新） | stage 归一化（全空 → 不分阶段；部分空 → 补 1；跳号 → 压实）；派单策略从 stage 推 status |
-| `api/schemas.test.ts` | `IssueDraftFinalizeSchema`：缺 `issues` → `[]`；`issues` 里有坏行 → 整个数组退化成 `[]`；`issue_id` 为空 → 硬失败 |
+| `api/schemas.test.ts` | `IssueDraftFinalizeSchema`：缺 `issues` → `[]`；`issues` 里有坏行 → 整个数组退化成 `[]`；`issue_id` 为空 → 硬失败；缺 `assignment_warnings` → `[]`，坏行仍可读（DENE-694） |
 | `api/client.test.ts` | finalize 的 malformed-response 用例（仓库 API 兼容规矩的硬要求） |
 
 **`packages/views/`（`.test.tsx`）** —— 只留确认页的 happy path、接线和无障碍，矩阵不重跑，注释指回上面的 `.test.ts`。
@@ -627,10 +645,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_issue_draft_reopened
 ## 9. 需要 kk zi 拍板的开放问题
 
 1. **派单默认档。** 推荐「按 stage 只点第 1 阶段」（§6.2）。备选：全 `todo`（快，但烧 N 份配额且产出会打架）、全 `backlog`（安全，但拆完还要点 N 次）。
-2. **谁负责把 stage 2 从 backlog 提上来。**（§6.3，这是三个问题里唯一会让链路断掉的）
-   - (a) 父单指派给调度席，屏障唤醒它去提 —— 链路闭环，代价是父单被创建时会多起一次没必要的 run；
+2. **谁负责把 stage 2 从 backlog 提上来。**（§6.3）**已定：父单当协调者，用 `in_progress`，创建时抑制它自己的 run。**
+   - (a) 父单指派给调度席，屏障唤醒它去提 —— 链路闭环；「创建时多起一次没必要的 run」由 `SuppressAssigneeRun` 消掉，所以这是最终选择；
    - (b) 放弃编排，全部子单一次性 `todo`；
-   - (c) **推荐**：阶段 2 先做「stage 1 自动跑 + 人工提阶段」，把 (a) 留到阶段 3 和「任务中动态对齐」一起定。
+   - (c) ~~阶段 2 先做「stage 1 自动跑 + 人工提阶段」~~ —— 被否，等于把闭环留给人工。
 3. **拆单上限。** 推荐 prompt 里建议 8、服务端硬上限 20（§2.4）。上限决定了 §4.4 里 advisory 锁的持有量和 §3.3 时序 A 里并发确认的阻塞时长。
 4. **父单要不要参与配额。** 现在的算法是父单也占一张（§4.4）。如果 kk zi 认为「容器单不该占额度」，那是一次 `AllocateIssueNumber` 的语义改动，会影响所有子单创建路径，不只是对齐 —— 我的建议是**不要改**，父单是一张真的 issue，它有标题、有讨论、有状态。
 5. **文档位置。** 本页按 DENE-368 原文放在 `docs/design/`；仓库里既有的设计稿都在 `docs/kun/`（`blocker-attribution-design.md`、`config-transfer-v2.md` 等）。要统一的话我改路径，一条 `git mv` 的事。

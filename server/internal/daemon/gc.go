@@ -116,6 +116,7 @@ type gcStats struct {
 	repoCachesReclaimed           int            // bare repo caches under .repos evicted past their TTL
 	taskTempDirsReclaimed         int            // per-task temp dirs under the temp base reclaimed after their owning execution ended
 	taskRootIndexEntriesReclaimed int            // abandoned stable-root records and unpublished entries reclaimed past the orphan TTL
+	sharedScratchReclaimed        int            // idle shared-session folders reclaimed past their retention
 	packageStoreBytesReclaimed    int64          // bytes freed from the shared package store under .pkg-store
 	bytesReclaimed                int64          // total bytes freed in this cycle
 	byPattern                     map[string]int // configured basename or managed path label -> reclaim count
@@ -199,6 +200,17 @@ func (d *Daemon) runGC(ctx context.Context) {
 		stats.bytesReclaimed += storeBytes
 	}
 
+	// Idle conversation folders under .sessions. They are not task
+	// directories, so the workspace walk above never sees them, and they are
+	// not a user's files: the pruner refuses anything outside that root,
+	// anything it did not create, and anything a task is in.
+	if d.sharedScratch != nil {
+		if removed, reclaimed := d.sharedScratch.Prune(d.cfg.WorkspacesRoot); removed > 0 {
+			stats.sharedScratchReclaimed += removed
+			stats.bytesReclaimed += reclaimed
+		}
+	}
+
 	// Drop unreferenced packages from the shared dependency store. Like the
 	// repo cache it is a sibling of the task dirs, so the walk above never
 	// sees it, and unlike every other pruner here the reclamation decision
@@ -220,7 +232,7 @@ func (d *Daemon) runGC(ctx context.Context) {
 		}
 	}
 
-	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 || stats.packageStoreBytesReclaimed > 0 {
+	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 || stats.packageStoreBytesReclaimed > 0 || stats.sharedScratchReclaimed > 0 {
 		d.logger.Info("gc: cycle complete",
 			"cleaned", stats.cleaned,
 			"orphaned", stats.orphaned,
@@ -233,6 +245,7 @@ func (d *Daemon) runGC(ctx context.Context) {
 			"repo_caches_reclaimed", stats.repoCachesReclaimed,
 			"task_temp_dirs_reclaimed", stats.taskTempDirsReclaimed,
 			"task_root_index_entries_reclaimed", stats.taskRootIndexEntriesReclaimed,
+			"shared_scratch_reclaimed", stats.sharedScratchReclaimed,
 			"package_store_bytes_reclaimed", stats.packageStoreBytesReclaimed,
 			"bytes_reclaimed", stats.bytesReclaimed,
 			"by_pattern", stats.byPattern,

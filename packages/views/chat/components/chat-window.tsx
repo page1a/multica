@@ -76,6 +76,7 @@ import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatInputFocus } from "./use-chat-input-focus";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
+import { ProviderQuotaStrip } from "./provider-quota-strip";
 import { ChatQueue } from "./chat-queue";
 import { EmptyState } from "./chat-empty-state";
 import { SessionRenameInput } from "./session-rename-input";
@@ -1076,6 +1077,7 @@ export function ChatWindow() {
         contextItems={contextItems}
         focusRequest={focusRequest}
       />
+      <ProviderQuotaStrip />
     </motion.div>
   );
 }

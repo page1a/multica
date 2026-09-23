@@ -71,6 +71,54 @@ func TestAgentWorkEnabledGetAndUpdate(t *testing.T) {
 	})
 }
 
+func TestAgentWorkEnabledDisablesDirectSpecialisations(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	parentID, childID := specializationFixture(t, "work-enabled-specialisation")
+	otherID := createAgentOnRuntime(t, "work-enabled-unrelated", testRuntimeID, "")
+
+	update := func(agentID string, enabled bool) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{
+			"work_enabled": enabled,
+		}), "id", agentID)
+		testHandler.UpdateAgent(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT work_enabled=%v: expected 200, got %d: %s", enabled, w.Code, w.Body.String())
+		}
+	}
+	read := func(agentID string) bool {
+		t.Helper()
+		var enabled bool
+		if err := testPool.QueryRow(t.Context(), `SELECT work_enabled FROM agent WHERE id = $1`, agentID).Scan(&enabled); err != nil {
+			t.Fatalf("read work_enabled: %v", err)
+		}
+		return enabled
+	}
+
+	update(parentID, false)
+	if read(parentID) {
+		t.Fatal("base role remained enabled")
+	}
+	if read(childID) {
+		t.Fatal("direct specialisation remained enabled")
+	}
+	if !read(otherID) {
+		t.Fatal("unrelated role was disabled")
+	}
+
+	update(parentID, true)
+	if !read(parentID) {
+		t.Fatal("base role did not re-enable")
+	}
+	if read(childID) {
+		t.Fatal("re-enabling base role should not re-enable specialisation")
+	}
+}
+
 func TestRoutingRosterOmitsDisabledSeats(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

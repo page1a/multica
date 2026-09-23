@@ -34,6 +34,14 @@ var guestWritablePrefixes = []string{
 	"/api/client-usage",             // own client telemetry
 	"/api/inbox",                    // own read / archive state
 	"/api/notification-preferences", // own delivery settings
+	"/api/invitations",              // accept or decline invitations addressed to the caller
+	"/api/share-links/join",         // join a workspace with a share link
+	"/api/tokens",                   // own personal access tokens
+	"/api/lark/binding/redeem",      // bind the caller's Lark identity
+	"/api/slack/binding/redeem",     // bind the caller's Slack identity
+	"/api/dingtalk/binding/redeem",  // bind the caller's DingTalk identity
+	"/api/wecom/binding/redeem",     // bind the caller's WeCom identity
+	"/api/telegram/binding/redeem",  // bind the caller's Telegram identity
 }
 
 // pathWithin reports whether path is prefix itself or a segment below it, so

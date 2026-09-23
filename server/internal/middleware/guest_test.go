@@ -23,6 +23,17 @@ func TestGuestWritablePath(t *testing.T) {
 		"/api/inbox/mark-all-read",
 		"/api/inbox/abc-123/read",
 		"/api/notification-preferences",
+		"/api/invitations/11111111-1111-1111-1111-111111111111/accept",
+		"/api/invitations/11111111-1111-1111-1111-111111111111/decline",
+		"/api/share-links/join",
+		"/api/tokens",
+		"/api/tokens/current/renew",
+		"/api/tokens/11111111-1111-1111-1111-111111111111",
+		"/api/lark/binding/redeem",
+		"/api/slack/binding/redeem",
+		"/api/dingtalk/binding/redeem",
+		"/api/wecom/binding/redeem",
+		"/api/telegram/binding/redeem",
 		"/api/workspaces",
 		"/api/workspaces/11111111-1111-1111-1111-111111111111/leave",
 	}
@@ -46,6 +57,8 @@ func TestGuestWritablePath(t *testing.T) {
 		"/api/mercury",
 		"/api/inboxes",
 		"/api/feedback-templates",
+		"/api/share-links/join-extra",
+		"/api/tokens-extra",
 	}
 	for _, path := range denied {
 		if GuestWritablePath(path) {

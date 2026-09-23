@@ -95,6 +95,20 @@ type IssueCreateParams struct {
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
+	// SuppressAssigneeRun applies the create normally — the row, its
+	// assignee, its broadcast and its analytics event all happen — but
+	// does not enqueue the assignee's run.
+	//
+	// Alignment groups use it on their coordination root: the root keeps
+	// its assignee so the stage barrier has someone to wake when a stage
+	// closes, yet confirming the group must not hand that assignee an
+	// implementation task of its own. This is a statement about THIS
+	// create, not a state the issue is parked in — the root is created
+	// active on purpose, and every later write to it (a reassignment, a
+	// status change, a stage closing) enqueues exactly as it would for
+	// any other issue.
+	SuppressAssigneeRun bool
+
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
 	// created and attachments are linked. Its return value is sent as
 	// the EventIssueCreated payload via the event bus. The HTTP handler
@@ -587,7 +601,10 @@ func (s *IssueService) afterCommit(ctx context.Context, issue db.Issue, labels [
 
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	if opts.AssignedAgentRunFireAt.IsZero() {
+	// SuppressAssigneeRun short-circuits both halves of the assignment trigger
+	// (the agent task and the squad-leader task): the caller is creating a group
+	// root whose assignee is a coordinator, not an executor.
+	if opts.AssignedAgentRunFireAt.IsZero() && !opts.SuppressAssigneeRun {
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
 	}
 

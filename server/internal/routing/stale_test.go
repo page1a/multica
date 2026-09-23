@@ -41,6 +41,28 @@ func TestHumanHeldInReviewFillsTheReviewerSlot(t *testing.T) {
 	}
 }
 
+func TestChildInReviewIsIgnoredByStaleAcceptanceSweep(t *testing.T) {
+	store := newFakeStore()
+	store.issue.ParentIssueID = "parent-1"
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerAgent, ID: "a-bulma-g", Name: "布尔玛游戏"}
+	store.issue.LastActivityAt = time.Now().Add(-48 * time.Hour)
+	judge := &fakeJudge{verdict: confidentVerdict()}
+
+	out, err := newRouter(store, judge).RouteStale(context.Background(), "ws-1", "issue-1")
+	if err != nil {
+		t.Fatalf("route stale: %v", err)
+	}
+	if out.Action != ActionNoop || out.Reason != "sub-issue has no acceptance route" {
+		t.Fatalf("stale child route = %+v, want acceptance no-op", out)
+	}
+	if store.wrote() || store.commentCount() != 0 || judge.callCount() != 0 {
+		t.Fatalf("stale child produced independent acceptance work: writes=%v comments=%d calls=%d", store.wrote(), store.commentCount(), judge.callCount())
+	}
+}
+
 // The other side of the same carve-out: it is as narrow as the bug. A person
 // holding a ticket whose reviewer slot already holds a value has nothing left
 // to fill, so the ticket is untouched exactly as before.

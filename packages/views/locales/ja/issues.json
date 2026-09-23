@@ -132,7 +132,7 @@
     "queued": "待機中"
   },
   "close_protocol": {
-    "missing": "プロトコル未クローズ",
+    "missing": "クローズ記録なし",
     "status_drift": "close.status ≠ {{issueStatus}}",
     "next_owner": "次: {{name}}",
     "next_owner_none": "次: なし",
@@ -1070,6 +1070,8 @@
     "group_summary_parent": "親タスクは担当者なしで作成されるため、単独では何も実行しません。",
     "created_title": "タスクを作成しました",
     "created_group_title": "{{count}} 件のタスクを作成しました",
+    "assignee_dropped": "「{{title}}」の担当者を設定できず、タスクは未アサインで作成されました。",
+    "assignee_dropped_several": "{{count}} 件のタスクは担当者を設定できず、未アサインで作成されました。",
     "retired_title": "このすり合わせは終了しました",
     "retired_description": "未完了の下書きには表示されません。",
     "load_failed": "すり合わせを読み込めませんでした。",

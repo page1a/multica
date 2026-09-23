@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/logexport"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -408,6 +409,23 @@ type Handler struct {
 	// rather than dropping it; routing then uses the deployment gateway, which
 	// is what it did before workspaces could bring their own.
 	RoutingSecrets *secretbox.Box
+	// LogExportSecrets seals the per-workspace log-export git token. Nil means
+	// this deployment cannot store one: the settings write REFUSES a token
+	// rather than dropping it, and a push against a repo whose token was
+	// sealed by a key this process does not have fails with a configuration
+	// error instead of silently pushing unauthenticated.
+	LogExportSecrets *secretbox.Box
+	// LogExportPusher commits an exported bundle into the workspace's
+	// configured git repository and returns a link to it. Nil means the
+	// feature is not available on this deployment, and the push endpoint
+	// reports that rather than pretending to push.
+	LogExportPusher logexport.Pusher
+	// logExportNow is the clock the two log-export handlers stamp a bundle
+	// with. It is a seam, not a setting: a test freezes it to prove the
+	// download and the push render byte-identical artifacts, which a wall
+	// clock moving between the two calls would make impossible to assert.
+	// Nil means time.Now().UTC().
+	logExportNow func() time.Time
 	// PRRefresh drives the GitHub API snapshot pipeline for PR cards (MUL-5265):
 	// webhook / page-visit / TTL triggers → authenticated GraphQL fetch →
 	// head-SHA-guarded atomic snapshot write. Always non-nil, but inert (every

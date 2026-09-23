@@ -35,16 +35,18 @@ Write order — stop on the first failure:
 
 Blocked close records must write `close.block_kind` and `close.block_action` together. `dependency` additionally requires a non-empty `close.waiting_on`; `decision` and `permission` require a concrete `member`, `agent`, or `squad` next owner. Legacy blocked records that predate these two keys remain readable when both are absent. For non-blocked conclusions, the fields must be empty or absent. Human review is overdue after 24 hours without activity; `capacity` blockers do not count toward “needs you”.
 
-Decision table (first match). `needs_acceptance` means this issue's AC still
-requires Reviewer / human / device confirmation. Staged child = has a parent
-and (own `stage` or any staged sibling).
+Decision table (first match). `needs_acceptance` means the top-level parent
+still requires Reviewer / human / device confirmation. A sub-issue never owns
+an acceptance conclusion: it reports its execution result and closes as
+`delivered`; the parent reviewer checks the parent together with every child.
+Staged child = has a parent and (own `stage` or any staged sibling).
 
 | conclusion | when | status | next owner | wake |
 |---|---|---|---|---|
 | `delivered` | ask delivered, no acceptance, staged child | `done` | parent assignee, or `none` | `stage_done` — do **not** mention the parent assignee |
 | `delivered` | ask delivered, no acceptance, not staged | `done` | `none` unless AC names someone | `none` or `mention` |
-| `awaiting_review` | acceptance is an agent Reviewer | `in_review` | that Reviewer | `mention` — **not** `done`; barrier stays open |
-| `awaiting_human` | acceptance is a human | `in_review` | that member | `none`. Optional dispatcher: `mention` that agent and name the human in `waiting_on` or the evidence |
+| `awaiting_review` | top-level parent acceptance is an agent Reviewer | `in_review` | that Reviewer | `mention` — **not** `done`; child barrier is already closed |
+| `awaiting_human` | top-level parent acceptance is a human | `in_review` | that member | `none`. Optional dispatcher: `mention` that agent and name the human in `waiting_on` or the evidence |
 | `blocked` | missing auth / human decision / external dep | `blocked` | who can unblock | `mention` if agent/squad, else `none` |
 | (no close) | this turn did not deliver this issue's ask | do not change status | — | do not write `close.*` |
 Four closing scenes:

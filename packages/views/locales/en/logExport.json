@@ -1,0 +1,72 @@
+{
+  "button": {
+    "label": "Export logs",
+    "tooltip": "Export a log bundle for this run"
+  },
+  "dialog": {
+    "title": "Export run logs",
+    "subtitle": "Generate one redacted bundle you can download or report",
+    "cancel": "Cancel"
+  },
+  "range": {
+    "section": "Range",
+    "run": "This run",
+    "run_hint": "Run {{id}}",
+    "hours": "Last {{hours}}h",
+    "hours_hint": "From {{from}}",
+    "hours_input": "Hours to look back",
+    "task": "Whole task",
+    "task_hint": "Every run on this task"
+  },
+  "action": {
+    "export": "Export logs",
+    "reexport": "Export again",
+    "retry": "Retry",
+    "partial": "Export what was collected",
+    "widen": "Widen to the whole task",
+    "report": "Report as a comment attachment and @ the owner",
+    "retry_comment": "Resend the comment",
+    "copy_summary": "Copy the AI summary",
+    "copied": "Copied",
+    "download": "Download the bundle"
+  },
+  "state": {
+    "idle_title": "Nothing exported yet",
+    "idle_body": "Pick a range, then choose \"{{action}}\". The server builds the bundle in one piece: structured logs, run metadata, and a summary you can paste into an AI chat.",
+    "section": "Result",
+    "collecting_title": "Collecting logs",
+    "collecting_body": "Reading the structured transcript, run metadata, and the redacted summary.",
+    "collected": "{{n}} collected so far",
+    "received": "{{received}} of {{total}} received",
+    "empty_title": "No logs in this range",
+    "empty_body": "Nothing matched \"{{range}}\".",
+    "failed_title": "The export did not finish",
+    "partial_note": "The server builds the bundle in one piece, so a failed export leaves no half-document to hand over. The last bundle that did finish is still here.",
+    "restored": "This is the last bundle that finished."
+  },
+  "card": {
+    "entries": "{{n}} entries",
+    "runs": "{{n}} runs",
+    "truncated": "Entry cap reached — this is the head of the transcript",
+    "redacted": "Redacted automatically",
+    "redaction_incomplete": "Redaction incomplete — do not forward as is",
+    "redaction_unknown": "Redaction status unknown — do not forward as is",
+    "summary": "AI summary",
+    "no_summary": "(no summary text)"
+  },
+  "report": {
+    "hint": "Pushes to the workspace log repository first, leaving only a link in the comment; falls back to a comment attachment when the repository is unavailable.",
+    "running": "Reporting…",
+    "success_git": "Reported on {{issue}} — the bundle was pushed to {{repo}}.",
+    "success_attachment": "Reported on {{issue}} — the bundle is a comment attachment.",
+    "fallback": "Fell back to a comment attachment: {{reason}}",
+    "push_landed": "Pushed to the log repository, but the comment did not send: {{reason}}",
+    "failed": "Report failed: {{reason}}",
+    "link": "Open the bundle"
+  },
+  "error": {
+    "export_failed": "Export failed",
+    "report_failed": "Report failed",
+    "no_issue": "This run is not linked to an issue, so it cannot be reported."
+  }
+}

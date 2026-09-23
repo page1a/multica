@@ -18,6 +18,7 @@ export {
 } from "./fold";
 export { issueDraftCommentSeed } from "./comment-seed";
 export {
+  ISSUE_DRAFT_COORDINATOR_STATUS,
   ISSUE_DRAFT_MAX_CHILDREN,
   ISSUE_DRAFT_RECOMMENDED_CHILDREN,
   issueDraftChildStatus,
@@ -34,6 +35,7 @@ export {
   sameIssueDraftChildren,
   type IssueDraftGroupPlan,
   type IssueDraftGroupRow,
+  type IssueDraftGroupRowOutcome,
   type IssueDraftGroupStageProgress,
 } from "./group";
 export {
@@ -90,8 +92,10 @@ export { readIssueDraftCapabilityPreference, writeIssueDraftCapabilityPreference
 export {
   ISSUE_DRAFT_ROOT_ROW,
   applyIssueDraftAssigneeSuggestions,
+  issueDraftSuggestionPhase,
   issueDraftSuggestionRequest,
   type DraftAssigneeSuggestion,
   type DraftAssigneeSuggestionRequest,
   type DraftAssigneeSuggestionRow,
+  type IssueDraftSuggestionPhase,
 } from "./assignee-suggestions";

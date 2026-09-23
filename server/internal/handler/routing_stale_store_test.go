@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -38,6 +39,11 @@ func TestStaleReviewStoreQueries(t *testing.T) {
 		"status":           "in_review",
 		"last_activity_at": long,
 	})
+	child := fx.Issue(t, "child review must stay with parent", testutil.Cols{
+		"status":           "in_review",
+		"last_activity_at": long,
+	})
+	fx.Exec(t, `UPDATE issue SET parent_issue_id = $1 WHERE id = $2`, stale, child)
 	runtimeID := fx.Runtime(t, "stale-sweep-runtime")
 	agentID := fx.Agent(t, "stale-sweep-agent", runtimeID)
 	fx.Task(t, agentID, testutil.Cols{
@@ -59,9 +65,10 @@ func TestStaleReviewStoreQueries(t *testing.T) {
 			t.Errorf("the stalled ticket was not picked up")
 		}
 		for label, id := range map[string]string{
-			"a ticket touched an hour ago": fresh,
-			"a ticket being worked on":     working,
-			"a ticket with an active run":  running,
+			"a ticket touched an hour ago":  fresh,
+			"a ticket being worked on":      working,
+			"a ticket with an active run":   running,
+			"a child issue awaiting review": child,
 		} {
 			if seen[id] {
 				t.Errorf("%s was picked up by the sweep", label)
@@ -204,6 +211,62 @@ func TestStaleReviewStoreQueries(t *testing.T) {
 			t.Fatalf("an enabled workspace was not listed for the sweep")
 		}
 	})
+}
+
+// The sweep's budget must not be spent on child rows.
+//
+// Acceptance is parent-scoped, so a child is not a candidate at all. That
+// exclusion has to live in the candidate query, not only in the no-op the
+// decision layer returns after a row has been selected: the query orders
+// oldest-quiet-first and caps the round at `limit`, so children filtered only
+// after selection spend every slot before the sweep ever reaches the stalled
+// top-level parent. The parent then waits round after round — not a slow
+// sweep, a sweep that never visits the ticket it exists for.
+//
+// The children here are quieter than the parent on purpose, so they sort ahead
+// of it, and the limit is smaller than the child population.
+func TestStaleReviewSweepIsNotStarvedByChildIssues(t *testing.T) {
+	ctx := context.Background()
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	store := testHandler.RoutingStore()
+
+	// A workspace of its own: the claim is about which rows fill the round,
+	// and stale top-level rows another test left in the shared workspace
+	// would be exactly the noise this assertion must not have.
+	wsID := fx.Workspace(t, "child-starved stale sweep",
+		fmt.Sprintf("child-starved-sweep-%d", time.Now().UnixNano()))
+
+	parent := fx.Issue(t, "top-level ticket quietly awaiting acceptance", testutil.Cols{
+		"workspace_id":     wsID,
+		"status":           "in_review",
+		"last_activity_at": time.Now().Add(-48 * time.Hour),
+	})
+	const children = 30
+	for i := 0; i < children; i++ {
+		fx.Issue(t, "quiet child awaiting acceptance", testutil.Cols{
+			"workspace_id":     wsID,
+			"status":           "in_review",
+			"parent_issue_id":  parent,
+			"last_activity_at": time.Now().Add(-72 * time.Hour),
+		})
+	}
+
+	const limit = 5
+	ids, err := store.StaleReviews(ctx, wsID, time.Now().Add(-24*time.Hour), limit)
+	if err != nil {
+		t.Fatalf("stale reviews: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Fatalf("the sweep returned nothing: the only candidate in this workspace is the " +
+			"top-level parent, and a sweep that never reaches it is the stall it exists to catch")
+	}
+	for _, id := range ids {
+		if id != parent {
+			t.Fatalf("sweep = %v, want only the top-level parent: %d child rows quieter than it "+
+				"sorted ahead of it, so a filter applied after selection spends the whole round "+
+				"on children and the parent is never reached", ids, children)
+		}
+	}
 }
 
 // A sub-issue completed by the sweep must reach its parent.
