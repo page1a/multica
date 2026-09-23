@@ -28,8 +28,9 @@ const quotaRelayPendingBatch = 50
 // tier down. The bool tells HandleFailedTasks not to reset the issue to todo:
 // a replacement is queued, or the issue was marked blocked on purpose.
 //
-// Transient errors, including provider capacity, return false and change
-// nothing. Quota failures are not retried; this is the path that runs instead.
+// A capacity or rate-limit failure uses the same path only after the in-place
+// retry budget is spent. While retryEligible is still true, this returns
+// false and changes nothing. Other transient errors stay out.
 func (s *TaskService) RelayQuotaFailure(ctx context.Context, task db.AgentTaskQueue) (bool, error) {
 	if s == nil || s.Queries == nil || !quotaFailureWorthRelay(task) {
 		return false, nil
@@ -161,6 +162,11 @@ func (s *TaskService) prepareQuotaRelay(ctx context.Context, task db.AgentTaskQu
 			}
 			return err
 		}
+		// Same predicate the in-place retry uses. A capacity miss that can
+		// still spawn a child must not open a breaker or move the issue.
+		if capacityRetriesRemain(locked, agent) {
+			return nil
+		}
 		plan, ok := quotarelay.PlanFor(quotaReason(locked), quotaError(locked), quotaModelBinding(agent), time.Now())
 		if !ok {
 			return nil
@@ -227,7 +233,7 @@ func (s *TaskService) prepareQuotaRelay(ctx context.Context, task db.AgentTaskQu
 			return s.skipQuotaRelay(ctx, qtx, locked, agent, issue, plan, handoff, "skipped_active", "这张票已经有别的进行中的任务")
 		}
 
-		choice, found, err := pickQuotaReplacement(ctx, qtx, agent, issue.WorkspaceID)
+		choice, found, err := pickQuotaReplacement(ctx, qtx, locked, agent, issue.WorkspaceID)
 		if err != nil {
 			return err
 		}
@@ -488,7 +494,35 @@ func suppressQuotaSeat(ctx context.Context, qtx *db.Queries, agent db.Agent) (pg
 	return updated, nil
 }
 
-func pickQuotaReplacement(ctx context.Context, qtx *db.Queries, failed db.Agent, workspaceID pgtype.UUID) (quotarelay.Choice, bool, error) {
+func capacityRetriesRemain(task db.AgentTaskQueue, agent db.Agent) bool {
+	reason := quotaReason(task)
+	if !quotarelay.IsCapacityFailure(reason, quotaError(task)) {
+		return false
+	}
+	return retryEligible(reason, task, agent)
+}
+
+// relayCapacityIfRetriesSpent is the daemon fail path. HandleFailedTasks
+// already calls RelayQuotaFailure after MaybeRetryFailedTask declines; a
+// failure the daemon reported itself never reaches that sweeper, so the
+// exhausted capacity attempt has to enter the relay here or the issue stays
+// in progress with the provider's English sentence.
+func (s *TaskService) relayCapacityIfRetriesSpent(ctx context.Context, task db.AgentTaskQueue, failureReason, errMsg string) bool {
+	if s == nil || !quotarelay.IsCapacityFailure(failureReason, errMsg) {
+		return false
+	}
+	hold, err := s.RelayQuotaFailure(ctx, task)
+	if err != nil {
+		slog.Warn("fail task: capacity relay failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return false
+	}
+	return hold
+}
+
+func pickQuotaReplacement(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, failed db.Agent, workspaceID pgtype.UUID) (quotarelay.Choice, bool, error) {
 	agents, err := qtx.ListAgents(ctx, workspaceID)
 	if err != nil {
 		return quotarelay.Choice{}, false, err
@@ -507,16 +541,19 @@ func pickQuotaReplacement(ctx context.Context, qtx *db.Queries, failed db.Agent,
 	for _, agent := range agents {
 		id := util.UUIDToString(agent.ID)
 		tier := quotaTierKey(agent.RoutingTier)
+		provider, _ := routing.DefaultLadder.ProviderOf(agent.Name)
 		seat := quotarelay.Seat{
 			ID:        id,
 			Name:      agent.Name,
 			Tier:      tier,
 			Direction: quotaSeatDirection(agent.Name),
+			Provider:  provider,
 			Eligible:  agent.WorkEnabled && agent.RuntimeID.Valid && !agent.ArchivedAt.Valid && tier != "" && !broken[id],
 		}
 		if id == failedID {
 			failedSeat = seat
 			failedSeat.Eligible = false
+			failedSeat.AvoidHouse = capacityAvoidHouse(task, agent.Name)
 		}
 		roster = append(roster, seat)
 	}
@@ -654,6 +691,17 @@ func quotaTierKey(raw pgtype.Text) string {
 
 func planSeatTier(agent db.Agent) string {
 	return quotaTierKey(agent.RoutingTier)
+}
+
+func capacityAvoidHouse(task db.AgentTaskQueue, name string) string {
+	if !quotarelay.IsCapacityFailure(quotaReason(task), quotaError(task)) {
+		return ""
+	}
+	provider, ok := routing.DefaultLadder.ProviderOf(name)
+	if !ok || provider != quotarelay.OpenAIHouse {
+		return ""
+	}
+	return provider
 }
 
 func quotaSeatDirection(name string) string {

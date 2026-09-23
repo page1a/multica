@@ -40,6 +40,9 @@ var internalOnlyPayloadKeys = map[string][]string{
 	// It may contain provider/runtime detail that belongs in the originating
 	// chat transcript, not in the workspace-wide realtime fanout.
 	protocol.EventTaskFailed: {"error"},
+	// issue:invalidated routes on recipient_id (see registerListeners) but the
+	// client never reads it, so it does not belong on the wire.
+	protocol.EventIssueInvalidated: {"recipient_id"},
 }
 
 // projectOutbound returns payload with the event type's internal-only keys
@@ -89,6 +92,10 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		protocol.EventInvitationRevoked:  true,
 		protocol.EventChatSessionCreated: true,
 		protocol.EventChatSessionUpdated: true,
+		// issue:invalidated may be targeted (recipient_id) or workspace-wide;
+		// its own listener decides which, so SubscribeAll must not also
+		// broadcast the targeted shape to the whole room.
+		protocol.EventIssueInvalidated: true,
 	}
 
 	// Helper: marshal event and send to a specific user.
@@ -239,48 +246,69 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		b.SendToUser(userID, data, e.WorkspaceID)
 	})
 
+	// issue:invalidated (DENE-717) is the id-only "drop your cached copy and
+	// refetch" frame. A recipient_id makes it personal — one member's access
+	// changed — while its absence means the whole workspace is being told to
+	// refresh, which is what a sharing-scope change needs. It is listed under
+	// personalEvents so SubscribeAll does not broadcast the targeted shape to
+	// everyone as well.
+	bus.Subscribe(protocol.EventIssueInvalidated, func(e events.Event) {
+		payload, ok := e.Payload.(map[string]any)
+		if !ok {
+			return
+		}
+		if recipientID, _ := payload["recipient_id"].(string); recipientID != "" {
+			sendToRecipient(b, e, recipientID)
+			return
+		}
+		broadcastWorkspace(b, e)
+	})
+
 	// SubscribeAll handles workspace-broadcast for non-personal events.
 	bus.SubscribeAll(func(e events.Event) {
 		// Skip personal events — they are handled by type-specific listeners above.
 		if personalEvents[e.Type] {
 			return
 		}
-
-		msg := map[string]any{
-			"type":       e.Type,
-			"payload":    projectOutbound(e.Type, e.Payload),
-			"actor_id":   e.ActorID,
-			"actor_type": e.ActorType,
-		}
-		data, err := json.Marshal(msg)
-		if err != nil {
-			slog.Error("failed to marshal event", "event_type", e.Type, "error", err)
-			return
-		}
-
-		// Phase 1 (MUL-1138): the per-resource scope routing for high-frequency
-		// task/chat events is intentionally NOT enabled yet. The server-side
-		// pieces — Hub.subscribe/unsubscribe protocol, ScopeAuthorizer, Redis
-		// Streams relay — have all landed, but the client (WSClient + the
-		// per-page chat/task hooks) does not yet send `subscribe` frames or
-		// replay subscriptions on reconnect. Routing these events through
-		// `BroadcastToScope("task"|"chat", ...)` today would silently drop
-		// every chat/task message on the floor, breaking the live chat
-		// timeline, chat unread badges, and pending-task UI.
-		//
-		// Until the client lands its scope-subscription PR, we keep
-		// task/chat events on workspace fanout (same behavior as before this
-		// PR). The `Event.TaskID` / `Event.ChatSessionID` hints are still
-		// populated by producers so that flipping the switch later is a
-		// one-line change here. See review on PR #1429 for context.
-
-		if e.WorkspaceID != "" {
-			realtime.M.RecordEvent(e.Type)
-			b.BroadcastToWorkspace(e.WorkspaceID, data)
-		} else if strings.HasPrefix(e.Type, "daemon:") {
-			realtime.M.RecordEvent(e.Type)
-			b.Broadcast(data)
-		}
-		// Otherwise drop — no global broadcast for non-daemon events without a workspace.
+		broadcastWorkspace(b, e)
 	})
+}
+
+// broadcastWorkspace marshals one event as a client frame and fans it out to
+// the event's workspace room. Frames in a room are narrowed per recipient at
+// delivery time, so this is the same path for content and for invalidation.
+//
+// Phase 1 (MUL-1138): the per-resource scope routing for high-frequency
+// task/chat events is intentionally NOT enabled yet. The server-side pieces —
+// Hub.subscribe/unsubscribe protocol, ScopeAuthorizer, Redis Streams relay —
+// have all landed, but the client (WSClient + the per-page chat/task hooks)
+// does not yet send `subscribe` frames or replay subscriptions on reconnect.
+// Routing these events through `BroadcastToScope("task"|"chat", ...)` today
+// would silently drop every chat/task message on the floor, breaking the live
+// chat timeline, chat unread badges, and pending-task UI.
+//
+// Until the client lands its scope-subscription PR, we keep task/chat events
+// on workspace fanout (same behavior as before that PR). The `Event.TaskID` /
+// `Event.ChatSessionID` hints are still populated by producers so that flipping
+// the switch later is a one-line change here. See review on PR #1429.
+func broadcastWorkspace(b realtime.Broadcaster, e events.Event) {
+	msg := map[string]any{
+		"type":       e.Type,
+		"payload":    projectOutbound(e.Type, e.Payload),
+		"actor_id":   e.ActorID,
+		"actor_type": e.ActorType,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("failed to marshal event", "event_type", e.Type, "error", err)
+		return
+	}
+	if e.WorkspaceID != "" {
+		realtime.M.RecordEvent(e.Type)
+		b.BroadcastToWorkspace(e.WorkspaceID, data)
+	} else if strings.HasPrefix(e.Type, "daemon:") {
+		realtime.M.RecordEvent(e.Type)
+		b.Broadcast(data)
+	}
+	// Otherwise drop — no global broadcast for non-daemon events without a workspace.
 }

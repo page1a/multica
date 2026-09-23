@@ -290,6 +290,8 @@ export function ManualCreatePanel({
   const [labelIds, setLabelIds] = useState<string[]>(draft.manual.labelIds);
   const [propertyValues, setPropertyValues] = useState(draft.manual.propertyValues ?? {});
   const [customPropertyPickerId, setCustomPropertyPickerId] = useState<string | null>(null);
+  const projectSeeded = Boolean(data && "project_id" in data);
+  const [projectTouched, setProjectTouched] = useState(false);
   const [projectId, setProjectId] = useState<string | undefined>(() => {
     if (data && "project_id" in data) {
       return (data.project_id as string | null) ?? undefined;
@@ -404,7 +406,18 @@ export function ManualCreatePanel({
     setAssigneeType(type); setAssigneeId(id);
     setManual({ assigneeType: type, assigneeId: id });
   };
-  const updateProject = (id?: string) => { setProjectId(id); setShared({ projectId: id }); };
+  const updateProject = (id?: string) => {
+    setProjectId(id);
+    setProjectTouched(true);
+    setShared({ projectId: id });
+  };
+  // A sub-issue whose project was seeded or edited sends that choice, including
+  // null when the user cleared it. Leaving the field out is what lets the
+  // server inherit the parent's project for callers that never showed a picker.
+  const submittedProjectId =
+    parentIssueId && (projectSeeded || projectTouched)
+      ? (projectId ?? null)
+      : projectId;
   const updateStartDate = (v: string | null) => { setStartDate(v); setManual({ startDate: v }); };
   const updateDueDate = (v: string | null) => { setDueDate(v); setShared({ dueDate: v }); };
   const updateLabelIds = (ids: string[]) => { setLabelIds(ids); setManual({ labelIds: ids }); };
@@ -524,7 +537,7 @@ export function ManualCreatePanel({
               attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
               label_ids: labelIds.length > 0 ? labelIds : undefined,
               stage: parentIssueId && stage != null ? stage : undefined,
-              project_id: projectId,
+              project_id: submittedProjectId,
             },
           },
         });
@@ -548,7 +561,7 @@ export function ManualCreatePanel({
           parent_issue_id: parentIssueId,
           // Stage is only meaningful for a sub-issue (relative to its siblings).
           stage: parentIssueId && stage != null ? stage : undefined,
-          project_id: projectId,
+          project_id: submittedProjectId,
         });
       }
 

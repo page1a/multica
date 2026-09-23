@@ -94,7 +94,8 @@ func TestIssueVisibilitySQLAgreesWithCanSeeIssue(t *testing.T) {
 					SELECT 1 FROM (
 						SELECT $1::text AS visibility, $2::text AS creator_type,
 						       $3::uuid AS creator_id, $4::uuid AS project_id,
-						       $5::text AS assignee_type, $6::uuid AS assignee_id
+						       $5::text AS assignee_type, $6::uuid AS assignee_id,
+						       '00000000-0000-0000-0000-000000000000'::uuid AS workspace_id
 					) AS i WHERE %s
 				)`, predicate)
 

@@ -2693,11 +2693,19 @@ type QuickCreateIssueResponse struct {
 }
 
 func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
 	var req QuickCreateIssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	var rawFields map[string]json.RawMessage
+	_ = json.Unmarshal(bodyBytes, &rawFields)
+	_, projectPinned := rawFields["project_id"]
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		writeError(w, http.StatusBadRequest, "prompt is required")
@@ -2851,11 +2859,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-			ID:          pid,
-			WorkspaceID: wsUUID,
-		}); err != nil {
-			writeError(w, http.StatusBadRequest, "project not found")
+		if _, ok := h.visibleProjectInWorkspace(w, r, wsUUID, pid); !ok {
 			return
 		}
 		projectUUID = pid
@@ -2866,6 +2870,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	// issue" entry, but the handler re-checks so a forged request can't
 	// smuggle a foreign parent UUID through.
 	var parentIssueUUID pgtype.UUID
+	var parentProject pgtype.UUID
 	if strings.TrimSpace(req.ParentIssueID) != "" {
 		pid, ok := parseUUIDOrBadRequest(w, req.ParentIssueID, "parent_issue_id")
 		if !ok {
@@ -2880,9 +2885,17 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		parentIssueUUID = pid
+		parentProject = parent.ProjectID
+	}
+	// Omitted project on a sub-issue takes the parent's. An explicit null is
+	// the user clearing it, and the agent is told to pass `--project ""` so
+	// the later create does not fill the parent's project back in.
+	projectExplicitNone := projectPinned && !projectUUID.Valid
+	if !projectPinned && !projectUUID.Valid && parentProject.Valid {
+		projectUUID = parentProject
 	}
 
-	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, priority, dueDate, projectUUID, parentIssueUUID, attachmentIDs)
+	task, err := h.TaskService.EnqueueQuickCreateTaskChoosingProject(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, priority, dueDate, projectUUID, parentIssueUUID, attachmentIDs, projectExplicitNone)
 	if err != nil {
 		if writeIssueLimitReached(w, err) {
 			return
@@ -2992,6 +3005,45 @@ func readRuntimeCLIVersion(metadata []byte) string {
 	return ""
 }
 
+// visibleProjectInWorkspace loads a project in this workspace and refuses one
+// the caller cannot see. A project that exists but is not visible answers
+// with the same "not found" as a missing one: sight is not a separate
+// permission error (see permission.CanSee). A row with no creator cannot be
+// attributed, so only the workspace boundary applies to it.
+//
+// The bool is false when a response has already been written.
+func (h *Handler) visibleProjectInWorkspace(w http.ResponseWriter, r *http.Request, workspaceID, projectID pgtype.UUID) (db.Project, bool) {
+	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+		ID:          projectID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if !isNotFound(err) {
+			slog.Error("validate project scope",
+				append(logger.RequestAttrs(r), "project_id", uuidToString(projectID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to validate project")
+			return db.Project{}, false
+		}
+		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return db.Project{}, false
+	}
+	if !project.CreatedBy.Valid {
+		return project, true
+	}
+	viewer, viewerErr := h.visibilityViewerFor(r, workspaceID)
+	if viewerErr != nil {
+		slog.Error("validate project visibility",
+			append(logger.RequestAttrs(r), "project_id", uuidToString(projectID), "error", viewerErr)...)
+		writeError(w, http.StatusInternalServerError, "failed to validate project")
+		return db.Project{}, false
+	}
+	if !viewer.canSeeProject(project) {
+		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return db.Project{}, false
+	}
+	return project, true
+}
+
 type CreateIssueRequest struct {
 	Title         string   `json:"title"`
 	Description   *string  `json:"description"`
@@ -3025,11 +3077,21 @@ func duplicateIssueMessage(issue IssueResponse) string {
 }
 
 func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
 	var req CreateIssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Present-even-when-null, same convention as UpdateIssue. An omitted
+	// project_id inherits the parent's project; an explicit null stays empty.
+	var rawFields map[string]json.RawMessage
+	_ = json.Unmarshal(bodyBytes, &rawFields)
+	_, projectPinned := rawFields["project_id"]
 
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
@@ -3111,9 +3173,12 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ProjectID != nil {
+	if projectPinned && req.ProjectID != nil && strings.TrimSpace(*req.ProjectID) != "" {
 		id, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
 		if !ok {
+			return
+		}
+		if _, ok := h.visibleProjectInWorkspace(w, r, wsUUID, id); !ok {
 			return
 		}
 		projectID = id
@@ -3251,6 +3316,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		CreatorID:      parseUUID(actualCreatorID),
 		ParentIssueID:  parentIssueID,
 		ProjectID:      projectID,
+		ProjectPinned:  projectPinned,
 		StartDate:      startDate,
 		DueDate:        dueDate,
 		OriginType:     originType,
@@ -3473,6 +3539,50 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 	}
 }
 
+// inheritUnsetProjectFromNewParent copies the parent's project onto an issue
+// that is being attached and does not already have one, when this write did
+// not name a project. An issue that already has a project keeps it, and an
+// explicit project in the same request (including null) is left untouched.
+// Sending the parent the issue already has is not a new attachment: a project
+// the user cleared stays cleared. A parent with no project, or a project row
+// that is gone, leaves the issue empty rather than failing the parent link.
+func inheritUnsetProjectFromNewParent(ctx context.Context, q *db.Queries, params *db.UpdateIssueParams, current db.Issue, rawFields map[string]json.RawMessage) error {
+	if _, touched := rawFields["project_id"]; touched {
+		return nil
+	}
+	if _, touched := rawFields["parent_issue_id"]; !touched || !params.ParentIssueID.Valid {
+		return nil
+	}
+	if current.ParentIssueID.Valid && current.ParentIssueID == params.ParentIssueID {
+		return nil
+	}
+	if current.ProjectID.Valid {
+		return nil
+	}
+	parent, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          params.ParentIssueID,
+		WorkspaceID: current.WorkspaceID,
+	})
+	if err != nil || !parent.ID.Valid || !parent.ProjectID.Valid {
+		return nil
+	}
+	project, err := q.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		ID:          parent.ProjectID,
+		WorkspaceID: current.WorkspaceID,
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("inherit parent project: %w", err)
+	}
+	params.ProjectID = parent.ProjectID
+	if permission.Visibility(project.Visibility).Valid() {
+		params.Visibility = pgtype.Text{String: project.Visibility, Valid: true}
+	}
+	return nil
+}
+
 var errIssueFieldConflict = errors.New("issue text field conflict")
 
 func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string) (db.Issue, db.Issue, bool, error) {
@@ -3546,6 +3656,9 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	refreshUntouchedNullableIssueParams(&params, current, rawFields)
+	if err := inheritUnsetProjectFromNewParent(ctx, qtx, &params, current, rawFields); err != nil {
+		return db.Issue{}, current, false, err
+	}
 
 	issue, err := qtx.UpdateIssue(ctx, params)
 	if err != nil {
@@ -3767,22 +3880,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, ok := rawFields["project_id"]; ok {
-		if req.ProjectID != nil {
+		if req.ProjectID != nil && strings.TrimSpace(*req.ProjectID) != "" {
 			projectUUID, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
 			if !ok {
 				return
 			}
-			if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-				ID:          projectUUID,
-				WorkspaceID: prevIssue.WorkspaceID,
-			}); err != nil {
-				if !isNotFound(err) {
-					slog.Error("update issue: validate project scope",
-						append(logger.RequestAttrs(r), "project_id", uuidToString(projectUUID), "error", err)...)
-					writeError(w, http.StatusInternalServerError, "failed to validate project")
-					return
-				}
-				writeError(w, http.StatusBadRequest, "project not found in this workspace")
+			if _, ok := h.visibleProjectInWorkspace(w, r, prevIssue.WorkspaceID, projectUUID); !ok {
 				return
 			}
 			params.ProjectID = projectUUID
@@ -3858,6 +3961,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		err = h.runWithIssueStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, func(q *db.Queries) error {
+			// A parent-only write (the attach-as-child path) never enters
+			// updateIssueAtomically, so the same inheritance has to run here.
+			// An explicit project_id in this request, including null, still wins.
+			if innerErr := inheritUnsetProjectFromNewParent(r.Context(), q, &params, prevIssue, rawFields); innerErr != nil {
+				return innerErr
+			}
 			var innerErr error
 			issue, innerErr = q.UpdateIssue(r.Context(), params)
 			return innerErr
@@ -3930,6 +4039,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		"creator_type":        prevIssue.CreatorType,
 		"creator_id":          uuidToString(prevIssue.CreatorID),
 	})
+	// A member moved off this issue may have just lost the only reason they
+	// could see it. The content frame above is filtered for exactly those
+	// recipients, so the id-only frame is what evicts their cached copy
+	// (DENE-717). Unconditional because an unassign arrives as explicit nulls,
+	// which leaves assigneeChanged false; the helper does the real check.
+	h.invalidateFormerAssignee(r.Context(), prevIssue, issue, actorType, actorID)
 	if attachmentsChanged {
 		// The full owner snapshot must be admitted before an auxiliary event at
 		// the same revision. Otherwise clients advance only the revision here and
@@ -4491,24 +4606,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-			ID:          projectUUID,
-			WorkspaceID: wsUUID,
-		}); err != nil {
-			if !isNotFound(err) {
-				slog.Error("batch update issues: validate project scope",
-					append(logger.RequestAttrs(r), "project_id", uuidToString(projectUUID), "error", err)...)
-				writeError(w, http.StatusInternalServerError, "failed to validate project")
-				return
-			}
-			writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		project, ok := h.visibleProjectInWorkspace(w, r, wsUUID, projectUUID)
+		if !ok {
 			return
 		}
 		batchProjectID = projectUUID
-		if project, projectErr := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-			ID:          projectUUID,
-			WorkspaceID: wsUUID,
-		}); projectErr == nil && permission.Visibility(project.Visibility).Valid() {
+		if permission.Visibility(project.Visibility).Valid() {
 			// Same inheritance as the single-issue move: everything landing in
 			// this project takes its current scope (DENE-698).
 			batchProjectVisibility = pgtype.Text{String: project.Visibility, Valid: true}
@@ -4694,6 +4797,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			err = h.runWithIssueStatusGuard(r.Context(), wsUUID, batchStatusKey, func(q *db.Queries) error {
+				if innerErr := inheritUnsetProjectFromNewParent(r.Context(), q, &params, prevIssue, rawUpdates); innerErr != nil {
+					return innerErr
+				}
 				var innerErr error
 				issue, innerErr = q.UpdateIssue(r.Context(), params)
 				return innerErr
@@ -4728,6 +4834,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			"priority_changed": priorityChanged,
 			"project_changed":  projectChanged,
 		})
+		// See the single-update path: an unassign is expressed as explicit
+		// nulls, so this cannot be gated on the assignee_changed flag.
+		h.invalidateFormerAssignee(r.Context(), prevIssue, issue, actorType, actorID)
 
 		// Reassignment does not cancel existing tasks (#4963 / MUL-4113) —
 		// mirrors UpdateIssue. See that handler for the rationale.

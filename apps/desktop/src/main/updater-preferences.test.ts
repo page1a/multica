@@ -31,22 +31,39 @@ describe("updater preferences", () => {
 
     await expect(loadUpdaterPreferences(missingPath)).resolves.toEqual({
       automaticUpdates: true,
+      releaseChannel: "stable",
     });
     await expect(loadUpdaterPreferences(invalidPath)).resolves.toEqual({
       automaticUpdates: true,
+      releaseChannel: "stable",
+    });
+  });
+
+  it("keeps an older file on the stable channel", async () => {
+    const filePath = await makePreferencesPath();
+    await writeFile(filePath, JSON.stringify({ automaticUpdates: false }));
+
+    await expect(loadUpdaterPreferences(filePath)).resolves.toEqual({
+      automaticUpdates: false,
+      releaseChannel: "stable",
     });
   });
 
   it("round-trips a disabled automatic update preference", async () => {
     const filePath = await makePreferencesPath();
 
-    await saveUpdaterPreferences(filePath, { automaticUpdates: false });
+    await saveUpdaterPreferences(filePath, {
+      automaticUpdates: false,
+      releaseChannel: "test",
+    });
 
     await expect(loadUpdaterPreferences(filePath)).resolves.toEqual({
       automaticUpdates: false,
+      releaseChannel: "test",
     });
     expect(JSON.parse(await readFile(filePath, "utf-8"))).toEqual({
       automaticUpdates: false,
+      releaseChannel: "test",
     });
   });
 });

@@ -6039,6 +6039,39 @@ func (q *Queries) ListAgentChildren(ctx context.Context, parentAgentID pgtype.UU
 	return items, nil
 }
 
+const listAgentIDsOwnedByMember = `-- name: ListAgentIDsOwnedByMember :many
+SELECT id FROM agent
+WHERE workspace_id = $1 AND owner_id = $2
+`
+
+type ListAgentIDsOwnedByMemberParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+}
+
+// Resource visibility treats an agent as acting for its human owner. Keep the
+// lookup workspace-scoped so an owner cannot inherit an agent from another
+// tenant.
+func (q *Queries) ListAgentIDsOwnedByMember(ctx context.Context, arg ListAgentIDsOwnedByMemberParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listAgentIDsOwnedByMember, arg.WorkspaceID, arg.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentTasks = `-- name: ListAgentTasks :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, code_decision FROM agent_task_queue
 WHERE agent_id = $1

@@ -96,9 +96,9 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
     () => (session.stage === "ready" && !record ? issueDraftSuggestionRequest(session.draft) : null),
     [record, session.draft, session.stage],
   );
-  const assigneeSuggestions = useQuery(
+  const assigneeSuggestionsQuery = useQuery(
     issueDraftAssigneeSuggestionsOptions(wsId, draftId, suggestionRequest),
-  ).data;
+  );
 
   /**
    * The transcript as a person should read it.
@@ -290,7 +290,9 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
               runtimes={runtimesQuery.data ?? []}
               runtimesLoading={runtimesQuery.isLoading}
               members={membersQuery.data ?? []}
-              assigneeSuggestions={assigneeSuggestions}
+              assigneeSuggestions={assigneeSuggestionsQuery.data}
+              assigneeSuggestionsLoading={assigneeSuggestionsQuery.isLoading}
+              assigneeSuggestionsError={assigneeSuggestionsQuery.isError}
               currentUserId={currentUserId}
               switchingRuntime={session.switchingRuntime}
               pending={session.pending}

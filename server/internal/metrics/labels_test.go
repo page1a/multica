@@ -14,6 +14,7 @@ func TestNormalizeRuntimeProviderRecognizesKnownProviders(t *testing.T) {
 		{input: "Reasonix", want: "reasonix"},
 		{input: "DSH", want: "dsh"},
 		{input: "Dim", want: "dim"},
+		{input: "Devin", want: "devin"},
 		{input: "ZeroClaw", want: "zeroclaw"},
 		{input: "CodeArts", want: "codearts"},
 	}

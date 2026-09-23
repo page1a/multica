@@ -162,18 +162,21 @@ export function AlignCreatePanel({
   const [model, setModel] = useState("");
   const [thinkingLevel, setThinkingLevel] = useState("");
   // What the boxes start as: this user's last actually-used combination, on
-  // any workspace (DENE-691). Keyed on the user so a late sign-in or an account
-  // switch never inherits somebody else's selection; a first use or an
-  // unreadable preference reads back as the default.
-  const rememberedCapabilities = useMemo(
-    () => readIssueDraftCapabilityPreference(currentUserId),
+  // any workspace (DENE-692). Keyed on the user so a late sign-in or an account
+  // switch never inherits somebody else's selection. Until that id is known the
+  // panel shows a placeholder and will not start — reading the unscoped key
+  // would be someone else's record. A first use reads back as the system
+  // default; an unreadable record does too, and says so once.
+  const remembered = useMemo(
+    () => (currentUserId ? readIssueDraftCapabilityPreference(currentUserId) : null),
     [currentUserId],
   );
-  // Applied at read time rather than written into the store on mount: a user
-  // who never opens the panel has expressed no opinion, and freezing a value
-  // into the draft would make it look like one.
+  const capabilitiesLoading = remembered === null;
+  // An edit made in this open (including a switch to the other face and back)
+  // wins over the remembered record. `undefined` means this open has not
+  // touched the boxes, so the record — or the system default — is what shows.
   const capabilities: readonly IssueDraftCapabilityKey[] =
-    draft.align.capabilities ?? rememberedCapabilities;
+    draft.align.capabilities ?? remembered?.capabilities ?? [];
 
   const draftsQuery = useQuery(issueDraftListOptions(wsId));
   const runtimesQuery = useQuery(runtimeListOptions(wsId));
@@ -262,7 +265,8 @@ export function AlignCreatePanel({
   // `gate` is the coordinator-wide gate: it counts the shared pool's
   // placeholders too, so a file still uploading on the manual face keeps this
   // face's button disabled as well — the first turn binds the same pool.
-  const canSubmit = hasContent && runtimeOnline && !start.isPending && !gate.uploading;
+  const canSubmit =
+    hasContent && runtimeOnline && !start.isPending && !gate.uploading && !capabilitiesLoading;
 
   const resume = (draftId: string) => {
     onClose();
@@ -270,7 +274,7 @@ export function AlignCreatePanel({
   };
 
   const submit = async () => {
-    if (!canSubmit || !selectedRuntime || gate.isBlocked()) return;
+    if (!canSubmit || !selectedRuntime || gate.isBlocked() || capabilitiesLoading) return;
     const request = editorRef.current?.getMarkdown()?.trim() ?? "";
     if (!request) return;
     // Only the ids whose markdown link the request still references: a file
@@ -380,6 +384,20 @@ export function AlignCreatePanel({
           </p>
         ) : null}
 
+        {capabilitiesLoading ? (
+          <p role="status" className="mt-4 text-body text-muted-foreground">
+            {t(($) => $.alignment.capability_preference_loading)}
+          </p>
+        ) : null}
+
+        {/* A failed read is one notice, not a blocked start: the boxes are the
+            system default and the submit button stays available. */}
+        {!capabilitiesLoading && remembered?.failed ? (
+          <p role="status" className="mt-4 text-body text-muted-foreground">
+            {t(($) => $.alignment.capability_preference_failed)}
+          </p>
+        ) : null}
+
         {start.isError ? (
           <p role="alert" className="mt-4 text-body text-destructive">
             {entryFailureMessage(start.error, t)}
@@ -434,8 +452,9 @@ export function AlignCreatePanel({
             thinkingLevel={thinkingLevel}
             onThinkingLevelChange={setThinkingLevel}
             capabilities={capabilities}
+            capabilitiesLoading={capabilitiesLoading}
             onCapabilitiesChange={(next) => setAlign({ capabilities: [...next] })}
-            disabled={start.isPending}
+            disabled={start.isPending || capabilitiesLoading}
           />
         </div>
         {/* The way back to filing this as an issue. The body stays in the

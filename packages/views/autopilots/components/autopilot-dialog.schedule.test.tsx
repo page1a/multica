@@ -159,6 +159,11 @@ function renderEditDialog(triggers: AutopilotTrigger[]) {
 const saveButton = () => screen.getByRole("button", { name: "Save" });
 const addScheduleButton = () => screen.getByRole("button", { name: "Add schedule" });
 
+async function saveScheduleWithoutProject(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(saveButton());
+  await user.click(await screen.findByRole("button", { name: "Continue without a project" }));
+}
+
 describe("AutopilotDialog schedule section on an autopilot with no schedule", () => {
   beforeEach(() => {
     mockUpdateAutopilot.mockReset().mockResolvedValue({ id: AUTOPILOT_ID });
@@ -200,7 +205,7 @@ describe("AutopilotDialog schedule section on an autopilot with no schedule", ()
     await user.click(addScheduleButton());
     expect(await screen.findByTestId("timezone-picker")).toBeInTheDocument();
 
-    await user.click(saveButton());
+    await saveScheduleWithoutProject(user);
 
     await waitFor(() => expect(mockCreateTrigger).toHaveBeenCalledTimes(1));
     expect(mockCreateTrigger.mock.calls[0]?.[0]).toMatchObject({
@@ -230,7 +235,7 @@ describe("AutopilotDialog schedule section on an autopilot with no schedule", ()
     renderEditDialog([trigger({ kind: "api", cron_expression: null, timezone: null })]);
 
     await user.click(addScheduleButton());
-    await user.click(saveButton());
+    await saveScheduleWithoutProject(user);
 
     await waitFor(() => expect(mockCreateTrigger).toHaveBeenCalledTimes(1));
     expect(mockUpdateTrigger).not.toHaveBeenCalled();
@@ -255,7 +260,7 @@ describe("AutopilotDialog schedule section on an autopilot that has one", () => 
     const user = userEvent.setup();
     renderEditDialog([trigger()]);
 
-    await user.click(saveButton());
+    await saveScheduleWithoutProject(user);
 
     await waitFor(() => expect(mockUpdateAutopilot).toHaveBeenCalledTimes(1));
     expect(mockUpdateTrigger).not.toHaveBeenCalled();
@@ -287,7 +292,7 @@ describe("AutopilotDialog schedule section on an autopilot with several triggers
     expect(screen.queryByText(/Close this dialog/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "At an interval" }));
-    await user.click(saveButton());
+    await saveScheduleWithoutProject(user);
 
     await waitFor(() => expect(mockUpdateTrigger).toHaveBeenCalledTimes(1));
     // The schedule row, never the webhook one: the API rejects a cron on any
@@ -317,7 +322,7 @@ describe("AutopilotDialog schedule section on an autopilot with several triggers
     expect(screen.queryByTestId("timezone-picker")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "At an interval" })).not.toBeInTheDocument();
 
-    await user.click(saveButton());
+    await saveScheduleWithoutProject(user);
 
     // Other fields still save; the schedules are left to the trigger rows.
     await waitFor(() => expect(mockUpdateAutopilot).toHaveBeenCalledTimes(1));

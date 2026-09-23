@@ -14,6 +14,7 @@ export type WSEventType =
   | "issue:updated"
   | "issue_attachments:changed"
   | "issue:deleted"
+  | "issue:invalidated"
   | "comment:created"
   | "comment:updated"
   | "comment:deleted"
@@ -122,6 +123,18 @@ export interface IssueUpdatedPayload {
 
 export interface IssueDeletedPayload {
   issue_id: string;
+}
+
+/**
+ * The id-only invalidation frame (DENE-717). It carries no content — a sharing
+ * scope changed, a project membership moved, or an assignee was removed — and
+ * tells the client to drop whatever it cached and refetch through the HTTP
+ * reads, which apply the caller's own visibility. Either id may be absent; a
+ * project-scoped invalidation names only the project.
+ */
+export interface IssueInvalidatedPayload {
+  issue_id?: string;
+  project_id?: string;
 }
 
 export interface IssueLabelsChangedPayload {
@@ -578,6 +591,7 @@ export interface WSEventPayloadMap {
   "issue:created": IssueCreatedPayload;
   "issue:updated": IssueUpdatedPayload;
   "issue:deleted": IssueDeletedPayload;
+  "issue:invalidated": IssueInvalidatedPayload;
   "issue_attachments:changed": IssueAttachmentsChangedPayload;
   "issue_labels:changed": IssueLabelsChangedPayload;
   "issue_properties:changed": IssuePropertiesChangedPayload;

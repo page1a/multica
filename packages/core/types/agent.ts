@@ -177,6 +177,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "reasonix",
   "dsh",
   "dim",
+  "devin",
   "kiro",
   "antigravity",
   "qoder",

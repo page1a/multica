@@ -892,6 +892,7 @@ type AgentTaskResponse struct {
 	SquadName                string                `json:"squad_name,omitempty"`                  // display name for the picker squad
 	ParentIssueID            string                `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
 	ParentIssueIdentifier    string                `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	ProjectExplicitNone      bool                  `json:"project_explicit_none,omitempty"`       // user cleared the project; the daemon prompt must pass an empty --project
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and

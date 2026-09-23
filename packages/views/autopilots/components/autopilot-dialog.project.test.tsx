@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { AutopilotExecutionMode } from "@multica/core/types";
+import type { AutopilotExecutionMode, AutopilotTrigger } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 
 // Regression cover for MUL-6681 (GH #7550): the dialog rendered the Project
@@ -127,7 +127,26 @@ import { AutopilotDialog } from "./autopilot-dialog";
 
 const AUTOPILOT_ID = "ap-1";
 
-function renderEditDialog(mode: AutopilotExecutionMode, projectId: string | null) {
+const scheduleTrigger: AutopilotTrigger = {
+  id: "trg-1",
+  autopilot_id: AUTOPILOT_ID,
+  kind: "schedule",
+  enabled: true,
+  cron_expression: "TZ=Asia/Shanghai 30 8 * * *",
+  timezone: "Asia/Shanghai",
+  next_run_at: null,
+  webhook_token: null,
+  label: null,
+  last_fired_at: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+function renderEditDialog(
+  mode: AutopilotExecutionMode,
+  projectId: string | null,
+  triggers: AutopilotTrigger[] = [],
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderWithI18n(
     <QueryClientProvider client={qc}>
@@ -145,7 +164,7 @@ function renderEditDialog(mode: AutopilotExecutionMode, projectId: string | null
           execution_mode: mode,
           subscriber_user_ids: [],
         }}
-        triggers={[]}
+        triggers={triggers}
         collaborators={[]}
         canManageAccess={false}
       />
@@ -234,5 +253,47 @@ describe("AutopilotDialog project section", () => {
       execution_mode: "run_only",
       project_id: "proj-1",
     });
+  });
+
+  it("asks before saving a schedule with no project, and does not save until confirmed", async () => {
+    const user = userEvent.setup();
+    renderEditDialog("create_issue", null, [scheduleTrigger]);
+
+    await user.click(saveButton());
+
+    expect(await screen.findByText("This plan has no project")).toBeInTheDocument();
+    expect(mockUpdateAutopilot).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Continue without a project" }));
+
+    await waitFor(() => expect(mockUpdateAutopilot).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAutopilot.mock.calls[0]?.[0]).toMatchObject({ project_id: null });
+  });
+
+  it("returns to the project picker without saving when the empty-project confirm is cancelled", async () => {
+    const user = userEvent.setup();
+    renderEditDialog("create_issue", null, [scheduleTrigger]);
+
+    await user.type(screen.getByLabelText("title"), " kept");
+    await user.click(saveButton());
+    await user.click(await screen.findByRole("button", { name: "Choose a project" }));
+
+    expect(mockUpdateAutopilot).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("title")).toHaveValue("Push fleet repo to GitHub kept");
+    expect(screen.queryByText("This plan has no project")).not.toBeInTheDocument();
+  });
+
+  it("asks again after a confirmed save fails", async () => {
+    const user = userEvent.setup();
+    mockUpdateAutopilot.mockRejectedValueOnce(new Error("nope"));
+    renderEditDialog("create_issue", null, [scheduleTrigger]);
+
+    await user.click(saveButton());
+    await user.click(await screen.findByRole("button", { name: "Continue without a project" }));
+    await waitFor(() => expect(mockUpdateAutopilot).toHaveBeenCalledTimes(1));
+
+    await user.click(saveButton());
+    expect(await screen.findByText("This plan has no project")).toBeInTheDocument();
+    expect(mockUpdateAutopilot).toHaveBeenCalledTimes(1);
   });
 });

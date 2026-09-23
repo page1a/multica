@@ -158,6 +158,7 @@ var (
 		"kimi":          "kimi",
 		"reasonix":      "reasonix",
 		"dim":           "dim",
+		"devin":         "devin",
 		"mcode":         "mcode",
 		"zeroclaw":      "zeroclaw",
 		"multica_agent": "multica_agent",

@@ -122,6 +122,16 @@ func canonicalize(p string) string {
 	return filepath.Join(canonicalize(parent), filepath.Base(clean))
 }
 
+// SameCanonicalPath reports whether two paths name the same place, including
+// a path that does not exist yet. /tmp and /private/tmp on macOS are the case
+// that makes a plain string compare lie.
+func SameCanonicalPath(a, b string) bool {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	return canonicalize(a) == canonicalize(b)
+}
+
 // WorktreeRecord is the proof that Multica created a working copy, written
 // beside it the moment it exists.
 //

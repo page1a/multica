@@ -105,12 +105,20 @@ jobs:
           # `|| gh release view` because cli-release.yml creates the same
           # release from the same tag push: whichever workflow loses the race
           # sees the other's release, which is the state this step wants.
+          # A `vX.Y.Z-<suffix>` tag is the test line. Mark it prerelease so
+          # `/releases/latest` (what stable clients' electron-updater asks)
+          # keeps resolving to the newest vX.Y.Z and never to a test build.
+          prerelease_flag=()
+          if [[ "$TAG" == *-* ]]; then
+            prerelease_flag=(--prerelease)
+          fi
           gh release create "$TAG" \
             --repo "$REPO" \
             --verify-tag \
+            ${prerelease_flag[@]+"${prerelease_flag[@]}"} \
             --title "Multica Desktop $TAG (kun fork)" \
             --generate-notes \
-            --notes "macOS (Apple Silicon)、Windows (x64/arm64)、Linux (x64/arm64) 桌面安装包。macOS 为 ad-hoc 签名、未公证，首次打开需在「系统设置 → 隐私与安全性」中放行，或执行 \`xattr -cr /Applications/Multica.app\`；Windows 与 Linux 包未签名。资产由 Desktop Release workflow 构建并上传，上传后会逐个核对 \`state=uploaded\` 与文件大小。" \
+            --notes "macOS (Apple Silicon)、Windows (x64/arm64)、Linux (x64/arm64) 桌面安装包。macOS 在配置了 CSC_LINK 时用同一张自签证书签名，否则为 ad-hoc 签名；两种都未公证。首次打开若被拦，到「系统设置 → 隐私与安全性」放行，或执行 \`xattr -dr com.apple.quarantine /Applications/Multica.app\`。自动更新不要求把这张证书设为始终信任。Windows 与 Linux 包未签名。资产由 Desktop Release workflow 构建并上传，上传后会逐个核对 \`state=uploaded\` 与文件大小。" \
             || gh release view "$TAG" --repo "$REPO" >/dev/null
 
   package:
@@ -164,7 +172,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: .release-tools
-          sparse-checkout: scripts/desktop-release-assets.mjs
+          sparse-checkout: |
+            scripts/desktop-release-assets.mjs
+            scripts/macos-ci-keychain.sh
           sparse-checkout-cone-mode: false
 
       - name: Record the build commit
@@ -207,17 +217,44 @@ jobs:
 
       - name: Package Desktop — ${{ matrix.label }}
         working-directory: apps/desktop
+        # The script below is bash; windows-latest defaults to pwsh.
+        shell: bash
         env:
-          # No code signing anywhere in this matrix. macOS gets an ad-hoc
-          # signature (the release carries no Apple Developer credentials, and
-          # installed clients already accept it; `package.mjs` also disables
-          # notarization when APPLE_TEAM_ID is absent); Windows and Linux ship
-          # unsigned, with the CLI carrying the trust boundary.
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # macOS only. An empty secret keeps the ad-hoc fallback in the
+          # script below, so a branch without CSC_LINK still goes green.
+          # Windows and Linux never receive these and stay unsigned.
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.CSC_KEY_PASSWORD || '' }}
+        run: |
+          set -euo pipefail
           # No publisher token: publishing happens below so the upload can be
           # verified. electron-builder still writes the latest*.yml feeds and
           # the blockmaps with --publish never.
-        run: node scripts/package.mjs --${{ matrix.platform }} ${{ matrix.archs }} --publish never
+          #
+          # macOS with CSC_LINK: import the p12 into a temporary keychain and
+          # trust it for code signing there. electron-builder's own importer
+          # leaves the certificate untrusted, `find-identity -v` then skips
+          # it, and arm64 falls back to an ad-hoc signature. Unset CSC_LINK
+          # afterwards so electron-builder uses CSC_KEYCHAIN instead of
+          # importing again. package.mjs turns forceCodeSigning on when the
+          # keychain is set, so a bad certificate fails the job.
+          # Anything else (no secret, or Windows/Linux): force ad-hoc / no
+          # discovery, which is the previous behavior.
+          if [[ "${{ matrix.platform }}" == "mac" && -n "${CSC_LINK}" ]]; then
+            echo "macOS code signing: importing CSC_LINK into a temporary trusted keychain."
+            keychain=$(bash "$GITHUB_WORKSPACE/.release-tools/scripts/macos-ci-keychain.sh")
+            export CSC_KEYCHAIN="$keychain"
+            unset CSC_LINK
+            unset CSC_KEY_PASSWORD
+          else
+            echo "No CSC_LINK for this job — ad-hoc on macOS, unsigned on Windows and Linux."
+            # The step env always defines CSC_LINK, empty here. electron-builder
+            # treats a defined-but-empty CSC_LINK as a path relative to the
+            # working directory and fails with "apps/desktop not a file".
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          node scripts/package.mjs --${{ matrix.platform }} ${{ matrix.archs }} --publish never
 
       - name: Drop zombie assets left by an earlier failed upload
         env:

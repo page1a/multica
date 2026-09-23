@@ -11,11 +11,25 @@ import (
 //go:embed ladder.json
 var ladderJSON []byte
 
-// Tier is one rung of the seat ladder.
+// TierSeat is one routable base on a rung. Provider is the model family
+// (openai, anthropic, …), which is how a same-tier handoff tells a GPT seat
+// from any other house. Model and Thinking are the live seat config the rung
+// was aligned to. A direction-specialised seat is not a separate row; it
+// inherits this base.
+type TierSeat struct {
+	Base     string `json:"base"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Thinking string `json:"thinking,omitempty"`
+}
+
+// Tier is one rung of the seat ladder. Base is the untagged name-convention
+// seat. Seats is every routable base that sits on the rung.
 type Tier struct {
-	Key   string `json:"key"`
-	Base  string `json:"base"`
-	Label string `json:"label"`
+	Key   string     `json:"key"`
+	Base  string     `json:"base"`
+	Label string     `json:"label"`
+	Seats []TierSeat `json:"seats"`
 }
 
 // Ladder is the candidate source: the ordered tiers, the known directions, and
@@ -46,6 +60,36 @@ func mustLoadLadder() Ladder {
 	if l.Fallback != "" {
 		if _, ok := l.TierByKey(l.Fallback); !ok {
 			panic("routing: ladder.json names fallback_tier " + l.Fallback + ", which is not a declared tier")
+		}
+	}
+	seenTier := make(map[string]struct{}, len(l.Tiers))
+	seenSeat := make(map[string]string, len(l.Tiers))
+	for _, t := range l.Tiers {
+		if t.Key == "" || t.Label == "" || t.Base == "" {
+			panic("routing: ladder.json has a tier missing key, label, or base")
+		}
+		if _, dup := seenTier[t.Key]; dup {
+			panic("routing: ladder.json repeats tier " + t.Key)
+		}
+		seenTier[t.Key] = struct{}{}
+		if len(t.Seats) == 0 {
+			panic("routing: ladder.json tier " + t.Key + " lists no seats")
+		}
+		foundBase := false
+		for _, s := range t.Seats {
+			if s.Base == "" || s.Provider == "" || s.Model == "" {
+				panic("routing: ladder.json tier " + t.Key + " has a seat missing base, provider, or model")
+			}
+			if prev, dup := seenSeat[s.Base]; dup {
+				panic("routing: ladder.json lists " + s.Base + " on both " + prev + " and " + t.Key)
+			}
+			seenSeat[s.Base] = t.Key
+			if s.Base == t.Base {
+				foundBase = true
+			}
+		}
+		if !foundBase {
+			panic("routing: ladder.json tier " + t.Key + " base " + t.Base + " is not one of its seats")
 		}
 	}
 	return l
@@ -344,6 +388,48 @@ func (l Ladder) TierKeys() []string {
 // Both name the same rung, so both are accepted at the boundary and only the
 // key is ever persisted — one vocabulary in the database, two spellings for
 // whoever is typing.
+
+// SeatByName finds a routable seat. A direction-specialised name inherits its
+// base, so 孙悟饭游戏 reports the same provider and rung as 孙悟饭.
+func (l Ladder) SeatByName(name string) (TierSeat, string, bool) {
+	if seat, tier, ok := l.seatByBase(name); ok {
+		return seat, tier, true
+	}
+	if dir := l.seatDirection(name); dir != "" {
+		if seat, tier, ok := l.seatByBase(strings.TrimSuffix(name, dir)); ok {
+			return seat, tier, true
+		}
+	}
+	return TierSeat{}, "", false
+}
+
+// ProviderOf reports the provider family of a routable seat, including a
+// direction specialisation of a listed base. Empty means the name is not on
+// this ladder.
+func (l Ladder) ProviderOf(name string) (string, bool) {
+	seat, _, ok := l.SeatByName(name)
+	if !ok || seat.Provider == "" {
+		return "", false
+	}
+	return seat.Provider, true
+}
+
+// TierOf reports the rung key a routable seat sits on.
+func (l Ladder) TierOf(name string) (string, bool) {
+	_, tier, ok := l.SeatByName(name)
+	return tier, ok
+}
+
+func (l Ladder) seatByBase(base string) (TierSeat, string, bool) {
+	for _, t := range l.Tiers {
+		for _, s := range t.Seats {
+			if s.Base == base {
+				return s, t.Key, true
+			}
+		}
+	}
+	return TierSeat{}, "", false
+}
 
 // TierByKey finds a rung by its key.
 func (l Ladder) TierByKey(key string) (Tier, bool) {

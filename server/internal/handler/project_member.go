@@ -151,7 +151,13 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 	// now, not when a cache expires (DENE-698).
 	h.invalidateSharingCaches(r.Context(), project.WorkspaceID, memberUUID)
 
-	h.publish(protocol.EventProjectUpdated, uuidToString(project.WorkspaceID), "member", uuidToString(actor.UserID), map[string]any{
+	wsID := uuidToString(project.WorkspaceID)
+	actorID := uuidToString(actor.UserID)
+	// ...and their open tab has to hear about it, or the list they are looking
+	// at stays as it was until a reload (DENE-717). The frame is targeted: it
+	// tells one member to refetch, and the HTTP filter decides what comes back.
+	h.publishIssueInvalidated(wsID, "member", actorID, "", uuidToString(project.ID), uuidToString(memberUUID))
+	h.publish(protocol.EventProjectUpdated, wsID, "member", actorID, map[string]any{
 		"project_id": uuidToString(project.ID),
 	})
 	writeJSON(w, http.StatusCreated, h.projectMemberToResponse(sm, user))
@@ -182,7 +188,12 @@ func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
 	// Leaving a project narrows what this person can see; the same caches have
 	// to drop for the narrowing to take effect immediately.
 	h.invalidateSharingCaches(r.Context(), project.WorkspaceID, memberUUID)
-	h.publish(protocol.EventProjectUpdated, uuidToString(project.WorkspaceID), "member", uuidToString(actor.UserID), map[string]any{
+	wsID := uuidToString(project.WorkspaceID)
+	actorID := uuidToString(actor.UserID)
+	// Their open tab has to hear it too: this is the frame that makes the
+	// project's issues disappear from their list without a reload (DENE-717).
+	h.publishIssueInvalidated(wsID, "member", actorID, "", uuidToString(project.ID), uuidToString(memberUUID))
+	h.publish(protocol.EventProjectUpdated, wsID, "member", actorID, map[string]any{
 		"project_id": uuidToString(project.ID),
 	})
 	w.WriteHeader(http.StatusNoContent)

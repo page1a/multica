@@ -26,6 +26,7 @@ import {
   DialogContent,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import {
   Popover,
@@ -299,11 +300,21 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   // silence this replaces. Rendered as `showErrors && <field is still empty>`,
   // so filling the field clears its error without a second submit.
   const [showErrors, setShowErrors] = useState(false);
+  const [noProjectConfirmOpen, setNoProjectConfirmOpen] = useState(false);
   const titleEditorRef = useRef<TitleEditorRef>(null);
+  const projectTriggerRef = useRef<HTMLButtonElement>(null);
   const assigneeTriggerRef = useRef<HTMLButtonElement>(null);
   const assigneeErrorId = useId();
 
-  const handleSubmit = async () => {
+  // A schedule with no project is a real choice, not the default. The
+  // confirmation is for this click only — cancelling returns to the project
+  // picker with the form intact, and the next save asks again.
+  const schedulePlanWithoutProject =
+    !projectId &&
+    triggerKind === "schedule" &&
+    (isCreate || existingSchedule !== null || scheduleAdded || scheduleTriggerCount > 0);
+
+  const handleSubmit = async (confirmedNoProject?: boolean) => {
     if (submitting) return;
     if (missingField !== null) {
       // Reveal the inline errors and take the user to the field at fault;
@@ -313,6 +324,11 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
       else assigneeTriggerRef.current?.focus();
       return;
     }
+    if (schedulePlanWithoutProject && confirmedNoProject !== true) {
+      setNoProjectConfirmOpen(true);
+      return;
+    }
+    setNoProjectConfirmOpen(false);
     setSubmitting(true);
     try {
       if (scheduleWillBeWritten && !(await scheduleGate.ensureAccepted(schedule))) {
@@ -641,6 +657,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
               projectId={projectId}
               selectedProject={selectedProject}
               onChange={setProjectId}
+              triggerRef={projectTriggerRef}
             />
 
             {executionMode === "create_issue" && (
@@ -716,7 +733,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
                 any disabled state could. `handleSubmit` is the gate. */}
             <Button
               size="sm"
-              onClick={handleSubmit}
+              onClick={() => void handleSubmit()}
               disabled={submitting}
               aria-busy={submitting || undefined}
             >
@@ -731,6 +748,38 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
           </div>
         </div>
           </>
+        )}
+        {noProjectConfirmOpen && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 p-6">
+            <div
+              role="alertdialog"
+              aria-labelledby="no-project-confirm-title"
+              aria-describedby="no-project-confirm-description"
+              className="w-full max-w-sm rounded-xl bg-surface-raised p-5 shadow-[var(--floating-shadow)] ring-1 ring-surface-border"
+            >
+              <h2 id="no-project-confirm-title" className="text-title-sm font-medium">
+                {t(($) => $.dialog.no_project_confirm.title)}
+              </h2>
+              <p id="no-project-confirm-description" className="mt-2 text-body text-muted-foreground">
+                {t(($) => $.dialog.no_project_confirm.description)}
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setNoProjectConfirmOpen(false);
+                    projectTriggerRef.current?.focus();
+                  }}
+                >
+                  {t(($) => $.dialog.no_project_confirm.cancel)}
+                </Button>
+                <Button size="sm" onClick={() => void handleSubmit(true)}>
+                  {t(($) => $.dialog.no_project_confirm.confirm)}
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
       </DialogContent>
     </Dialog>
@@ -904,10 +953,12 @@ function ProjectSection({
   projectId,
   selectedProject,
   onChange,
+  triggerRef,
 }: {
   projectId: string | null;
   selectedProject: { title: string; icon: string | null } | null;
   onChange: (projectId: string | null) => void;
+  triggerRef?: React.Ref<HTMLButtonElement>;
 }) {
   const { t } = useT("autopilots");
   return (
@@ -922,6 +973,7 @@ function ProjectSection({
         align="start"
         triggerRender={
           <button
+            ref={triggerRef}
             type="button"
             className={cn(
               "w-full flex items-center gap-2.5 rounded-md border bg-background px-3 py-2 text-left",

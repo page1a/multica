@@ -69,6 +69,7 @@ export function AlignmentConfigPicker({
   thinkingLevel,
   onThinkingLevelChange,
   capabilities,
+  capabilitiesLoading,
   onCapabilitiesChange,
   disabled,
 }: {
@@ -86,6 +87,9 @@ export function AlignmentConfigPicker({
   onThinkingLevelChange: (level: string) => void;
   /** The capabilities to switch on, in this client's render order. */
   capabilities: readonly IssueDraftCapabilityKey[];
+  /** The user record is not ready yet. The section shows a placeholder instead
+   *  of boxes, and the entry refuses to start. */
+  capabilitiesLoading?: boolean;
   /** Every change is a fresh array; an EMPTY one is a real choice ("none of
    *  them") and travels to the server as `[]` rather than as an omitted field —
    *  see `encodeIssueDraftCapabilities`. */
@@ -120,6 +124,7 @@ export function AlignmentConfigPicker({
     thinkingLevel,
     thinkingLabel: selectedLevel?.label ?? "",
     capabilities,
+    capabilitiesLoading,
     t,
     tAgents,
   });
@@ -319,11 +324,20 @@ export function AlignmentConfigPicker({
         <Section
           icon={<Sparkles className="size-3.5" aria-hidden="true" />}
           title={t(($) => $.alignment.capability_label)}
-          hint={t(($) => $.alignment.config_capabilities_hint, {
-            count: capabilities.length,
-          })}
+          hint={
+            capabilitiesLoading
+              ? t(($) => $.alignment.capability_preference_loading)
+              : t(($) => $.alignment.config_capabilities_hint, {
+                  count: capabilities.length,
+                })
+          }
         >
-          {ISSUE_DRAFT_CAPABILITIES.map((key) => {
+          {capabilitiesLoading ? (
+            <p className="flex items-center gap-2 px-1 py-2 text-caption text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              {t(($) => $.alignment.capability_preference_loading)}
+            </p>
+          ) : ISSUE_DRAFT_CAPABILITIES.map((key) => {
             const checked = capabilities.includes(key);
             return (
               <label
@@ -382,6 +396,7 @@ function alignmentConfigSummary({
   thinkingLevel,
   thinkingLabel,
   capabilities,
+  capabilitiesLoading,
   t,
   tAgents,
 }: {
@@ -390,6 +405,7 @@ function alignmentConfigSummary({
   thinkingLevel: string;
   thinkingLabel: string;
   capabilities: readonly IssueDraftCapabilityKey[];
+  capabilitiesLoading?: boolean;
   t: TFunction<"issues">;
   tAgents: TFunction<"agents">;
 }): string {
@@ -398,7 +414,11 @@ function alignmentConfigSummary({
   parts.push(model || t(($) => $.alignment.config_model_short));
   if (thinkingLevel) parts.push(thinkingLabel || thinkingLevel);
   else parts.push(tAgents(($) => $.pickers.thinking_default));
-  parts.push(t(($) => $.alignment.config_capabilities_count, { count: capabilities.length }));
+  parts.push(
+    capabilitiesLoading
+      ? t(($) => $.alignment.capability_preference_loading)
+      : t(($) => $.alignment.config_capabilities_count, { count: capabilities.length }),
+  );
   return parts.join(" · ");
 }
 

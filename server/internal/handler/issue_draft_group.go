@@ -177,7 +177,11 @@ type issueDraftNode struct {
 // value, so the confirm still creates the work (DENE-694). Title, status,
 // priority, project and parent stay hard gates. The security property is
 // unchanged: an assignee that fails the gate is never written.
-func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, workspaceID string, session db.ChatSession, node issueDraftNode) (service.IssueCreateParams, string, bool) {
+//
+// projectPinned records whether this node named a project, including the choice
+// of none. Only the group root can pin one; a child leaves it false and takes
+// the root's project, including an explicit empty one.
+func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, workspaceID string, session db.ChatSession, node issueDraftNode, projectPinned bool) (service.IssueCreateParams, string, bool) {
 	title := strings.TrimSpace(node.Title)
 	if title == "" {
 		writeError(w, http.StatusBadRequest, "draft title is required")
@@ -206,6 +210,9 @@ func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, w
 	if node.ProjectID != nil && *node.ProjectID != "" {
 		id, ok := parseUUIDOrBadRequest(w, *node.ProjectID, "project_id")
 		if !ok {
+			return service.IssueCreateParams{}, "", false
+		}
+		if _, ok := h.visibleProjectInWorkspace(w, r, session.WorkspaceID, id); !ok {
 			return service.IssueCreateParams{}, "", false
 		}
 		projectID = id
@@ -242,6 +249,7 @@ func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, w
 		CreatorID:     session.CreatorID,
 		ParentIssueID: parentIssueID,
 		ProjectID:     projectID,
+		ProjectPinned: projectPinned,
 		Stage:         node.Stage,
 		// The draft's conversation IS the issue's provenance: it is how the
 		// created issue points back at what was agreed, and how a crashed
@@ -439,8 +447,8 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 	// One node's params, plus the warning its assignee may have produced. A node
 	// the server cannot resolve at all still aborts the whole confirm; only the
 	// assignee degrades to a warning.
-	appendNode := func(node issueDraftNode) bool {
-		params, warning, ok := h.issueParamsFromDraft(w, r, workspaceID, session, node)
+	appendNode := func(node issueDraftNode, projectPinned bool) bool {
+		params, warning, ok := h.issueParamsFromDraft(w, r, workspaceID, session, node, projectPinned)
 		if !ok {
 			return false
 		}
@@ -462,8 +470,13 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 		// and appending there would turn "confirm again" into "create those
 		// children too". Reopening is the only thing that makes new keys an
 		// increment, and the only thing that moves the round counter.
+		rootProjectPinned := draftJSONFieldPresent(draft.Draft, "project_id")
 		for _, node := range nodes {
-			if !appendNode(node) {
+			// Only the root carries a project choice. Children leave the
+			// field out so they take the root's project, including an
+			// explicit empty one.
+			pinned := node.Key == "" && rootProjectPinned
+			if !appendNode(node, pinned) {
 				return service.IssueGroupParams{}, nil, false
 			}
 		}
@@ -503,11 +516,22 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 			// and a follow-up round is not grounds for overwriting that.
 			continue
 		}
-		if !appendNode(node) {
+		// A follow-up round does not carry its own project choice. Leaving the
+		// pin unset is what lets the new node take the root's project.
+		if !appendNode(node, false) {
 			return service.IssueGroupParams{}, nil, false
 		}
 	}
 	return group, warnings, true
+}
+
+func draftJSONFieldPresent(raw []byte, field string) bool {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	_, ok := payload[field]
+	return ok
 }
 
 // lookupIssueGroupRoot finds the group this alignment already produced, by the

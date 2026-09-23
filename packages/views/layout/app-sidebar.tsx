@@ -144,6 +144,7 @@ type NavLabelKey =
   | "usage"
   | "runtimes"
   | "skills"
+  | "permissions"
   | "settings";
 
 // Nav icons are NOT declared here: they are derived from each item's
@@ -433,12 +434,13 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname, push } = useNavigation();
+  const { pathname, push, searchParams } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
   const workspace = useCurrentWorkspace();
   const p = useWorkspacePaths();
+  const PermissionsIcon = routeIconForPath(p.settings());
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
@@ -926,6 +928,16 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     </SidebarMenuItem>
                   );
                 })}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={pathname === p.settings() && searchParams.get("tab") === "project-sharing"}
+                    render={<AppLink href={`${p.settings()}?tab=project-sharing`} />}
+                    className={NAV_ITEM_CLASS_NAME}
+                  >
+                    <PermissionsIcon />
+                    <span>{t(($) => $.nav.permissions)}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

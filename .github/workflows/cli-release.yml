@@ -126,9 +126,17 @@ jobs:
           fi
           # The Desktop workflow may be creating the same release right now;
           # losing that race is fine as long as the release ends up there.
+          # A `vX.Y.Z-<suffix>` tag is the test line. Mark it prerelease so
+          # `/releases/latest` (what stable clients' electron-updater asks)
+          # keeps resolving to the newest vX.Y.Z and never to a test build.
+          prerelease_flag=()
+          if [[ "$TAG" == *-* ]]; then
+            prerelease_flag=(--prerelease)
+          fi
           gh release create "$TAG" \
             --repo "$REPO" \
             --verify-tag \
+            ${prerelease_flag[@]+"${prerelease_flag[@]}"} \
             --title "Multica $TAG (kun fork)" \
             --generate-notes \
             || gh release view "$TAG" --repo "$REPO" >/dev/null

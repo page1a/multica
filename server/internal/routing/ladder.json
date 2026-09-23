@@ -3,25 +3,62 @@
     "Pure data. Editing this file changes which seats routing can pick and how",
     "a project maps to a direction; it never requires a code change.",
     "",
-    "tiers are ordered strongest first. `base` is the generic seat name; a",
-    "direction-specialised seat is named base+direction by workspace convention",
-    "(e.g. 孙悟空 + 游戏 = 孙悟空游戏), which is how routing resolves one without",
-    "a second lookup table. A tier whose seat does not exist in the workspace is",
-    "skipped at candidate-build time rather than failing the call.",
+    "tiers are ordered strongest first. `base` is the untagged name-convention",
+    "seat (base + direction, e.g. 孙悟空 + 游戏 = 孙悟空游戏). A tier whose seat",
+    "does not exist in the workspace is skipped at candidate-build time rather",
+    "than failing the call.",
     "",
-    "KNOWN DRIFT (DENE-633): this ladder is a transcription of the ladder named",
-    "in the issue. The live roster has since grown past it — 孙悟饭 (gpt-6-astra),",
-    "特兰克斯 (gpt-5.6-sol) and 克林 (gpt-5.6-luna) exist as base seats and are not",
-    "listed here, and 贝吉塔 and 比克 still share one model, so the two bottom rungs",
-    "are the same strength. Straightening the ladder is configuration work that",
-    "belongs to whoever owns the roster; when it happens, this file is the only",
-    "edit."
+    "`seats` is every routable base on that rung. `provider` is the model family",
+    "(openai, anthropic, deepseek, xai, google), so a same-tier handoff can tell",
+    "a GPT seat from any other house. A direction seat is not listed; it inherits",
+    "its base's provider. `model` and `thinking` are the live workspace seat",
+    "config this ladder was aligned to — not a guess from an older comment.",
+    "",
+    "孙悟饭 (gpt-6-astra) is strongest, 特兰克斯 (gpt-6-sol) is strong, 克林",
+    "(gpt-6-luna) is weak; all three are openai. 贝吉塔 and 比克 are different",
+    "rungs on purpose: their model strings are different command-code accounts",
+    "of deepseek-v4.1-flash, and thinking differs (贝吉塔 high → medium, 比克",
+    "low → weak). 孙悟天 (grok-4.7, xai) shares strong; 人造人18号",
+    "(gemini-3.8-flash-high, google) shares medium."
   ],
   "tiers": [
-    { "key": "strongest", "base": "布尔玛", "label": "最强" },
-    { "key": "strong", "base": "孙悟空", "label": "强" },
-    { "key": "medium", "base": "贝吉塔", "label": "中" },
-    { "key": "weak", "base": "比克", "label": "弱" }
+    {
+      "key": "strongest",
+      "base": "布尔玛",
+      "label": "最强",
+      "seats": [
+        { "base": "布尔玛", "provider": "anthropic", "model": "claude-fable-5-1", "thinking": "medium" },
+        { "base": "孙悟饭", "provider": "openai", "model": "gpt-6-astra", "thinking": "medium" }
+      ]
+    },
+    {
+      "key": "strong",
+      "base": "孙悟空",
+      "label": "强",
+      "seats": [
+        { "base": "孙悟空", "provider": "anthropic", "model": "claude-opus-5-5", "thinking": "medium" },
+        { "base": "特兰克斯", "provider": "openai", "model": "gpt-6-sol", "thinking": "high" },
+        { "base": "孙悟天", "provider": "xai", "model": "grok-4.7", "thinking": "high" }
+      ]
+    },
+    {
+      "key": "medium",
+      "base": "贝吉塔",
+      "label": "中",
+      "seats": [
+        { "base": "贝吉塔", "provider": "deepseek", "model": "command-code/deepseek%2Fdeepseek-v4.1-flash", "thinking": "high" },
+        { "base": "人造人18号", "provider": "google", "model": "gemini-3.8-flash-high" }
+      ]
+    },
+    {
+      "key": "weak",
+      "base": "比克",
+      "label": "弱",
+      "seats": [
+        { "base": "比克", "provider": "deepseek", "model": "command-code2/deepseek%2Fdeepseek-v4.1-flash", "thinking": "low" },
+        { "base": "克林", "provider": "openai", "model": "gpt-6-luna", "thinking": "max" }
+      ]
+    }
   ],
   "_fallback_comment": [
     "The rung an unconfident verdict lands on. Routing never leaves the",

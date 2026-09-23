@@ -516,13 +516,16 @@ func buildQuickCreatePrompt(task Task) string {
 	// omitted so the platform routes to the workspace default. Always pass
 	// the UUID (never a name) so the issue lands in the right project even
 	// when several share a title.
-	if task.ProjectID != "" {
+	switch {
+	case task.ProjectID != "":
 		if task.ProjectTitle != "" {
 			fmt.Fprintf(&b, "- **project**: required for this run. Pass `--project %q` so the new issue lands in project %q (the user picked it in the quick-create modal). Do not infer a different project from the prompt text — the modal selection is authoritative.\n", task.ProjectID, task.ProjectTitle)
 		} else {
 			fmt.Fprintf(&b, "- **project**: required for this run. Pass `--project %q` so the new issue lands in the project the user picked in the quick-create modal. Do not infer a different project from the prompt text — the modal selection is authoritative.\n", task.ProjectID)
 		}
-	} else {
+	case task.ProjectExplicitNone:
+		b.WriteString("- **project**: required for this run. Pass `--project \"\"` so the new issue stays without a project. The user cleared it; leaving the flag off would make the issue inherit its parent's project.\n")
+	default:
 		b.WriteString("- **project**: omit. The platform will route the issue to the workspace default.\n")
 	}
 	// parent — pinned by the modal when the user opened it from "Add sub

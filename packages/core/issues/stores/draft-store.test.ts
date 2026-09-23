@@ -392,6 +392,47 @@ describe("issue draft store — alignment slot (DENE-370)", () => {
     expect(draft.manual.title).toBe("kept");
     expect(draft.activeMode).toBe("align");
   });
+
+  it("does not restore a workspace draft's capability ticks", async () => {
+    setCurrentWorkspace(null, null);
+    await flush();
+    localStorage.setItem(
+      "multica_issue_draft:delta",
+      JSON.stringify({
+        state: {
+          draft: {
+            align: { request: "kept", capabilities: ["grill"] },
+            activeMode: "align",
+          },
+        },
+        version: 0,
+      }),
+    );
+
+    setCurrentWorkspace("delta", "ws_d");
+    await flush();
+    await flush();
+
+    const { draft } = useIssueDraftStore.getState();
+    expect(draft.align.request).toBe("kept");
+    expect(draft.align.capabilities).toBeUndefined();
+  });
+
+  it("keeps an in-session capability edit in memory but not in the workspace draft", async () => {
+    setCurrentWorkspace(null, null);
+    await flush();
+    localStorage.removeItem("multica_issue_draft:delta");
+    setCurrentWorkspace("delta", "ws_d");
+    await flush();
+    await flush();
+
+    useIssueDraftStore.getState().setAlign({ capabilities: ["grill"] });
+
+    expect(useIssueDraftStore.getState().draft.align.capabilities).toEqual(["grill"]);
+    expect(localStorage.getItem("multica_issue_draft:delta") ?? "").not.toContain(
+      "capabilities",
+    );
+  });
 });
 
 describe("issue draft store — logout cleanup", () => {

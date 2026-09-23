@@ -1700,6 +1700,10 @@ type QuickCreateContext struct {
 	// pass `--parent <uuid>` so the sub-issue relationship is preserved
 	// across the manual→agent mode flip.
 	ParentIssueID string `json:"parent_issue_id,omitempty"`
+	// ProjectExplicitNone is set when the user cleared the project on a
+	// sub-issue. The prompt then requires `--project ""` so create does not
+	// treat the omitted flag as "inherit the parent".
+	ProjectExplicitNone bool `json:"project_explicit_none,omitempty"`
 	// SourceContextID identifies the immutable pending capture that must attach
 	// to the one issue this quick-create chain produces.
 	SourceContextID string `json:"source_context_id,omitempty"`
@@ -1728,14 +1732,25 @@ const QuickCreateContextType = "quick_create"
 // open the modal from "Add sub issue"). The handler is responsible for
 // validating it belongs to the same workspace before passing it in.
 func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, nil)
+	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, false, nil)
+}
+
+// EnqueueQuickCreateTaskChoosingProject is EnqueueQuickCreateTask plus the
+// caller's explicit "no project" choice. projectExplicitNone tells the agent
+// to pass an empty --project so a sub-issue does not inherit its parent.
+func (s *TaskService) EnqueueQuickCreateTaskChoosingProject(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, projectExplicitNone bool) (db.AgentTaskQueue, error) {
+	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, projectExplicitNone, nil)
 }
 
 func (s *TaskService) EnqueueQuickCreateTaskWithSourceContext(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture SourceContextCapture) (db.AgentTaskQueue, error) {
-	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, &capture)
+	return s.EnqueueQuickCreateTaskWithSourceContextChoosingProject(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, false, capture)
 }
 
-func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture *SourceContextCapture) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueQuickCreateTaskWithSourceContextChoosingProject(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, projectExplicitNone bool, capture SourceContextCapture) (db.AgentTaskQueue, error) {
+	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, projectExplicitNone, &capture)
+}
+
+func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, projectExplicitNone bool, capture *SourceContextCapture) (db.AgentTaskQueue, error) {
 	if err := CheckIssueCreateCapacity(ctx, s.Queries, s.Entitlements, workspaceID); err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("preflight quick-create issue capacity: %w", err)
 	}
@@ -1770,6 +1785,7 @@ func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, r
 	if parentIssueID.Valid {
 		payload.ParentIssueID = util.UUIDToString(parentIssueID)
 	}
+	payload.ProjectExplicitNone = projectExplicitNone
 	if capture != nil {
 		payload.SourceContextID = util.UUIDToString(capture.ID)
 	}
@@ -5290,13 +5306,22 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 		}
 	}
 
+	// Capacity that will not be retried in place takes the relay path the
+	// sweeper already uses. A hold means the issue was reassigned or blocked
+	// on purpose, so the provider's English sentence is not the last word.
+	capacityHeld := false
+	if retried == nil && task.IssueID.Valid {
+		capacityHeld = s.relayCapacityIfRetriesSpent(ctx, task, failureReason, errMsg)
+	}
+
 	// Skip the per-failure system comment when we'll immediately retry —
 	// the new task will surface its own status to the user, and we don't
 	// want to spam the issue with "task timed out" messages on every
 	// daemon hiccup. Delegated failures keep this existing failed-issue comment
 	// in addition to the coordinator recovery signal, preserving visibility on
-	// both sides of a cross-issue handoff.
-	if errMsg != "" && task.IssueID.Valid && retried == nil {
+	// both sides of a cross-issue handoff. A capacity relay posts its own
+	// audit instead of the raw provider sentence.
+	if errMsg != "" && task.IssueID.Valid && retried == nil && !capacityHeld {
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(failureCommentBody(failureReason, errMsg)), "system", task.TriggerCommentID, task.ID)
 	}
 
@@ -6397,9 +6422,11 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			}
 		}
 		if !retryPending {
-			// Quota exhaustion is not retried (DENE-675). Break the spent seat
-			// and hand the unfinished issue to another seat before the
-			// in_progress → todo reset below looks for an active task.
+			// Quota exhaustion is not retried (DENE-675). A capacity miss
+			// reaches this call only because MaybeRetryFailedTask just
+			// declined it. Break the spent seat and hand the unfinished
+			// issue to another seat before the in_progress → todo reset
+			// below looks for an active task.
 			hold, err := s.RelayQuotaFailure(ctx, t)
 			if err != nil {
 				slog.Warn("handle failed tasks: quota relay failed",

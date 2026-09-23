@@ -5,6 +5,7 @@ import { ExternalLink, FileText, Loader2, Trash2 } from "lucide-react";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   applyIssueDraftAssigneeSuggestions,
+  ISSUE_DRAFT_ROOT_ROW,
   type DraftAssigneeSuggestion,
 } from "@multica/core/issue-drafts";
 import {
@@ -81,6 +82,8 @@ export function IssueDraftPreviewPanel({
   runtimesLoading,
   members,
   assigneeSuggestions,
+  assigneeSuggestionsLoading = false,
+  assigneeSuggestionsError = false,
   currentUserId,
   switchingRuntime,
   pending,
@@ -112,6 +115,8 @@ export function IssueDraftPreviewPanel({
   runtimesLoading: boolean;
   members: MemberWithUser[];
   assigneeSuggestions?: readonly (DraftAssigneeSuggestion | null)[];
+  assigneeSuggestionsLoading?: boolean;
+  assigneeSuggestionsError?: boolean;
   currentUserId: string | null;
   switchingRuntime: boolean;
   /** A turn is running: nothing may be written while the carrier is replying. */
@@ -315,6 +320,9 @@ export function IssueDraftPreviewPanel({
   };
 
   const updateChild = (index: number, patch: Partial<IssueDraftChild>) => {
+    if (patch.assignee_id !== undefined || patch.assignee_type !== undefined) {
+      offeredRows.current.add(children[index]?.key ?? "");
+    }
     setEditing({
       ...value,
       children: children.map((child, at) =>
@@ -483,15 +491,33 @@ export function IssueDraftPreviewPanel({
                   open={parentLocked ? false : undefined}
                   align="start"
                   onUpdate={(updates) =>
-                    setEditing({
-                      ...value,
-                      assignee_type: updates.assignee_type ?? null,
-                      assignee_id: updates.assignee_id ?? null,
-                    })
+                    (() => {
+                      offeredRows.current.add(ISSUE_DRAFT_ROOT_ROW);
+                      setEditing({
+                        ...value,
+                        assignee_type: updates.assignee_type ?? null,
+                        assignee_id: updates.assignee_id ?? null,
+                      });
+                    })()
                   }
                 />
               </div>
             </div>
+            {assigneeSuggestionsLoading ? (
+              <p className="text-caption text-muted-foreground" role="status">
+                {t(($) => $.alignment.assignee_suggestions_loading)}
+              </p>
+            ) : null}
+            {assigneeSuggestionsError ? (
+              <p className="text-caption text-destructive" role="alert">
+                {t(($) => $.alignment.assignee_suggestions_failed)}
+              </p>
+            ) : null}
+            {!value.assignee_id && children.length === 0 ? (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.alignment.assignee_unassigned)}
+              </p>
+            ) : null}
 
             <div className="space-y-2">
               <span className="text-caption text-muted-foreground">
@@ -624,7 +650,7 @@ export function IssueDraftPreviewPanel({
                 ) : null}
                 {newChildren.map(({ child, index }) => {
                   const row = groupPlan.rows[index + 1];
-                  const startsNow = row?.startsOnCreate === true;
+                  const outcome = row?.outcome ?? "unassigned";
                   return (
                     <div
                       key={child.key}
@@ -637,14 +663,18 @@ export function IssueDraftPreviewPanel({
                         <span
                           className={cn(
                             "ml-auto text-caption",
-                            startsNow
+                            outcome === "starts"
                               ? "font-medium text-foreground"
                               : "text-muted-foreground",
                           )}
                         >
-                          {startsNow
+                          {outcome === "starts"
                             ? t(($) => $.alignment.child_starts_now)
-                            : t(($) => $.alignment.child_parked)}
+                            : outcome === "parked"
+                              ? t(($) => $.alignment.child_parked)
+                              : outcome === "member"
+                                ? t(($) => $.alignment.child_assigned_person)
+                                : t(($) => $.alignment.child_unassigned)}
                         </span>
                         <Button
                           variant="ghost"
@@ -778,9 +808,18 @@ export function IssueDraftPreviewPanel({
               ) : null}
               {!isContinuation &&
               groupPlan.total > 1 &&
-              groupPlan.rows[0]?.startsOnCreate !== true ? (
+              groupPlan.rows[0]?.outcome !== "starts" ? (
+                // The parent of a group is its coordinator, so it never starts
+                // work here. What the line may NOT say is that the chain is
+                // closed: the stage barrier only wakes an agent or squad
+                // assignee, so an unassigned parent — or one held by a person —
+                // leaves every later stage in Backlog with nobody told. Same
+                // sentence, two very different promises (see
+                // `issueDraftNodeWakesOnStageClose`).
                 <p className="text-caption text-muted-foreground">
-                  {t(($) => $.alignment.group_summary_parent)}
+                  {groupPlan.coordinatorWakeable
+                    ? t(($) => $.alignment.group_summary_parent)
+                    : t(($) => $.alignment.group_summary_parent_unwoken)}
                 </p>
               ) : null}
               {isContinuation && groupPlan.built > 0 ? (

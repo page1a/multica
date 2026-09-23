@@ -42,6 +42,28 @@ type ScopeAuthorizer interface {
 	AuthorizeScope(ctx context.Context, userID, workspaceID, scopeType, scopeID string) (bool, error)
 }
 
+// BroadcastDecision answers one recipient's question about an outbound frame:
+// the bytes to deliver (possibly the frame unchanged), and whether to deliver
+// at all. A false deliver is the "suppress" answer, which is how a per-recipient
+// visibility rule hides a resource from one connection while another receives
+// it.
+type BroadcastDecision func(userID string) (frame []byte, deliver bool)
+
+// BroadcastFilter resolves one outbound frame into a per-recipient decision.
+// It runs once per broadcast, before any recipient is served, so the part of
+// the question that does not depend on the recipient — which issue, which
+// workspace — is answered once instead of once per connection.
+//
+// Returning nil means "deliver to everyone", which is the right answer for the
+// frames no recipient-specific rule applies to (daemon plumbing, workspace
+// membership, agent status).
+type BroadcastFilter func(ctx context.Context, scopeType, scopeID string, frame []byte) BroadcastDecision
+
+// broadcastFilterTimeout bounds the visibility lookups a filter performs on the
+// synchronous publish path. A filter that cannot answer in time fails closed,
+// so a database stall suppresses a frame rather than delivering it to everyone.
+const broadcastFilterTimeout = 5 * time.Second
+
 var allowedWSOrigins atomic.Value // holds []string
 var trustedProxies atomic.Value   // holds []netip.Prefix
 
@@ -283,6 +305,9 @@ type Hub struct {
 	mu         sync.RWMutex
 
 	authorizer ScopeAuthorizer
+	// broadcastFilter is the per-recipient visibility rule (DENE-717). Nil
+	// means every frame reaches every subscriber of its scope.
+	broadcastFilter BroadcastFilter
 
 	// Subscription lifecycle hooks. Both can be nil.
 	onFirstSubscriber SubscriptionCallback
@@ -315,6 +340,22 @@ func (h *Hub) SetSubscriptionCallbacks(onFirst, onLast SubscriptionCallback) {
 	defer h.mu.Unlock()
 	h.onFirstSubscriber = onFirst
 	h.onLastSubscriber = onLast
+}
+
+// SetBroadcastFilter wires the per-recipient visibility rule into delivery.
+// Safe to call before Run. Passing nil restores unfiltered fanout.
+func (h *Hub) SetBroadcastFilter(f BroadcastFilter) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.broadcastFilter = f
+}
+
+// broadcastFilterFor snapshots the filter under the read lock so the DB work a
+// filter performs never runs while the hub's lock is held.
+func (h *Hub) broadcastFilterFor() BroadcastFilter {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.broadcastFilter
 }
 
 // Run starts the hub event loop.
@@ -495,6 +536,12 @@ func (h *Hub) BroadcastToScope(scopeType, scopeID string, message []byte) {
 // BroadcastToScopeDedup is the same as BroadcastToScope but skips delivery
 // to clients that have already seen eventID (used by the Redis relay to
 // deduplicate the local fast path of DualWriteBroadcaster).
+//
+// When a BroadcastFilter is wired, the shared half of its question is resolved
+// once and the per-recipient half once per connection, both outside the hub
+// lock. Frames are then delivered under the read lock, which is what keeps a
+// send to a client that disconnected during the decision from racing the
+// close(c.send) in removeClient.
 func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, eventID string) {
 	if scopeType == "" || scopeID == "" {
 		return
@@ -502,15 +549,29 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 	key := sk(scopeType, scopeID)
 
 	h.mu.RLock()
-	clients := h.rooms[key]
+	clients := make([]*Client, 0, len(h.rooms[key]))
+	for client := range h.rooms[key] {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
+
+	frames, deliverable := h.decideFrames(scopeType, scopeID, message, clients)
+	if deliverable == 0 {
+		return
+	}
+
 	var slow []*Client
 	var sent int64
-	for client := range clients {
+	h.mu.RLock()
+	for i, client := range clients {
+		if !frames[i].deliver || !h.clients[client] {
+			continue
+		}
 		if !client.markSeen(eventID) {
 			continue
 		}
 		select {
-		case client.send <- message:
+		case client.send <- frames[i].frame:
 			sent++
 		default:
 			slow = append(slow, client)
@@ -524,6 +585,54 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 	if len(slow) > 0 {
 		h.evictSlow(slow)
 	}
+}
+
+// deliveredFrame is one recipient's answer: whether to send, and what.
+type deliveredFrame struct {
+	frame   []byte
+	deliver bool
+}
+
+// decideFrames resolves the filter for every snapshot client. It returns the
+// per-client frames and how many are deliverable, letting the caller skip the
+// delivery pass entirely when the filter suppressed everyone.
+//
+// A nil filter, or a filter that returns a nil decision, means "everyone gets
+// the original frame".
+func (h *Hub) decideFrames(scopeType, scopeID string, message []byte, clients []*Client) ([]deliveredFrame, int) {
+	if len(clients) == 0 {
+		// Nobody is in the room: do not pay for a visibility lookup whose
+		// answer no one will read.
+		return nil, 0
+	}
+	frames := make([]deliveredFrame, len(clients))
+	filter := h.broadcastFilterFor()
+	if filter == nil {
+		for i := range frames {
+			frames[i] = deliveredFrame{frame: message, deliver: true}
+		}
+		return frames, len(frames)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), broadcastFilterTimeout)
+	defer cancel()
+	decision := filter(ctx, scopeType, scopeID, message)
+
+	deliverable := 0
+	for i, client := range clients {
+		if decision == nil {
+			frames[i] = deliveredFrame{frame: message, deliver: true}
+			deliverable++
+			continue
+		}
+		frame, ok := decision(client.userID)
+		if !ok {
+			continue
+		}
+		frames[i] = deliveredFrame{frame: frame, deliver: true}
+		deliverable++
+	}
+	return frames, deliverable
 }
 
 // fanoutAll delivers message to every connected client. If excludeWorkspace
@@ -583,8 +692,25 @@ func (h *Hub) Broadcast(message []byte) {
 }
 
 // fanoutUser delivers a message to all clients in the user scope, optionally
-// excluding clients in excludeWorkspace and deduping against eventID.
+// excluding clients in excludeWorkspace and deduping against eventID. It runs
+// the same per-recipient filter the workspace fanout does, so a personal frame
+// that names a resource the recipient cannot see (an inbox item for an issue
+// they lost access to) is suppressed at the same single decision point.
 func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventID string) {
+	frame := message
+	filter := h.broadcastFilterFor()
+	if filter != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), broadcastFilterTimeout)
+		defer cancel()
+		if decision := filter(ctx, ScopeUser, userID, message); decision != nil {
+			var ok bool
+			frame, ok = decision(userID)
+			if !ok {
+				return
+			}
+		}
+	}
+
 	key := sk(ScopeUser, userID)
 	h.mu.RLock()
 	clients := h.rooms[key]
@@ -598,7 +724,7 @@ func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventI
 			continue
 		}
 		select {
-		case client.send <- message:
+		case client.send <- frame:
 			sent++
 		default:
 			slow = append(slow, client)

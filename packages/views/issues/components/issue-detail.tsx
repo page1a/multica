@@ -1428,15 +1428,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
    * this issue, so whatever the conversation settles on is filed beneath it
    * instead of founding a second top-level issue.
    *
-   * The project and assignee seeds are deliberately NOT carried: the
-   * conversation decides who does the work, and the panel already inherits the
-   * project from the shared draft slot.
+   * The project is seeded from this issue so the alignment starts in the same
+   * place; the user can change or clear it before the conversation begins.
+   * The assignee is still left to the conversation.
    */
   const openCommentAlign = useCallback((commentId: string) => {
     if (!issue) return;
     openAlignIssue({
       anchor_comment_id: commentId,
       parent_issue_id: issue.id,
+      project_id: issue.project_id,
     });
   }, [issue]);
 
@@ -3157,6 +3158,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               draftId={alignmentDraftId}
               groupIssues={alignmentGroupIssues}
               parentIssueId={issue.id}
+              projectId={issue.project_id}
               selfStarted={alignmentDraftId !== null}
               startedByAnother={alignmentHeldByAnother}
             />

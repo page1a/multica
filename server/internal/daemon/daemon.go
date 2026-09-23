@@ -6998,7 +6998,7 @@ func sharedModeBriefDelivery(provider string) sharedBriefDelivery {
 	case "antigravity":
 		return sharedBriefViaAntigravityAddDir
 	case "openclaw", "kimi", "traecli", "qwenpaw",
-		"codebuddy", "dim", "grok", "dsh", "kiro", "qoder", "qoderclicn", "zeroclaw":
+		"codebuddy", "dim", "devin", "grok", "dsh", "kiro", "qoder", "qoderclicn", "zeroclaw":
 		return sharedBriefInline
 	default:
 		// mcode is intentionally unsupported: it ignores ExecOptions.SystemPrompt
@@ -8268,6 +8268,23 @@ func qualifyTaskModel(
 	return qualified
 }
 
+// sameSeatRetryWorkDir is the previous cwd a same-seat retry may rebuild, or
+// "" when this run must start a fresh working copy.
+//
+// A different seat (the capacity handoff that moves the issue to another
+// agent) is a new conversation and passes previousDirReusable false from the
+// caller, because shouldContinueInterruptedSession is already false there.
+// previousDirReusable is the path check: the directory is a missing child of
+// this repository's worktree root. previousDirInUse is the live-task check.
+// Either one failing leaves the retry on a new directory, and the resume gate
+// then drops the session instead of sending the CLI somewhere it cannot find.
+func sameSeatRetryWorkDir(task Task, previousDirReusable, previousDirInUse bool) string {
+	if !shouldContinueInterruptedSession(task) || !previousDirReusable || previousDirInUse {
+		return ""
+	}
+	return task.PriorWorkDir
+}
+
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
 	phaseRecorder := taskPhaseRecorderFromContext(ctx)
 	phaseRecorder.Mark(taskPhasePrepareStarted)
@@ -8847,6 +8864,32 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("prepare execution environment: %w", err))
 			}
 		} else if localAssignment.UsesWorktree() {
+			// Same-seat retry only. The env root stays this task's own
+			// directory (GC and the env-root lock key off the task id); what
+			// has to stay put is the working copy the CLI's conversation is
+			// filed under. A different seat never sets the continue flag, so
+			// it keeps a new copy. A path that is missing, busy, or not under
+			// this repo's worktree root is not offered, and Prepare falls
+			// back to a fresh copy without deleting anything.
+			resumeWorkDir := ""
+			if shouldContinueInterruptedSession(task) && task.PriorWorkDir != "" {
+				reusable, inUse := false, false
+				gitRoot, gitErr := execenv.ResolveGitRoot(localAssignment.AbsPath)
+				if gitErr != nil {
+					taskLog.Info("same-seat retry: repository not resolved; starting a fresh worktree", "error", gitErr)
+				} else if wtRoot, rootErr := execenv.ResolveWorktreeRoot(gitRoot, strings.TrimSpace(localAssignment.Ref.WorktreeRoot)); rootErr != nil {
+					taskLog.Info("same-seat retry: worktree root refused; starting a fresh worktree", "error", rootErr)
+				} else if dir, ok := execenv.ReusableWorktreeDir(wtRoot, gitRoot, localAssignment.AbsPath, task.PriorWorkDir); !ok {
+					taskLog.Info("same-seat retry: previous worktree unavailable; starting a fresh worktree",
+						"prior_work_dir", task.PriorWorkDir)
+				} else if d.worktreeCleanup.IsActive(dir) {
+					inUse = true
+					taskLog.Info("same-seat retry: previous worktree still in use; starting a fresh worktree", "path", dir)
+				} else {
+					reusable = true
+				}
+				resumeWorkDir = sameSeatRetryWorkDir(task, reusable, inUse)
+			}
 			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{
 				LocalPath:     localAssignment.AbsPath,
 				CheckoutPaths: task.CheckoutPaths,
@@ -8856,7 +8899,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				// that stripped it for a daemon lacking the capability, lands
 				// on the same default — which is what this daemon implements
 				// either way (DENE-617).
-				WorktreeRoot: strings.TrimSpace(localAssignment.Ref.WorktreeRoot),
+				WorktreeRoot:  strings.TrimSpace(localAssignment.Ref.WorktreeRoot),
+				ResumeWorkDir: resumeWorkDir,
 			}
 			// Take the per-path mutex for the snapshot alone, then hand it
 			// straight back — long enough to read a consistent tree, short

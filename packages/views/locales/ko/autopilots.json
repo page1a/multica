@@ -300,6 +300,12 @@
     "section_project": "프로젝트",
     "project_hint": "실행 환경도 결정합니다 — 해당 프로젝트의 저장소 또는 로컬 디렉터리",
     "no_project": "프로젝트 없음",
+    "no_project_confirm": {
+      "title": "이 계획에는 프로젝트가 없습니다",
+      "description": "프로젝트는 이 계획이 실행될 맥락과 로컬 디렉터리를 정합니다. 프로젝트 없이 저장하려는 경우에만 계속하세요.",
+      "cancel": "프로젝트 선택",
+      "confirm": "프로젝트 없이 계속"
+    },
     "section_subscribers": "구독자",
     "subscribers_hint": "이 오토파일럿이 만드는 모든 태스크를 자동으로 구독합니다",
     "subscribers_empty": "구독자가 없습니다. 팀원을 추가하면 매번 알림을 받습니다",

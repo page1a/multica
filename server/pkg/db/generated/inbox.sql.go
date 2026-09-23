@@ -197,6 +197,14 @@ WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
     iss.id IS NULL
     OR (iss.creator_type = 'member' AND iss.creator_id = i.recipient_id)
     OR (iss.assignee_type = 'member' AND iss.assignee_id = i.recipient_id)
+    OR (iss.creator_type = 'agent' AND EXISTS (
+          SELECT 1 FROM agent a
+          WHERE a.id = iss.creator_id AND a.workspace_id = iss.workspace_id AND a.owner_id = i.recipient_id
+       ))
+    OR (iss.assignee_type = 'agent' AND EXISTS (
+          SELECT 1 FROM agent a
+          WHERE a.id = iss.assignee_id AND a.workspace_id = iss.workspace_id AND a.owner_id = i.recipient_id
+       ))
     OR (iss.visibility = 'workspace' AND COALESCE(m.role, '') <> 'guest')
     OR (iss.visibility = 'project' AND iss.project_id IS NOT NULL AND (
           COALESCE(m.role, '') IN ('owner', 'admin')
@@ -255,6 +263,14 @@ FROM (
         iss.id IS NULL
         OR (iss.creator_type = 'member' AND iss.creator_id = i.recipient_id)
         OR (iss.assignee_type = 'member' AND iss.assignee_id = i.recipient_id)
+        OR (iss.creator_type = 'agent' AND EXISTS (
+              SELECT 1 FROM agent a
+              WHERE a.id = iss.creator_id AND a.workspace_id = iss.workspace_id AND a.owner_id = i.recipient_id
+           ))
+        OR (iss.assignee_type = 'agent' AND EXISTS (
+              SELECT 1 FROM agent a
+              WHERE a.id = iss.assignee_id AND a.workspace_id = iss.workspace_id AND a.owner_id = i.recipient_id
+           ))
         OR (iss.visibility = 'workspace' AND m.role <> 'guest')
         OR (iss.visibility = 'project' AND iss.project_id IS NOT NULL AND (
               m.role IN ('owner', 'admin')

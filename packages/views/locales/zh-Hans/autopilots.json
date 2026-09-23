@@ -300,6 +300,12 @@
     "section_project": "关联项目",
     "project_hint": "同时决定运行时的执行环境 —— 该项目的仓库或本地目录",
     "no_project": "不关联项目",
+    "no_project_confirm": {
+      "title": "当前计划没有绑定项目",
+      "description": "项目决定任务落在哪个上下文和本地目录。只有你确认不需要项目时，才继续保存。",
+      "cancel": "返回选择项目",
+      "confirm": "无需安排项目"
+    },
     "section_output_mode": "输出模式",
     "section_subscribers": "订阅者",
     "subscribers_hint": "每次跑出来的任务默认订阅",

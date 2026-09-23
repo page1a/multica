@@ -160,6 +160,22 @@ function CreateIssueDialogBody({
       ? effectiveData.parent_issue_id
       : undefined;
 
+  // The alignment face reads the project from the shared draft, not from this
+  // payload. Seed it once from the parent so the picker shows the inherited
+  // project. A project already in the draft — picked on the manual face, or
+  // cleared there — is left alone.
+  const projectSeedApplied = useRef(false);
+  useLayoutEffect(() => {
+    if (projectSeedApplied.current) return;
+    if (!effectiveData || !("project_id" in effectiveData)) return;
+    projectSeedApplied.current = true;
+    const seeded = effectiveData.project_id;
+    if (typeof seeded !== "string" || seeded.length === 0) return;
+    const store = useIssueDraftStore.getState();
+    if (store.draft.shared.projectId) return;
+    store.setShared({ projectId: seeded });
+  }, [effectiveData]);
+
   // An alignment opened FROM a comment thread starts on that comment rather
   // than on an empty box (DENE-452). The seed is written ONCE, the first time it
   // is both available and safe to write:
