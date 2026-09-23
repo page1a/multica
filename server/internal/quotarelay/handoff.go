@@ -37,10 +37,14 @@ func (h Handoff) scope() string {
 }
 
 func (h Handoff) reasonLabel() string {
-	if h.Kind == KindSpecializedModel {
+	switch h.Kind {
+	case KindSpecializedModel:
 		return "特化模型额度耗尽"
+	case KindProviderCapacity:
+		return "模型满载，原地重试已用尽"
+	default:
+		return "席位周额度失效"
 	}
-	return "席位周额度失效"
 }
 
 func (h Handoff) step() string {
@@ -76,7 +80,11 @@ func emptyAsUnset(v string) string {
 // AgentNote is the opening handoff on the replacement task.
 func AgentNote(h Handoff) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "额度熔断接力。上一席位「%s」因%s已停用，请从这张票的当前讨论继续，不要另开任务，也不要重试已经耗尽的额度。\n", h.FailedName, h.reasonLabel())
+	if h.Kind == KindProviderCapacity {
+		fmt.Fprintf(&b, "模型满载接力。上一席位「%s」原地重试后仍然满载，请从这张票的当前讨论继续，不要另开任务。\n", h.FailedName)
+	} else {
+		fmt.Fprintf(&b, "额度熔断接力。上一席位「%s」因%s已停用，请从这张票的当前讨论继续，不要另开任务，也不要重试已经耗尽的额度。\n", h.FailedName, h.reasonLabel())
+	}
 	fmt.Fprintf(&b, "票 #%d %s。原任务 %s。工作线程 %s。\n", h.IssueNumber, h.IssueTitle, h.TaskID, threadLabel(h.ThreadCommentID))
 	fmt.Fprintf(&b, "验收席：%s %s。\n", emptyAsUnset(h.ReviewerType), emptyAsUnset(h.ReviewerID))
 	if strings.TrimSpace(h.Acceptance) != "" {

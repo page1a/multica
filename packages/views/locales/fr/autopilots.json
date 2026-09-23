@@ -300,6 +300,12 @@
     "section_project": "Projet",
     "project_hint": "Définit aussi le lieu des exécutions : le dépôt ou le répertoire local du projet",
     "no_project": "Aucun projet",
+    "no_project_confirm": {
+      "title": "Ce plan n'a pas de projet",
+      "description": "Le projet décide du contexte et du répertoire local où ce plan s'exécute. Continuez seulement si vous voulez l'enregistrer sans projet.",
+      "cancel": "Choisir un projet",
+      "confirm": "Continuer sans projet"
+    },
     "section_output_mode": "Mode de sortie",
     "section_subscribers": "Abonnés",
     "subscribers_hint": "Abonnés automatiquement à chaque tâche créée par cette automatisation",

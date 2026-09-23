@@ -56,10 +56,10 @@ const completionStallRepeatWindow = 30 * time.Minute
 // status — completion is neither todo nor done, and a direct write would also
 // race the executor's own in-flight status update. It publishes an observable
 // signal instead: a system comment naming the current assignee and the parent
-// issue, broadcast as comment:created so the board picks it up immediately.
-// Whether to re-wake the executor or move the issue is the dispatcher's call,
-// which is why the comment is written directly rather than through the HTTP
-// comment path — a mention here must not enqueue a run on its own.
+// issue, broadcast as comment:created so the board picks it up immediately,
+// then queues one bounded recovery run for the same assignee. The recovery run
+// is told to finish the work through the close protocol; if it finds a real
+// human decision, it can move the issue to in_review/awaiting_human itself.
 //
 // Returns the number of issues signalled.
 func (s *TaskService) HandleCompletedTasks(ctx context.Context, tasks []db.AgentTaskQueue) int {
@@ -157,12 +157,48 @@ func (s *TaskService) signalCompletionStall(ctx context.Context, issueKey string
 		})
 	}
 
+	// A completed run that leaves an active issue behind has not delivered a
+	// terminal outcome. Re-awaken the owner once with an explicit closeout
+	// instruction so a quiet executor cannot strand the issue indefinitely.
+	// The repeat-window guard above makes this bounded across completion rounds;
+	// the pending-task uniqueness constraint also collapses concurrent callbacks.
+	if err := s.enqueueCompletionRecovery(ctx, issue); err != nil {
+		slog.Warn("completion stall: recovery run enqueue failed", "issue_id", issueKey, "error", err)
+	}
+
 	slog.Info("completion stall: signalled run completed without a terminal issue",
 		"issue_id", issueKey,
 		"workspace_id", util.UUIDToString(issue.WorkspaceID),
 		"status", issue.Status,
 	)
 	return true
+}
+
+const completionStallRecoveryNote = `A previous run finished but left this issue in progress without another run queued. Continue the issue now: inspect the acceptance criteria and the work already recorded, finish any remaining work yourself, and close the issue through the close protocol. Move to done when delivery is complete; use in_review with close.conclusion=awaiting_human only when a human decision is genuinely required. Do not stop after reporting what is missing.`
+
+func (s *TaskService) enqueueCompletionRecovery(ctx context.Context, issue db.Issue) error {
+	switch issue.AssigneeType.String {
+	case "agent":
+		if !issue.AssigneeID.Valid {
+			return fmt.Errorf("issue has no agent assignee")
+		}
+		_, err := s.EnqueueTaskForIssueWithHandoff(ctx, issue, completionStallRecoveryNote, pgtype.UUID{})
+		return err
+	case "squad":
+		if !issue.AssigneeID.Valid {
+			return fmt.Errorf("issue has no squad assignee")
+		}
+		squad, err := s.Queries.GetSquad(ctx, issue.AssigneeID)
+		if err != nil {
+			return fmt.Errorf("load assigned squad: %w", err)
+		}
+		_, err = s.EnqueueTaskForSquadLeaderWithHandoff(ctx, issue, squad.LeaderID, issue.AssigneeID, completionStallRecoveryNote, pgtype.UUID{})
+		return err
+	default:
+		// A task can finish after a member reassigned the issue. Never turn
+		// that stale completion into an agent run against the member's intent.
+		return fmt.Errorf("issue assignee type %q cannot receive recovery work", issue.AssigneeType.String)
+	}
 }
 
 // hasOpenChildren reports whether the issue still has a non-terminal child.
@@ -225,9 +261,9 @@ func (s *TaskService) completionStallNotice(ctx context.Context, issue db.Issue)
 	return fmt.Sprintf(
 		"%sStalled run: a run on this issue just completed, the issue is still `in_progress`, and nothing is "+
 			"queued for it — so no executor is working on it. Run completion is not delivery completion: the "+
-			"executor owns the issue status and did not terminate it. Assignee on record: %s.%s This signal is "+
-			"mention-only — the status is deliberately left untouched and no run was started, so decide whether "+
-			"to continue the work or close the issue out.\n\n%s",
+			"executor owns the issue status and did not terminate it. Assignee on record: %s.%s A bounded "+
+			"recovery run is being requested with a closeout instruction; the status is deliberately left untouched "+
+			"until that run records delivery or a real human wait.\n\n%s",
 		mention,
 		assigneeLabel,
 		parent,

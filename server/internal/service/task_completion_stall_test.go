@@ -26,7 +26,7 @@ func newCompletionStallFixture(t *testing.T) (*testutil.Fixture, *TaskService, *
 	fx.WorkspaceID = fx.Workspace(t, "Completion stall", fmt.Sprintf("completion-stall-%d", suffix))
 	fx.Member(t, fx.WorkspaceID, fx.UserID, "owner")
 	runtimeID := fx.Runtime(t, "Completion stall runtime")
-	agentID := fx.Agent(t, "Stalled executor", runtimeID)
+	agentID := fx.Agent(t, "Stalled executor", runtimeID, testutil.Cols{"work_enabled": true})
 
 	bus := events.New()
 	svc := &TaskService{Queries: db.New(fx.Pool), Bus: bus}
@@ -130,13 +130,19 @@ func TestHandleCompletedTasksSignalsStalledIssue(t *testing.T) {
 	if got := issueStatusOf(t, fx, issueID); got != "in_progress" {
 		t.Errorf("issue status = %q, want in_progress (the signal must not write status)", got)
 	}
-	// Nothing was queued either — re-waking the executor is the dispatcher's
-	// call, not a side effect of detection.
+	// The detector must also wake the owner with a bounded closeout run.
 	var active int
 	fx.QueryRow(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1
 		AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')`, issueID).Scan(&active)
-	if active != 0 {
-		t.Errorf("tasks enqueued by the signal = %d, want 0", active)
+	if active != 1 {
+		t.Errorf("tasks enqueued by the signal = %d, want 1", active)
+	}
+	var handoff string
+	if err := fx.Pool.QueryRow(context.Background(), `SELECT handoff_note FROM agent_task_queue WHERE issue_id = $1 AND status = 'queued'`, issueID).Scan(&handoff); err != nil {
+		t.Fatalf("load recovery handoff note: %v", err)
+	}
+	if !strings.Contains(handoff, "close protocol") || !strings.Contains(handoff, "human decision") {
+		t.Errorf("recovery handoff note does not require closeout and human-wait handling: %q", handoff)
 	}
 
 	if len(commentEvents) != 1 {

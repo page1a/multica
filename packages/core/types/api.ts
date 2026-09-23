@@ -12,7 +12,8 @@ export interface CreateIssueRequest {
   assignee_type?: IssueAssigneeType;
   assignee_id?: string;
   parent_issue_id?: string;
-  project_id?: string;
+  /** Set to null to keep a sub-issue without a project. Omit it to inherit the parent's. */
+  project_id?: string | null;
   /** Ordered stage (>= 1) grouping this sub-issue under its parent. */
   stage?: number;
   start_date?: string;

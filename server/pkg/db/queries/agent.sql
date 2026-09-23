@@ -27,6 +27,13 @@ ORDER BY created_at ASC;
 SELECT * FROM agent
 WHERE id = $1;
 
+-- name: ListAgentIDsOwnedByMember :many
+-- Resource visibility treats an agent as acting for its human owner. Keep the
+-- lookup workspace-scoped so an owner cannot inherit an agent from another
+-- tenant.
+SELECT id FROM agent
+WHERE workspace_id = $1 AND owner_id = $2;
+
 -- name: GetAgentForUpdate :one
 -- Serializes read-modify-write updates to disabled_runtime_skills so two
 -- concurrent per-skill toggles cannot overwrite each other.

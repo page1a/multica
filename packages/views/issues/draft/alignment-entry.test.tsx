@@ -117,7 +117,23 @@ describe("IssueAlignmentEntry", () => {
     // The parent rides the modal payload, which is what makes the conversation
     // file its group under this issue instead of founding a second top-level
     // one (DENE-452).
-    expect(mocks.openAlignIssue).toHaveBeenCalledWith({ parent_issue_id: "issue-7" });
+    expect(mocks.openAlignIssue).toHaveBeenCalledWith({
+      parent_issue_id: "issue-7",
+      project_id: null,
+    });
+  });
+
+  it("starts the alignment on the issue's project", async () => {
+    renderEntry({ parentIssueId: "issue-7", projectId: "proj-1" });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Align on this issue" }),
+    );
+
+    expect(mocks.openAlignIssue).toHaveBeenCalledWith({
+      parent_issue_id: "issue-7",
+      project_id: "proj-1",
+    });
   });
 
   it("does not offer a second alignment on a group that already came out of one", () => {

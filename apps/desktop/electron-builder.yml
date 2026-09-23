@@ -45,10 +45,21 @@ mac:
   # Naming scheme: multica-desktop-<version>-<platform>-<arch>.<ext>
   # so the filename alone surfaces kind, version, platform, and CPU arch.
   artifactName: multica-desktop-${version}-mac-${arch}.${ext}
+  # The kun fork signs with one long-lived self-signed certificate (or
+  # ad-hoc when CSC_LINK is unset). Hardened Runtime is for an Apple
+  # notarized Developer ID build; left on, a self-signed bundle is killed
+  # at launch. package.mjs passes `-c.mac.hardenedRuntime=true` only when
+  # APPLE_TEAM_ID is set.
+  hardenedRuntime: false
+  # spctl --assess rejects anything Apple has not notarized, including a
+  # self-signed identity. Keep the assess off so a CSC_LINK build does not
+  # fail the packaging job. package.mjs repeats the flag when notarization
+  # is skipped.
+  gatekeeperAssess: false
   # Notarize via notarytool. Requires APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD
-  # + APPLE_TEAM_ID env vars at package time. Non-mac contributors are
-  # unaffected because `pnpm package` already requires the Developer ID
-  # signing cert — notarization is a strict superset.
+  # + APPLE_TEAM_ID env vars at package time. package.mjs forces this off
+  # when APPLE_TEAM_ID is absent — a self-signed certificate cannot be
+  # notarized, and the job must still succeed.
   notarize: true
 dmg:
   artifactName: multica-desktop-${version}-mac-${arch}.${ext}

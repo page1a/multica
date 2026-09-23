@@ -1380,12 +1380,19 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		}
 		body["parent_issue_id"] = parent.ID
 	}
-	if v, _ := cmd.Flags().GetString("project"); v != "" {
-		project, err := resolveProjectID(ctx, client, v)
-		if err != nil {
-			return fmt.Errorf("resolve project: %w", err)
+	if cmd.Flags().Changed("project") {
+		v, _ := cmd.Flags().GetString("project")
+		if strings.TrimSpace(v) == "" {
+			// Explicit empty is "no project", including on a sub-issue. Omitting
+			// the flag is what lets the server inherit the parent's project.
+			body["project_id"] = nil
+		} else {
+			project, err := resolveProjectID(ctx, client, v)
+			if err != nil {
+				return fmt.Errorf("resolve project: %w", err)
+			}
+			body["project_id"] = project.ID
 		}
-		body["project_id"] = project.ID
 	}
 	if cmd.Flags().Changed("stage") {
 		stage, _ := cmd.Flags().GetInt("stage")

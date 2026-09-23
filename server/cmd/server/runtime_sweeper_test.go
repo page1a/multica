@@ -1037,7 +1037,14 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 		var issueID string
 		if err := testPool.QueryRow(ctx, `
 			WITH bumped AS (
-				UPDATE workspace SET issue_counter = issue_counter + 1
+				-- Some fixtures seed an issue with MAX(number) + 1 without
+				-- bumping the counter, so trust whichever is further ahead:
+				-- the counter alone can hand back a number another row owns.
+				UPDATE workspace
+				SET issue_counter = GREATEST(
+					issue_counter,
+					(SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)
+				) + 1
 				WHERE id = $1 RETURNING issue_counter
 			)
 			INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id, number)
@@ -1262,7 +1269,14 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 		var issueID string
 		if err := testPool.QueryRow(ctx, `
 			WITH bumped AS (
-				UPDATE workspace SET issue_counter = issue_counter + 1
+				-- Some fixtures seed an issue with MAX(number) + 1 without
+				-- bumping the counter, so trust whichever is further ahead:
+				-- the counter alone can hand back a number another row owns.
+				UPDATE workspace
+				SET issue_counter = GREATEST(
+					issue_counter,
+					(SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)
+				) + 1
 				WHERE id = $1 RETURNING issue_counter
 			)
 			INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id, number)

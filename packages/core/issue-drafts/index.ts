@@ -87,7 +87,11 @@ export {
   type IssueDraftStage,
 } from "./stage";
 
-export { readIssueDraftCapabilityPreference, writeIssueDraftCapabilityPreference } from "./capability-preference";
+export {
+  readIssueDraftCapabilityPreference,
+  writeIssueDraftCapabilityPreference,
+  type IssueDraftCapabilityPreference,
+} from "./capability-preference";
 
 export {
   ISSUE_DRAFT_ROOT_ROW,

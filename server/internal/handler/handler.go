@@ -576,6 +576,13 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
 
+	// Realtime delivery asks the same visibility question the HTTP reads do
+	// (DENE-717). Wiring it here means a hub constructed for tests gets the
+	// production rule rather than a stand-in.
+	if hub != nil {
+		hub.SetBroadcastFilter(h.FilterRealtimeBroadcast)
+	}
+
 	return h
 }
 

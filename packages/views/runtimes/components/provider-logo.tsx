@@ -359,6 +359,27 @@ function DimLogo({ className }: { className: string }) {
 // mark (three claw-scratch strokes) rather than a claimed "official" logo.
 // currentColor keeps it legible in both themes; swap for a real asset once
 // ZeroClaw ships one, following the DimLogo <img> pattern.
+// Devin CLI — no first-party mark is bundled yet. A letter tile keeps the
+// runtime list distinct from Kiro, which an earlier draft reused as a stand-in.
+function DevinLogo({ className }: { className: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <rect width="24" height="24" rx="6" fill="currentColor" />
+      <text
+        x="12"
+        y="16.5"
+        textAnchor="middle"
+        fontSize="13"
+        fontWeight="700"
+        fill="var(--background, #fff)"
+        fontFamily="ui-sans-serif, system-ui, sans-serif"
+      >
+        D
+      </text>
+    </svg>
+  );
+}
+
 function ZeroClawLogo({ className }: { className: string }) {
   return (
     <svg
@@ -433,6 +454,8 @@ export function ProviderLogo({
       return <DshLogo className={className} />;
     case "dim":
       return <DimLogo className={className} />;
+    case "devin":
+      return <DevinLogo className={className} />;
     case "zeroclaw":
       return <ZeroClawLogo className={className} />;
     default:

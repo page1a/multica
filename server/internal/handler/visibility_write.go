@@ -273,6 +273,11 @@ func (h *Handler) SetIssueVisibility(w http.ResponseWriter, r *http.Request) {
 
 	wsID := uuidToString(issue.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
+	// The id-only invalidation goes first: recipients who just lost access must
+	// evict their cached copy, and the content frame below is filtered for
+	// exactly those recipients. Recipients who gained access have nothing
+	// cached and pick the issue up from the update that follows.
+	h.publishIssueInvalidated(wsID, actorType, actorID, uuidToString(updated.ID), "", "")
 	h.publish(protocol.EventIssueUpdated, wsID, actorType, actorID, map[string]any{
 		"issue": issueToResponse(updated, h.getIssuePrefix(r.Context(), issue.WorkspaceID)),
 	})
@@ -500,9 +505,18 @@ func (h *Handler) SetProjectVisibility(w http.ResponseWriter, r *http.Request) {
 
 	wsID := uuidToString(project.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
+	// A project's scope sweep re-scopes every issue it holds, so the invalidation
+	// names the project rather than each issue: the client refetches its lists
+	// and the HTTP filter decides what comes back.
+	h.publishIssueInvalidated(wsID, actorType, actorID, "", uuidToString(updated.ID), "")
 	h.publish(protocol.EventProjectUpdated, wsID, actorType, actorID, map[string]any{
 		"project": projectToResponse(updated),
 	})
+	// The sweep may also have re-scoped repositories, which live in the
+	// workspace snapshot rather than in the project's own events.
+	if len(repoSweep) > 0 {
+		h.publishWorkspaceSnapshot(r.Context(), project.WorkspaceID, wsID, actorType, actorID)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"project_id":               uuidToString(updated.ID),
@@ -659,6 +673,12 @@ func (h *Handler) SetRepoVisibility(w http.ResponseWriter, r *http.Request) {
 		source:       auditSourceDirect,
 		projectID:    scopedProject,
 	})
+
+	// Repos travel inside the workspace snapshot, so the snapshot is what a
+	// client refetches — with its own visibility applied at delivery time.
+	wsID := uuidToString(wsUUID)
+	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
+	h.publishWorkspaceSnapshot(r.Context(), wsUUID, wsID, actorType, actorID)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"url":           req.URL,

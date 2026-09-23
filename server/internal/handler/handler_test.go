@@ -862,6 +862,179 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	}
 }
 
+func TestCreateSubIssueExplicitEmptyProjectDoesNotInherit(t *testing.T) {
+	var projectID, parentID, childID string
+	defer func() {
+		for _, issueID := range []string{childID, parentID} {
+			if issueID == "" {
+				continue
+			}
+			req := withURLParam(newRequest("DELETE", "/api/issues/"+issueID, nil), "id", issueID)
+			testHandler.DeleteIssue(httptest.NewRecorder(), req)
+		}
+		if projectID != "" {
+			req := withURLParam(newRequest("DELETE", "/api/projects/"+projectID, nil), "id", projectID)
+			testHandler.DeleteProject(httptest.NewRecorder(), req)
+		}
+	}()
+
+	w := testutil.Call(t, testHandler.CreateProject, newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Parent project for an explicit empty child",
+	})).Want(http.StatusCreated)
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	projectID = project.ID
+
+	w = testutil.Call(t, testHandler.CreateIssue, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "Parent with project",
+		"project_id": projectID,
+	})).Want(http.StatusCreated)
+	var parent IssueResponse
+	json.NewDecoder(w.Body).Decode(&parent)
+	parentID = parent.ID
+
+	w = testutil.Call(t, testHandler.CreateIssue, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":           "Child that cleared its project",
+		"parent_issue_id": parentID,
+		"project_id":      nil,
+	})).Want(http.StatusCreated)
+	var child IssueResponse
+	json.NewDecoder(w.Body).Decode(&child)
+	childID = child.ID
+	if child.ProjectID != nil {
+		t.Fatalf("explicit empty project was overwritten with %v", child.ProjectID)
+	}
+}
+
+func TestUpdateIssueInheritsParentProjectOnlyWhenUnset(t *testing.T) {
+	var parentProjectID, childProjectID, parentID, emptyChildID, setChildID, clearedWhileAttachingID string
+	defer func() {
+		for _, issueID := range []string{setChildID, clearedWhileAttachingID, emptyChildID, parentID} {
+			if issueID == "" {
+				continue
+			}
+			req := withURLParam(newRequest("DELETE", "/api/issues/"+issueID, nil), "id", issueID)
+			testHandler.DeleteIssue(httptest.NewRecorder(), req)
+		}
+		for _, id := range []string{childProjectID, parentProjectID} {
+			if id == "" {
+				continue
+			}
+			req := withURLParam(newRequest("DELETE", "/api/projects/"+id, nil), "id", id)
+			testHandler.DeleteProject(httptest.NewRecorder(), req)
+		}
+	}()
+
+	createProject := func(title string) string {
+		w := testutil.Call(t, testHandler.CreateProject, newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+			"title": title,
+		})).Want(http.StatusCreated)
+		var project ProjectResponse
+		json.NewDecoder(w.Body).Decode(&project)
+		return project.ID
+	}
+	parentProjectID = createProject("Parent project for attach")
+	childProjectID = createProject("Child's own project")
+
+	w := testutil.Call(t, testHandler.CreateIssue, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "Parent",
+		"project_id": parentProjectID,
+	})).Want(http.StatusCreated)
+	var parent IssueResponse
+	json.NewDecoder(w.Body).Decode(&parent)
+	parentID = parent.ID
+
+	w = testutil.Call(t, testHandler.CreateIssue, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Empty child",
+	})).Want(http.StatusCreated)
+	var emptyChild IssueResponse
+	json.NewDecoder(w.Body).Decode(&emptyChild)
+	emptyChildID = emptyChild.ID
+
+	w = testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest("PUT", "/api/issues/"+emptyChildID, map[string]any{
+		"parent_issue_id": parentID,
+	}), "id", emptyChildID)).Want(http.StatusOK)
+	json.NewDecoder(w.Body).Decode(&emptyChild)
+	if emptyChild.ProjectID == nil || *emptyChild.ProjectID != parentProjectID {
+		t.Fatalf("empty child project = %v, want parent project %s", emptyChild.ProjectID, parentProjectID)
+	}
+
+	// Attaching the parent again must not be what puts the project back
+	// after the user has cleared it.
+	w = testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest("PUT", "/api/issues/"+emptyChildID, map[string]any{
+		"project_id": nil,
+	}), "id", emptyChildID)).Want(http.StatusOK)
+	w = testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest("PUT", "/api/issues/"+emptyChildID, map[string]any{
+		"parent_issue_id": parentID,
+	}), "id", emptyChildID)).Want(http.StatusOK)
+	json.NewDecoder(w.Body).Decode(&emptyChild)
+	if emptyChild.ProjectID != nil {
+		t.Fatalf("re-attaching the parent restored project %v", emptyChild.ProjectID)
+	}
+
+	// Naming project_id in the same request as the parent is an explicit
+	// choice, including null. The single-field inheritance must not fill it.
+	w = testutil.Call(t, testHandler.CreateIssue, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Empty child cleared while attaching",
+	})).Want(http.StatusCreated)
+	var clearedWhileAttaching IssueResponse
+	json.NewDecoder(w.Body).Decode(&clearedWhileAttaching)
+	clearedWhileAttachingID = clearedWhileAttaching.ID
+	w = testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest("PUT", "/api/issues/"+clearedWhileAttachingID, map[string]any{
+		"parent_issue_id": parentID,
+		"project_id":      nil,
+	}), "id", clearedWhileAttachingID)).Want(http.StatusOK)
+	json.NewDecoder(w.Body).Decode(&clearedWhileAttaching)
+	if clearedWhileAttaching.ProjectID != nil {
+		t.Fatalf("explicit empty project on attach was overwritten with %v", clearedWhileAttaching.ProjectID)
+	}
+
+	w = testutil.Call(t, testHandler.CreateIssue, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "Child with its own project",
+		"project_id": childProjectID,
+	})).Want(http.StatusCreated)
+	var setChild IssueResponse
+	json.NewDecoder(w.Body).Decode(&setChild)
+	setChildID = setChild.ID
+
+	w = testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest("PUT", "/api/issues/"+setChildID, map[string]any{
+		"parent_issue_id": parentID,
+	}), "id", setChildID)).Want(http.StatusOK)
+	json.NewDecoder(w.Body).Decode(&setChild)
+	if setChild.ProjectID == nil || *setChild.ProjectID != childProjectID {
+		t.Fatalf("child with a project was overwritten with %v", setChild.ProjectID)
+	}
+}
+
+func TestCreateIssueRejectsProjectTheCallerCannotSee(t *testing.T) {
+	w := testutil.Call(t, testHandler.CreateProject, newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Private project of the workspace owner",
+	})).Want(http.StatusCreated)
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	t.Cleanup(func() {
+		req := withURLParam(newRequest("DELETE", "/api/projects/"+project.ID, nil), "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), req)
+	})
+
+	stranger := visibilityTestMember(t, "Project Sight Stranger", fmt.Sprintf("project-sight-%d@multica.ai", time.Now().UnixNano()))
+	resp := testutil.Call(t, testHandler.CreateIssue, newRequestAs(stranger, "POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "Should not land in a hidden project",
+		"project_id": project.ID,
+	})).Want(http.StatusBadRequest)
+	if !strings.Contains(resp.Body.String(), "project not found in this workspace") {
+		t.Fatalf("hidden project error = %s", resp.Body.String())
+	}
+	var count int
+	dbfx.QueryRow(t,
+		`SELECT COUNT(*) FROM issue WHERE workspace_id = $1 AND title = $2`,
+		testWorkspaceID, "Should not land in a hidden project",
+	).Scan(&count)
+	if count != 0 {
+		t.Fatalf("rejected create still wrote a row (count=%d)", count)
+	}
+}
+
 func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())

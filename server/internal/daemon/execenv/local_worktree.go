@@ -117,6 +117,14 @@ type LocalWorktreeParams struct {
 	// out the whole repository. A declaration narrows only this task's
 	// worktree; the user's own checkout stays complete.
 	CheckoutPaths string
+	// ResumeWorkDir is the previous run's agent cwd on a same-seat retry.
+	// When it names a working copy this repository can recreate — a direct
+	// child of the worktree root that is not on disk — Prepare builds this
+	// turn's worktree there, so a CLI that stores its conversation under the
+	// working directory finds the interrupted session. Anything else is
+	// ignored and a fresh directory is created. The daemon sets this only for
+	// a same-seat continuation; a different seat leaves it empty.
+	ResumeWorkDir string
 }
 
 // owner is the identity a branch created for this task is recorded under.
@@ -352,7 +360,23 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	// builds from the conversation key plus a unique suffix
 	// (`dene-617-926d754d34e9`). That makes the copy identifiable in a file
 	// browser while keeping the one-copy-per-task mapping the env root had.
-	worktreePath := filepath.Join(worktreeRoot, filepath.Base(params.EnvRoot))
+	//
+	// A same-seat retry pins the previous run's path instead. The env root
+	// stays per-task — a new suffix — but the CLI keys its conversation to
+	// the working-copy path, so a new suffix is a new conversation. The pin
+	// is only a missing directory under this repo's own worktree root;
+	// deciding it here, and again under the repo lock before anything is
+	// deleted, is what keeps a retry from removing another run's copy.
+	freshPath := filepath.Join(worktreeRoot, filepath.Base(params.EnvRoot))
+	worktreePath := freshPath
+	reusedPath := false
+	if pinned, ok := ReusableWorktreeDir(worktreeRoot, gitRoot, localPath, params.ResumeWorkDir); ok {
+		worktreePath = pinned
+		reusedPath = true
+	} else if params.ResumeWorkDir != "" && logger != nil {
+		logger.Info("execenv: previous worktree unavailable; starting a fresh one",
+			"prior_work_dir", params.ResumeWorkDir)
+	}
 
 	// Everything below mutates the repo's worktree admin state or its refs, so
 	// take the per-repo lock first. It covers the stale-path cleanup, which runs
@@ -366,11 +390,29 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	}
 	defer unlock()
 
+	if reusedPath {
+		if _, statErr := os.Lstat(worktreePath); statErr == nil || !os.IsNotExist(statErr) {
+			// Appeared between the check and the lock, or could not be
+			// stated. Deleting it would remove whatever landed there.
+			if logger != nil {
+				logger.Info("execenv: previous worktree path is occupied; starting a fresh one",
+					"path", worktreePath, "error", statErr)
+			}
+			worktreePath = freshPath
+			reusedPath = false
+		}
+	}
 	if _, statErr := os.Stat(worktreePath); statErr == nil {
 		// Prepare wipes and recreates envRoot, so an existing worktree path
 		// means a stale registration in the user's repo pointing here. Remove
-		// both rather than failing the task.
+		// both rather than failing the task. A reused path never reaches this
+		// branch: it was required to be absent, and an occupied one fell back
+		// to freshPath above.
 		removeLocalWorktreeDir(gitRoot, worktreePath, logger)
+	}
+	if reusedPath && logger != nil {
+		logger.Info("execenv: same-seat retry reusing the previous worktree",
+			"path", worktreePath)
 	}
 
 	// Self-heal registrations orphaned by a crashed daemon: their env roots are
@@ -1020,6 +1062,75 @@ func deleteBranch(gitRoot, branch string, logger *slog.Logger) {
 		logger.Warn("execenv: delete task branch failed (non-fatal)",
 			"branch", branch, "output", out, "error", err)
 	}
+}
+
+// ResolveGitRoot is resolveGitRoot for the daemon. A same-seat retry has to
+// decide whether the previous working copy can be reused before preparation
+// runs in the helper process, and that decision needs the repository root.
+func ResolveGitRoot(dir string) (string, error) {
+	return resolveGitRoot(dir)
+}
+
+// ReusableWorktreeDir reports the working-copy directory a same-seat retry
+// may recreate so a cwd-keyed CLI session still resolves.
+//
+// The previous run's cwd is priorWorkDir. This returns the copy that contains
+// it — priorWorkDir itself when the resource points at the repository root,
+// or the parent copy when the resource points at a subdirectory — but only
+// when that copy is a direct child of worktreeRoot, is not inside the user's
+// checkout, and is not on disk. An existing directory is left alone: it may
+// be another run's copy or a finalize that kept the work, and recreating a
+// session is not a reason to delete either.
+//
+// False is the safe answer. The caller then builds a fresh copy under a new
+// name, and the resume gate drops the session instead of pointing the CLI at
+// a directory it cannot find.
+func ReusableWorktreeDir(worktreeRoot, gitRoot, localPath, priorWorkDir string) (string, bool) {
+	if strings.TrimSpace(worktreeRoot) == "" || strings.TrimSpace(gitRoot) == "" ||
+		strings.TrimSpace(localPath) == "" || strings.TrimSpace(priorWorkDir) == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(priorWorkDir) {
+		return "", false
+	}
+	root := canonicalize(worktreeRoot)
+	repo := canonicalize(gitRoot)
+	resource := localPath
+	if resolved, err := filepath.EvalSymlinks(localPath); err == nil {
+		resource = resolved
+	}
+	resource = canonicalize(resource)
+	rel, err := filepath.Rel(repo, resource)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	prior := canonicalize(priorWorkDir)
+	var copyDir string
+	if rel == "." {
+		copyDir = prior
+	} else {
+		suffix := string(filepath.Separator) + rel
+		if !strings.HasSuffix(prior, suffix) {
+			return "", false
+		}
+		copyDir = filepath.Clean(strings.TrimSuffix(prior, suffix))
+	}
+	if copyDir == "" || copyDir == root || filepath.Dir(copyDir) != root {
+		return "", false
+	}
+	base := filepath.Base(copyDir)
+	if base == "." || base == ".." || base == "" || strings.HasPrefix(base, ".") {
+		return "", false
+	}
+	if inside, err := pathIsInside(repo, copyDir); err != nil || inside {
+		return "", false
+	}
+	if _, err := os.Lstat(copyDir); err == nil {
+		return "", false
+	} else if !os.IsNotExist(err) {
+		return "", false
+	}
+	return copyDir, true
 }
 
 // resolveGitRoot returns the repository root containing dir. Worktree mode is

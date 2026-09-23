@@ -21,7 +21,9 @@ import type {
   InboxItem,
   Workspace,
 } from "../types";
+import { projectKeys } from "../projects/queries";
 import {
+  applyIssueInvalidatedToCache,
   applyChatCancelFinalizedToCache,
   applyChatDoneToCache,
   applyChatMessageToCache,
@@ -1348,5 +1350,57 @@ describe("applyChatMessageToCache", () => {
     applyChatMessageToCache(qc, messagePayload());
     expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toBeUndefined();
     expect(qc.getQueryData(chatKeys.messagesPage(sessionId))).toBeUndefined();
+  });
+});
+
+describe("applyIssueInvalidatedToCache", () => {
+  // The inbox refresh is an async chain (cancel, then invalidate), so the
+  // assertions that read it have to let the microtask queue drain.
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  // The frame is id-only and says what moved: an issue whose scope changed, a
+  // project whose membership moved, or both.
+  it("evicts the named issue and refetches the issue queries", async () => {
+    const qc = createQueryClient();
+    qc.setQueryData(issueKeys.detail("ws-1", "issue-1"), { id: "issue-1" });
+    const spy = vi.spyOn(qc, "invalidateQueries");
+
+    applyIssueInvalidatedToCache(qc, "ws-1", { issue_id: "issue-1" });
+    await flush();
+
+    expect(qc.getQueryData(issueKeys.detail("ws-1", "issue-1"))).toBeUndefined();
+    const invalidated = spy.mock.calls.map(([arg]) =>
+      JSON.stringify(arg?.queryKey),
+    );
+    expect(invalidated).toContain(JSON.stringify(issueKeys.all("ws-1")));
+    expect(invalidated).toContain(JSON.stringify(inboxKeys.all("ws-1")));
+    expect(invalidated).not.toContain(JSON.stringify(projectKeys.all("ws-1")));
+  });
+
+  it("refetches projects when the frame names a project instead", async () => {
+    const qc = createQueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+
+    applyIssueInvalidatedToCache(qc, "ws-1", { project_id: "project-1" });
+    await flush();
+
+    const invalidated = spy.mock.calls.map(([arg]) =>
+      JSON.stringify(arg?.queryKey),
+    );
+    expect(invalidated).toContain(JSON.stringify(projectKeys.all("ws-1")));
+    expect(invalidated).toContain(JSON.stringify(issueKeys.all("ws-1")));
+  });
+
+  it("refetches the cross-workspace unread summary too", async () => {
+    const qc = createQueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+
+    applyIssueInvalidatedToCache(qc, "ws-1", { project_id: "project-1" });
+    await flush();
+
+    const invalidated = spy.mock.calls.map(([arg]) =>
+      JSON.stringify(arg?.queryKey),
+    );
+    expect(invalidated).toContain(JSON.stringify(inboxKeys.unreadSummary()));
   });
 });

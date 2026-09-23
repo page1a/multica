@@ -72,14 +72,16 @@ export interface IssueCreateAlign {
    *  the agent prompt, so a mode switch never overwrites another face's body. */
   request: string;
   /**
-   * Which built-in alignment methods the conversation opens with (DENE-514).
+   * Which built-in alignment methods this open dialog is about to send
+   * (DENE-514, DENE-692).
    *
-   * Persisted, unlike the machine / model / effort beside it in the same panel:
-   * the capability set is a property of the alignment the user is describing, so
-   * a user who turned the map off and comes back to the entry point means it.
-   * `undefined` means "not chosen yet", which the panel resolves to the built-in
-   * default at read time rather than freezing the default into the draft; an
-   * EMPTY array is a real choice — "none of them" — and is sent as one (see
+   * In memory only, for a mode switch inside the same open. The last combination
+   * this user actually started is a separate, user-scoped record
+   * (`readIssueDraftCapabilityPreference`) shared by every workspace — a value
+   * kept on this workspace's draft would make the next open here disagree with
+   * an open somewhere else. `undefined` means "not edited in this open", so the
+   * panel fills from that record (or the system default). An EMPTY array is a
+   * real choice — "none of them" — and is sent as one (see
    * `encodeIssueDraftCapabilities`).
    */
   capabilities?: IssueDraftCapabilityKey[];
@@ -153,6 +155,23 @@ interface IssueDraftStore {
   setLastAssignee: (type?: IssueAssigneeType, id?: string) => void;
 }
 
+/** Alignment fields that belong in a workspace draft. Capability ticks are
+ *  omitted: they stay in memory for a mode switch, and the next open reads the
+ *  user-level record instead of this workspace's copy. */
+function alignmentForStorage(align: Partial<IssueCreateAlign> | undefined): IssueCreateAlign {
+  return {
+    request: typeof align?.request === "string" ? align.request : "",
+    ...(typeof align?.seedFailedDraftId === "string"
+      ? { seedFailedDraftId: align.seedFailedDraftId }
+      : {}),
+  };
+}
+
+/** The copy written to workspace storage. */
+function draftWithoutCapabilityTicks(draft: IssueCreateDraft): IssueCreateDraft {
+  return { ...draft, align: alignmentForStorage(draft.align) };
+}
+
 function isLegacyFlatDraft(d: Record<string, unknown>): boolean {
   return (
     !("manual" in d) &&
@@ -212,7 +231,11 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
     manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}) },
     agent: { ...emptyAgent(), ...((d.agent as Partial<IssueCreateAgent>) ?? {}) },
     // Backfills drafts persisted before the alignment face existed.
-    align: { ...emptyAlign(), ...((d.align as Partial<IssueCreateAlign>) ?? {}) },
+    // Capability ticks are not restored. They used to ride this workspace draft,
+    // which made two workspaces open on two different "last" combinations.
+    // The user-scoped preference is the record; this slot is only the edit
+    // inside the dialog that is open right now.
+    align: alignmentForStorage((d.align as Partial<IssueCreateAlign>) ?? {}),
     activeMode:
       d.activeMode === "agent" ? "agent" : d.activeMode === "align" ? "align" : "manual",
   };
@@ -280,7 +303,7 @@ export const useIssueDraftStore = create<IssueDraftStore>()(
       // the ordinary backup throughout that session; a crash/reload therefore
       // restores the user's normal create draft, not source-specific input.
       partialize: (state) => ({
-        draft: state.isolatedDraftBackup ?? state.draft,
+        draft: draftWithoutCapabilityTicks(state.isolatedDraftBackup ?? state.draft),
         lastAssigneeType: state.lastAssigneeType,
         lastAssigneeId: state.lastAssigneeId,
       }),

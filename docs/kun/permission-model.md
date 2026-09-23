@@ -50,6 +50,7 @@ DENE-695 权限系统的判定规则。这篇是给人读的矩阵；可执行�
 - **`private` 对 Owner / Admin 同样不可见。** 管理兜底只覆盖 `project` 范围（它是「所有项目」的兜底，不是「所有资源」的兜底）。这和 `issue_view` 现在的行为一致。
 - **`workspace` 不含访客**，哪怕访客恰好也在那个项目里。要给访客看，范围必须是 `project`。
 - **创建者永远看得见自己建的东西。** 访客不能新建，这一列对访客只在「原来是 Member、后来被降成访客」时才会出现：他还看得见自己以前建的，但已经只读。
+- **AI 不会切断真人归属。** 如果 issue 的创建者或被指派人是某个 agent，而该 agent 有 `owner_id`，这个 owner 按创建者/被指派人关系看到该 issue，即使 issue 仍是 `private`。这样 AI 执行的私有工作不会从 owner 的任务列表消失；其他成员仍然看不到。
 - `project` 范围只能设在属于某个项目的资源上（`permission.CanSetVisibility`）；不属于任何项目的资源只能 `private` 或 `workspace`。对「项目」这种资源，「所属项目」就是它自己。
 
 ## 第二层：能做什么
@@ -159,6 +160,7 @@ Guest 一整列除了「查看」全是否，没有任何关系能翻过来：�
 - `GET /api/projects/{id}/visibility/preview` 先回答「会扫到多少」：`affected_count` 与 `previously_private_count`，供确认弹窗用；正式写入返回同样两个数字加 `audience_size`。
 - 改项目范围 = 覆盖它当前持有的全部资源。之后进入项目的资源取项目当时的范围，随后各自独立，不再被项目带着走。
 - 新建资源默认 `private`，只有一个例外：**智能体创建的 issue 若不属于任何项目，落地就是 `workspace`**。`private` 的含义是「只有创建者看得见」，而智能体不是一个能被展示列表的人——这样的 issue 留在 `private` 会对所有人（包括让它干活的那个人）不可见。在项目里的仍然取项目当时的范围。规则写在 `service.CreateIssue`。
+- 智能体创建的项目同样不能落成无人可见的 `private` 孤儿项目，因此默认落地为 `workspace`；人类随后可以通过项目共享入口收紧范围。
 - `project` 档没有项目就不成立：接口先回 400（话说人话），数据库的配对约束兜底。issue 被移出全部项目时，`UpdateIssue` 的 SQL 把它降回 `private`——收紧是自动的，放宽永远不是。
 - 每一次变更都写 `visibility_audit`：直接改写一行 `source='direct'`，被项目扫中的资源逐个写 `source='project_bulk'`（一条语句批量写入，避免扫一千个 issue 就来一千个往返）。
 

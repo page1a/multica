@@ -369,9 +369,14 @@ function seedDraft(
     description: request,
     status: "",
     priority: "",
-    // Only when there is one: the draft's "no project" state is the field being
-    // absent, and writing an empty string would address a project named "".
-    ...(projectId ? { project_id: projectId } : {}),
+    // A sub-issue records an explicit project, including null when the user
+    // left it empty, so confirm does not inherit the parent back. A top-level
+    // alignment still omits the field when there is no project.
+    ...(parentIssueId
+      ? { project_id: projectId ?? null }
+      : projectId
+        ? { project_id: projectId }
+        : {}),
     // Same rule for the parent: an alignment filed under an existing issue
     // records it here, and one that founds its own top-level issue leaves the
     // field absent rather than writing a null the server would have to read.

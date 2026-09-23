@@ -6,6 +6,7 @@ import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
   deriveVersion,
+  publishChannelForTarget,
   DESCRIBE_ARGS,
   envWithLocalBins,
   normalizeGitVersion,
@@ -336,6 +337,7 @@ describe("builderArgsForTarget", () => {
       ),
     ).toEqual([
       "-c.extraMetadata.version=1.2.3",
+      "-c.mac.hardenedRuntime=true",
       "--mac",
       "dmg",
       "zip",
@@ -364,12 +366,99 @@ describe("builderArgsForTarget", () => {
       ),
     ).toEqual([
       "-c.extraMetadata.version=1.2.3",
+      "-c.mac.hardenedRuntime=true",
       "--mac",
       "--arm64",
       "--publish",
       "always",
       "-c.directories.output=dist/mac-arm64",
     ]);
+  });
+
+  it("keeps a self-signed macOS build unnotarized and without the hardened runtime", () => {
+    expect(
+      builderArgsForTarget(
+        { platform: "mac", arch: "arm64" },
+        { allPlatforms: false, sharedArgs: ["--publish", "never"], platformTargets: { mac: [], win: [], linux: [] }, requestedPlatforms: ["mac"], requestedArchs: ["arm64"] },
+        "1.2.3", { disableMacNotarize: true, hostPlatform: "darwin", useScopedOutputDir: false, forceMacCodeSigning: true },
+      ),
+    ).toEqual(["-c.extraMetadata.version=1.2.3", "-c.mac.notarize=false", "-c.forceCodeSigning=true", "-c.mac.hardenedRuntime=false", "-c.mac.gatekeeperAssess=false", "--mac", "--arm64", "--publish", "never"]);
+  });
+
+  it("keeps the established stable feed names and uses test for -test.N", () => {
+    const stableNames = {"mac:arm64": null, "mac:x64": "latest-x64", "win:x64": null, "win:arm64": "latest-arm64", "linux:x64": null, "linux:arm64": null};
+    const testNames = {"mac:arm64": "test", "mac:x64": "test-x64", "win:x64": "test", "win:arm64": "test-arm64", "linux:x64": "test", "linux:arm64": "test"};
+    for (const [key, channel] of Object.entries(stableNames)) { const [platform, arch] = key.split(":"); for (const version of ["0.5.4", "v0.5.4", "1.2.3", "0.5.4-14-gabcdef"]) expect(publishChannelForTarget(version, platform, arch)).toBe(channel); }
+    for (const [key, channel] of Object.entries(testNames)) { const [platform, arch] = key.split(":"); for (const version of ["0.5.5-test.3", "v0.5.5-test.1", "0.5.5-test.3-2-gabcdef"]) expect(publishChannelForTarget(version, platform, arch)).toBe(channel); }
+  });
+
+  it("passes the test channel through builder args without renaming stable feeds", () => {
+    const parsed = { allPlatforms: false, sharedArgs: ["--publish", "never"], platformTargets: { mac: [], win: [], linux: [] }, requestedPlatforms: ["mac"], requestedArchs: ["arm64"] };
+    const stable = builderArgsForTarget({ platform: "mac", arch: "arm64" }, parsed, "0.5.4", { hostPlatform: "darwin" });
+    expect(stable.some((arg) => arg.startsWith("-c.publish.channel="))).toBe(false);
+    const test = builderArgsForTarget({ platform: "mac", arch: "arm64" }, parsed, "0.5.5-test.3", { hostPlatform: "darwin" });
+    expect(test).toContain("-c.publish.channel=test"); expect(test).not.toContain("-c.publish.channel=beta"); expect(test).not.toContain("-c.publish.channel=latest");
+  });
+  it("keeps the established stable feed names and uses test for -test.N", () => {
+    const stableNames = {
+      "mac:arm64": null,
+      "mac:x64": "latest-x64",
+      "win:x64": null,
+      "win:arm64": "latest-arm64",
+      "linux:x64": null,
+      "linux:arm64": null,
+    };
+    const testNames = {
+      "mac:arm64": "test",
+      "mac:x64": "test-x64",
+      "win:x64": "test",
+      "win:arm64": "test-arm64",
+      "linux:x64": "test",
+      "linux:arm64": "test",
+    };
+
+    for (const [key, channel] of Object.entries(stableNames)) {
+      const [platform, arch] = key.split(":");
+      for (const version of ["0.5.4", "v0.5.4", "1.2.3", "0.5.4-14-gabcdef"]) {
+        expect(publishChannelForTarget(version, platform, arch)).toBe(channel);
+      }
+    }
+
+    for (const [key, channel] of Object.entries(testNames)) {
+      const [platform, arch] = key.split(":");
+      for (const version of ["0.5.5-test.3", "v0.5.5-test.1", "0.5.5-test.3-2-gabcdef"]) {
+        expect(publishChannelForTarget(version, platform, arch)).toBe(channel);
+      }
+    }
+  });
+
+  it("passes the test channel through builder args without renaming stable feeds", () => {
+    const parsed = {
+      allPlatforms: false,
+      sharedArgs: ["--publish", "never"],
+      platformTargets: { mac: [], win: [], linux: [] },
+      requestedPlatforms: ["mac"],
+      requestedArchs: ["arm64"],
+    };
+    const stable = builderArgsForTarget(
+      { platform: "mac", arch: "arm64" },
+      parsed,
+      "0.5.4",
+      { hostPlatform: "darwin" },
+    );
+    expect(stable.some((arg) => arg.startsWith("-c.publish.channel="))).toBe(
+      false,
+    );
+
+    const test = builderArgsForTarget(
+      { platform: "mac", arch: "arm64" },
+      parsed,
+      "0.5.5-test.3",
+      { hostPlatform: "darwin" },
+    );
+    expect(test).toContain("-c.publish.channel=test");
+    expect(test).not.toContain("-c.publish.channel=beta");
+    expect(test).not.toContain("-c.publish.channel=latest");
   });
 
   it("defaults linux cross-builds to AppImage on non-Linux hosts", () => {

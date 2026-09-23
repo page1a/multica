@@ -46,6 +46,7 @@
     "@multica/ui": "workspace:*",
     "@multica/views": "workspace:*",
     "@tanstack/react-query": "catalog:",
+    "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "fix-path": "^5.0.0",
     "lucide-react": "catalog:",

@@ -316,6 +316,7 @@ describe("planIssueDraftGroup", () => {
       starting: 0,
       parked: 0,
       built: 0,
+      coordinatorWakeable: false,
     });
   });
 
@@ -398,6 +399,20 @@ describe("planIssueDraftGroup", () => {
     expect(plan.parked).toBe(0);
   });
 
+  it("treats a parent with children as coordination and an unassigned stage one row as unassigned", () => {
+    const plan = planIssueDraftGroup(
+      payload({
+        assignee_type: "agent",
+        assignee_id: "parent-agent",
+        children: [child({ key: "a", stage: 1 })],
+      }),
+    );
+    expect(plan.rows[0]?.outcome).toBe("coordinates");
+    expect(plan.rows[1]?.outcome).toBe("unassigned");
+    expect(plan.starting).toBe(0);
+    expect(plan.parked).toBe(0);
+  });
+
   it("never counts a coordinator root as starting, even with an agent on it", () => {
     // The root's assignee is the seat the stage barrier wakes, not an
     // executor. Counting it would promise a run that the confirm suppresses.
@@ -427,6 +442,55 @@ describe("planIssueDraftGroup", () => {
     );
     expect(plan.rows[0]?.outcome).toBe("starts");
     expect(plan.starting).toBe(1);
+  });
+
+  it("sees a coordinator the stage barrier can wake", () => {
+    // The stage barrier only pages an agent or squad seat, so those two are the
+    // whole set of groups where "the next stage gets promoted" is even a thing
+    // that can happen on its own (DENE-755 §6.3).
+    const agent = planIssueDraftGroup(
+      payload({
+        assignee_type: "agent",
+        assignee_id: "coord",
+        children: [child({ key: "a", stage: 1 })],
+      }),
+    );
+    expect(agent.coordinatorWakeable).toBe(true);
+
+    const squad = planIssueDraftGroup(
+      payload({
+        assignee_type: "squad",
+        assignee_id: "sq1",
+        children: [child({ key: "a", stage: 1 })],
+      }),
+    );
+    expect(squad.coordinatorWakeable).toBe(true);
+  });
+
+  it("sees no wakeable coordinator when nobody would be woken", () => {
+    // Unassigned and person-held are the two shapes `notifyParentOfChildDone`
+    // skips: the stages after the first stay in Backlog with nothing said, and
+    // the panel has to name that instead of implying the chain is closed.
+    const unassigned = planIssueDraftGroup(
+      payload({ children: [child({ key: "a", stage: 1 })] }),
+    );
+    expect(unassigned.coordinatorWakeable).toBe(false);
+
+    const member = planIssueDraftGroup(
+      payload({
+        assignee_type: "member",
+        assignee_id: "u1",
+        children: [child({ key: "a", stage: 1 })],
+      }),
+    );
+    expect(member.coordinatorWakeable).toBe(false);
+
+    // A single issue has no stage barrier to be woken by, so an assigned root
+    // is not a wakeable coordinator either: `total` is what tells the two apart.
+    const single = planIssueDraftGroup(
+      payload({ status: "todo", assignee_type: "agent", assignee_id: "ag1" }),
+    );
+    expect(single.coordinatorWakeable).toBe(false);
   });
 
   it("names one outcome per row", () => {

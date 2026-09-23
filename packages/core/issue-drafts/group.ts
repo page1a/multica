@@ -260,6 +260,29 @@ export function issueDraftNodeRunsOnCreate(
 }
 
 /**
+ * Whether a stage closing can wake this node's seat.
+ *
+ * The sibling of `issueDraftNodeRunsOnCreate`, and a different question: a
+ * coordinator is never started at confirm time, but it is the node the stage
+ * barrier wakes afterwards, and `notifyParentOfChildDone` skips two shapes of
+ * parent outright — one assigned to a person (MUL-2538) and one with no
+ * assignee at all, which has no seat to wake. Both leave every stage after the
+ * first parked in Backlog with nothing said: no comment, no inbox row, no
+ * promotion. The panel has to name that gap rather than imply an automatic
+ * advance that cannot happen.
+ *
+ * Only agent and squad qualify, exactly as on the create path: a person
+ * assignee is skipped by the barrier, and no status of the coordinator's own
+ * can change that.
+ */
+export function issueDraftNodeWakesOnStageClose(
+  node: IssueDraftNodeDispatch,
+): boolean {
+  const type = node.assignee_type;
+  return (type === "agent" || type === "squad") && !!node.assignee_id;
+}
+
+/**
  * What one row of the confirm preview will do.
  *
  * One value per row, so the panel renders a badge instead of re-deriving the
@@ -316,6 +339,19 @@ export interface IssueDraftGroupPlan {
   parked: number;
   /** How many already exist and are adopted untouched. */
   built: number;
+  /**
+   * This group HAS a coordinator and it can be woken when a stage closes: the
+   * parent carries an agent or squad assignee and the stage barrier will page
+   * it to promote the next stage.
+   *
+   * False both for a group whose coordinator is unassigned or held by a person
+   * — nobody will be woken, and every stage after the first stays in Backlog
+   * until someone promotes it by hand — and for a payload with no sub-issues,
+   * where there is no coordinator at all. The two are told apart by `total`;
+   * the panel is the only surface that has to, because it is the only one that
+   * promises the user what confirming will do.
+   */
+  coordinatorWakeable: boolean;
 }
 
 /**
@@ -341,7 +377,15 @@ export function planIssueDraftGroup(
   builtKeys?: ReadonlySet<string>,
 ): IssueDraftGroupPlan {
   if (!payload) {
-    return { rows: [], total: 0, creating: 0, starting: 0, parked: 0, built: 0 };
+    return {
+      rows: [],
+      total: 0,
+      creating: 0,
+      starting: 0,
+      parked: 0,
+      built: 0,
+      coordinatorWakeable: false,
+    };
   }
 
   const isBuilt = (key: string) => builtKeys?.has(key) === true;
@@ -405,9 +449,15 @@ export function planIssueDraftGroup(
     rows,
     total: rows.length,
     creating: incoming.length,
-    starting: incoming.filter((row) => row.startsOnCreate).length,
-    parked: incoming.filter((row) => row.status === "backlog").length,
+    starting: incoming.filter((row) => row.outcome === "starts").length,
+    parked: incoming.filter((row) => row.outcome === "parked").length,
     built: rows.length - incoming.length,
+    // Asked of the payload's root, and only when there IS a coordinator: a
+    // single-issue draft has no stage barrier to be woken by, and answering
+    // "yes" for its assigned root would describe a promise this plan does not
+    // make.
+    coordinatorWakeable:
+      hasChildren && issueDraftNodeWakesOnStageClose(payload),
   };
 }
 

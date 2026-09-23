@@ -15,6 +15,81 @@ DENE-352 补上了第二类踩坑：**上传到一半断了，命令行却报成
 7. **（兜底路径）先传两个大产物，最后传 `latest-mac.yml`。** 清单先上去而产物没传完，等于对着所有已装客户端广播一个指向 404 的自动更新地址——比不发版更糟。顺序错了就先把清单删掉，传完产物再补。CI 路径已把这条顺序固定在 `desktop-release-assets.mjs upload` 里，不要手工 `gh release upload` 拼顺序。**注意**：`gh release upload` 对传给它的文件用 5 个并发 worker 上传，一条命令里排参数顺序是没用的（537 字节的 `latest-mac.yml` 必然先于 230 MB 的 dmg 落地）。脚本因此按「产物 → blockmap → 清单」分三批、每批一条 `gh release upload`，前一批失败就不发下一批。
 8. **不在 Release 说明、评论、产物里写任何 token / 凭据 / 环境变量值。**
 9. **版本号只由 tag 决定。** `apps/desktop/scripts/package.mjs` 从 `git describe --tags --match 'v[0-9]*'` 推导版本，与 GoReleaser 给 CLI 的 `main.version` 同源。不要手改 `apps/desktop/package.json` 的 `version`。
+10. **macOS 的「原地静默安装」要求所有包用同一张证书签，但发版不以此为前提。** ad-hoc 签名的 designated requirement 锁在这一份二进制的哈希上，下一版必然对不上，Squirrel 不会替换应用——默认发版就是这种包，走下面的「自带安装包」路径：应用自己把 `.dmg` 下下来，用户只负责拖进「应用程序」。要更省事的原地安装才需要那张证书；证书只生成一次，换一张，已经装出去的客户端就再也收不到原地更新。私钥、`.p12`、密码不进仓库、不进票、不进评论。
+
+## macOS 默认更新路径（没有证书，也不需要）
+
+默认发版不带任何证书：CI 没有 `CSC_LINK`，macOS 包是 ad-hoc 签名。这种包不能原地替换自己，但更新链路是通的——**下载由应用完成，只有最后一步要人动手**。
+
+应用启动 5 秒后照常检查更新。发现新版本时 `updater.ts` 不让 electron-updater 下载（它只会暂存一个 Squirrel 装不上的包），改走 `mac-installer.ts`：从打包进应用的那份 `app-update.yml`（即 electron-updater 自己读的那个 feed）推出本版本对应的 `.dmg` 直链，流式下到 `userData/installers/`，进度走和普通下载同一条渲染进程通道。下完了弹「安装包已下载 / 打开安装包 / 在访达中显示」，文案直说：打开它，把 Multica 拖进「应用程序」覆盖旧版本。
+
+几个刻意的选择：
+
+- **落盘位置是 `userData/installers/`，不是 `~/Downloads`。** 下载目录在新版 macOS 受 TCC 保护，下载到一半弹权限框正是这条路径要避免的打断。界面直接给绝对路径，并提供「在访达中显示」。
+- **每次只留当前这一份 `.dmg`。** 一版 220 MB，不清理就按用户跳过的版本数线性堆积。
+- **`.dmg` 直链是从 feed 推的，不是写死 GitHub。** 文件名跟 `electron-builder.yml` 的 `mac.artifactName` 一致——改了那边没改 `installerFileName()`，每次自动下载都会 404。provider 推不出资产地址时返回 null，界面退回「打开 Release 页面」，绝不猜一个 URL 去下。
+- **手动拖进「应用程序」不走 designated requirement 校验。** 那道同源校验是 Squirrel 在静默替换时做的；用户自己替换文件是系统认可的显式操作，所以这条路径对签名没有任何要求。
+
+Gatekeeper 仍然会拦第一次启动（包没有公证）。放行一次即可：系统设置 → 隐私与安全性 → 仍要打开，或 `xattr -dr com.apple.quarantine /Applications/Multica.app`。
+
+### 实测（2026-09-23）
+
+在本机用 `CSC_IDENTITY_AUTO_DISCOVERY=false -c.mac.identity=null` 打了两个 ad-hoc 包（复现 CI 上没有任何证书的情形），`codesign -dv` 两边都是 `Signature=adhoc`、`TeamIdentifier=not set`：`0.5.90-test.3` 与 `0.5.90-test.4`。把 test.4 的 `latest-mac.yml`、`.dmg`、`.zip` 放到一个本机 generic feed（`http://127.0.0.1:8765`），把 test.3 的 `app-update.yml` 指过去后重新 ad-hoc 签名，用独立 `--user-data-dir` 启动 test.3。
+
+日志按顺序记下这三条：`[updater] in-place install unavailable (mac-unsigned); downloading the installer for a manual drag into Applications` → `Found version 0.5.90-test.4` → `[updater] installer ready for manual install: .../installers/multica-desktop-0.5.90-test.4-mac-arm64.dmg`。落盘的 `.dmg` 是 237,908,431 字节，sha512 与 feed 上的那份一致。界面右下角出现「Installer downloaded / Show in Finder / Open installer」。
+
+把这份下载来的 `.dmg` `hdiutil attach` 后，卷里是标准的 `Multica.app` + `Applications` 快捷方式；拷出来的 app `CFBundleShortVersionString` 是 `0.5.90-test.4`。即：没有任何证书，应用自己完成了下载，用户拖一次就升到新版本。
+
+本机没有屏幕录制权限，`screencapture` 取不到画面；截图是通过 Electron 的远程调试端口用 CDP `Page.captureScreenshot` 抓的，画的是应用窗口本身。
+
+## （可选）macOS 自签证书：换取原地静默安装
+
+有了上面的默认路径，这一节是**可选优化**，不是发版前提：它把「下载 + 拖一次」变成「下载完重启就装好」。owner 不使用 Apple Developer ID。自动更新靠一张长期自签的 Code Signing 证书：本机生成一次，导出 `.p12`，由 owner 自己写进仓库 secret，GitHub Actions 用同一张签每一个 mac 包。只在自己电脑上签、CI 仍打 ad-hoc，包和包之间还是对不上。
+
+没有 `CSC_LINK` 时，workflow 保持 ad-hoc 行为，缺 secret 不会让这条流水线变红，用户拿到的是上面那条自带安装包的更新路径。Windows / Linux 不读这张证书，继续不签名。
+
+有 `CSC_LINK` 时，macOS job 先跑 `scripts/macos-ci-keychain.sh`：把 `.p12` 导入一把临时钥匙串，并只在这把钥匙串里把证书标成代码签名可信任。electron-builder 用 `security find-identity -v` 挑证书，不信任的自签证书会被跳过，然后 arm64 悄悄退回 ad-hoc。脚本跑完会清掉 `CSC_LINK`，改把 `CSC_KEYCHAIN` 交给 electron-builder，避免它再导入一把没有信任的钥匙串。这把信任只活在这次构建里，不会打进安装包。证书不可用时 `forceCodeSigning` 让 job 变红，而不是发出一个签坏的包。
+
+公证（notarization）和 Hardened Runtime 在没有 `APPLE_TEAM_ID` 时关闭。自签证书过不了公证；Hardened Runtime 配自签证书，应用启动就会被系统杀掉。
+
+### 生成（owner 自己跑，agent 不碰私钥）
+
+钥匙串助理也能建这张证书：钥匙串访问 → 证书助理 → 创建证书 → 名称 `Multica Kun Self-Signed`，身份类型「自签名根证书」，证书类型「代码签名」，覆盖默认值把有效期改成 3650 天。然后选中证书导出 `.p12`。下面这条脚本做同一件事，并且顺便写出 CI 要的 base64，避免手改有效期或用途时漏掉。
+
+```bash
+scripts/macos-self-sign-cert.sh
+```
+
+默认写到 `~/Library/Application Support/multica-signing/`（仓库外面，权限 0700）。已经有私钥时脚本拒绝覆盖：换钥匙等于把已安装的客户端锁死在旧版本上。
+
+脚本结束会打印这两条，由 owner 自己执行。密码只在 `gh` 的提示里输入。
+
+```bash
+gh secret set CSC_LINK --repo jeff-kunkun/multica \
+  < "$HOME/Library/Application Support/multica-signing/csc-link.b64"
+gh secret set CSC_KEY_PASSWORD --repo jeff-kunkun/multica
+```
+
+`CSC_LINK` 是 `.p12` 的单行 base64。`CSC_KEY_PASSWORD` 是导出时设的密码。两个都不要回贴到票上。
+
+### 装过一次的 Mac 要做的事
+
+包没有公证。从浏览器或 GitHub 下载后，Gatekeeper 会拦（「未识别的开发者」或「已损坏」）。放行一次即可：
+
+- 系统设置 → 隐私与安全性 → 仍要打开
+- 或 `xattr -dr com.apple.quarantine /Applications/Multica.app`
+
+Squirrel 在安装更新前会用当前应用的 designated requirement 校验新包。2026-09-23 的实测里，证书不在登录钥匙串的信任设置中，`SecStaticCodeCheckValidityWithErrors` 仍然返回成功，退出后新版本装上了。安装端不用把证书设成「代码签名 / 始终信任」。
+
+### 实测（自签证书路径）
+
+2026-09-23，同一张自签证书（CN `Multica Kun Self-Signed`，没有放进登录钥匙串）打出 `0.5.90-test.1-dirty` 和 `0.5.90-test.2-dirty`。两边的 designated requirement 都是 `identifier "ai.multica.desktop" and certificate leaf = H"16ff7c1a8849390b6b77015b617166300fa7016e"`，不是 `cdhash`。
+
+用 Squirrel 那组参数（`kSecCSCheckAllArchitectures`，加上正在运行的包的 designated requirement）去校验新包，返回 0，没有 `errSecCSSignatureUntrusted`。
+
+把第一版放到实验室目录里启动（没有替换 `/Applications/Multica.app`）。它向本机 feed 拉第二版，electron-log 记下 216 MB 的 zip 下载完成，以及 `nativeUpdater.update-downloaded`。退出后实验室里的版本变成 `0.5.90-test.2-dirty`，签名仍是同一张证书。正在使用的 `/Applications/Multica.app` 保持 0.5.4。
+
+本机磁盘上的 feed 大约 0.3 秒传完，没有逐条进度日志，当前环境也没有屏幕录制权限，所以没有截到进度条。下载完成和版本变化由日志和安装后的版本号证明。
 
 ## 主路径：CI 发版（默认走这条）
 
@@ -29,9 +104,9 @@ git tag v0.4.58 && git push origin v0.4.58
 推送 tag 后 `.github/workflows/desktop-release.yml` 会自动：
 
 1. 校验 tag 形状（`vX.Y.Z` / `vX.Y.Z-suffix`，拒绝 `-dirty`）；
-2. 在 `macos-14`（Apple Silicon）runner 上 `pnpm install --frozen-lockfile` + `node scripts/package.mjs --mac --arm64 --publish never`；
+2. 三个平台并行打包。macOS 在 `CSC_LINK` 有值时用那张自签证书签，没有 secret 时退回 ad-hoc；Windows 与 Linux 保持不签名。`package.mjs` 在没有 `APPLE_TEAM_ID` 时关掉公证和 Hardened Runtime；
 3. 用 `desktop-release-assets.mjs clean` 清掉旧僵尸资产；
-4. Release 不存在时用 `gh release create --verify-tag --generate-notes` 建好（说明里带 ad-hoc 签名放行提示）；
+4. Release 不存在时用 `gh release create --verify-tag --generate-notes` 建好（说明里写明自签或 ad-hoc，以及首次打开怎么放行）；
 5. 用 `desktop-release-assets.mjs upload` 分三批上传全部 5 个资产，**`latest-mac.yml` 单独一批、最后传**（即红线 7）；
 6. 用 `desktop-release-assets.mjs check --attempts 6` 逐个核对 `state=uploaded` + size + sha256，不通过就红。
 
@@ -102,8 +177,15 @@ pnpm install --frozen-lockfile
 # 3. 打 tag：上一版 patch +1
 git tag v0.4.58 && git push origin v0.4.58
 
-# 4. 构建（ad-hoc 签名，未公证）
-CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter @multica/desktop package -- --mac --arm64
+# 4. 构建。有自签证书时走和 CI 相同的变量，不要再设
+#    CSC_IDENTITY_AUTO_DISCOVERY=false，否则会退回 ad-hoc。
+#    没有证书时才用下面这一行。
+export CSC_LINK="$HOME/Library/Application Support/multica-signing/cert.p12"
+export CSC_KEY_PASSWORD='(导出 p12 时的密码)'
+unset CSC_IDENTITY_AUTO_DISCOVERY
+pnpm --filter @multica/desktop package -- --mac --arm64
+# 无证书的兜底：
+# CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter @multica/desktop package -- --mac --arm64
 
 # 5. 产物挪出 worktree（红线 6）
 mkdir -p ~/multica-releases/v0.4.58
@@ -162,4 +244,6 @@ plutil -extract CFBundleShortVersionString raw /Applications/Multica.app/Content
 4. **用户要重跑哪一步**：编号步骤，写清判定标准（例：「先看包体积，还是 KB 级就别导入，直接回我」）；
 5. **未决风险 / 边界**：本版没改什么、哪些算待人工测试。
 
-Gatekeeper 提示要写进步骤里：本包 ad-hoc 签名未公证，首次打开需在「系统设置 → 隐私与安全性」放行，或 `xattr -cr /Applications/Multica.app`。
+Gatekeeper 提示要写进步骤里：本包未公证。有 `CSC_LINK` 时是自签证书，没有时是 ad-hoc。首次打开需在「系统设置 → 隐私与安全性」放行，或 `xattr -dr com.apple.quarantine /Applications/Multica.app`。实测确认自动更新不要求把证书设为「始终信任」。
+
+macOS 用户升级方式也要写清，按本版怎么签的分两种：ad-hoc 包由应用自己下 `.dmg`，弹窗提示后打开它、把 Multica 拖进「应用程序」覆盖旧版本；自签证书包下完重启即装好。

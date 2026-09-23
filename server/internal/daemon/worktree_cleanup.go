@@ -102,6 +102,28 @@ func (s *worktreeCleanupState) MarkActive(path string) {
 	s.active[filepath.Clean(path)]++
 }
 
+// IsActive reports whether a task is currently inside this working copy.
+// Spellings that canonicalise to the same path count as the same copy, so a
+// retry cannot miss a live holder just because one side went through /tmp and
+// the other through /private/tmp.
+func (s *worktreeCleanupState) IsActive(path string) bool {
+	if s == nil || strings.TrimSpace(path) == "" {
+		return false
+	}
+	want := filepath.Clean(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active[want] > 0 {
+		return true
+	}
+	for active := range s.active {
+		if execenv.SameCanonicalPath(active, want) {
+			return true
+		}
+	}
+	return false
+}
+
 // ReleaseActive undoes MarkActive. Counted rather than boolean: a copy can be
 // entered more than once across a task's prepare/finalize path, and clearing
 // the flag on the first exit would expose a still-running copy to cleanup.

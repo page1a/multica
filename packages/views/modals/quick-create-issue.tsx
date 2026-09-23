@@ -272,6 +272,8 @@ export function AgentCreatePanel({
   // project page (or manual panel) the modal was opened from, and the user's
   // own unfinished draft. It is deliberately NOT seeded from the last create
   // — see quick-create-store (MUL-5862).
+  const projectSeeded = Boolean(data && "project_id" in data);
+  const [projectTouched, setProjectTouched] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(() => {
     const seed = (data?.project_id as string | undefined) ?? draft.shared.projectId;
     return seed ?? null;
@@ -287,6 +289,7 @@ export function AgentCreatePanel({
   // and the pill's quick-clear go through here.
   const commitProject = (next: string | null) => {
     setProjectId(next);
+    setProjectTouched(true);
     setShared({ projectId: next ?? undefined });
   };
 
@@ -299,6 +302,12 @@ export function AgentCreatePanel({
   const parentIssueId = (data?.parent_issue_id as string | undefined) ?? undefined;
   const parentIssueIdentifier =
     (data?.parent_issue_identifier as string | undefined) ?? undefined;
+  // Same rule as the manual face: a shown or edited project is sent, including
+  // null. Omitting it is reserved for callers that never offered the picker.
+  const submittedProjectId =
+    parentIssueId && (projectSeeded || projectTouched)
+      ? projectId
+      : (projectId ?? undefined);
 
   // Stale-id sweep. Once the project list query has actually resolved
   // (`isSuccess` — distinct from "data is the empty default during loading"),
@@ -441,7 +450,7 @@ export function AgentCreatePanel({
                 ? { agent_id: actor.id }
                 : { squad_id: actor.id }),
               prompt: md,
-              project_id: projectId ?? undefined,
+              project_id: submittedProjectId,
               ...(priority !== "none" ? { priority } : {}),
               ...(dueDate ? { due_date: dueDate } : {}),
               ...(activeAttachmentIds.length > 0 ? { attachment_ids: activeAttachmentIds } : {}),
@@ -453,7 +462,7 @@ export function AgentCreatePanel({
               ? { agent_id: actor.id }
               : { squad_id: actor.id }),
             prompt: md,
-            project_id: projectId ?? undefined,
+            project_id: submittedProjectId,
             ...(priority !== "none" ? { priority } : {}),
             ...(dueDate ? { due_date: dueDate } : {}),
             parent_issue_id: parentIssueId,

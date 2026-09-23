@@ -46,8 +46,12 @@ import { fileURLToPath } from "node:url";
 const PAYLOAD_PATTERN = /\.(?:dmg|zip|exe|AppImage|deb|rpm)$/;
 /** electron-updater block maps, published alongside each payload. */
 const BLOCKMAP_PATTERN = /\.blockmap$/;
-/** electron-updater feed metadata (`latest-mac.yml`, `latest-x64.yml`, ...). */
-const FEED_PATTERN = /^latest(?:-[A-Za-z0-9._-]+)?\.ya?ml$/;
+/**
+ * electron-updater feed metadata. Stable clients already fetch `latest*.yml`
+ * (`latest-mac.yml`, `latest-x64-mac.yml`, `latest-arm64.yml`, ...). The test
+ * channel publishes the same shapes with a `test` prefix.
+ */
+const FEED_PATTERN = /^(?:latest|test)(?:-[A-Za-z0-9._-]+)?\.ya?ml$/;
 
 const DEFAULT_REPO = "jeff-kunkun/multica";
 

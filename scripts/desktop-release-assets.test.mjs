@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
+  assetRank,
   collectLocalAssets,
   compareReleaseAssets,
   orderAssetsForUpload,
@@ -52,6 +53,28 @@ function fakeGh(dir, { assets = [], apiStatus = 0 } = {}) {
   chmodSync(path, 0o755);
   return path;
 }
+
+test("treats test feeds as metadata and leaves stable feed names unchanged", () => {
+  for (const name of [
+    "latest.yml",
+    "latest-mac.yml",
+    "latest-x64-mac.yml",
+    "latest-arm64.yml",
+    "latest-linux.yml",
+    "latest-linux-arm64.yml",
+    "test.yml",
+    "test-mac.yml",
+    "test-x64-mac.yml",
+    "test-arm64.yml",
+    "test-linux.yml",
+    "test-linux-arm64.yml",
+  ]) {
+    assert.equal(assetRank(name), 2, name);
+  }
+  assert.equal(assetRank("builder-debug.yml"), -1);
+  assert.equal(assetRank("beta-mac.yml"), -1);
+  assert.equal(assetRank("latest-mac.yml.blockmap"), 1);
+});
 
 test("uploads payloads before blockmaps and feed metadata last", () => {
   const ordered = orderAssetsForUpload([

@@ -427,6 +427,19 @@ func (h *Handler) PreviewCommentSubIssue(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func nestedJSONFieldPresent(raw map[string]json.RawMessage, objectKey, field string) bool {
+	blob, ok := raw[objectKey]
+	if !ok {
+		return false
+	}
+	var inner map[string]json.RawMessage
+	if err := json.Unmarshal(blob, &inner); err != nil {
+		return false
+	}
+	_, present := inner[field]
+	return present
+}
+
 type createCommentSubIssueRequest struct {
 	Mode         string                   `json:"mode"`
 	CaptureToken string                   `json:"capture_token"`
@@ -435,11 +448,20 @@ type createCommentSubIssueRequest struct {
 }
 
 func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
 	var req createCommentSubIssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	var rawTop map[string]json.RawMessage
+	_ = json.Unmarshal(bodyBytes, &rawTop)
+	issueProjectPinned := nestedJSONFieldPresent(rawTop, "issue", "project_id")
+	quickProjectPinned := nestedJSONFieldPresent(rawTop, "quick_create", "project_id")
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -499,7 +521,7 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 			h.writeSourceContextError(w, err, build.Limits)
 			return
 		}
-		preparedAgent, err = h.prepareAgentCommentSubIssue(w, r, wsUUID, *req.QuickCreate)
+		preparedAgent, err = h.prepareAgentCommentSubIssue(w, r, wsUUID, *req.QuickCreate, quickProjectPinned)
 		if err != nil {
 			if !errors.Is(err, errSourceContextResponseWritten) {
 				h.writeSourceContextError(w, err, service.SourceContextLimitUsage{})
@@ -551,7 +573,7 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 
 	switch req.Mode {
 	case "manual":
-		if err := h.createManualCommentSubIssue(w, r, wsUUID, userUUID, *req.Issue, capture, build.Limits); err != nil {
+		if err := h.createManualCommentSubIssue(w, r, wsUUID, userUUID, *req.Issue, capture, build.Limits, issueProjectPinned); err != nil {
 			cleanupIfUnpersisted()
 			slog.Warn("source context capture failed", append(sourceContextAuditAttrs(r, capture.ID, capture.Snapshot.SourceIssue.ID, capture.Snapshot.AnchorCommentID, userUUID, req.Mode, build.Limits, "failed"), "error", err)...)
 			if !errors.Is(err, errSourceContextResponseWritten) {
@@ -637,7 +659,7 @@ func (h *Handler) cloneSourceContext(ctx context.Context, workspaceID, userID, c
 	return capture, keys, nil
 }
 
-func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID, userID pgtype.UUID, input CreateIssueRequest, capture service.SourceContextCapture, limits service.SourceContextLimitUsage) error {
+func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID, userID pgtype.UUID, input CreateIssueRequest, capture service.SourceContextCapture, limits service.SourceContextLimitUsage, projectPinned bool) error {
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
 		return sourceContextBadRequest("title is required")
@@ -675,10 +697,13 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		return errSourceContextResponseWritten
 	}
 	var projectID pgtype.UUID
-	if input.ProjectID != nil && strings.TrimSpace(*input.ProjectID) != "" {
+	if projectPinned && input.ProjectID != nil && strings.TrimSpace(*input.ProjectID) != "" {
 		parsed, err := util.ParseUUID(strings.TrimSpace(*input.ProjectID))
 		if err != nil {
 			return sourceContextBadRequest("invalid project_id")
+		}
+		if _, ok := h.visibleProjectInWorkspace(w, r, workspaceID, parsed); !ok {
+			return errSourceContextResponseWritten
 		}
 		projectID = parsed
 	}
@@ -719,7 +744,7 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID: workspaceID, Title: title, Description: ptrToText(input.Description), Status: status, Priority: priority,
 		AssigneeType: assigneeType, AssigneeID: assigneeID, CreatorType: "member", CreatorID: userID,
-		ParentIssueID: capture.SourceIssueID, ProjectID: projectID, StartDate: startDate, DueDate: dueDate,
+		ParentIssueID: capture.SourceIssueID, ProjectID: projectID, ProjectPinned: projectPinned, StartDate: startDate, DueDate: dueDate,
 		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Stage: stage,
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
@@ -747,10 +772,11 @@ type preparedAgentCommentSubIssue struct {
 	agentID, squadID, runtimeID pgtype.UUID
 	prompt, priority, dueDate   string
 	projectID                   pgtype.UUID
+	projectExplicitNone         bool
 	attachmentIDs               []pgtype.UUID
 }
 
-func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, input QuickCreateIssueRequest) (*preparedAgentCommentSubIssue, error) {
+func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, input QuickCreateIssueRequest, projectPinned bool) (*preparedAgentCommentSubIssue, error) {
 	prompt := strings.TrimSpace(input.Prompt)
 	if prompt == "" {
 		return nil, sourceContextBadRequest("prompt is required")
@@ -827,20 +853,20 @@ func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Req
 		return nil, errSourceContextResponseWritten
 	}
 	var projectID pgtype.UUID
-	if strings.TrimSpace(input.ProjectID) != "" {
+	if projectPinned && strings.TrimSpace(input.ProjectID) != "" {
 		parsed, err := util.ParseUUID(strings.TrimSpace(input.ProjectID))
 		if err != nil {
 			return nil, sourceContextBadRequest("invalid project_id")
 		}
-		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: parsed, WorkspaceID: workspaceID}); err != nil {
-			return nil, sourceContextBadRequest("project not found")
+		if _, ok := h.visibleProjectInWorkspace(w, r, workspaceID, parsed); !ok {
+			return nil, errSourceContextResponseWritten
 		}
 		projectID = parsed
 	}
 	return &preparedAgentCommentSubIssue{
 		agentID: agentID, squadID: squadID, runtimeID: agent.RuntimeID,
 		prompt: prompt, priority: priority, dueDate: dueDate,
-		projectID: projectID, attachmentIDs: attachmentIDs,
+		projectID: projectID, projectExplicitNone: projectPinned && !projectID.Valid, attachmentIDs: attachmentIDs,
 	}, nil
 }
 
@@ -852,7 +878,15 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"code": "source_context_quick_create_unsupported", "error": "selected agent runtime must be updated before using captured context"})
 		return errSourceContextResponseWritten
 	}
-	task, err := h.TaskService.EnqueueQuickCreateTaskWithSourceContext(r.Context(), workspaceID, userID, prepared.agentID, prepared.squadID, prepared.prompt, prepared.priority, prepared.dueDate, prepared.projectID, capture.SourceIssueID, prepared.attachmentIDs, capture)
+	projectID := prepared.projectID
+	if !prepared.projectExplicitNone && !projectID.Valid {
+		if parent, parentErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID: capture.SourceIssueID, WorkspaceID: workspaceID,
+		}); parentErr == nil && parent.ProjectID.Valid {
+			projectID = parent.ProjectID
+		}
+	}
+	task, err := h.TaskService.EnqueueQuickCreateTaskWithSourceContextChoosingProject(r.Context(), workspaceID, userID, prepared.agentID, prepared.squadID, prepared.prompt, prepared.priority, prepared.dueDate, projectID, capture.SourceIssueID, prepared.attachmentIDs, prepared.projectExplicitNone, capture)
 	if err != nil {
 		return err
 	}

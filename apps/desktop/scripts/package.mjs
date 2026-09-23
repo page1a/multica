@@ -18,9 +18,11 @@
 // renderer code and white-screens on launch.
 //
 // Extra CLI args after `pnpm package --` are forwarded to electron-builder
-// unchanged (e.g. `--mac --arm64`). For an unsigned local smoke-test
-// build, set `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder falls
-// back to an ad-hoc signature instead of requiring a Developer ID cert.
+// unchanged (e.g. `--mac --arm64`). A release build signs macOS with the
+// self-signed certificate in `CSC_LINK` / `CSC_KEY_PASSWORD` (see
+// docs/kun/desktop-release.md). For an unsigned local smoke-test build,
+// set `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder falls back to
+// an ad-hoc signature. Ad-hoc builds cannot install later updates.
 //
 // The `normalizeGitVersion`, `deriveVersion`, and `DESCRIBE_ARGS` exports let
 // tests cover version derivation both as a pure string transform and as the
@@ -306,6 +308,41 @@ function formatTarget(target) {
   return `${PLATFORM_CONFIG[target.platform].label} ${target.arch}`;
 }
 
+/**
+ * `vX.Y.Z-test.N` (and a git-describe distance after that tag) is the test
+ * line. Anything else, including `vX.Y.Z` and `vX.Y.Z-<distance>-g<hash>`,
+ * stays on the stable line. The leading `v` is optional because
+ * `normalizeGitVersion` already strips it before this sees the string.
+ */
+export function isTestReleaseVersion(version) {
+  if (typeof version !== "string" || version.length === 0) return false;
+  const match = version
+    .replace(/^v/, "")
+    .match(/^\d+\.\d+\.\d+(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?/);
+  if (!match?.[1]) return false;
+  return match[1].split(".")[0] === "test";
+}
+
+/**
+ * Publish-channel name shared with `updater.ts`. `null` means "do not pass
+ * `-c.publish.channel`", which is electron-builder's default `latest` feed —
+ * the name already-installed stable clients are checking.
+ *
+ * Stable: win arm64 `latest-arm64`, mac x64 `latest-x64`, everything else
+ * omitted (`latest` / `latest-mac.yml` / `latest-linux*.yml`).
+ * Test: the same suffixes with the `test` prefix (`test`, `test-x64`,
+ * `test-arm64`). The prefix must equal the prerelease segment of the
+ * `vX.Y.Z-test.N` tag — that is the only channel name electron-updater's
+ * GitHub provider derives for a prerelease, so `beta` would 404.
+ */
+export function publishChannelForTarget(version, platform, arch) {
+  const prefix = isTestReleaseVersion(version) ? "test" : "latest";
+  if (platform === "win" && arch === "arm64") return `${prefix}-arm64`;
+  if (platform === "mac" && arch === "x64") return `${prefix}-x64`;
+  if (prefix === "latest") return null;
+  return prefix;
+}
+
 export function builderArgsForTarget(
   target,
   parsed,
@@ -314,11 +351,29 @@ export function builderArgsForTarget(
     disableMacNotarize = false,
     hostPlatform = process.platform,
     useScopedOutputDir = false,
+    forceMacCodeSigning = false,
   } = {},
 ) {
   const builderArgs = [];
   if (version) builderArgs.push(`-c.extraMetadata.version=${version}`);
   if (disableMacNotarize) builderArgs.push("-c.mac.notarize=false");
+  if (target.platform === "mac" && forceMacCodeSigning) {
+    // CSC_LINK is set, so a missing or unusable identity must fail the job.
+    // Without this, arm64 silently falls back to an ad-hoc signature and the
+    // release looks green while auto-update stays broken.
+    builderArgs.push("-c.forceCodeSigning=true");
+  }
+  if (target.platform === "mac") {
+    // electron-builder.yml leaves the hardened runtime off. A self-signed
+    // certificate cannot satisfy it, and the process is killed on launch.
+    // Notarization (APPLE_TEAM_ID present) requires it, so that path turns
+    // it back on. spctl --assess rejects every unnotarized signature and
+    // would fail the self-signed CI job, so it stays off in that case.
+    builderArgs.push(
+      `-c.mac.hardenedRuntime=${disableMacNotarize ? "false" : "true"}`,
+    );
+    if (disableMacNotarize) builderArgs.push("-c.mac.gatekeeperAssess=false");
+  }
   builderArgs.push(PLATFORM_CONFIG[target.platform].builderFlag);
   const requestedTargets = parsed.platformTargets[target.platform];
   if (
@@ -345,15 +400,20 @@ export function builderArgsForTarget(
   // arm64/x64 would both publish `latest-mac.yml`. Keep the established x64
   // Windows and arm64 macOS feeds unchanged for installed clients, and route
   // the additional architectures to explicit channels. updater.ts pins the
-  // matching channel at runtime.
-  if (target.platform === "win" && target.arch === "arm64") {
-    builderArgs.push("-c.publish.channel=latest-arm64");
-  }
+  // matching channel at runtime. A `-test.N` tag swaps the `latest` prefix
+  // for `test` and keeps those same suffixes.
   if (target.platform === "mac" && target.arch === "x64") {
     // Scope the Electron 39 platform floor to the new Intel package so this
     // change does not rewrite established Apple Silicon bundle metadata.
     builderArgs.push("-c.mac.minimumSystemVersion=12.0.0");
-    builderArgs.push("-c.publish.channel=latest-x64");
+  }
+  const publishChannel = publishChannelForTarget(
+    version,
+    target.platform,
+    target.arch,
+  );
+  if (publishChannel) {
+    builderArgs.push(`-c.publish.channel=${publishChannel}`);
   }
   return builderArgs;
 }
@@ -451,6 +511,10 @@ function main() {
       disableMacNotarize,
       hostPlatform: process.platform,
       useScopedOutputDir,
+      // A certificate was provided, either as CSC_LINK or as a keychain the
+      // CI step already imported and trusted (CSC_KEYCHAIN). Do not quietly
+      // ship an ad-hoc build.
+      forceMacCodeSigning: Boolean(process.env.CSC_LINK || process.env.CSC_KEYCHAIN),
     });
 
     // Step 4: invoke electron-builder for the current target only.

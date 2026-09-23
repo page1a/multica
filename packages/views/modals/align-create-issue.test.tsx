@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   getListModelsResult: vi.fn(),
   push: vi.fn(),
   close: vi.fn(),
+  currentUserId: "user-1" as string | null,
   setAlign: vi.fn(),
   setShared: vi.fn(),
   setActiveMode: vi.fn(),
@@ -72,8 +73,10 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/auth", () => ({
-  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) =>
-    selector({ user: { id: "user-1" } }),
+  useAuthStore: (selector: (state: { user: { id: string } | null }) => unknown) =>
+    selector({
+      user: mocks.currentUserId ? { id: mocks.currentUserId } : null,
+    }),
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -448,6 +451,7 @@ function uploadedPool(filename = "x.png", url = "https://cdn/x.png") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.currentUserId = "user-1";
   mocks.drafts = [];
   mocks.runtimes = [ONLINE_RUNTIME];
   mocks.listIssueDrafts.mockImplementation(() => Promise.resolve(mocks.drafts));
@@ -733,6 +737,59 @@ describe("AlignCreatePanel", () => {
       });
     } finally {
       localStorage.removeItem("multica_alignment_capabilities:user-1");
+    }
+  }, 15_000);
+
+  it("holds the start button on a placeholder until the signed-in user is known", async () => {
+    mocks.currentUserId = null;
+    renderPanel();
+    await userEvent.type(editor(), "add dark mode");
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading your last alignment methods…",
+    );
+    expect(submitButton()).toBeDisabled();
+
+    await openConfigPanel();
+    expect(screen.queryByRole("checkbox", { name: /Requirement interview/ })).toBeNull();
+  }, 15_000);
+
+  it("shows the system default and one notice when the record cannot be read, and still starts", async () => {
+    localStorage.setItem("multica_alignment_capabilities:user-1", "{");
+    renderPanel();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Couldn't load your last alignment methods",
+    );
+
+    await typeRequest("add dark mode");
+    await openConfigPanel();
+    for (const name of [/Decision map/, /Requirement interview/, /See the screen first/]) {
+      expect(screen.getByRole("checkbox", { name })).toBeChecked();
+    }
+
+    await userEvent.click(submitButton());
+    await waitFor(() =>
+      expect(mocks.push).toHaveBeenCalledWith("/acme/issues/new/sess-new"),
+    );
+  }, 15_000);
+
+  it("still starts when remembering the combination fails", async () => {
+    const original = localStorage.setItem.bind(localStorage);
+    vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => {
+      if (String(key).startsWith("multica_alignment_capabilities")) {
+        throw new Error("quota");
+      }
+      original(key, value);
+    });
+    try {
+      renderPanel();
+      await typeRequest("add dark mode");
+      await userEvent.click(submitButton());
+      await waitFor(() =>
+        expect(mocks.push).toHaveBeenCalledWith("/acme/issues/new/sess-new"),
+      );
+    } finally {
+      vi.restoreAllMocks();
     }
   }, 15_000);
 

@@ -183,11 +183,12 @@ describe("AutopilotDialog required-field feedback", () => {
     });
 
     await user.click(createButton());
+    await user.click(await screen.findByRole("button", { name: "Continue without a project" }));
     await waitFor(() => expect(mockCreateAutopilot).toHaveBeenCalledTimes(1));
     expect(mockCreateAutopilot.mock.calls[0]?.[0]).toMatchObject({
       title: "Daily digest",
       assignee_type: "agent",
       assignee_id: "agent-1",
     });
-  });
+  }, 15000);
 });

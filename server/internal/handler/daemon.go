@@ -3973,6 +3973,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					resp.ParentIssueID = qc.ParentIssueID
 				}
 			}
+			resp.ProjectExplicitNone = qc.ProjectExplicitNone
 
 			// Squad-leader briefing injection for quick-create tasks. When
 			// the user picked a squad in the modal, the task runs on the

@@ -332,12 +332,17 @@ func TestQuotaRelayWaitsAndNotifiesWhenNoSeatExists(t *testing.T) {
 	}
 }
 
-func TestCapacityFailureDoesNotBreakOrRelay(t *testing.T) {
+func TestCapacityFailureDoesNotRelayWhileRetriesRemain(t *testing.T) {
 	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "API Error: 429 Too Many Requests", true)
 	ctx := context.Background()
+	// attempt defaults to 1 and max_attempts to 2. The capacity ceiling widens
+	// that to 3, so this row still has an in-place retry left.
+	if _, err := w.pool.Exec(ctx, `UPDATE agent_task_queue SET attempt = 2, max_attempts = 2 WHERE id = $1`, w.taskID); err != nil {
+		t.Fatalf("set attempt: %v", err)
+	}
 	hold, err := w.service().RelayQuotaFailure(ctx, w.task(t))
 	if err != nil || hold {
-		t.Fatalf("capacity relay hold=%v err=%v, want no relay", hold, err)
+		t.Fatalf("capacity relay hold=%v err=%v, want no relay while retries remain", hold, err)
 	}
 	var breakers, relays int
 	var enabled bool
@@ -351,7 +356,171 @@ func TestCapacityFailureDoesNotBreakOrRelay(t *testing.T) {
 		t.Fatalf("enabled: %v", err)
 	}
 	if breakers != 0 || relays != 0 || !enabled {
-		t.Fatalf("breakers=%d relays=%d enabled=%v, capacity must not trip the breaker", breakers, relays, enabled)
+		t.Fatalf("breakers=%d relays=%d enabled=%v, capacity must not trip the breaker before the retry budget is spent", breakers, relays, enabled)
+	}
+}
+
+func TestCapacityFailureRelaysAfterRetriesAreSpent(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.", true)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `UPDATE agent_task_queue SET attempt = 3, max_attempts = 3 WHERE id = $1`, w.taskID); err != nil {
+		t.Fatalf("exhaust attempts: %v", err)
+	}
+	hold, err := w.service().RelayQuotaFailure(ctx, w.task(t))
+	if err != nil || !hold {
+		t.Fatalf("capacity relay hold=%v err=%v, want a handoff", hold, err)
+	}
+	var reason, scope string
+	var assignee string
+	if err := w.pool.QueryRow(ctx, `SELECT reason, scope FROM agent_quota_breaker WHERE agent_id = $1 AND recovered_at IS NULL`, w.failedID).Scan(&reason, &scope); err != nil {
+		t.Fatalf("breaker: %v", err)
+	}
+	if reason != "provider_capacity" || scope != "agent" {
+		t.Fatalf("breaker = %s/%s, want provider_capacity/agent", reason, scope)
+	}
+	if err := w.pool.QueryRow(ctx, `SELECT assignee_id::text FROM issue WHERE id = $1`, w.issueID).Scan(&assignee); err != nil {
+		t.Fatalf("assignee: %v", err)
+	}
+	if assignee != w.sameID {
+		t.Fatalf("assignee = %s, want the same-tier seat %s", assignee, w.sameID)
+	}
+}
+
+func TestCapacityFailureBlocksWhenNoSeatRemains(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.", true)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `UPDATE agent_task_queue SET attempt = 3, max_attempts = 3 WHERE id = $1`, w.taskID); err != nil {
+		t.Fatalf("exhaust attempts: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE agent SET routing_tier = NULL WHERE id = $1 OR id = $2`, w.sameID, w.mediumID); err != nil {
+		t.Fatalf("clear ladder: %v", err)
+	}
+	hold, err := w.service().RelayQuotaFailure(ctx, w.task(t))
+	if err != nil || !hold {
+		t.Fatalf("capacity wait hold=%v err=%v", hold, err)
+	}
+	var status, outcome, audit string
+	if err := w.pool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, w.issueID).Scan(&status); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if status != "blocked" {
+		t.Fatalf("status = %s, want blocked", status)
+	}
+	if err := w.pool.QueryRow(ctx, `SELECT outcome, audit_comment FROM agent_quota_relay WHERE source_task_id = $1`, w.taskID).Scan(&outcome, &audit); err != nil {
+		t.Fatalf("relay: %v", err)
+	}
+	if outcome != "waiting" || !strings.Contains(audit, "模型满载") || !strings.Contains(audit, "blocked") {
+		t.Fatalf("outcome=%s audit=%s", outcome, audit)
+	}
+}
+
+func TestFailTaskCapacityExhaustedRelaysInsteadOfStoppingOnTheEnglishError(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.", true)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'running', attempt = 3, max_attempts = 3, failure_reason = NULL, error = NULL
+		WHERE id = $1`, w.taskID); err != nil {
+		t.Fatalf("reopen task: %v", err)
+	}
+	if _, err := w.service().FailTask(ctx, util.MustParseUUID(w.taskID), "Selected model is at capacity. Please try a different model.", "", "", "", "", false, "", ""); err != nil {
+		t.Fatalf("FailTask: %v", err)
+	}
+	var assignee, status string
+	var english int
+	if err := w.pool.QueryRow(ctx, `SELECT assignee_id::text, status FROM issue WHERE id = $1`, w.issueID).Scan(&assignee, &status); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if assignee != w.sameID || status != "in_progress" {
+		t.Fatalf("issue assignee/status = %s/%s, want the same-tier seat still in progress", assignee, status)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FROM comment
+		WHERE issue_id = $1 AND content LIKE '%Selected model is at capacity%'`, w.issueID).Scan(&english); err != nil {
+		t.Fatalf("comments: %v", err)
+	}
+	if english != 0 {
+		t.Fatalf("english capacity comments = %d, want the relay audit instead", english)
+	}
+}
+
+func TestCapacityOnAGPTSeatPrefersClaudeThenDropsOneTier(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.", true)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `UPDATE agent_task_queue SET attempt = 3, max_attempts = 3 WHERE id = $1`, w.taskID); err != nil {
+		t.Fatalf("exhaust attempts: %v", err)
+	}
+	rename := func(id, name, tier string) {
+		t.Helper()
+		if _, err := w.pool.Exec(ctx, `UPDATE agent SET name = $2, routing_tier = $3 WHERE id = $1`, id, name, tier); err != nil {
+			t.Fatalf("rename %s: %v", name, err)
+		}
+	}
+	rename(w.failedID, "特兰克斯", "strong")
+	rename(w.sameID, "孙悟天", "strong")
+	rename(w.mediumID, "孙悟空", "strong")
+	rename(w.siblingID, "贝吉塔", "medium")
+
+	hold, err := w.service().RelayQuotaFailure(ctx, w.task(t))
+	if err != nil || !hold {
+		t.Fatalf("relay hold=%v err=%v", hold, err)
+	}
+	var assignee, handoff string
+	if err := w.pool.QueryRow(ctx, `
+		SELECT i.assignee_id::text, COALESCE(t.handoff_note, '')
+		FROM issue i
+		LEFT JOIN agent_task_queue t ON t.issue_id = i.id AND t.agent_id = i.assignee_id AND t.status = 'queued'
+		WHERE i.id = $1`, w.issueID).Scan(&assignee, &handoff); err != nil {
+		t.Fatalf("handoff: %v", err)
+	}
+	if assignee != w.mediumID || !strings.Contains(handoff, "step=same") {
+		t.Fatalf("assignee=%s handoff=%s, want the Claude seat on the same tier", assignee, handoff)
+	}
+
+	// Same tier is only GPT once Claude and Grok are turned off. The next
+	// open seat is one tier down, even though that seat is also GPT.
+	if _, err := w.pool.Exec(ctx, `UPDATE agent SET work_enabled = FALSE WHERE id = $1 OR id = $2`, w.sameID, w.mediumID); err != nil {
+		t.Fatalf("disable cross-house seats: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'cancelled'
+		WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')`, w.issueID); err != nil {
+		t.Fatalf("clear the first handoff: %v", err)
+	}
+	rename(w.siblingID, "克林", "medium")
+	if _, err := w.pool.Exec(ctx, `
+		UPDATE issue SET assignee_type = 'agent', assignee_id = $1, status = 'in_progress' WHERE id = $2`, w.failedID, w.issueID); err != nil {
+		t.Fatalf("point issue back: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE agent SET work_enabled = TRUE WHERE id = $1`, w.failedID); err != nil {
+		t.Fatalf("re-enable failed seat: %v", err)
+	}
+	var second string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, failure_reason, error,
+			attempt, max_attempts, originator_user_id, accountable_user_id
+		)
+		VALUES ($1, $2, $3, 'failed', 0, $4, 'Selected model is at capacity. Please try a different model.', 3, 3, $5, $5)
+		RETURNING id`, w.failedID, w.runtimeID, w.issueID, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), w.userID).Scan(&second); err != nil {
+		t.Fatalf("second task: %v", err)
+	}
+	secondTask, err := w.service().Queries.GetAgentTask(ctx, util.MustParseUUID(second))
+	if err != nil {
+		t.Fatalf("load second: %v", err)
+	}
+	if _, err := w.service().RelayQuotaFailure(ctx, secondTask); err != nil {
+		t.Fatalf("second relay: %v", err)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT i.assignee_id::text, COALESCE(t.handoff_note, '')
+		FROM issue i
+		LEFT JOIN agent_task_queue t ON t.issue_id = i.id AND t.agent_id = i.assignee_id AND t.status = 'queued'
+		WHERE i.id = $1`, w.issueID).Scan(&assignee, &handoff); err != nil {
+		t.Fatalf("second handoff: %v", err)
+	}
+	if assignee != w.siblingID || !strings.Contains(handoff, "step=down") {
+		t.Fatalf("second assignee=%s handoff=%s, want the one-tier-down GPT seat", assignee, handoff)
 	}
 }
 

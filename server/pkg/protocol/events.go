@@ -8,6 +8,15 @@ const (
 	EventIssueDeleted            = "issue:deleted"
 	EventIssueMetadataChanged    = "issue_metadata:changed"
 	EventIssueAttachmentsChanged = "issue_attachments:changed"
+	// EventIssueInvalidated is the id-only "drop your cached copy and refetch"
+	// frame (DENE-717). Content frames are filtered per recipient, so exactly
+	// the people who just lost access to an issue are the ones a content filter
+	// excludes — and they are the ones who must be told to evict. The payload
+	// is ids only (issue_id and/or project_id) by contract, which is why the
+	// delivery-time visibility filter passes it through untouched. A
+	// recipient_id makes it a personal frame for the one member whose access
+	// changed.
+	EventIssueInvalidated = "issue:invalidated"
 
 	// Comment events
 	EventCommentCreated       = "comment:created"

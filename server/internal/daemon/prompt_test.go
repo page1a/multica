@@ -239,6 +239,14 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 	if strings.Contains(plain, "--project") {
 		t.Errorf("buildQuickCreatePrompt without project must NOT mention --project, got:\n%s", plain)
 	}
+
+	cleared := buildQuickCreatePrompt(Task{
+		QuickCreatePrompt:   "fix the login button color",
+		ProjectExplicitNone: true,
+	})
+	if !strings.Contains(cleared, "--project \"\"") {
+		t.Errorf("buildQuickCreatePrompt with an explicit empty project must require --project \"\", got:\n%s", cleared)
+	}
 }
 
 func TestBuildQuickCreatePromptExplicitPriorityAndDueDate(t *testing.T) {

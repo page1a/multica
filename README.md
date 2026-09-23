@@ -178,7 +178,7 @@ authenticated, so switching providers is a dropdown, not a migration.
 | Reasonix | `reasonix` | Trae CLI | `traecli` |
 | DeepSeek Harness | `dsh` | Oh-My-Pi | `omp` |
 | MiniMax Code | `mcode` | Dim | `dim` |
-| Huawei Cloud CodeArts | `codearts` | — | — |
+| Huawei Cloud CodeArts | `codearts` | Devin CLI | `devin` |
 
 Installing and authenticating them: [Install an agent runtime](https://multica.ai/docs/install-agent-runtime) ·
 [Providers](https://multica.ai/docs/providers)

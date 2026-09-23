@@ -41,6 +41,7 @@ import {
   onIssueAuxiliaryRevision,
   invalidateIssueOwnerProjections,
 } from "../issues/ws-updaters";
+import { evictIssueAfterVisibilityChange } from "../issues/delete-cache";
 import {
   invalidateLastActivitySortedIssueLists,
   invalidateUpdatedAtSortedIssueLists,
@@ -79,6 +80,7 @@ import type {
   IssueUpdatedPayload,
   IssueCreatedPayload,
   IssueDeletedPayload,
+  IssueInvalidatedPayload,
   IssueAttachmentsChangedPayload,
   IssueLabelsChangedPayload,
   IssueMetadataChangedPayload,
@@ -491,6 +493,33 @@ export function applyChatCancelFinalizedToCache(
       void qc.invalidateQueries({ queryKey: chatKeys.draftRestores(sessionId) });
     }
   }
+}
+
+/**
+ * Apply an id-only invalidation frame (DENE-717).
+ *
+ * The server filters content frames per recipient, so this is the frame the
+ * people who just LOST access receive — and the only one. The row still
+ * exists, so the answer is "evict and refetch", never "delete": the HTTP reads
+ * return the issue to viewers who kept access and omit it for those who did
+ * not. Inbox and issue lists are invalidated rather than pruned, because the
+ * server-side queries are the only thing that knows what each viewer may now
+ * see.
+ */
+export function applyIssueInvalidatedToCache(
+  qc: QueryClient,
+  wsId: string,
+  payload: IssueInvalidatedPayload,
+): void {
+  if (payload.issue_id) {
+    evictIssueAfterVisibilityChange(qc, wsId, payload.issue_id);
+  }
+  if (payload.project_id) {
+    qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+  }
+  qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+  void onInboxInvalidate(qc, wsId);
+  void onInboxSummaryInvalidate(qc);
 }
 
 /**
@@ -994,7 +1023,7 @@ export function useRealtimeSync(
     const specificEvents = new Set([
       "workspace:updated",
       "modules:updated",
-      "issue:updated", "issue:created", "issue:deleted", "issue_attachments:changed", "issue_labels:changed", "issue_metadata:changed", "issue_properties:changed", "property:created", "property:updated", "inbox:new",
+      "issue:updated", "issue:created", "issue:deleted", "issue:invalidated", "issue_attachments:changed", "issue_labels:changed", "issue_metadata:changed", "issue_properties:changed", "property:created", "property:updated", "inbox:new",
       "comment:created", "comment:updated", "comment:deleted",
       "comment:resolved", "comment:unresolved",
       "activity:created",
@@ -1078,6 +1107,20 @@ export function useRealtimeSync(
         onIssueDeleted(qc, wsId, issue_id);
         void onInboxIssueDeleted(qc, wsId, issue_id);
       }
+    });
+
+    // The id-only invalidation frame (DENE-717): a sharing scope changed, a
+    // project membership moved, or an assignee was removed. The server filters
+    // the content frames by recipient, so this is the frame the people who
+    // just LOST access receive — and it is the only one they receive. The row
+    // still exists, so the answer is "evict and refetch", not "delete": the
+    // HTTP reads return it to viewers who kept access and omit it for those
+    // who did not. The inbox is refetched rather than pruned, because the
+    // server-side inbox query is what knows whether a row survives.
+    const unsubIssueInvalidated = ws.on("issue:invalidated", (p) => {
+      const wsId = getCurrentWsId();
+      if (!wsId) return;
+      applyIssueInvalidatedToCache(qc, wsId, p as IssueInvalidatedPayload);
     });
 
     const unsubIssueLabelsChanged = ws.on("issue_labels:changed", (p) => {
@@ -1782,6 +1825,7 @@ export function useRealtimeSync(
       unsubIssueUpdated();
       unsubIssueCreated();
       unsubIssueDeleted();
+      unsubIssueInvalidated();
       unsubIssueAttachmentsChanged();
       unsubIssueLabelsChanged();
       unsubIssueMetadataChanged();

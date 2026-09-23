@@ -71,6 +71,11 @@ type IssueCreateParams struct {
 	CreatorID     pgtype.UUID
 	ParentIssueID pgtype.UUID
 	ProjectID     pgtype.UUID
+	// ProjectPinned is true when the caller named a project, including the
+	// choice of none. False means the field was left out: a sub-issue then
+	// takes its parent's project. An explicit empty project stays empty, so
+	// clearing the picker is not undone by that inheritance.
+	ProjectPinned bool
 	StartDate     pgtype.Date
 	DueDate       pgtype.Date
 	OriginType    pgtype.Text
@@ -348,10 +353,11 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		if err != nil || !parent.ID.Valid {
 			return issueCreateTxOutcome{}, ErrParentIssueNotFound
 		}
-		// Back-fill project from parent when the caller did not pin
-		// one explicitly. Matches the long-standing HTTP behavior: a
-		// sub-issue inherits its parent's project unless overridden.
-		if !projectID.Valid {
+		// A sub-issue takes its parent's project only when the caller
+		// left the field out. An explicit project wins, and an explicit
+		// empty project stays empty — clearing it is a choice, not a
+		// missing value for this fallback to fill back in.
+		if !projectID.Valid && !p.ProjectPinned {
 			projectID = parent.ProjectID
 		}
 	}

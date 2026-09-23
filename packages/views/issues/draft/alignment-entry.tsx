@@ -45,6 +45,7 @@ export function IssueAlignmentEntry({
   draftId,
   groupIssues,
   parentIssueId,
+  projectId = null,
   selfStarted,
   startedByAnother,
 }: {
@@ -58,6 +59,8 @@ export function IssueAlignmentEntry({
   groupIssues: Issue[];
   /** The issue a new alignment is filed under — the one on screen. */
   parentIssueId: string;
+  /** The parent issue's project, shown as the group's starting project. */
+  projectId?: string | null;
   /**
    * This page holds a conversation of the user's own that is still open, or
    * that can be reopened. Drives the primary action, and is what keeps the
@@ -105,7 +108,10 @@ export function IssueAlignmentEntry({
     // rather than a second top-level issue. The identifier is not carried — the
     // alignment face renders no parent chip, and this page is already showing
     // the issue it is named after.
-    openAlignIssue({ parent_issue_id: parentIssueId });
+    openAlignIssue({
+      parent_issue_id: parentIssueId,
+      project_id: projectId,
+    });
   };
 
   return (
