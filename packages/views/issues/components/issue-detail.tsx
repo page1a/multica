@@ -16,7 +16,7 @@ import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { AppLink, useBackOrReplace } from "../../navigation";
+import { AppLink, useBackOrReplace, useNavigation } from "../../navigation";
 import {
   Archive,
   Calendar,
@@ -107,6 +107,7 @@ import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
+import { IssueLogExportButton } from "../../common/log-export";
 import { ExecutionLogSection } from "./execution-log-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
@@ -153,6 +154,7 @@ import {
 } from "../../platform";
 import { cn } from "@multica/ui/lib/utils";
 import { PAGE_GUTTER } from "../../layout/page-header";
+import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
 
 import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
@@ -689,6 +691,8 @@ function SubIssueRow({
   rowProps,
   customProperties,
   blockerState,
+  parentStatus,
+  hasStagedSibling,
 }: {
   child: Issue;
   /** The sub-issue's OWN children progress (it can itself be a parent). */
@@ -698,6 +702,8 @@ function SubIssueRow({
   /** Workspace custom properties the user opted into showing on rows. */
   customProperties: IssueProperty[];
   blockerState?: { state: "ROOT" | "PROPAGATED" | "CLEAR"; rootCause?: string };
+  parentStatus?: Issue["status"];
+  hasStagedSibling?: boolean;
 }) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -898,7 +904,7 @@ function SubIssueRow({
           />
         )}
         </div>
-        <SubIssueCloseStrip issue={child} />
+        <SubIssueCloseStrip issue={child} parentStatus={parentStatus} hasStagedSibling={hasStagedSibling} />
       </div>
     </IssueActionsContextMenu>
   );
@@ -1160,6 +1166,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const id = issueId;
   const user = useAuthStore((s) => s.user);
   const paths = useWorkspacePaths();
+  const navigation = useNavigation();
   const openModal = useModalStore((state) => state.open);
 
   // Issue navigation — read from TQ list cache
@@ -1214,6 +1221,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  const [shareScopeOpen, setShareScopeOpen] = useState(false);
+  const [shareAudienceSize, setShareAudienceSize] = useState<number | undefined>();
   const githubSettings = useGitHubSettings();
 
   // Per-issue, per-session set of optional properties currently visible in
@@ -2352,16 +2361,24 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${propertiesOpen ? "rotate-90" : ""}`} />
         </button>
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
-          {/* Core props — always rendered. */}
+          {/* Core props — always rendered, except the acceptance slot below. */}
           <PropRow label={t(($) => $.detail.prop_status)}>
             <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
           </PropRow>
-          <PropRow label={t(($) => $.detail.prop_reviewer)}>
-            <ReviewerPicker reviewerType={issue.reviewer_type} reviewerId={issue.reviewer_id} onUpdate={handleUpdateField} align="start" />
-          </PropRow>
+          {/* 验收席 is parent-scoped: acceptance belongs to the top-level
+              issue, and a sub-issue is execution-only. An empty slot on a
+              sub-issue is therefore not a requirement — offering one would
+              invite a reviewer that routing never hands the ticket to. A
+              value somebody recorded by hand still renders, so existing
+              tickets keep their decision and can clear it. */}
+          {(issue.parent_issue_id == null || issue.reviewer_type != null) && (
+            <PropRow label={t(($) => $.detail.prop_reviewer)}>
+              <ReviewerPicker reviewerType={issue.reviewer_type} reviewerId={issue.reviewer_id} onUpdate={handleUpdateField} align="start" />
+            </PropRow>
+          )}
           <PropRow label={t(($) => $.detail.prop_project)}>
             <ProjectPicker
               projectId={issue.project_id}
@@ -2871,6 +2888,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 it never overlaps the title (which truncates to make room).
                 It self-hides when no agent is active. */}
             <IssueAgentHeaderChip issueId={id} />
+            {/* Exports the newest run's logs; self-hides when the issue has
+                no runs. The range picker inside reaches the rest of the
+                history, so the header needs no run picker of its own. */}
+            <IssueLogExportButton issueId={id} issueIdentifier={issue.identifier} />
             {onDone && !issueBehavesAsAny(issue, ["done", "closed"]) && (
               <Tooltip>
                 <TooltipTrigger
@@ -2920,6 +2941,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               />
               <TooltipContent side="bottom">{actions.isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}</TooltipContent>
             </Tooltip>
+            <WriteAction>
+              <ShareScopeTrigger
+                scope={issue.visibility}
+                audienceSize={shareAudienceSize}
+                onClick={() => setShareScopeOpen(true)}
+              />
+            </WriteAction>
             <IssueActionsDropdown
               issue={issue}
               align="end"
@@ -3350,6 +3378,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                               rowProps={subIssueRowProps}
                               customProperties={subIssueCustomProps}
                               blockerState={blockerBadgeState(blockerData.tree, child.id)}
+                              parentStatus={issue.status}
+                              hasStagedSibling={staged}
                             />
                           ))}
                         </Fragment>
@@ -3619,6 +3649,27 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             className="absolute bottom-0 right-3 top-12"
           />
         )}
+        <ShareScopeDialog
+          open={shareScopeOpen}
+          onOpenChange={setShareScopeOpen}
+          target={{
+            kind: "issue",
+            resourceId: issue.id,
+            currentScope: issue.visibility,
+            audienceSize: shareAudienceSize,
+            projectId: issue.project_id,
+            resourceLabel: issue.identifier,
+          }}
+          onSaved={(result) => {
+            setShareAudienceSize(result.audience_size);
+          }}
+          onManageMembers={issue.project_id ? () => {
+            const projectId = issue.project_id;
+            if (!projectId) return;
+            setShareScopeOpen(false);
+            navigation.push(paths.projectDetail(projectId));
+          } : undefined}
+        />
       </div>
     </ImageSequenceProvider>
     </CurrentIssueRenderContextProvider>

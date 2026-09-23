@@ -111,16 +111,41 @@ describe("SubIssueCloseStrip", () => {
     expect(queryChip("close.missing")).not.toBeInTheDocument();
   });
 
-  it("marks a bag with no close.* keys as not closed under protocol (DENE-230)", () => {
+  it("shows a neutral missing record only when an active staged parent needs it (DENE-230)", () => {
     renderWithI18n(<SubIssueCloseStrip issue={issue({ metadata: {} })} />);
 
     const strip = screen.getByTestId("sub-issue-close-strip");
     expect(strip).toHaveAttribute("data-close-state", "missing");
-    expect(chip("close.missing")).toHaveTextContent(
-      "Not closed under protocol",
-    );
+    expect(chip("close.missing")).toHaveTextContent("No close record");
     expect(chip("stage")).toHaveTextContent("Stage 1");
     expect(queryChip("close.conclusion")).not.toBeInTheDocument();
+  });
+
+  it("does not show a missing chip for an unfinished child", () => {
+    renderWithI18n(
+      <SubIssueCloseStrip issue={issue({ status: "in_progress", metadata: {} })} />,
+    );
+
+    expect(screen.getByTestId("sub-issue-close-strip")).toHaveAttribute(
+      "data-close-state",
+      "ok",
+    );
+    expect(queryChip("close.missing")).not.toBeInTheDocument();
+  });
+
+  it("does not show a missing chip when the parent is already terminal", () => {
+    renderWithI18n(
+      <SubIssueCloseStrip
+        issue={issue({ metadata: {} })}
+        parentStatus="done"
+      />,
+    );
+
+    expect(screen.getByTestId("sub-issue-close-strip")).toHaveAttribute(
+      "data-close-state",
+      "ok",
+    );
+    expect(queryChip("close.missing")).not.toBeInTheDocument();
   });
 
   it("marks close.status drift instead of rendering as a normal close (DENE-233 history)", () => {

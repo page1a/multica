@@ -181,6 +181,17 @@ export interface IssueDraftCreatedIssue {
 }
 
 /**
+ * One node of a confirmed group whose assignee could not be applied at confirm.
+ * The issue itself was still created — it is unassigned. `key` is empty for the
+ * parent, which is what maps the warning back onto the row the panel shows.
+ */
+export interface IssueDraftAssignmentWarning {
+  key: string;
+  title: string;
+  reason: string;
+}
+
+/**
  * Result of confirming a draft.
  *
  * `issue_id` is the same value for every repeat of the same confirm — the
@@ -189,11 +200,17 @@ export interface IssueDraftCreatedIssue {
  * `issues` is the whole group, root first, and is absent from a backend that
  * predates groups; callers that need the group degrade to `[issue_id]`, which
  * is exactly what a group with no sub-issues is.
+ *
+ * `assignment_warnings` names the nodes that were created unassigned because
+ * the seat shown on the panel could not be applied. Absent from a backend that
+ * predates the field, and empty when every assignment landed; the two mean the
+ * same thing to a reader (DENE-694).
  */
 export interface IssueDraftFinalizeResult {
   draft: IssueDraft;
   issue_id: string;
   issues?: IssueDraftCreatedIssue[];
+  assignment_warnings?: IssueDraftAssignmentWarning[];
 }
 
 /** Result of rebinding a live alignment conversation to another runtime. */

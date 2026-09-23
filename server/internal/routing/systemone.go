@@ -166,7 +166,7 @@ const (
 )
 
 const (
-	executorInstruction = "Which seat tier should DO the work on this ticket? Pick the weakest tier that can be expected to finish it correctly without supervision; a ticket that is ambiguous, cross-cutting, or expensive to get wrong belongs on a stronger tier."
+	executorInstruction = "Which seat tier should DO the work on this ticket? Follow policy_prompt and routing_policy in the state. Default to medium or strong. Use weak only when the work is simple, explicit, and low-risk. Use strong or strongest only when it is complex, vague, cross-module, or costly to get wrong. Answer with a tier only: do not change status and do not take an action. A seat whose availability is not available or unknown is not a candidate. unknown latency, quota, or availability is missing data: do not treat it as zero and do not treat it as a reason to select or reject the seat. Provider quota never decides whether a seat is alive."
 	reviewerInstruction = "Does this ticket need a separate acceptance pass after the work is done, and if so by whom?"
 	reviewerTierInstr   = "Assuming another AI seat checks this work, which tier should check it? Reviewing is a judgement task: it is normally at least as demanding as doing the work."
 	causeInstruction    = "This ticket is blocked. What is the most likely reason it cannot move?"
@@ -178,10 +178,10 @@ const (
 // only a key and a Chinese label, which is an identifier rather than a rubric;
 // a Choice answer is only as good as the descriptions of its options.
 var tierCriteria = map[string]string{
-	"strongest": "The strongest seat available. Use for work that is ambiguous, architectural, security- or money-sensitive, or hard to reverse.",
-	"strong":    "A strong seat. Use for ordinary feature work, non-trivial bug fixes, and anything needing judgement across more than one file.",
-	"medium":    "A mid seat. Use for well-specified changes with a clear shape and a small blast radius.",
-	"weak":      "The weakest seat. Use for mechanical, fully specified work: renames, copy edits, single-line fixes.",
+	"strongest": "The strongest seat. Use only for work that is complex, vague, cross-module, architectural, security- or money-sensitive, or costly to get wrong.",
+	"strong":    "A strong seat. A default for ordinary work that needs judgement: feature work, non-trivial bug fixes, anything spanning more than one module.",
+	"medium":    "A mid seat. A default for ordinary, well-specified work with a clear shape and a small blast radius.",
+	"weak":      "The weakest seat. Use only for simple, explicit, low-risk work: renames, copy edits, single-line fixes.",
 }
 
 func tierChoices(candidates []string) map[string]any {

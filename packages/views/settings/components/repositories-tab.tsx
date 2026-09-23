@@ -39,7 +39,7 @@ import {
 } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace } from "@multica/core/paths";
+import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import {
   githubInstallationRepositoriesOptions,
@@ -61,6 +61,7 @@ import {
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
 import { GitHubMark } from "./github-mark";
+import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
 
 const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
@@ -107,6 +108,7 @@ export function RepositoriesTab() {
   const { t } = useT("settings");
   const user = useAuthStore((state) => state.user);
   const workspace = useCurrentWorkspace();
+  const wsPaths = useWorkspacePaths();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
@@ -122,6 +124,8 @@ export function RepositoriesTab() {
     Map<number, GitHubRepository>
   >(new Map());
   const [repositorySearch, setRepositorySearch] = useState("");
+  const [shareScopeIndex, setShareScopeIndex] = useState<number | null>(null);
+  const [shareAudienceSizes, setShareAudienceSizes] = useState<Record<string, number>>({});
 
   const currentMember = members.find((member) => member.user_id === user?.id) ?? null;
   const canManageWorkspace =
@@ -360,6 +364,7 @@ export function RepositoriesTab() {
   };
 
   if (!workspace) return null;
+  const selectedRepository = shareScopeIndex === null ? null : repositories[shareScopeIndex] ?? null;
 
   return (
     <SettingsTab title={t(($) => $.page.tabs.repositories)}>
@@ -416,15 +421,22 @@ export function RepositoriesTab() {
                 placeholder={t(($) => $.repositories.description_placeholder)}
               />
               {canManageWorkspace ? (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t(($) => $.repositories.delete_aria)}
-                  className="justify-self-end text-muted-foreground hover:text-destructive"
-                  onClick={() => setPendingRemovalIndex(index)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                <div className="flex items-center justify-self-end gap-1">
+                  <ShareScopeTrigger
+                    scope={repository.visibility}
+                    audienceSize={shareAudienceSizes[repository.url]}
+                    onClick={() => setShareScopeIndex(index)}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t(($) => $.repositories.delete_aria)}
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => setPendingRemovalIndex(index)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
               ) : null}
             </div>
           ))}
@@ -474,6 +486,36 @@ export function RepositoriesTab() {
           )}
         </SettingsCard>
       </SettingsSection>
+
+      {selectedRepository && (
+        <ShareScopeDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setShareScopeIndex(null);
+          }}
+          target={{
+            kind: "repo",
+            resourceId: selectedRepository.url,
+            currentScope: selectedRepository.visibility,
+            audienceSize: shareAudienceSizes[selectedRepository.url],
+            projectId: selectedRepository.project_id,
+            resourceLabel: selectedRepository.url,
+          }}
+          onSaved={(result) => {
+            const url = selectedRepository.url;
+            setRepositories((current) => current.map((repo, index) =>
+              index === shareScopeIndex ? { ...repo, visibility: result.visibility } : repo,
+            ));
+            if (result.audience_size !== undefined) {
+              setShareAudienceSizes((current) => ({ ...current, [url]: result.audience_size! }));
+            }
+          }}
+          onManageMembers={selectedRepository.project_id ? () => {
+            setShareScopeIndex(null);
+            navigation.push(wsPaths.projectDetail(selectedRepository.project_id!));
+          } : undefined}
+        />
+      )}
 
       <Dialog
         open={githubPickerOpen}

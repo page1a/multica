@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/permission"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/sparsecheckout"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -3057,6 +3058,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if issue.Description.Valid {
 			resp.IssueDescription = issue.Description.String
 		}
+		checkoutPaths, pathsErr := sparsecheckout.MetadataString(issue.Metadata)
+		if pathsErr != nil {
+			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task,
+				"Issue metadata checkout_paths is not a string of repository paths. Set it with `multica issue metadata set --key checkout_paths --value apps/web` or delete the key.",
+				taskfailure.ReasonEnvironmentPrepareFailed,
+				"error_invalid_checkout_paths", http.StatusBadRequest, "invalid checkout_paths metadata",
+			)
+		}
+		resp.CheckoutPaths = checkoutPaths
 		resp.IssueStatus = issue.Status
 		resp.IssueAssigneeType = issue.AssigneeType.String
 		resp.IssueAssigneeID = uuidToString(issue.AssigneeID)
@@ -4155,6 +4166,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			status:  http.StatusUnprocessableEntity,
 			message: reason,
 		}
+	}
+
+	// DENE-727: an automatic retry that inherited the parent's session already
+	// ran partway. Tell the daemon to continue that session instead of
+	// re-injecting the original task. The child's session_id is copied from
+	// the parent at CreateRetryTask, so it being set is the "already ran"
+	// signal — a retry of a startup failure has no session and keeps the
+	// full prompt. force_fresh_session (poisoned conversation) also stays
+	// on the full-prompt path.
+	if task.RetryOfTaskID.Valid && !task.ForceFreshSession && task.SessionID.Valid {
+		resp.ContinueInterruptedSession = true
 	}
 
 	return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, nil

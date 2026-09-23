@@ -81,9 +81,34 @@ If the runtime list is missing an expected tool, first confirm the tool runs and
 
 This means another in-flight run is using the same local directory. Multica waits for the directory lock to be released so two agents never modify the same files at once.
 
-This wait only exists in the directory's `in_place` ("Direct") mode. If the directory is a git repository, switching the resource to `worktree` ("Parallel") removes the queue altogether: each run gets its own worktree and hands its work back as a branch, so nothing waits on anything. See [Project resources](/project-resources#how-runs-share-the-directory).
+This wait only exists in the directory's `in_place` ("Direct") mode. If the directory is a git repository, switching the resource to `worktree` ("Parallel") removes the queue altogether: each run gets its own worktree and hands its work back as a branch, so nothing waits on anything. `shared` ("Shared") mode skips the lock too, but deliberately — it is for a directory whose tasks isolate themselves, and it is why two shared runs that touch the same tree can collide. See [Project resources](/project-resources#how-runs-share-the-directory).
 
 Otherwise you just wait for the earlier run to finish. If it is stuck, stop it from its execution log, or pick a different local directory for the current agent. This directory mutex lives in the daemon's memory — no lock file is written to disk. If you suspect stale lock state, `multica daemon restart` releases it; there is nothing to delete manually.
+
+## A run fails with a code source error
+
+Which directory a run writes is decided on the server before a runtime claims it, and the runtime verifies that decision instead of choosing again. When the decision cannot be made, or the directory does not hold up, the run fails with a code rather than falling back to another directory or a fresh remote checkout. The execution log shows it as the run's failure reason:
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `daemon_cannot_run_mode` | The directory asks for `worktree` ("Parallel") or `shared` ("Shared") mode, and the runtime claiming the run did not advertise that it implements it | Update the Multica app on that machine, or set the directory back to Direct. Running it in place instead is refused: losing concurrency is a nuisance, writing into a tree the mode exists to protect is not |
+| `unknown_execution_mode` | The stored mode string is one this server does not know — the row was written by a newer server | Bring the server and the app to compatible versions. Guessing `in_place` would write into a directory the mode may exist to keep out of |
+| `malformed_resource` | A `local_directory` row the server cannot read: an unreadable `resource_ref`, no `daemon_id`, or a `local_path` that is not absolute | Remove and re-add the directory from Desktop. A row that cannot be named cannot be trusted to name the right folder |
+| `pinned_resource_not_found` | The run was pinned to a resource id that is not attached to any of its projects | Re-pin the run, or re-add the resource to the project |
+| `pinned_resource_other_machine` | The run was pinned to a directory bound to a different computer | Run it on the machine that holds the directory, or pin it to a directory that machine has |
+| `pinned_resource_unusable` | The pinned resource is not a local directory this run can be placed in | Pin a local directory or a repository |
+| `decision_mismatch` | The daemon's copy of the resource no longer agrees with the decision the server computed — the path or the mode changed in between | Retry; if it repeats, re-save the directory so server and runtime read the same row |
+| `not_git_worktree` | The directory runs in `worktree` ("Parallel") but is not a git work tree | Create a local Git repository in it from the source list, or switch the directory back to Direct |
+| `path_not_found` / `path_not_directory` | The bound path no longer exists, or is not a directory | Fix the path in **Resources**. A moved or deleted folder is never silently swapped for another one |
+| `path_forbidden` | The path is one Multica refuses: a system root or drive root, a home directory or its parent, or a system directory such as `/etc`, `/var`, `/tmp`, `/usr`, `/opt` | Pick a directory inside your home folder that is not a system directory |
+| `path_not_writable` | The daemon cannot read or write the directory | Fix its permissions or ownership for the account the daemon runs as |
+| `path_invalid` | The path could not be resolved or used for some other reason; the raw error says which | Read the raw error in the run record |
+| `local_directory_error` | A placement failure the runtime could not narrow to a finer code above, a wait for the directory lock that ended for a reason other than the user cancelling, a cancelled run whose working copy was kept, or the server cancelling a run whose runtime cannot run the directory's mode. The current version reports it too, not only runtimes that predate these codes | Read the raw error; it names the specific cause. This code on its own does not mean the runtime is out of date |
+| `unset` | No code source decision was computed for the run at all | Retry; if it repeats, check that the server and the client app are the same generation |
+
+The runtime never re-chooses: a directory that is missing, unwritable, or not a git work tree fails the run with the code above instead of sending the agent somewhere else.
+
+**Older runtimes keep working.** The server narrows the resource list it sends to what the claiming runtime said it can handle, so a runtime predating multiple local directories or the new working-copy location receives exactly the resources it did before. Upgrading the server does not require upgrading a daemon, and such a runtime's runs behave exactly as they always have. See [Project resources](/project-resources#when-the-server-cannot-place-a-run).
 
 ## AI coding tool fails to start
 

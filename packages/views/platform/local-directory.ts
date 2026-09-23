@@ -57,12 +57,19 @@ export type ValidateLocalDirectoryResult = {
   git_root?: string;
 };
 
+export type InitLocalGitResult = {
+  ok: boolean;
+  reason?: "not_absolute" | "not_a_directory" | "inside_repo" | "error" | "unsupported";
+  error?: string;
+};
+
 interface DesktopLocalDirectoryAPI {
   pickDirectory?: (defaultPath?: string) => Promise<PickDirectoryResult>;
   validateLocalDirectory?: (
     path: string,
   ) => Promise<ValidateLocalDirectoryResult>;
   validateWritablePath?: (path: string) => Promise<{ ok: boolean }>;
+  initLocalGit?: (path: string) => Promise<InitLocalGitResult>;
   listLocalDirectorySharedOverrides?: () => Promise<
     LocalDirectorySharedOverride[]
   >;
@@ -107,6 +114,14 @@ export async function validateLocalDirectory(
 /** Whether `path` (or its nearest existing ancestor) is writable. Web and
  *  older desktop builds return true: they cannot check, and the daemon
  *  still refuses an unwritable root at task time. */
+/** Create a local Git repository in a plain folder. Web and older desktop
+ *  builds report unsupported — they cannot touch the disk. */
+export async function initLocalGit(path: string): Promise<InitLocalGitResult> {
+  const api = readDesktopAPI();
+  if (!api?.initLocalGit) return { ok: false, reason: "unsupported" };
+  return api.initLocalGit(path);
+}
+
 export async function validateWritablePath(path: string): Promise<boolean> {
   const api = readDesktopAPI();
   if (!api?.validateWritablePath) return true;

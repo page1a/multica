@@ -92,7 +92,7 @@ Guest 一整列除了「查看」全是否，没有任何关系能翻过来：�
 - 全局只读拦截层 `middleware.GuestReadOnly` 挂在整个已认证 `/api` 路由组的最前面，按 HTTP 方法判定，而不是靠每个 handler 自己记得检查。
 - `normalizeMemberRole` 放行 `guest`；邀请表的 role CHECK 扩成 `admin / member / guest`（migration 508）。`workspace_share_link` 不走 `normalizeMemberRole`，仍是 `admin / member`，不在本次范围内。
 
-拦截层只对写方法（非 GET/HEAD/OPTIONS）生效，并留了一份**只涉及本人账号状态**的白名单：`/api/me`、`/api/cli-token`、`/api/feedback`、`/api/client-usage`、`/api/inbox`、`/api/notification-preferences`，加上「新建自己的工作区」和「退出工作区」。前缀匹配按路径段边界比较，`/api/me` 不会误命中 `/api/members`。访客改不了任何工作区内容，但能改自己的名字、标记通知已读、退出工作区。
+拦截层只对写方法（非 GET/HEAD/OPTIONS）生效，并留了一份**只涉及本人账号状态**的白名单：`/api/me`、`/api/cli-token`、`/api/feedback`、`/api/client-usage`、`/api/inbox`、`/api/notification-preferences`，加上「新建自己的工作区」和「退出工作区」。DENE-718 补上了同样只改本人账号、却会被当前工作区请求头误伤的几条：接受或拒绝发给自己的邀请（`/api/invitations`）、用分享链接加入（`/api/share-links/join`）、自己的个人访问令牌（`/api/tokens`），以及 Lark / Slack / DingTalk / WeCom / Telegram 的绑定兑换（`/binding/redeem`）。前缀匹配按路径段边界比较，`/api/me` 不会误命中 `/api/members`。访客改不了任何工作区内容，但能改自己的名字、标记通知已读、退出工作区、处理自己的邀请和令牌。
 
 拦截层还顺手把它读到的 `member` 行按「用户 + 工作区」配对塞进 context，`RequireWorkspaceMember` 直接复用，所以写请求的成员查询次数不变，仍是一次。
 

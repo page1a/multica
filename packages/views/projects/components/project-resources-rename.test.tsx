@@ -65,6 +65,7 @@ vi.mock("../../platform/local-directory", () => ({
   pickDirectory: vi.fn(),
   validateLocalDirectory: vi.fn(),
   validateWritablePath: async () => true,
+  initLocalGit: async () => ({ ok: false, reason: "unsupported" as const }),
 }));
 vi.mock("../../platform/use-local-daemon-status", () => ({
   useLocalDaemonStatus: () => ({ daemonId: "daemon-1", deviceName: "MacBook", running: true }),

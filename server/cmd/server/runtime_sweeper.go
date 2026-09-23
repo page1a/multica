@@ -165,6 +165,7 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 		// These stages retain their existing cadence and ordering. Runtime GC and
 		// delegated-failure recovery run in independent lower-frequency loops.
 		sweepStaleRuntimes(ctx, queries, liveness, taskSvc, bus)
+		sweepQuotaBreakers(ctx, taskSvc)
 		sweepOfflineRuntimeTasks(ctx, queries, taskSvc, reconnectGrace)
 		sweepExpiredRuntimeReconnectRetries(ctx, queries, taskSvc, reconnectGrace)
 		sweepStaleTasks(ctx, queries, taskSvc, bus, reconnectGrace)
@@ -172,6 +173,26 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 		sweepExpiredQueuedTasks(ctx, queries, taskSvc, reconnectGrace)
 		sweepDeferredChatFinalizations(ctx, queries, taskSvc)
 	})
+}
+
+// sweepQuotaBreakers re-enables seats whose quota window has passed and
+// finishes replacement handoffs that were chosen but not yet enqueued.
+func sweepQuotaBreakers(ctx context.Context, taskSvc *service.TaskService) {
+	if taskSvc == nil {
+		return
+	}
+	released, err := taskSvc.RecoverExpiredQuotaBreakers(ctx)
+	if err != nil {
+		slog.Warn("runtime sweeper: quota breaker recovery failed", "error", err)
+	} else if released > 0 {
+		slog.Info("runtime sweeper: re-enabled quota-broken seats", "count", released)
+	}
+	finished, err := taskSvc.FinishPendingQuotaRelays(ctx)
+	if err != nil {
+		slog.Warn("runtime sweeper: pending quota relay failed", "error", err)
+	} else if finished > 0 {
+		slog.Info("runtime sweeper: finished pending quota relays", "count", finished)
+	}
 }
 
 func runDelegatedFailureRecoverySweeper(ctx context.Context, taskSvc *service.TaskService) {

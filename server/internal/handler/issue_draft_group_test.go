@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/entitlement/entitlementtest"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 )
@@ -607,10 +609,13 @@ func TestFinalizeIssueDraftGroupRejectsMalformedChildren(t *testing.T) {
 	}
 }
 
-// A group must fail whole when one node's assignee is not invocable by the
-// caller. The check runs before the transaction, so nothing is created — this
-// is the same door the ordinary create path closes.
-func TestFinalizeIssueDraftGroupRejectsUnauthorizedChildAssignee(t *testing.T) {
+// A confirm is one human decision about a whole group, so a single node whose
+// seat cannot be applied must not cost the user the other rows (DENE-694). The
+// unauthorized pair is dropped — never written — the node is created unassigned,
+// and the response names it. The security property is unchanged: the caller
+// cannot dispatch an agent it cannot invoke, it just does not lose the ticket
+// over one.
+func TestFinalizeIssueDraftGroupDropsAChildAssigneeItCannotApply(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -620,17 +625,86 @@ func TestFinalizeIssueDraftGroupRejectsUnauthorizedChildAssignee(t *testing.T) {
 	privateAgentID, _, _ := privateAgentTestFixture(t)
 
 	session := startIssueDraftSession(t)
-	saved := saveIssueDraft(t, session.SessionID, 0, "ready", draftGroupPayload("unauthorized child",
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready", draftGroupPayload("parent with one unappliable seat",
 		assignTo(draftChild("c1", "allowed child", "todo"), agentID),
 		assignTo(draftChild("c2", "child the caller cannot dispatch", "todo"), privateAgentID),
 	))
 
+	var finalized FinalizeIssueDraftResponse
 	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
-		Want(http.StatusForbidden)
+		Want(http.StatusOK).JSON(&finalized)
 
-	if got := issueDraftGroupIssueCount(t); got != 0 {
-		t.Fatalf("a forbidden assignee on the last child still created %d issues; the group "+
-			"transaction must never start", got)
+	if got := issueDraftGroupIssueCount(t); got != 3 {
+		t.Fatalf("a group with one unappliable assignee created %d issues, want the root plus both "+
+			"children — one bad seat must not cost the rest of the group", got)
+	}
+	if len(finalized.Issues) != 3 {
+		t.Fatalf("the response carries %d issues, want the whole group of 3", len(finalized.Issues))
+	}
+
+	allowed, blocked := finalized.Issues[1], finalized.Issues[2]
+	if allowed.Title != "allowed child" || blocked.Title != "child the caller cannot dispatch" {
+		t.Fatalf("the group came back in the wrong order: %q then %q", allowed.Title, blocked.Title)
+	}
+	if allowed.AssigneeID == nil || *allowed.AssigneeID != agentID {
+		t.Fatalf("the allowed child lost its assignee too (%v); only the unappliable node may be dropped",
+			allowed.AssigneeID)
+	}
+	if blocked.AssigneeID != nil || blocked.AssigneeType != nil {
+		t.Fatalf("the unappliable child was assigned anyway (%v/%v)", blocked.AssigneeType, blocked.AssigneeID)
+	}
+	var storedAssignee *string
+	dbfx.QueryRow(t, `SELECT assignee_id::text FROM issue WHERE id = $1`, blocked.ID).Scan(&storedAssignee)
+	if storedAssignee != nil {
+		t.Fatalf("the dropped assignee was written to the row anyway: %v", *storedAssignee)
+	}
+
+	if len(finalized.AssignmentWarnings) != 1 {
+		t.Fatalf("assignment warnings = %+v, want the one child that could not be dispatched",
+			finalized.AssignmentWarnings)
+	}
+	warning := finalized.AssignmentWarnings[0]
+	if warning.Key != "c2" {
+		t.Fatalf("warning key = %q, want c2 — the panel maps the warning back to the row by key", warning.Key)
+	}
+	if warning.Title != "child the caller cannot dispatch" {
+		t.Fatalf("warning title = %q, want the node's title, which is what a person is shown", warning.Title)
+	}
+	if warning.Reason == "" {
+		t.Fatal("the warning carries no reason; the user cannot tell why the seat was dropped")
+	}
+}
+
+// A payload that cannot even be parsed into an assignee — here a bogus id — is
+// the same case as a forbidden one: the node is created unassigned and named,
+// not refused. It is the ordinary create path's own refusal reused as a
+// warning, so the two surfaces cannot drift apart.
+func TestFinalizeIssueDraftGroupDropsAMalformedChildAssignee(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	cleanupIssueDraftGroup(t)
+
+	broken := draftChild("c1", "child with a bogus seat", "todo")
+	broken["assignee_type"] = "agent"
+	broken["assignee_id"] = "not-a-uuid"
+
+	session := startIssueDraftSession(t)
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready",
+		draftGroupPayload("parent with a malformed seat", broken))
+
+	var finalized FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&finalized)
+
+	if got := issueDraftGroupIssueCount(t); got != 2 {
+		t.Fatalf("a group with a malformed assignee created %d issues, want the root and its child", got)
+	}
+	if len(finalized.AssignmentWarnings) != 1 || finalized.AssignmentWarnings[0].Key != "c1" {
+		t.Fatalf("assignment warnings = %+v, want the one malformed child", finalized.AssignmentWarnings)
+	}
+	if len(finalized.Issues) != 2 || finalized.Issues[1].AssigneeID != nil {
+		t.Fatalf("the malformed child was not created unassigned: %+v", finalized.Issues)
 	}
 }
 
@@ -667,5 +741,336 @@ func TestFinalizeIssueDraftGroupCreatesNothingWhenTheQuotaCannotCoverIt(t *testi
 	if got := issueDraftGroupIssueCount(t); got != 0 {
 		t.Fatalf("a group that did not fit the quota created %d issues; a half-created group "+
 			"is worse than none", got)
+	}
+}
+
+// issueDraftGroupTaskCount counts the tasks a single issue of a group enqueued.
+// agent_task_queue carries no foreign key, so this is the only place a confirm's
+// "did it actually start work" question can be answered.
+func issueDraftGroupTaskCount(t *testing.T, issueID string) int {
+	t.Helper()
+	return dbfx.Count(t, `SELECT COUNT(*) FROM agent_task_queue WHERE issue_id = $1`, issueID)
+}
+
+// issueDraftGroupIssueByTitle finds one node of a just-confirmed group by the
+// title the payload gave it.
+func issueDraftGroupIssueByTitle(t *testing.T, issues []IssueDraftCreatedIssue, title string) IssueDraftCreatedIssue {
+	t.Helper()
+	for _, issue := range issues {
+		if issue.Title == title {
+			return issue
+		}
+	}
+	t.Fatalf("the confirmed group has no issue titled %q", title)
+	return IssueDraftCreatedIssue{}
+}
+
+// issueDraftGroupStoredStatus reads a node's status from the row itself, not
+// from the response: the response is built from the same row, but a test that
+// wants to prove what was WRITTEN should read what was written.
+func issueDraftGroupStoredStatus(t *testing.T, issueID string) string {
+	t.Helper()
+	var status string
+	dbfx.QueryRow(t, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&status)
+	return status
+}
+
+// A group's root coordinates. It keeps the assignee the alignment gave it —
+// that is the seat the stage barrier wakes — and it is created in an ACTIVE
+// status, because `notifyParentOfChildDone` skips a backlog parent silently and
+// every stage after the first would then wait forever with nobody told to move
+// it. What keeps it from doing implementation work is this confirm, not a
+// parking status: its run is suppressed.
+func TestFinalizeIssueDraftCoordinatorRootIsCreatedWithoutARun(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	cleanupIssueDraftGroup(t)
+
+	agentID := handlerTestAgentID(t)
+	first := assignTo(draftChild("k1", "coordinated stage one", "todo"), agentID)
+	first["stage"] = 1
+	parked := assignTo(draftChild("k2", "coordinated stage two", "backlog"), agentID)
+	parked["stage"] = 2
+
+	session := startIssueDraftSession(t)
+	payload := draftGroupPayload("coordinated parent", first, parked)
+	payload["status"] = "todo"
+	payload["assignee_type"] = "agent"
+	payload["assignee_id"] = agentID
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready", payload)
+
+	var finalized FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&finalized)
+
+	root := finalized.Issues[0]
+	if root.Status != "in_progress" {
+		t.Fatalf("coordinator root status = %q, want in_progress — a backlog parent is "+
+			"never woken by the stage barrier", root.Status)
+	}
+	if root.AssigneeType == nil || *root.AssigneeType != "agent" ||
+		root.AssigneeID == nil || *root.AssigneeID != agentID {
+		t.Fatalf("coordinator root lost its assignee: %v/%v; the barrier would have "+
+			"nobody to wake", root.AssigneeType, root.AssigneeID)
+	}
+	if got := issueDraftGroupTaskCount(t, root.ID); got != 0 {
+		t.Fatalf("the coordinator root queued %d tasks; confirming a group must not give "+
+			"the coordinator an implementation task of its own", got)
+	}
+
+	startedNow := issueDraftGroupIssueByTitle(t, finalized.Issues, "coordinated stage one")
+	if startedNow.Status != "todo" {
+		t.Fatalf("stage 1 child status = %q, want todo", startedNow.Status)
+	}
+	if got := issueDraftGroupTaskCount(t, startedNow.ID); got != 1 {
+		t.Fatalf("stage 1 child queued %d tasks, want 1", got)
+	}
+
+	waiting := issueDraftGroupIssueByTitle(t, finalized.Issues, "coordinated stage two")
+	if waiting.Status != "backlog" {
+		t.Fatalf("stage 2 child status = %q, want backlog", waiting.Status)
+	}
+	if got := issueDraftGroupTaskCount(t, waiting.ID); got != 0 {
+		t.Fatalf("stage 2 child queued %d tasks; a parked stage must not start work", got)
+	}
+}
+
+// Closing stage 1 wakes the coordinator through the EXISTING stage barrier, and
+// leaves stage 2 parked for it to promote. Nothing new dispatches here: the root
+// is awake precisely because it was created active.
+func TestFinalizeIssueDraftStageBarrierWakesTheCoordinator(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	cleanupIssueDraftGroup(t)
+
+	agentID := handlerTestAgentID(t)
+	first := assignTo(draftChild("w1", "wake stage one", "todo"), agentID)
+	first["stage"] = 1
+	parked := assignTo(draftChild("w2", "wake stage two", "backlog"), agentID)
+	parked["stage"] = 2
+
+	session := startIssueDraftSession(t)
+	payload := draftGroupPayload("wake parent", first, parked)
+	payload["assignee_type"] = "agent"
+	payload["assignee_id"] = agentID
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready", payload)
+
+	var finalized FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&finalized)
+
+	root := finalized.Issues[0]
+	stageOne := issueDraftGroupIssueByTitle(t, finalized.Issues, "wake stage one")
+	stageTwo := issueDraftGroupIssueByTitle(t, finalized.Issues, "wake stage two")
+	if got := issueDraftGroupTaskCount(t, root.ID); got != 0 {
+		t.Fatalf("the coordinator was running before any stage closed (%d tasks)", got)
+	}
+
+	updateChildStatus(t, stageOne.ID, "done")
+
+	if got := countSystemCommentsOn(t, root.ID); got != 1 {
+		t.Fatalf("closing stage 1 produced %d coordinator comments, want 1", got)
+	}
+	if got := issueDraftGroupTaskCount(t, root.ID); got != 1 {
+		t.Fatalf("closing stage 1 queued %d coordinator tasks, want 1 — the next stage "+
+			"has nobody to promote it otherwise", got)
+	}
+	if got := issueDraftGroupStoredStatus(t, stageTwo.ID); got != "backlog" {
+		t.Fatalf("stage 2 status after stage 1 closed = %q, want backlog: the server "+
+			"detects and wakes, the coordinator promotes", got)
+	}
+	if got := issueDraftGroupTaskCount(t, stageTwo.ID); got != 0 {
+		t.Fatalf("stage 2 started on its own (%d tasks)", got)
+	}
+
+	// The coordinator is the one that promotes, through the ordinary status
+	// write. That is the whole point of waking it.
+	updateChildStatus(t, stageTwo.ID, "todo")
+	if got := issueDraftGroupTaskCount(t, stageTwo.ID); got != 1 {
+		t.Fatalf("promoting stage 2 queued %d tasks, want 1", got)
+	}
+}
+
+// No assignee, no fake run. A sub-issue nobody matched is created as an
+// UNASSIGNED todo — visible on the board as work with a hole in it — and the
+// ordinary assign path is the way the hole gets filled. Parking it in Backlog
+// instead would hide exactly the gap the confirm just warned about.
+func TestFinalizeIssueDraftUnassignedChildWaitsForSomeoneToPickItUp(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	cleanupIssueDraftGroup(t)
+
+	agentID := handlerTestAgentID(t)
+	unassigned := draftChild("n1", "nobody matched yet", "todo")
+	unassigned["stage"] = 1
+	parked := assignTo(draftChild("n2", "later stage", "backlog"), agentID)
+	parked["stage"] = 2
+
+	session := startIssueDraftSession(t)
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready",
+		draftGroupPayload("unassigned parent", unassigned, parked))
+
+	var finalized FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&finalized)
+
+	orphan := issueDraftGroupIssueByTitle(t, finalized.Issues, "nobody matched yet")
+	if orphan.Status != "todo" {
+		t.Fatalf("unassigned stage 1 child status = %q, want todo", orphan.Status)
+	}
+	if orphan.AssigneeID != nil || orphan.AssigneeType != nil {
+		t.Fatalf("unassigned stage 1 child carries an assignee: %v/%v",
+			orphan.AssigneeType, orphan.AssigneeID)
+	}
+	if got := issueDraftGroupTaskCount(t, orphan.ID); got != 0 {
+		t.Fatalf("an unassigned sub-issue queued %d tasks; nobody was paged", got)
+	}
+
+	// The follow-up path: fill the seat with the ordinary assign write, and the
+	// ordinary assignment trigger starts the work. No group-specific repair.
+	rec := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+orphan.ID, map[string]any{
+		"assignee_type": "agent",
+		"assignee_id":   agentID,
+	})
+	req = withURLParam(req, "id", orphan.ID)
+	testHandler.UpdateIssue(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign the unassigned child: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := issueDraftGroupTaskCount(t, orphan.ID); got != 1 {
+		t.Fatalf("assigning the unassigned child queued %d tasks, want 1", got)
+	}
+}
+
+// Stage decides a sub-issue's status at the write boundary, not the payload.
+// An older client — or a payload written straight into the draft — can say
+// `todo` on stage 2, and the confirm must still park it: stage 1 runs, later
+// stages wait, and that has to be a server guarantee rather than a promise the
+// client keeps.
+func TestFinalizeIssueDraftDerivesChildStatusFromStage(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	cleanupIssueDraftGroup(t)
+
+	agentID := handlerTestAgentID(t)
+	late := assignTo(draftChild("z1", "raw late todo", "todo"), agentID)
+	late["stage"] = 2
+	early := assignTo(draftChild("z2", "raw early backlog", "backlog"), agentID)
+	early["stage"] = 1
+
+	session := startIssueDraftSession(t)
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready",
+		draftGroupPayload("derived parent", late, early))
+
+	var finalized FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&finalized)
+
+	stageTwo := issueDraftGroupIssueByTitle(t, finalized.Issues, "raw late todo")
+	if got := issueDraftGroupStoredStatus(t, stageTwo.ID); got != "backlog" {
+		t.Fatalf("stage 2 child stored %q, want backlog", got)
+	}
+	if got := issueDraftGroupTaskCount(t, stageTwo.ID); got != 0 {
+		t.Fatalf("stage 2 child queued %d tasks", got)
+	}
+
+	stageOne := issueDraftGroupIssueByTitle(t, finalized.Issues, "raw early backlog")
+	if got := issueDraftGroupStoredStatus(t, stageOne.ID); got != "todo" {
+		t.Fatalf("stage 1 child stored %q, want todo", got)
+	}
+	if got := issueDraftGroupTaskCount(t, stageOne.ID); got != 1 {
+		t.Fatalf("stage 1 child queued %d tasks, want 1", got)
+	}
+}
+
+// Confirming twice — a double click, a lost response, a client that retries —
+// adopts the group instead of building a second one, and the adoption must not
+// re-run anything: not the suppressed coordinator, not the stage 1 children,
+// not the parked ones.
+func TestFinalizeIssueDraftCoordinatorGroupStaysIdempotent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	cleanupIssueDraftGroup(t)
+
+	agentID := handlerTestAgentID(t)
+	first := assignTo(draftChild("r1", "retry stage one", "todo"), agentID)
+	first["stage"] = 1
+	second := assignTo(draftChild("r2", "retry stage two", "backlog"), agentID)
+	second["stage"] = 2
+
+	session := startIssueDraftSession(t)
+	payload := draftGroupPayload("retry parent", first, second)
+	payload["assignee_type"] = "agent"
+	payload["assignee_id"] = agentID
+	saved := saveIssueDraft(t, session.SessionID, 0, "ready", payload)
+
+	var finalized FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&finalized)
+	var repeated FinalizeIssueDraftResponse
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeRequest(t, session.SessionID, saved.Revision)).
+		Want(http.StatusOK).JSON(&repeated)
+
+	if got := issueDraftGroupIssueCount(t); got != 3 {
+		t.Fatalf("a repeated confirm left %d issues, want the original 3", got)
+	}
+	if len(repeated.Issues) != len(finalized.Issues) {
+		t.Fatalf("repeat returned %d issues, first returned %d", len(repeated.Issues), len(finalized.Issues))
+	}
+	root := finalized.Issues[0]
+	if got := issueDraftGroupTaskCount(t, root.ID); got != 0 {
+		t.Fatalf("the repeat queued %d coordinator tasks, want 0", got)
+	}
+	started := issueDraftGroupIssueByTitle(t, finalized.Issues, "retry stage one")
+	if got := issueDraftGroupTaskCount(t, started.ID); got != 1 {
+		t.Fatalf("the repeat left %d stage-1 tasks, want the original 1", got)
+	}
+	waiting := issueDraftGroupIssueByTitle(t, finalized.Issues, "retry stage two")
+	if got := issueDraftGroupTaskCount(t, waiting.ID); got != 0 {
+		t.Fatalf("the repeat queued %d parked tasks, want 0", got)
+	}
+}
+
+// A sub-issue's status is the stage's, decided here rather than trusted from
+// the payload. This is the one-line rule that makes "stage 1 runs, later stages
+// wait" true no matter which client wrote the draft, so it is worth pinning
+// without a database.
+func TestIssueDraftChildStatusForCreateIsDerivedFromStage(t *testing.T) {
+	stage := func(n int32) *int32 { return &n }
+	cases := []struct {
+		name  string
+		stage *int32
+		want  string
+	}{
+		{"no stage is the implicit first stage", nil, "todo"},
+		{"stage 1 starts", stage(1), "todo"},
+		{"stage 2 parks", stage(2), "backlog"},
+		{"the last accepted stage parks", stage(maxIssueDraftChildStage), "backlog"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueDraftChildStatusForCreate(tc.stage); got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The coordinator status must be one the ordinary status catalog accepts, and
+// it must not be backlog: a backlog parent is skipped by the child-done
+// notifier, which is the whole reason the root is kept active.
+func TestIssueDraftCoordinatorStatusIsActive(t *testing.T) {
+	if issueDraftCoordinatorStatus == "backlog" {
+		t.Fatal("a backlog coordinator is never woken when a stage closes")
+	}
+	if !issuestatus.IsBuiltIn(issueDraftCoordinatorStatus) {
+		t.Fatalf("coordinator status %q is not a built-in status; a workspace whose "+
+			"catalog is empty would refuse the create", issueDraftCoordinatorStatus)
 	}
 }

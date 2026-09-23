@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { api } from "@multica/core/api";
@@ -15,6 +16,7 @@ import {
   workspaceListOptions,
 } from "@multica/core/workspace/queries";
 import type { RoutingHealth } from "@multica/core/workspace/routing-health";
+import { DEFAULT_ROUTING_POLICY_PROMPT } from "@multica/core/workspace/routing-policy-prompt";
 import {
   normalizeStaleReviewHours,
   normalizeThreshold,
@@ -30,6 +32,7 @@ import { useT } from "../../i18n";
 import {
   SettingsCard,
   SettingsRow,
+  SettingsSaveState,
   SettingsSection,
   SettingsTab,
 } from "./settings-layout";
@@ -85,6 +88,7 @@ export function RoutingTab() {
   const [threshold, setThreshold] = useState(String(saved.confidence_threshold));
   const [staleHours, setStaleHours] = useState(String(saved.stale_review_hours));
   const [baseUrl, setBaseUrl] = useState(saved.base_url);
+  const [policyPrompt, setPolicyPrompt] = useState(saved.policy_prompt ?? "");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const autoDiscoverKey = useRef("");
   const autoFilledModel = useRef("");
@@ -103,6 +107,7 @@ export function RoutingTab() {
     setThreshold(String(next.confidence_threshold));
     setStaleHours(String(next.stale_review_hours));
     setBaseUrl(next.base_url);
+    setPolicyPrompt(next.policy_prompt ?? "");
     setKeyInput("");
     setAvailableModels([]);
     autoDiscoverKey.current = "";
@@ -117,8 +122,9 @@ export function RoutingTab() {
       confidence_threshold: normalizeThreshold(Number(threshold)),
       stale_review_hours: normalizeStaleReviewHours(Number(staleHours)),
       base_url: baseUrl,
+      policy_prompt: policyPrompt,
     }),
-    [enabled, model, threshold, staleHours, baseUrl],
+    [enabled, model, threshold, staleHours, baseUrl, policyPrompt],
   );
 
   const discoverModels = useMutation({
@@ -144,7 +150,7 @@ export function RoutingTab() {
     onError: () => setAvailableModels([]),
   });
 
-  useAutoSave({
+  const autoSave = useAutoSave({
     value: draft,
     savedValue: saved,
     onSave: async (next) => {
@@ -171,7 +177,8 @@ export function RoutingTab() {
       a.model.trim() === b.model.trim() &&
       a.confidence_threshold === b.confidence_threshold &&
       a.stale_review_hours === b.stale_review_hours &&
-      a.base_url.trim() === b.base_url.trim(),
+      a.base_url.trim() === b.base_url.trim() &&
+      (a.policy_prompt ?? "").trim() === (b.policy_prompt ?? "").trim(),
   });
 
   // Live health from the server. Without it the fourth state is unreachable:
@@ -263,6 +270,9 @@ export function RoutingTab() {
   // server's explicit `ineffective`, so a health report that has not caught up
   // with the switch yet cannot report a fault that does not exist.
   const state = routingState(draft, health.data);
+  const defaultPrompt =
+    health.data?.default_policy_prompt?.trim() || DEFAULT_ROUTING_POLICY_PROMPT;
+  const shownPrompt = policyPrompt.trim() === "" ? defaultPrompt : policyPrompt;
 
   return (
     <SettingsTab
@@ -447,16 +457,114 @@ export function RoutingTab() {
         />
       </SettingsSection>
 
-      {/* Placeholder for the candidate filter chain. Kept visible and clearly
-          marked as unimplemented so the seam is documented where the person
-          who would ask for it is already looking. */}
-      <SettingsSection title={t(($) => $.routing.filters_title)}>
-        <div className="rounded-lg border border-dashed border-surface-border px-4 py-6 text-caption text-muted-foreground">
-          {t(($) => $.routing.filters_placeholder)}
-        </div>
+      <SettingsSection
+        title={t(($) => $.routing.policy_label)}
+        description={t(($) => $.routing.policy_description)}
+        action={
+          <div className="flex items-center gap-2">
+            <SettingsSaveState
+              status={autoSave.status}
+              savingLabel={t(($) => $.routing.policy_saving)}
+              savedLabel={t(($) => $.routing.policy_saved)}
+              errorLabel={t(($) => $.routing.policy_save_error)}
+            />
+            {canManage ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setPolicyPrompt("")}
+              >
+                {t(($) => $.routing.policy_restore)}
+              </Button>
+            ) : null}
+          </div>
+        }
+      >
+        <Textarea
+          value={shownPrompt}
+          disabled={!canManage}
+          rows={8}
+          aria-label={t(($) => $.routing.policy_label)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setPolicyPrompt(next.trim() === defaultPrompt.trim() ? "" : next);
+          }}
+          className="min-h-36 text-caption leading-5"
+        />
+        {autoSave.status === "error" ? (
+          <p className="text-caption text-destructive" role="alert">
+            {t(($) => $.routing.policy_save_error)}
+          </p>
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection
+        title={t(($) => $.routing.quota_title)}
+        description={t(($) => $.routing.quota_description)}
+      >
+        <SettingsCard>
+          {(health.data?.provider_quotas ?? []).map((quota) => {
+            let value = t(($) => $.routing.quota_unknown);
+            if (quota.status === "quota_exhausted") {
+              value = t(($) => $.routing.quota_exhausted);
+            } else if (quota.status === "available" && quota.used_percent != null) {
+              value = t(($) => $.routing.quota_available, {
+                percent: Math.round(quota.used_percent),
+              });
+            }
+            const reset = quota.reset_at
+              ? t(($) => $.routing.quota_resets, { when: quota.reset_at })
+              : "";
+            const updated = quota.observed_at
+              ? t(($) => $.routing.quota_updated, { when: quota.observed_at })
+              : "";
+            return (
+              <SettingsRow key={quota.provider} label={providerLabel(quota.provider)}>
+                <span className="font-mono text-caption tabular-nums text-muted-foreground">
+                  {[value, reset, updated].filter(Boolean).join(" · ")}
+                </span>
+              </SettingsRow>
+            );
+          })}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t(($) => $.routing.seats_title)}
+        description={t(($) => $.routing.filters_placeholder)}
+      >
+        <SettingsCard>
+          {(health.data?.seats ?? []).length === 0 ? (
+            <p className="px-4 py-3 text-caption text-muted-foreground">
+              {t(($) => $.routing.seats_empty)}
+            </p>
+          ) : (
+            (health.data?.seats ?? []).map((seat) => (
+              <SettingsRow key={seat.agent_id} label={seat.tier}>
+                <span className="font-mono text-caption text-muted-foreground">
+                  {seat.availability}
+                </span>
+              </SettingsRow>
+            ))
+          )}
+        </SettingsCard>
       </SettingsSection>
     </SettingsTab>
   );
+}
+
+function providerLabel(provider: string): string {
+  switch (provider) {
+    case "claude":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    case "grok":
+      return "Grok";
+    default:
+      return provider;
+  }
 }
 
 /**

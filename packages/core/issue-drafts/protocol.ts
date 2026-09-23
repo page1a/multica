@@ -122,10 +122,12 @@ export function parseIssueDraftBlock(content: string): IssueDraftPatch | null {
  *     server refuses, and unlike a missing key there is nothing to guess; the
  *     row would be a line in the preview that can never be created.
  *
- * An assignee the carrier names is ignored. It has no roster, its instructions
- * forbid it, and a wrong id here fails the whole confirm
- * (`validateAssigneePair` refuses rather than ignores) — the preview panel is
- * the only thing that may choose a real assignee.
+ * An assignee the carrier names is ignored. It has no roster and its
+ * instructions forbid it; the preview panel is the only thing that may choose a
+ * real assignee. A wrong id that reaches the server is refused by
+ * `validateAssigneePair`, and since DENE-694 that refusal costs only the one
+ * row — the issue is created unassigned and reported back as an assignment
+ * warning — but the carrier still never gets to name a seat.
  */
 function parseIssueDraftChildren(raw: unknown): IssueDraftChild[] | undefined {
   if (!Array.isArray(raw)) return undefined;

@@ -75,6 +75,7 @@ import {
 import { useT } from "../../i18n";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
 
 // ---------------------------------------------------------------------------
 // Property row — sidebar property display
@@ -153,6 +154,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const [propertiesOpen, setPropertiesOpen] = useState(true);
   const [progressOpen, setProgressOpen] = useState(true);
   const [descriptionOpen, setDescriptionOpen] = useState(true);
+  const [shareScopeOpen, setShareScopeOpen] = useState(false);
+  const [shareAudienceSize, setShareAudienceSize] = useState<number | undefined>();
 
   // Sidebar panel
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -489,13 +492,15 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       {/* Resources */}
       <ProjectResourcesSection projectId={projectId} />
 
-      <ProjectMembersSection
-        projectId={projectId}
-        canManage={
-          isWorkspaceAdmin ||
-          (project.lead_type === "member" && project.lead_id === userId)
-        }
-      />
+      <div id="project-members-section">
+        <ProjectMembersSection
+          projectId={projectId}
+          canManage={
+            isWorkspaceAdmin ||
+            (project.lead_type === "member" && project.lead_id === userId)
+          }
+        />
+      </div>
     </div>
   );
 
@@ -524,6 +529,13 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               >
                 {isPinned ? <PinOff /> : <Pin />}
               </Button>
+              <WriteAction>
+                <ShareScopeTrigger
+                  scope={project.visibility}
+                  audienceSize={shareAudienceSize}
+                  onClick={() => setShareScopeOpen(true)}
+                />
+              </WriteAction>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -607,6 +619,28 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           </Sheet>
         )}
       </ResizablePanelGroup>
+
+      <ShareScopeDialog
+        open={shareScopeOpen}
+        onOpenChange={setShareScopeOpen}
+        target={{
+          kind: "project",
+          resourceId: project.id,
+          currentScope: project.visibility,
+          audienceSize: shareAudienceSize,
+          resourceLabel: project.title,
+        }}
+        onSaved={(result) => {
+          setShareAudienceSize(result.audience_size);
+        }}
+        onManageMembers={() => {
+          setShareScopeOpen(false);
+          document.getElementById("project-members-section")?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+        }}
+      />
 
       {/* Delete confirmation */}
       {isWorkspaceAdmin && (

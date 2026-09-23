@@ -792,6 +792,98 @@ describe("IssueDraftPage group", () => {
     // The page still lands on the group's root.
     expect(mocks.replace).toHaveBeenCalledWith("/acme/issues/issue-9");
   });
+
+  it("keeps the dropped-seat notice when one tick sends the confirm twice", async () => {
+    // Only the answer that INSERTED the rows can name the seats it could not
+    // apply: the duplicate adopts the group the first one made and reports
+    // nothing, because it created nothing. Reading that silence as "every seat
+    // landed" would let a duplicate press erase the notice the creating answer
+    // produced, which is the one thing the person had to be told (DENE-694).
+    const created = {
+      draft: draftSummary({
+        status: "completed",
+        draft: GROUP_DRAFT,
+        issue_id: "issue-9",
+      }),
+      issue_id: "issue-9",
+      issues: [
+        { id: "issue-9", identifier: "MUL-9", title: "Parent", status: "todo" },
+        { id: "issue-10", identifier: "MUL-10", title: "后端接口", status: "todo" },
+        { id: "issue-11", identifier: "MUL-11", title: "前端页面", status: "backlog" },
+      ],
+    };
+    mocks.drafts = [draftSummary({ status: "ready", draft: GROUP_DRAFT })];
+    // `mockResolvedValueOnce` queues survive `clearAllMocks`, so the two answers
+    // below are queued onto an empty mock rather than onto a leftover.
+    mocks.finalizeIssueDraft.mockReset();
+    mocks.finalizeIssueDraft
+      .mockResolvedValueOnce({
+        ...created,
+        assignment_warnings: [
+          { key: "c1", title: "后端接口", reason: "cannot invoke this agent" },
+        ],
+      })
+      // The adopting answer of the same round, and the later one by
+      // construction: it can only start once the first insert committed.
+      .mockResolvedValueOnce({ ...created });
+    renderPage();
+    const confirm = await screen.findByRole("button", { name: /Confirm and create/ });
+    await waitFor(() => expect(confirm).toBeEnabled());
+
+    await act(async () => {
+      // Raw dispatches for the same reason the double-confirm test above uses
+      // them: RTL's fireEvent flushes the disabled button between the two.
+      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(mocks.finalizeIssueDraft).toHaveBeenCalledTimes(2);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "“后端接口” could not be assigned, so it was created unassigned.",
+        ),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("stays on the panel that names the dropped seat instead of replacing the URL", async () => {
+    // This page is the only place the dropped seat is ever visible — the issue
+    // it made is an ordinary unassigned issue by the time the URL changes — so
+    // the replace a clean confirm performs has to wait. The created rows are
+    // still one click away, which is what the replace would have landed on.
+    mocks.drafts = [draftSummary({ status: "ready", draft: GROUP_DRAFT })];
+    mocks.finalizeIssueDraft.mockResolvedValue({
+      draft: draftSummary({
+        status: "completed",
+        draft: GROUP_DRAFT,
+        issue_id: "issue-9",
+      }),
+      issue_id: "issue-9",
+      issues: [
+        { id: "issue-9", identifier: "MUL-9", title: "Parent", status: "todo" },
+        { id: "issue-10", identifier: "MUL-10", title: "后端接口", status: "todo" },
+        { id: "issue-11", identifier: "MUL-11", title: "前端页面", status: "backlog" },
+      ],
+      assignment_warnings: [
+        { key: "c2", title: "前端页面", reason: "cannot invoke this agent" },
+      ],
+    });
+    renderPage();
+    const confirm = await screen.findByRole("button", { name: /Confirm and create/ });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await userEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "“前端页面” could not be assigned, so it was created unassigned.",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByRole("link", { name: /MUL-9/ })).toBeTruthy();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
 });
 
 describe("IssueDraftPage loading", () => {

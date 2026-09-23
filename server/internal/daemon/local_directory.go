@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/multica-ai/multica/server/internal/coderesolve"
 )
 
 // localDirectoryResourceType is the project_resource discriminator the daemon
@@ -199,6 +201,14 @@ func localDirectoryAssignmentForTask(task Task, daemonID string) (*localDirector
 // directory of every project on this machine — including that project's own
 // lower-priority rows — is read-only.
 func localDirectoryPlanForTask(task Task, daemonID string) (chosen *localDirectoryAssignment, readOnly []*localDirectoryAssignment, err error) {
+	// A decision is the whole answer. Scanning the resource list here would
+	// put the daemon back in the business of choosing — first project wins,
+	// first row wins — which is the disagreement this field exists to end.
+	// No decision means an older server; that claim still has the shape the
+	// scanner was written for, and the scanner stays.
+	if task.CodeDecision != nil {
+		return planFromCodeDecision(task, daemonID)
+	}
 	if task.IsLeaderTask {
 		return nil, nil, nil
 	}
@@ -257,8 +267,13 @@ func localDirectoryLockExempt(task Task) bool {
 }
 
 // findLocalDirectoryAssignment picks the local_directory this daemon runs the
-// task in, and reports the project's OTHER directories on this machine as
-// read-only context.
+// task in when the claim carries no code decision, and reports the project's
+// OTHER directories on this machine as read-only context.
+//
+// A claim that DOES carry a decision never reaches this function. The
+// decision names one resource id; planFromCodeDecision loads that row and
+// checks it, and a row that does not match is a failure rather than a reason
+// to keep scanning.
 //
 // One run writes one directory (DENE-617 invariant 1). Which one is not a
 // race: resources arrive in `position` order (ListProjectResources orders by
@@ -700,5 +715,265 @@ func (l *LocalPathLocker) releaser(realPath string, entry *pathLockEntry) func()
 			// just looked up the same entry and is about to TryLock.
 			_ = realPath
 		})
+	}
+}
+
+// codePlacementError is a refusal to place a run. Code is what the server
+// records as the failure reason; the text is what the person fixing the
+// binding reads. Returning one of these is the end of placement: the caller
+// fails the task and does not try another directory or a remote checkout.
+type codePlacementError struct {
+	Code string
+	Err  error
+}
+
+func (e *codePlacementError) Error() string {
+	if e == nil || e.Err == nil {
+		return "code placement failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *codePlacementError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// placementCode is the failure reason a placement error carries. Anything
+// that is not a placement error keeps the historical local_directory_error
+// bucket, so a claim with no decision still fails the way it always has.
+func placementCode(err error) string {
+	var placed *codePlacementError
+	if errors.As(err, &placed) && placed.Code != "" {
+		return placed.Code
+	}
+	return "local_directory_error"
+}
+
+// planFromCodeDecision loads the one directory the decision names and checks
+// it. It does not walk the resource list looking for a better candidate: a
+// missing id, a path that disagrees, a mode this runtime cannot run, or a
+// directory that is not there is a failure with a code.
+func planFromCodeDecision(task Task, daemonID string) (*localDirectoryAssignment, []*localDirectoryAssignment, error) {
+	decision := *task.CodeDecision
+	switch decision.Kind() {
+	case coderesolve.KindUnresolvable:
+		failure, _ := decision.Failure()
+		code := string(failure.Code)
+		if code == "" {
+			code = string(coderesolve.CodeUnset)
+		}
+		reason := strings.TrimSpace(failure.Reason)
+		if reason == "" {
+			reason = "this run has no usable code source"
+		}
+		return nil, nil, &codePlacementError{Code: code, Err: errors.New(reason)}
+	case coderesolve.KindRemoteCache, coderesolve.KindSharedScratch:
+		// No directory to lock or to use as cwd. Read-only entries, if the
+		// decision named any, stay context for the brief and nothing else.
+		return nil, readOnlyAssignments(decision), nil
+	case coderesolve.KindLocalInPlace, coderesolve.KindLocalShared, coderesolve.KindLocalWorktree:
+		chosen, err := lookupDecidedDirectory(task, daemonID, decision)
+		if err != nil {
+			return nil, nil, err
+		}
+		return chosen, readOnlyAssignments(decision), nil
+	default:
+		return nil, nil, &codePlacementError{
+			Code: string(coderesolve.CodeUnknownExecutionMode),
+			Err:  fmt.Errorf("code source decision kind %q is not one this daemon can execute", decision.Kind()),
+		}
+	}
+}
+
+// readOnlyAssignments lists the directories the decision says this run may
+// read. They are not checked for writability and they are not a fallback
+// cwd: a missing read-only path is omitted rather than failed, because
+// failing it would change where the run writes.
+func readOnlyAssignments(decision coderesolve.Decision) []*localDirectoryAssignment {
+	local, _ := decision.Local()
+	var out []*localDirectoryAssignment
+	for _, dir := range decision.ReadOnly() {
+		if dir.ResourceID != "" && dir.ResourceID == local.ResourceID {
+			continue
+		}
+		abs, err := normalizeLocalPath(dir.Path)
+		if err != nil {
+			continue
+		}
+		real, _ := resolveRealPath(abs)
+		out = append(out, &localDirectoryAssignment{
+			AbsPath:    abs,
+			RealPath:   real,
+			ResourceID: dir.ResourceID,
+			ProjectID:  dir.ProjectID,
+			Ref:        localDirectoryRef{LocalPath: abs, Label: dir.Name},
+		})
+	}
+	return out
+}
+
+func lookupDecidedDirectory(task Task, daemonID string, decision coderesolve.Decision) (*localDirectoryAssignment, error) {
+	target, ok := decision.Local()
+	if !ok {
+		return nil, &codePlacementError{Code: "decision_mismatch", Err: errors.New("local code decision carried no directory")}
+	}
+	id := strings.TrimSpace(target.ResourceID)
+	if id == "" {
+		return nil, &codePlacementError{
+			Code: string(coderesolve.CodePinnedResourceNotFound),
+			Err:  errors.New("code decision names no local directory"),
+		}
+	}
+	res, projectID, found := findResourceByID(task, id)
+	if !found {
+		return nil, &codePlacementError{
+			Code: string(coderesolve.CodePinnedResourceNotFound),
+			Err:  fmt.Errorf("code decision names local directory %s, which is not in this task", id),
+		}
+	}
+	if res.ResourceType != localDirectoryResourceType {
+		return nil, &codePlacementError{
+			Code: string(coderesolve.CodePinnedResourceUnusable),
+			Err:  fmt.Errorf("code decision resource %s is %s, not a local directory", id, res.ResourceType),
+		}
+	}
+	var ref localDirectoryRef
+	if err := json.Unmarshal(res.ResourceRef, &ref); err != nil {
+		return nil, &codePlacementError{
+			Code: string(coderesolve.CodeMalformedResource),
+			Err:  fmt.Errorf("local_directory: parse resource_ref: %w", err),
+		}
+	}
+	ref.DaemonID = strings.TrimSpace(ref.DaemonID)
+	if ref.DaemonID == "" {
+		return nil, &codePlacementError{
+			Code: string(coderesolve.CodeMalformedResource),
+			Err:  errors.New("local_directory: resource_ref missing daemon_id"),
+		}
+	}
+	if ref.DaemonID != daemonID {
+		return nil, &codePlacementError{
+			Code: string(coderesolve.CodePinnedResourceOtherMachine),
+			Err:  fmt.Errorf("local directory %s is bound to a different runtime", id),
+		}
+	}
+	absPath, err := normalizeLocalPath(ref.LocalPath)
+	if err != nil {
+		return nil, &codePlacementError{Code: string(coderesolve.CodeMalformedResource), Err: err}
+	}
+	wantPath := target.Path
+	if decision.Kind() == coderesolve.KindLocalWorktree {
+		// Path is the working copy beside the repository, which does not
+		// exist yet. The row has to agree with the repository the copy is
+		// taken from.
+		wantPath = target.RepoPath
+	}
+	if strings.TrimSpace(wantPath) == "" || !localPathsAgree(absPath, wantPath) {
+		return nil, &codePlacementError{
+			Code: "decision_mismatch",
+			Err:  fmt.Errorf("local directory %s is %q, but the decision says %q", id, absPath, wantPath),
+		}
+	}
+	wantMode := modeForDecision(target.ExecutionMode, decision.Kind())
+	gotMode := strings.TrimSpace(ref.ExecutionMode)
+	if gotMode == "" {
+		gotMode = localDirectoryModeInPlace
+	}
+	if gotMode != wantMode {
+		return nil, &codePlacementError{
+			Code: "decision_mismatch",
+			Err:  fmt.Errorf("local directory %s is execution_mode %q, but the decision says %q", id, gotMode, wantMode),
+		}
+	}
+	ref.ExecutionMode = gotMode
+	if root := strings.TrimSpace(target.WorktreeRoot); root != "" {
+		ref.WorktreeRoot = root
+	}
+	if strings.TrimSpace(ref.Label) == "" {
+		ref.Label = strings.TrimSpace(target.DisplayName)
+	}
+	realPath, _ := resolveRealPath(absPath)
+	assignment := &localDirectoryAssignment{
+		Ref:        ref,
+		AbsPath:    absPath,
+		RealPath:   realPath,
+		ResourceID: res.ID,
+		ProjectID:  projectID,
+	}
+	if err := assignment.ValidateExecutionMode(); err != nil {
+		return nil, &codePlacementError{Code: string(coderesolve.CodeDaemonCannotRunMode), Err: err}
+	}
+	if err := validateLocalPath(absPath); err != nil {
+		return nil, &codePlacementError{Code: classifyPathFailure(err), Err: err}
+	}
+	if gotMode == localDirectoryModeWorktree && !isGitWorkTree(context.Background(), absPath) {
+		return nil, &codePlacementError{
+			Code: "not_git_worktree",
+			Err:  fmt.Errorf("local_directory: %q is not a git work tree, so it cannot run in worktree mode", absPath),
+		}
+	}
+	return assignment, nil
+}
+
+func modeForDecision(mode string, kind coderesolve.Kind) string {
+	switch strings.TrimSpace(mode) {
+	case localDirectoryModeInPlace, localDirectoryModeWorktree, localDirectoryModeShared:
+		return strings.TrimSpace(mode)
+	}
+	switch kind {
+	case coderesolve.KindLocalShared:
+		return localDirectoryModeShared
+	case coderesolve.KindLocalWorktree:
+		return localDirectoryModeWorktree
+	default:
+		return localDirectoryModeInPlace
+	}
+}
+
+func findResourceByID(task Task, id string) (ProjectResourceData, string, bool) {
+	for _, project := range task.projectContexts() {
+		for _, res := range project.Resources {
+			if res.ID == id {
+				return res, project.ID, true
+			}
+		}
+	}
+	return ProjectResourceData{}, "", false
+}
+
+// localPathsAgree reports whether the directory on the resource and the
+// directory in the decision are the same place. A symlink and its target
+// agree; two different directories do not, even when one of them also
+// happens to be bound to this task.
+func localPathsAgree(resourcePath, decisionPath string) bool {
+	resourcePath = filepath.Clean(resourcePath)
+	decisionPath = filepath.Clean(strings.TrimSpace(decisionPath))
+	if resourcePath == decisionPath {
+		return true
+	}
+	resourceReal, resourceErr := filepath.EvalSymlinks(resourcePath)
+	decisionReal, decisionErr := filepath.EvalSymlinks(decisionPath)
+	if resourceErr != nil || decisionErr != nil {
+		return false
+	}
+	return filepath.Clean(resourceReal) == filepath.Clean(decisionReal)
+}
+
+func classifyPathFailure(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "does not exist"):
+		return "path_not_found"
+	case strings.Contains(msg, "not a directory"):
+		return "path_not_directory"
+	case strings.Contains(msg, "protected system root"), strings.Contains(msg, "home directory"), strings.Contains(msg, "drive root"):
+		return "path_forbidden"
+	case strings.Contains(msg, "write "), strings.Contains(msg, "read "):
+		return "path_not_writable"
+	default:
+		return "path_invalid"
 	}
 }

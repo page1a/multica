@@ -149,6 +149,13 @@ type repoCheckoutRequest struct {
 	// --fresh`). Without it an existing checkout that holds work is kept; older
 	// daemons ignore the field and always start over.
 	Fresh bool `json:"fresh,omitempty"`
+	// SparsePaths is an explicit path list for this checkout. SparsePathsSet
+	// distinguishes "caller chose these paths" (including an empty list, which
+	// means the whole tree) from "caller said nothing, use the task's
+	// declaration". Older clients omit both and keep a full checkout unless
+	// the task itself declared paths.
+	SparsePaths    []string `json:"sparse_paths,omitempty"`
+	SparsePathsSet bool     `json:"sparse_paths_set,omitempty"`
 }
 
 type activeRepoCheckoutTask struct {
@@ -165,6 +172,10 @@ type activeRepoCheckoutTask struct {
 	// request for the same reason every other identity field is: the caller
 	// must not be able to choose it.
 	LocalDirectory *localDirectoryAssignment
+	// CheckoutPaths is the issue's checkout_paths declaration. A checkout
+	// request that does not set its own paths uses this. Empty means the
+	// whole tree.
+	CheckoutPaths string
 }
 
 // registerActiveRepoCheckoutTask binds checkout identity to the active task.
@@ -457,6 +468,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
 	mux.HandleFunc("/worktrees/cleanup", d.worktreeCleanupHandler())
+	mux.HandleFunc("/sessions/scratch", d.sharedScratchHandler())
 
 	srv := &http.Server{Handler: mux}
 
@@ -558,6 +570,10 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			checkoutRef = d.taskRepoDefaultRef(req.WorkspaceID, req.TaskID, req.URL)
 		}
 
+		sparsePaths := activeTask.CheckoutPaths
+		if req.SparsePathsSet {
+			sparsePaths = strings.Join(req.SparsePaths, ",")
+		}
 		params := repocache.WorktreeParams{
 			WorkspaceID:         req.WorkspaceID,
 			RepoURL:             req.URL,
@@ -568,6 +584,7 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
 			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
 			Fresh:               req.Fresh,
+			SparsePaths:         sparsePaths,
 		}
 		if req.RetryBusy {
 			params.LockWaitTimeout = repoCheckoutLockWaitTimeout

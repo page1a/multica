@@ -250,5 +250,13 @@
     "delete": "删除会话",
     "archive": "归档会话",
     "unarchive": "取消归档"
+  },
+  "provider_quota": {
+    "label": "额度",
+    "unknown": "未知",
+    "exhausted": "已用尽",
+    "used": "{{percent}}%",
+    "resets": "{{when}} 重置",
+    "updated": "更新于 {{when}}"
   }
 }

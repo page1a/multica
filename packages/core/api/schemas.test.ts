@@ -2981,6 +2981,38 @@ describe("alignment group drift", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("reads the seats a confirm could not apply, and a missing list as none", () => {
+    const parsed = IssueDraftFinalizeSchema.parse({
+      draft,
+      issue_id: "issue-1",
+      assignment_warnings: [
+        { key: "c1", title: "Backend", reason: "cannot assign to archived agent" },
+      ],
+    });
+    expect(parsed.assignment_warnings).toEqual([
+      { key: "c1", title: "Backend", reason: "cannot assign to archived agent" },
+    ]);
+    // The same statement as a backend that predates the field: every seat
+    // landed. It must not turn a confirm that succeeded into a parse failure.
+    expect(
+      IssueDraftFinalizeSchema.parse({ draft, issue_id: "issue-1" })
+        .assignment_warnings,
+    ).toEqual([]);
+  });
+
+  it("keeps a warning row readable even when its fields are missing", () => {
+    // Dropping the list over one unreadable row would tell the user every seat
+    // landed on the one screen where a dropped seat is ever visible.
+    const parsed = IssueDraftFinalizeSchema.parse({
+      draft,
+      issue_id: "issue-1",
+      assignment_warnings: [{ key: "c1" }],
+    });
+    expect(parsed.assignment_warnings).toEqual([
+      { key: "c1", title: "", reason: "" },
+    ]);
+  });
 });
 
 describe("alignment rounds on the wire", () => {

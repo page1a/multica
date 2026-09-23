@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join } from "path";
 import { promisify } from "util";
 import { normalizeRepoUrl } from "@multica/core/projects/source-rule";
 import { activeDaemonProfileDir } from "./daemon-manager";
+import { initLocalGit, type InitLocalGitResult } from "./local-git";
 import {
   localDirectoryOverridesPath,
   readLocalDirectoryOverrides,
@@ -242,6 +243,11 @@ export function setupLocalDirectory(
     "local-directory:validate",
     (_event, path: string): Promise<ValidateLocalDirectoryResult> =>
       validateLocalDirectory(path),
+  );
+
+  ipcMain.handle(
+    "local-directory:init-git",
+    (_event, path: string): Promise<InitLocalGitResult> => initLocalGit(path),
   );
 
   ipcMain.handle(

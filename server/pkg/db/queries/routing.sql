@@ -128,6 +128,7 @@ ORDER BY id;
 SELECT i.id FROM issue i
 WHERE i.workspace_id = sqlc.arg('workspace_id')::uuid
   AND i.status = ANY(sqlc.arg('statuses')::text[])
+  AND i.parent_issue_id IS NULL
   AND COALESCE(i.last_activity_at, i.updated_at) < sqlc.arg('before')::timestamptz
   AND NOT EXISTS (
       SELECT 1 FROM agent_task_queue q
@@ -189,3 +190,20 @@ WHERE id = sqlc.arg('id')::uuid
   AND workspace_id = sqlc.arg('workspace_id')::uuid
   AND status = ANY(sqlc.arg('statuses')::text[])
 RETURNING *;
+
+-- name: ListRecentTaskSpansByAgents :many
+-- Wall-clock spans of the latest finished tasks for the watched agents.
+-- Routing turns these into p50/p95. A row missing either timestamp is not a
+-- duration, and this query does not invent one. Forty samples is enough for a
+-- stable percentile and small enough to attach to a routing pass.
+SELECT agent_id, started_at, completed_at
+FROM (
+    SELECT agent_id, started_at, completed_at,
+           row_number() OVER (PARTITION BY agent_id ORDER BY completed_at DESC) AS n
+    FROM agent_task_queue
+    WHERE agent_id = ANY(sqlc.arg('agent_ids')::uuid[])
+      AND started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at >= started_at
+) spans
+WHERE n <= 40;

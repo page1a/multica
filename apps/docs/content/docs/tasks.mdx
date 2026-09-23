@@ -77,7 +77,7 @@ Changing an issue's assignee or status does not stop a run that has already star
 
 ## Failures and automatic retries
 
-Transient faults — a runtime going briefly offline, a daemon restart, an execution timeout, or a network interruption in the AI coding tool — can trigger an automatic retry. A regular run executes at most twice by default; tool network interruptions get up to three attempts.
+Transient faults — a runtime going briefly offline, a daemon restart, an execution timeout, or a network interruption in the AI coding tool — can trigger an automatic retry. A regular run executes at most twice by default; tool network interruptions get up to three attempts. If the interrupted run already had a session, the retry continues that session with a short continue instruction instead of re-sending the original task. Failures that poison the conversation still start a fresh session.
 
 Errors returned by the agent itself are usually not retried automatically. Expired credentials, exhausted quota, misconfiguration, or a model unable to complete the request all need the cause fixed first, followed by a manual retry.
 

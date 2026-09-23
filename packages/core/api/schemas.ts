@@ -97,6 +97,7 @@ import type {
   SkillSummary,
   Squad,
   TaskLogExportBundle,
+  TaskLogExportPush,
   TimelineEntry,
   User,
   WebhookDelivery,
@@ -1410,9 +1411,11 @@ const ProjectSchema = z.object({
   due_date: z.string().nullable().default(null),
   created_at: z.string(),
   updated_at: z.string(),
+  created_by: z.string().nullable().optional(),
   issue_count: z.number().default(0),
   done_count: z.number().default(0),
   resource_count: z.number().default(0),
+  visibility: z.enum(["private", "project", "workspace"]).default("private"),
 }).loose();
 
 const SearchProjectResultSchema = ProjectSchema.extend({
@@ -2695,6 +2698,22 @@ export const IssueDraftCreatedIssueSchema = z.object({
 }).loose();
 
 /**
+ * One node of a confirmed group whose assignee could not be applied. The issue
+ * was still created, unassigned. `key` is empty for the parent.
+ *
+ * Every field falls back rather than failing the parse: a warning row that
+ * cannot be read is still "that seat did not land", and refusing the whole
+ * confirm response over it would be the worse of the two failures.
+ */
+export const IssueDraftAssignmentWarningSchema = z
+  .object({
+    key: z.string().catch(""),
+    title: z.string().catch(""),
+    reason: z.string().catch(""),
+  })
+  .loose();
+
+/**
  * The result of confirming a draft.
  *
  * `issue_id` has no fallback on purpose. This endpoint returns 2xx only after
@@ -2711,11 +2730,16 @@ export const IssueDraftCreatedIssueSchema = z.object({
  * time: the group is a single judgement, and "5 issues, one of them
  * unrenderable" and "we cannot tell how many" should both show the user the
  * same thing (the parent alone, which is `[issue_id]`).
+ *
+ * `assignment_warnings` is additive, and a missing list reads as empty — the
+ * same answer as "every assignment landed", which is what a backend that
+ * predates the field is saying (DENE-694).
  */
 export const IssueDraftFinalizeSchema = z.object({
   draft: IssueDraftSchema,
   issue_id: z.string().min(1),
   issues: z.array(IssueDraftCreatedIssueSchema).catch([]),
+  assignment_warnings: z.array(IssueDraftAssignmentWarningSchema).catch([]),
 }).loose();
 
 export const IssueDraftRuntimeSwitchSchema = z.object({
@@ -4396,4 +4420,39 @@ export const EMPTY_TASK_LOG_EXPORT_BUNDLE: TaskLogExportBundle = {
   runs: [],
   entries: [],
   summary_markdown: "",
+};
+
+// The push acknowledgement (c4). Lenient like the bundle: a response missing
+// a count still lets the dialog say "已上报" instead of blanking on a field
+// it only displays. `redaction_complete` stays nullable on purpose — `null`
+// means the push did not state it, which reads as "not proven clean".
+export const TaskLogExportPushSchema = z.object({
+  pushed: z.boolean().optional().default(false),
+  filename: z.string().optional().default(""),
+  path: z.string().optional().default(""),
+  url: z.string().optional().default(""),
+  branch: z.string().optional().default(""),
+  repo: z.string().optional().default(""),
+  summary_markdown: z.string().optional().default(""),
+  entry_count: z.number().optional().default(0),
+  run_count: z.number().optional().default(0),
+  size_bytes: z.number().optional().default(0),
+  redaction_complete: z.boolean().nullable().optional().default(null),
+  redaction_note: z.string().optional().default(""),
+  truncated: z.boolean().optional().default(false),
+}).loose();
+
+export const EMPTY_TASK_LOG_EXPORT_PUSH: TaskLogExportPush = {
+  pushed: false,
+  filename: "",
+  path: "",
+  url: "",
+  branch: "",
+  repo: "",
+  summary_markdown: "",
+  entry_count: 0,
+  run_count: 0,
+  size_bytes: 0,
+  redaction_complete: null,
+  truncated: false,
 };

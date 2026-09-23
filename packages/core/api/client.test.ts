@@ -3459,4 +3459,115 @@ describe("ApiClient exportTaskLogs", () => {
     const client = new ApiClient("https://api.example.test");
     await expect(client.exportTaskLogs("task-1")).rejects.toThrow(/task not found/);
   });
+
+  it("reports measured progress while the artifact streams", async () => {
+    const artifact = JSON.stringify(bundleBody);
+    // Two chunks so the readout has to come from the stream rather than from
+    // a single post-hoc figure.
+    const encoder = new TextEncoder();
+    const half = Math.floor(artifact.length / 2);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(artifact.slice(0, half)));
+        controller.enqueue(encoder.encode(artifact.slice(half)));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": String(encoder.encode(artifact).byteLength),
+          },
+        }),
+      ),
+    );
+
+    const seen: Array<{ receivedBytes: number; totalBytes: number; entries: number }> = [];
+    const client = new ApiClient("https://api.example.test");
+    const exported = await client.exportTaskLogs("task-1", {
+      onProgress: (progress) => seen.push(progress),
+    });
+
+    expect(exported.artifact).toBe(artifact);
+    expect(seen.length).toBeGreaterThan(0);
+    // The readout is only worth showing if it ends where the document does.
+    expect(seen.at(-1)?.receivedBytes).toBe(encoder.encode(artifact).byteLength);
+    expect(seen.at(-1)?.totalBytes).toBe(encoder.encode(artifact).byteLength);
+    // Byte counts never go backwards; that is what makes the bar honest.
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]!.receivedBytes).toBeGreaterThanOrEqual(seen[i - 1]!.receivedBytes);
+    }
+  });
+});
+
+describe("ApiClient pushTaskLogExport", () => {
+  const push = {
+    pushed: true,
+    filename: "log-export-DENE-599.json",
+    path: "logs/log-export-DENE-599.json",
+    url: "https://github.com/o/r/blob/kun/logs/log-export-DENE-599.json",
+    branch: "kun",
+    repo: "https://github.com/o/r",
+    summary_markdown: "## AI 摘要",
+    entry_count: 3,
+    run_count: 1,
+    size_bytes: 1234,
+    redaction_complete: true,
+    truncated: false,
+  };
+
+  it("posts the scope and returns the committed file", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(push), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const result = await client.pushTaskLogExport("task-1", { scope: "hours", hours: 6 });
+
+    expect(result.url).toBe(push.url);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/tasks/task-1/logs/export/push");
+    expect(init.method).toBe("POST");
+    // The artifact is not in the request: the server rebuilds it, which is the
+    // only reason a large bundle can reach the repository at all.
+    expect(JSON.parse(String(init.body))).toEqual({ scope: "hours", hours: 6 });
+  });
+
+  it("treats a 200 that names no committed file as a failed push", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ...push, pushed: false, url: "" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.pushTaskLogExport("task-1")).rejects.toThrow(/stored file/);
+  });
+
+  it("surfaces the unconfigured-repository error so the caller can fall back", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "log export git repository is not configured" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.pushTaskLogExport("task-1")).rejects.toThrow(/not configured/);
+  });
 });

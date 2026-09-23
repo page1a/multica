@@ -97,6 +97,7 @@ import {
 } from "./detail-surfaces";
 import { languageForPath } from "./diff-highlight";
 import { TaskSourceRows } from "../task-source/task-source-rows";
+import { TaskLogExportButton } from "../log-export";
 import { useLocale, useT } from "../../i18n";
 import {
   formatTokens,
@@ -946,6 +947,12 @@ export function AgentTranscriptDialog({
             )}
 
             <div className="flex shrink-0 items-center gap-0.5">
+              {/* Exporting this run's logs sits beside the run's own details:
+                  both answer questions about the run in front of the reader. */}
+              <TaskLogExportButton
+                task={task}
+                issueId={task.issue_id || undefined}
+              />
               {hasRunDetails && (
                 <Popover>
                   <PopoverTrigger

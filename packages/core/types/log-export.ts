@@ -101,3 +101,54 @@ export interface TaskLogExport {
   /** Server-suggested file name, safe to use as an attachment name. */
   filename: string;
 }
+
+/**
+ * A completed push of the artifact into the workspace's log repository.
+ *
+ * The request that produces this carries only the scope — the server rebuilds
+ * the bundle with the same generator it would have served over
+ * `GET .../logs/export` and commits those bytes. That is deliberate: this
+ * instance's upload path through Cloudflare dies on multi-megabyte bodies
+ * (100s origin timeout), so a bundle-sized request is exactly what the git
+ * path exists to avoid. `summary_markdown` comes back so the comment reports
+ * the document that was actually pushed, not a preview that may have aged.
+ */
+export interface TaskLogExportPush {
+  pushed: boolean;
+  /** File name inside the repository, e.g. `log-export-DENE-599-....json`. */
+  filename: string;
+  /** Repository-relative path, e.g. `logs/log-export-DENE-599-....json`. */
+  path: string;
+  /** Clickable link to the committed file. */
+  url: string;
+  branch: string;
+  /** Web URL of the repository, credentials stripped. */
+  repo: string;
+  summary_markdown: string;
+  entry_count: number;
+  run_count: number;
+  size_bytes: number;
+  /**
+   * Mirrors the artifact's own `redaction.complete`. `null` means the pushed
+   * bundle did not state it — read that as "not proven clean", never as
+   * "clean".
+   */
+  redaction_complete: boolean | null;
+  redaction_note?: string;
+  truncated: boolean;
+}
+
+/** Where an export landed when it was reported on its issue. */
+export type TaskLogExportReportChannel = "git" | "attachment";
+
+/** The outcome of reporting an export on its issue. */
+export interface TaskLogExportReport {
+  channel: TaskLogExportReportChannel;
+  /** The issue the comment landed on. */
+  issueId: string;
+  commentId: string;
+  /** Present for the `git` channel. */
+  url?: string;
+  /** Why the report fell back to an attachment; present for `attachment`. */
+  fallbackReason?: string;
+}

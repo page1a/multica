@@ -250,5 +250,13 @@
     "delete": "チャットを削除",
     "archive": "チャットをアーカイブ",
     "unarchive": "アーカイブを解除"
+  },
+  "provider_quota": {
+    "label": "残量",
+    "unknown": "不明",
+    "exhausted": "使い切り",
+    "used": "{{percent}}%",
+    "resets": "{{when}} にリセット",
+    "updated": "{{when}} 更新"
   }
 }

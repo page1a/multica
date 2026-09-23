@@ -295,6 +295,50 @@ func (q *Queries) LastEnteredReviewAt(ctx context.Context, arg LastEnteredReview
 	return created_at, err
 }
 
+const listRecentTaskSpansByAgents = `-- name: ListRecentTaskSpansByAgents :many
+SELECT agent_id, started_at, completed_at
+FROM (
+    SELECT agent_id, started_at, completed_at,
+           row_number() OVER (PARTITION BY agent_id ORDER BY completed_at DESC) AS n
+    FROM agent_task_queue
+    WHERE agent_id = ANY($1::uuid[])
+      AND started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at >= started_at
+) spans
+WHERE n <= 40
+`
+
+type ListRecentTaskSpansByAgentsRow struct {
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+}
+
+// Wall-clock spans of the latest finished tasks for the watched agents.
+// Routing turns these into p50/p95. A row missing either timestamp is not a
+// duration, and this query does not invent one. Forty samples is enough for a
+// stable percentile and small enough to attach to a routing pass.
+func (q *Queries) ListRecentTaskSpansByAgents(ctx context.Context, agentIds []pgtype.UUID) ([]ListRecentTaskSpansByAgentsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentTaskSpansByAgents, agentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentTaskSpansByAgentsRow{}
+	for rows.Next() {
+		var i ListRecentTaskSpansByAgentsRow
+		if err := rows.Scan(&i.AgentID, &i.StartedAt, &i.CompletedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReviewerCommentsForIssue = `-- name: ListReviewerCommentsForIssue :many
 SELECT content FROM comment
 WHERE issue_id = $1::uuid
@@ -379,6 +423,7 @@ const listStaleReviewIssues = `-- name: ListStaleReviewIssues :many
 SELECT i.id FROM issue i
 WHERE i.workspace_id = $1::uuid
   AND i.status = ANY($2::text[])
+  AND i.parent_issue_id IS NULL
   AND COALESCE(i.last_activity_at, i.updated_at) < $3::timestamptz
   AND NOT EXISTS (
       SELECT 1 FROM agent_task_queue q

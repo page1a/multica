@@ -1,0 +1,72 @@
+{
+  "button": {
+    "label": "Exporter les logs",
+    "tooltip": "Exporter un paquet de logs pour cette exécution"
+  },
+  "dialog": {
+    "title": "Exporter les logs d'exécution",
+    "subtitle": "Générer un paquet masqué, à télécharger ou à signaler",
+    "cancel": "Annuler"
+  },
+  "range": {
+    "section": "Plage",
+    "run": "Cette exécution",
+    "run_hint": "Exécution {{id}}",
+    "hours": "Dernières {{hours}} h",
+    "hours_hint": "Depuis {{from}}",
+    "hours_input": "Heures à remonter",
+    "task": "Toute la tâche",
+    "task_hint": "Toutes les exécutions"
+  },
+  "action": {
+    "export": "Exporter les logs",
+    "reexport": "Exporter à nouveau",
+    "retry": "Réessayer",
+    "partial": "Exporter ce qui a été collecté",
+    "widen": "Élargir à toute la tâche",
+    "report": "Signaler en pièce jointe et @ le responsable",
+    "retry_comment": "Renvoyer le commentaire",
+    "copy_summary": "Copier le résumé pour l'IA",
+    "copied": "Copié",
+    "download": "Télécharger le paquet"
+  },
+  "state": {
+    "idle_title": "Rien n'a encore été exporté",
+    "idle_body": "Choisissez une plage, puis « {{action}} ». Le serveur construit le paquet d'un seul tenant : logs structurés, métadonnées d'exécution et un résumé à coller directement dans un chat d'IA.",
+    "section": "Résultat",
+    "collecting_title": "Collecte des logs",
+    "collecting_body": "Lecture des logs structurés, des métadonnées d'exécution et du résumé masqué.",
+    "collected": "{{n}} collectées",
+    "received": "{{received}} sur {{total}} reçus",
+    "empty_title": "Aucun log sur cette plage",
+    "empty_body": "Rien ne correspond à « {{range}} ».",
+    "failed_title": "L'export ne s'est pas terminé",
+    "partial_note": "Le serveur construit le paquet d'un seul tenant : un export en échec ne laisse aucun document partiel à transmettre. Le dernier paquet abouti est toujours ici.",
+    "restored": "Ceci est le dernier paquet abouti."
+  },
+  "card": {
+    "entries": "{{n}} entrées",
+    "runs": "{{n}} exécutions",
+    "truncated": "Plafond d'entrées atteint — ceci est le début du journal",
+    "redacted": "Masqué automatiquement",
+    "redaction_incomplete": "Masquage incomplet — ne pas transmettre tel quel",
+    "redaction_unknown": "État du masquage inconnu — ne pas transmettre tel quel",
+    "summary": "Résumé pour l'IA",
+    "no_summary": "(aucun texte de résumé)"
+  },
+  "report": {
+    "hint": "Pousse d'abord vers le dépôt de logs de l'espace de travail et ne laisse qu'un lien dans le commentaire ; en cas d'indisponibilité, bascule sur une pièce jointe.",
+    "running": "Signalement…",
+    "success_git": "Signalé sur {{issue}} — le paquet a été poussé vers {{repo}}.",
+    "success_attachment": "Signalé sur {{issue}} — le paquet est une pièce jointe du commentaire.",
+    "fallback": "Repli sur une pièce jointe : {{reason}}",
+    "push_landed": "Poussé vers le dépôt de logs, mais le commentaire n'a pas été envoyé : {{reason}}",
+    "failed": "Échec du signalement : {{reason}}",
+    "link": "Ouvrir le paquet"
+  },
+  "error": {
+    "export_failed": "Échec de l'export",
+    "report_failed": "Échec du signalement",
+    "no_issue": "Cette exécution n'est liée à aucun ticket, elle ne peut pas être signalée."
+  }
+}

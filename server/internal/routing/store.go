@@ -29,6 +29,10 @@ type Issue struct {
 	ProjectName string
 	Repository  string
 	Labels      []string
+	// ParentIssueID is empty for a top-level issue. Child issues still use
+	// routing for executor dispatch, but acceptance belongs to their parent
+	// and must never be routed independently.
+	ParentIssueID string
 
 	ParentExecutor string
 	HasChildren    bool
@@ -158,6 +162,11 @@ type Store interface {
 	Issue(ctx context.Context, workspaceID, issueID string) (Issue, error)
 	// Roster maps agent name to agent for the whole workspace.
 	Roster(ctx context.Context, workspaceID string) (map[string]Agent, error)
+	// RoutingFacts is the seat and provider summary for one decision. agentIDs
+	// are the candidates; providers are the quota subscription. A store error
+	// is an incomplete context: the caller writes nothing. A missing
+	// observation is not an error — it comes back as unknown.
+	RoutingFacts(ctx context.Context, workspaceID string, agentIDs, providers []string) (RoutingFacts, error)
 	// AssignAgentIfUnassigned fills the executor slot only while it is still
 	// empty. Reports whether THIS call wrote it. Starting the seat's run is
 	// the store's job, because assignment is what wakes an agent.

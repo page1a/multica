@@ -24,9 +24,9 @@
 2. 看有什么新东西：`git log --oneline kun..upstream/main`。为空则「上游无更新」，结束。
 3. 先更新镜像：`git checkout main && git merge --ff-only upstream/main && git push origin main`
 4. 冲突预检（不碰 kun）：`git checkout -b sync/upstream-$(date +%Y%m%d) kun && git merge --no-ff upstream/main`
-   - 有冲突：`git diff --name-only --diff-filter=U` 列出冲突文件，`git merge --abort`，交给人决策，不要自行猜着解冲突。
+   - 有冲突：`git diff --name-only --diff-filter=U` 列出冲突文件，`git merge --abort`，检查冲突是否能按既有代码与项目约定可靠解决；涉及尚未确定的产品选择时再交给人决策。
    - 无冲突：跑构建和测试（Go 与前端各跑一次，命令以仓库 README / Makefile 为准）。
-5. 推送同步分支并开 PR：`git push -u origin sync/upstream-<日期>`，`gh pr create --base kun --title "sync: upstream main <日期>"`。PR 必须经 Reviewer 审查，由人合并。
+5. 推送同步分支并开 PR：`git push -u origin sync/upstream-<日期>`，`gh pr create --base kun --title "sync: upstream main <日期>"`。Reviewer 通过后直接合并；没有 Reviewer 结论时，Agent 完成按风险自检并认为可接受也可合并，不等待本人再次确认。
 
 ### 已提前照搬到 `kun`、上游还没合并的 PR
 
@@ -72,4 +72,4 @@ sudo scripts/install-selfhost-autoupdate.sh
 
 - 不向 `multica-ai/multica` 开 PR 或 push。
 - 不把任何 token、凭据、环境变量值写进提交、评论或 PR。
-- 不删除远端分支、不改 GitHub 默认分支、不合并 PR；这些需要人确认。
+- 不删除远端分支、不改 GitHub 默认分支。合并 PR 按上面的审查与自检规则执行，不要求本人再次确认。

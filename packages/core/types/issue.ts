@@ -209,6 +209,8 @@ export interface Issue {
   creator_id: string;
   parent_issue_id: string | null;
   project_id: string | null;
+  /** Resource sharing scope. Older servers omit this field. */
+  visibility?: "private" | "project" | "workspace";
   position: number;
   // Ordered barrier group among sibling sub-issues (null = unstaged). The
   // parent assignee is notified/woken only when every sub-issue in a stage

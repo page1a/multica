@@ -77,6 +77,7 @@ vi.mock("../../platform/local-directory", () => ({
     }),
   validateLocalDirectory: () => Promise.resolve(validation.current),
   validateWritablePath: async () => true,
+  initLocalGit: async () => ({ ok: false, reason: "unsupported" as const }),
 }));
 vi.mock("../../platform/use-local-daemon-status", () => ({
   useLocalDaemonStatus: () => ({
@@ -181,6 +182,7 @@ describe("ProjectResourcesSection — several local directories on one machine",
     };
     renderWithI18n(<ProjectResourcesSection projectId="p1" />);
     await openPickerAndWaitForModes();
+    expect(screen.getByRole("button", { name: /create local git/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /add folder/i }));
 
     await waitFor(() => expect(createMock).toHaveBeenCalled());

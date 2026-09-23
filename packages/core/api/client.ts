@@ -239,7 +239,9 @@ import type {
   CreateCommentSubIssueRequest,
   TaskLogExport,
   TaskLogExportBundle,
+  TaskLogExportPush,
   TaskLogExportScope,
+  CodeDecision,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -317,6 +319,7 @@ import {
   issueDraftRuntimeSwitchFallback,
   AgentSchema,
   AgentListSchema,
+  CodeDecisionSchema,
   EMPTY_AGENT_LIST,
   AgentBuilderSessionListSchema,
   EMPTY_AGENT_BUILDER_SESSION_LIST,
@@ -331,7 +334,9 @@ import {
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
   EMPTY_TASK_LOG_EXPORT_BUNDLE,
+  EMPTY_TASK_LOG_EXPORT_PUSH,
   TaskLogExportBundleSchema,
+  TaskLogExportPushSchema,
   EMPTY_CHAT_MESSAGE_LIST,
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_CHAT_SESSION,
@@ -762,6 +767,68 @@ function exportFilenameFromDisposition(disposition: string | null): string {
   const name = match?.[1] ?? "";
   const basename = name.split(/[\\/]/).pop() ?? "";
   return basename.trim() === "" ? "log-export.json" : basename;
+}
+
+/**
+ * What a streamed export has received so far.
+ *
+ * Every figure is measured, not modelled: `receivedBytes` counts bytes off the
+ * wire and `totalBytes` is the server's declared Content-Length (0 when the
+ * response is chunked, in which case the caller shows an indeterminate bar
+ * rather than a made-up percentage).
+ */
+export interface TaskLogExportProgress {
+  receivedBytes: number;
+  totalBytes: number;
+  /** Transcript entries decoded from the bytes received so far. */
+  entries: number;
+}
+
+/**
+ * Read the export body while reporting progress.
+ *
+ * The artifact is a single JSON document, so "how many entries have been
+ * collected" is derived from the received text: each transcript entry carries
+ * a `"seq":` field. That is a count of what has actually arrived rather than a
+ * projection, and it is only ever used for the in-flight readout — the card
+ * that follows renders the artifact's own `entry_count`. A tool payload that
+ * happens to contain a `seq` key can nudge the in-flight figure up by one;
+ * that is why nothing downstream treats it as authoritative.
+ */
+async function readArtifactStream(
+  res: Response,
+  onProgress: (progress: TaskLogExportProgress) => void,
+): Promise<string> {
+  if (!res.body) {
+    // No streaming support (older runtime or a test double): fall back to the
+    // one-shot read rather than failing the export.
+    return res.text();
+  }
+
+  const declared = Number(res.headers.get("content-length"));
+  const totalBytes = Number.isFinite(declared) && declared > 0 ? declared : 0;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let artifact = "";
+  let receivedBytes = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    receivedBytes += value.byteLength;
+    artifact += decoder.decode(value, { stream: true });
+    onProgress({ receivedBytes, totalBytes, entries: countCollectedEntries(artifact) });
+  }
+  artifact += decoder.decode();
+  onProgress({ receivedBytes, totalBytes, entries: countCollectedEntries(artifact) });
+  return artifact;
+}
+
+/** Count the transcript entries present in a (possibly partial) artifact. */
+function countCollectedEntries(artifact: string): number {
+  const matches = artifact.match(/"seq":/g);
+  return matches ? matches.length : 0;
 }
 
 function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
@@ -1475,6 +1542,13 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  async setIssueVisibility(id: string, visibility: "private" | "project" | "workspace") {
+    return this.fetch<{ id: string; visibility: "private" | "project" | "workspace"; audience_size?: number }>(
+      `/api/issues/${id}/visibility`,
+      { method: "PUT", body: JSON.stringify({ visibility }) },
+    );
   }
 
   async moveIssue(id: string, data: MoveIssueRequest): Promise<Issue> {
@@ -3289,6 +3363,35 @@ export class ApiClient {
     });
   }
 
+  async setRepoVisibility(url: string, visibility: "private" | "project" | "workspace") {
+    return this.fetch<{ url: string; visibility: "private" | "project" | "workspace"; audience_size?: number }>(
+      "/api/repos/visibility",
+      { method: "PUT", body: JSON.stringify({ url, visibility }) },
+    );
+  }
+
+  async previewProjectVisibility(projectId: string) {
+    return this.fetch<{
+      project_id: string;
+      visibility: "private" | "project" | "workspace";
+      affected_count: number;
+      previously_private_count: number;
+    }>(`/api/projects/${projectId}/visibility/preview`);
+  }
+
+  async setProjectVisibility(projectId: string, visibility: "private" | "project" | "workspace") {
+    return this.fetch<{
+      project_id: string;
+      visibility: "private" | "project" | "workspace";
+      affected_count: number;
+      previously_private_count: number;
+      audience_size?: number;
+    }>(`/api/projects/${projectId}/visibility`, {
+      method: "PUT",
+      body: JSON.stringify({ visibility }),
+    });
+  }
+
   /**
    * Read whether routing is actually working for this workspace.
    *
@@ -4007,10 +4110,22 @@ export class ApiClient {
    * `useReportTaskLogExport`), never a re-encoded `bundle`: the server owns
    * the artifact's bytes so `multica logs export` and the dialogs hand the
    * user the identical file.
+   *
+   * `onProgress` opts into a streamed read. The server builds the whole bundle
+   * before it answers, so there is no server-side progress to poll; what the
+   * callback reports is what has actually arrived — bytes received against the
+   * declared `Content-Length`, and a running count of the transcript entries
+   * decoded so far. Both are measured from real bytes, never synthesized, so a
+   * stalled transfer reads as stalled.
    */
   async exportTaskLogs(
     taskId: string,
-    opts?: { scope?: TaskLogExportScope; hours?: number; signal?: AbortSignal },
+    opts?: {
+      scope?: TaskLogExportScope;
+      hours?: number;
+      signal?: AbortSignal;
+      onProgress?: (progress: TaskLogExportProgress) => void;
+    },
   ): Promise<TaskLogExport> {
     const params = new URLSearchParams();
     if (opts?.scope) params.set("scope", opts.scope);
@@ -4039,7 +4154,9 @@ export class ApiClient {
       throw new Error(message);
     }
 
-    const artifact = await res.text();
+    const artifact = opts?.onProgress
+      ? await readArtifactStream(res, opts.onProgress)
+      : await res.text();
     this.logger.info(`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms` });
 
     let raw: unknown = null;
@@ -4061,6 +4178,49 @@ export class ApiClient {
       artifact,
       filename: exportFilenameFromDisposition(res.headers.get("content-disposition")),
     };
+  }
+
+  /**
+   * Push a freshly generated log bundle into the workspace's configured log
+   * repository.
+   *
+   * The request deliberately carries only the scope, not the artifact: the
+   * whole point of this path is that a multi-megabyte body never crosses the
+   * Cloudflare upload path. The server rebuilds the bundle with the same
+   * generator (so the pushed bytes carry the same redaction) and answers with
+   * the committed file's link plus the pushed document's own summary.
+   *
+   * Throws when the workspace has no repository configured or the push failed;
+   * callers fall back to the ordinary comment attachment, which is why the
+   * error is surfaced as a plain message.
+   */
+  async pushTaskLogExport(
+    taskId: string,
+    opts?: { scope?: TaskLogExportScope; hours?: number; signal?: AbortSignal },
+  ): Promise<TaskLogExportPush> {
+    const raw: unknown = await this.fetch(
+      `/api/tasks/${taskId}/logs/export/push`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          scope: opts?.scope ?? "run",
+          ...(typeof opts?.hours === "number" ? { hours: opts.hours } : {}),
+        }),
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      },
+    );
+    const push = parseWithFallback<TaskLogExportPush>(
+      raw,
+      TaskLogExportPushSchema,
+      EMPTY_TASK_LOG_EXPORT_PUSH,
+      { endpoint: "POST /api/tasks/:id/logs/export/push" },
+    );
+    if (!push.pushed || !push.url) {
+      // A 200 that does not name a committed file is not a completed push.
+      // Treating it as one would post a comment pointing at nothing.
+      throw new Error("Log export push did not return a stored file");
+    }
+    return push;
   }
 
   // Chat Sessions
@@ -4463,6 +4623,25 @@ export class ApiClient {
     projectId: string,
   ): Promise<ListProjectResourcesResponse> {
     return this.fetch(`/api/projects/${projectId}/resources`);
+  }
+
+  /** Where a new task on this project would run if `daemonId`'s machine claimed
+   *  it. The server computes it; callers render the result. */
+  async previewProjectCodeDecision(
+    projectId: string,
+    daemonId: string,
+  ): Promise<CodeDecision> {
+    const params = new URLSearchParams({ daemon_id: daemonId });
+    const raw = await this.fetch<unknown>(
+      `/api/projects/${projectId}/code-decision?${params}`,
+    );
+    const parsed = CodeDecisionSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(
+        "GET /api/projects/:id/code-decision failed schema validation",
+      );
+    }
+    return parsed.data;
   }
 
   async createProjectResource(

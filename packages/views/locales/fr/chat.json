@@ -254,5 +254,13 @@
     "archive": "Archiver la discussion",
     "unarchive": "Désarchiver la discussion",
     "delete": "Supprimer la discussion"
+  },
+  "provider_quota": {
+    "label": "Quota",
+    "unknown": "inconnu",
+    "exhausted": "épuisé",
+    "used": "{{percent}} %",
+    "resets": "réinitialisation {{when}}",
+    "updated": "mis à jour {{when}}"
   }
 }

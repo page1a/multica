@@ -57,6 +57,12 @@ export interface RoutingSettings {
    * which endpoint their tickets are described to cannot consent to it.
    */
   base_url: string;
+  /**
+   * Workspace wording for which tier should do the work. Empty means the
+   * shared default in `routing-policy-prompt.ts` — a blank prompt is not
+   * "let the model decide from habit".
+   */
+  policy_prompt?: string;
 }
 
 /**
@@ -98,6 +104,7 @@ export const DEFAULT_ROUTING_SETTINGS: RoutingSettings = {
   confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
   stale_review_hours: DEFAULT_STALE_REVIEW_HOURS,
   base_url: "",
+  policy_prompt: "",
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -122,6 +129,7 @@ export function parseRoutingSettings(
     confidence_threshold: normalizeThreshold(block.confidence_threshold),
     stale_review_hours: normalizeStaleReviewHours(block.stale_review_hours),
     base_url: typeof block.base_url === "string" ? block.base_url : "",
+    policy_prompt: typeof block.policy_prompt === "string" ? block.policy_prompt : "",
   };
 }
 
@@ -215,6 +223,7 @@ export function withRoutingSettings(
     confidence_threshold: normalizeThreshold(next.confidence_threshold),
     stale_review_hours: normalizeStaleReviewHours(next.stale_review_hours),
     base_url: next.base_url.trim(),
+    policy_prompt: (next.policy_prompt ?? "").trim(),
   };
   if (apiKey !== undefined) {
     block[ROUTING_API_KEY_FIELD] = apiKey.trim();

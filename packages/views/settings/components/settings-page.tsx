@@ -20,6 +20,7 @@ import {
   Server,
   ArrowDownUp,
   Route,
+  FolderKanban,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useCurrentWorkspace } from "@multica/core/paths";
@@ -51,6 +52,7 @@ import { PluginsTab } from "./plugins-tab";
 import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { ConfigTransferTab } from "./config-transfer-tab";
+import { ProjectSharingTab } from "./project-sharing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
@@ -145,6 +147,13 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
           t(($) => $.page.tabs.members),
           Users,
           <MembersTab />,
+        ),
+        entry(
+          "project-sharing",
+          t(($) => $.page.tabs.project_sharing),
+          FolderKanban,
+          <ProjectSharingTab />,
+          true,
         ),
         ...(billingEnabled
           ? [

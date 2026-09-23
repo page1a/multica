@@ -622,6 +622,65 @@ describe("IssueDraftPreviewPanel group", () => {
       "/acme/issues/i1",
     );
   });
+
+  it("names the seat a confirm could not apply", () => {
+    // The seat the user saw beside the row is not the seat the issue got. This
+    // footer is the only place that difference is ever visible, and the fix
+    // (assigning it) happens on the issue, which the row already links to.
+    renderPanel({
+      draft: GROUP,
+      stage: "created",
+      createdIssues: [
+        { id: "i1", identifier: "MUL-1", title: "Parent", status: "todo" },
+        { id: "i2", identifier: "MUL-2", title: "Child", status: "backlog" },
+      ],
+      assignmentWarnings: [
+        {
+          key: "c1",
+          title: "Child",
+          reason: "cannot assign to archived agent",
+        },
+      ],
+    });
+    expect(
+      screen.getByText(
+        "“Child” could not be assigned, so it was created unassigned.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("counts several dropped seats instead of listing them all", () => {
+    renderPanel({
+      draft: GROUP,
+      stage: "created",
+      createdIssues: [
+        { id: "i1", identifier: "MUL-1", title: "Parent", status: "todo" },
+      ],
+      assignmentWarnings: [
+        { key: "c1", title: "Child one", reason: "archived agent" },
+        { key: "c2", title: "Child two", reason: "archived agent" },
+      ],
+    });
+    expect(
+      screen.getByText(
+        "2 issues could not be assigned, so they were created unassigned.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("says nothing about seats when every assignment landed", () => {
+    // A warning about nothing is noise on the one screen where the user is
+    // checking what the confirm actually created.
+    renderPanel({
+      draft: GROUP,
+      stage: "created",
+      createdIssues: [
+        { id: "i1", identifier: "MUL-1", title: "Parent", status: "todo" },
+      ],
+      assignmentWarnings: [],
+    });
+    expect(screen.queryByText(/could not be assigned/)).toBeNull();
+  });
 });
 
 /**

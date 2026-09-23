@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/sparsecheckout"
 	"github.com/spf13/cobra"
 )
 
@@ -59,9 +60,21 @@ var repoCheckoutCmd = &cobra.Command{
 	RunE: runRepoCheckout,
 }
 
+var repoSparseAddCmd = &cobra.Command{
+	Use:   "sparse-add <path>",
+	Short: "Check out a path this task's sparse checkout left off disk",
+	Long: "Brings one repository path into the current checkout when the task declared a sparse checkout and that path was not included.\n\n" +
+		"If the path is not in the repository, the command says so. A missing file on disk is not the same thing. " +
+		"In a checkout that already has the whole tree, the command does nothing and says that too.",
+	Args: exactArgs(1),
+	RunE: runRepoSparseAdd,
+}
+
 var (
 	repoCheckoutRef   string
 	repoCheckoutFresh bool
+	repoCheckoutPaths string
+	repoCheckoutFull  bool
 )
 
 func init() {
@@ -76,11 +89,14 @@ func init() {
 
 	repoCheckoutCmd.Flags().StringVar(&repoCheckoutRef, "ref", "", "branch, tag, or commit to check out instead of the remote default branch")
 	repoCheckoutCmd.Flags().BoolVar(&repoCheckoutFresh, "fresh", false, "discard an existing checkout's uncommitted changes and untracked files and start over on a new branch from the latest default branch (or --ref); commits stay on the old branch")
+	repoCheckoutCmd.Flags().StringVar(&repoCheckoutPaths, "paths", "", "comma-separated repository paths to check out instead of the task's checkout_paths declaration")
+	repoCheckoutCmd.Flags().BoolVar(&repoCheckoutFull, "full", false, "check out the whole repository even when the task declared checkout paths")
 
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoAddCmd)
 	repoCmd.AddCommand(repoRemoveCmd)
 	repoCmd.AddCommand(repoCheckoutCmd)
+	repoCmd.AddCommand(repoSparseAddCmd)
 }
 
 type workspaceRepo struct {
@@ -373,6 +389,17 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		"retry_busy":    true,
 		"fresh":         repoCheckoutFresh,
 	}
+	if repoCheckoutFull {
+		reqBody["sparse_paths_set"] = true
+		reqBody["sparse_paths"] = []string{}
+	} else if strings.TrimSpace(repoCheckoutPaths) != "" {
+		scope, err := sparsecheckout.Parse(repoCheckoutPaths)
+		if err != nil {
+			return fmt.Errorf("checkout paths: %w", err)
+		}
+		reqBody["sparse_paths_set"] = true
+		reqBody["sparse_paths"] = scope.Paths
+	}
 
 	data, err := json.Marshal(reqBody)
 	if err != nil {
@@ -497,6 +524,11 @@ type repoCheckoutResult struct {
 	// DENE-598 omit both and only log the failure.
 	Stale       bool   `json:"stale,omitempty"`
 	StaleReason string `json:"stale_reason,omitempty"`
+	// SparsePaths is the declaration the daemon applied. SparseSkipped is
+	// "kept" when an existing checkout was left as it was, so the files were
+	// not removed.
+	SparsePaths   string `json:"sparse_paths,omitempty"`
+	SparseSkipped string `json:"sparse_skipped,omitempty"`
 }
 
 // repoCheckoutSourceLocalDirectory mirrors the daemon-side constant.
@@ -533,7 +565,7 @@ func repoCheckoutSummary(repoURL string, result repoCheckoutResult) string {
 			result.Path, branch, repoURL, ownership)
 	}
 	if result.Kept == "" {
-		return fmt.Sprintf("Checked out %s → %s (branch: %s)", repoURL, result.Path, result.BranchName)
+		return fmt.Sprintf("Checked out %s → %s (branch: %s)%s", repoURL, result.Path, result.BranchName, sparseCheckoutNote(result))
 	}
 	branch := result.BranchName
 	if branch == "" {
@@ -542,13 +574,57 @@ func repoCheckoutSummary(repoURL string, result repoCheckoutResult) string {
 	if result.Kept == "task_branch" {
 		branch += ", this task's branch"
 	}
+	keptAction := "nothing was reset, cleaned, or switched; only remote refs were fetched."
+	switch result.SparseSkipped {
+	case sparsecheckout.SkippedRestored:
+		keptAction = "the branch was left as it was, and sparse checkout was turned off so the whole repository is on disk again."
+	case sparsecheckout.SkippedWidened:
+		keptAction = "the branch was left as it was, and the sparse checkout was widened so the newly declared directories are on disk."
+	}
 	return fmt.Sprintf("Kept the existing checkout of %s at %s (branch: %s; %d uncommitted file%s, %d unpushed commit%s): "+
-		"nothing was reset, cleaned, or switched; only remote refs were fetched.\n"+
+		"%s\n"+
 		"To discard its uncommitted changes and untracked files and start over on a new branch from the latest default branch (or --ref), "+
-		"re-run with --fresh; commits stay on the old branch, but push any you still need first.",
+		"re-run with --fresh; commits stay on the old branch, but push any you still need first.%s",
 		repoURL, result.Path, branch,
 		result.UncommittedFiles, pluralS(result.UncommittedFiles),
-		result.UnpushedCommits, pluralS(result.UnpushedCommits))
+		result.UnpushedCommits, pluralS(result.UnpushedCommits),
+		keptAction,
+		sparseCheckoutNote(result))
+}
+
+func sparseCheckoutNote(result repoCheckoutResult) string {
+	switch result.SparseSkipped {
+	case sparsecheckout.SkippedRestored:
+		return "\nThe previous checkout was sparse. Nothing was declared this time, so every file in the repository is on disk now."
+	case sparsecheckout.SkippedWidened:
+		return "\nSparse checkout now includes " + result.SparsePaths + " plus root project files. Directories left out before are on disk."
+	case sparsecheckout.SkippedKept:
+		if strings.TrimSpace(result.SparsePaths) == "" {
+			return ""
+		}
+		return "\nThis task declared a sparse checkout (" + result.SparsePaths + ") but the existing checkout was kept, so its files were not removed. Re-run with --fresh to apply it; that discards uncommitted changes."
+	}
+	if strings.TrimSpace(result.SparsePaths) == "" {
+		return ""
+	}
+	return "\nSparse checkout: only " + result.SparsePaths + " plus root project files are on disk. A missing file may still be in the repository; run `multica repo sparse-add <path>` before concluding it does not exist."
+}
+
+func runRepoSparseAdd(cmd *cobra.Command, args []string) error {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	msg, err := sparsecheckout.Materialize(parent, workDir, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, msg)
+	return nil
 }
 
 func repoCheckoutRetryDelay(value string, now time.Time) time.Duration {

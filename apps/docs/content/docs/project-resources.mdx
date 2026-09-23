@@ -14,13 +14,26 @@ Two resource types are supported today:
 | **GitHub repository** | Code shared by the team, with checkouts managed by the runtime | A runtime-managed working directory |
 | **Local directory** | An existing checkout, a very large repository, or when you want to inspect local changes directly | The original directory on a specific computer |
 
+## Which setup applies to you
+
+Six combinations cover almost every case. Find your situation in the first column; the sections below explain the pieces.
+
+| | This is your situation | What you bind | Where the work happens | Whose disk, and who clears it | Concurrency | How changes come back to you |
+| --- | --- | --- | --- | --- | --- | --- |
+| **A** | A local git repository, with or without a remote — **the default** | Local directory · **Direct** | **Your own directory** | Uses no extra space | One run at a time in that directory; later runs queue | Your working copy is edited in place — you `git diff` and revert it yourself |
+| **B** | A local git repository that really does need several runs at once | Local directory · **Parallel** | **A working-copy directory beside your repository** — `<repo>.multica-worktrees/<run>` by default | **Your own disk.** Nothing clears it by default; with automatic cleanup on, only copies that are merged, older than N days and free of uncommitted changes | Runs on the same directory run concurrently | The branch is already in your repository, and the working copy stays where you can open it |
+| **C** | A plain local folder with no Git at all | Local directory · **Direct** | **Your own directory** | Uses no extra space | One run at a time; later runs queue | Edited in place — no diff, and **no undo** |
+| **D** | One directory holding several repositories or several separate bodies of work | Local directory · **Shared** | **Your own directory**, unlocked | Uses no extra space | Concurrent, but nothing is locked, so two runs can step on each other | Edited in place |
+| **E** | A cloud project, or this computer has no copy of the code | GitHub repository | A checkout in the Multica workspace | Multica's disk, reclaimed by the normal cleanup cycle | Concurrent by nature | A branch pushed to the remote |
+| **F** | Nothing bound — questions and conversation only | Nothing | **One shared session folder** (per conversation, not one folder per run) | Multica's disk, and it stays small | — | Artifacts stay in this conversation's folder under the shared folder |
+
 ## How resources enter a run
 
-When an agent works an issue inside the project, Multica adds the project name, project description, and resource list to the run's context, and writes `.multica/project/resources.json` into the working directory.
+When an agent works an issue inside the project, Multica adds the project name, project description, and resource list to the run's context, and writes the resource list to `.multica/project/resources.json` — either in the working directory or in the daemon's own per-run folder, depending on where the run happens. See "What gets written during a run" below.
 
 The workspace's linked repository list is always included in the run context. Repositories linked to the project additionally specify the code and default ref this body of work uses.
 
-A local directory only applies to the daemon it is bound to. When the daemon executing a run has a matching local directory, the agent works directly in that directory; other computers keep using the project's GitHub repositories or the workspace repositories.
+A local directory only applies to the daemon it is bound to, and it beats a repository. When the computer claiming a run has a local directory for the project, that directory is where the run works — whether or not the project also names a GitHub repository. A repository is used only when no local directory on that machine holds the project's code, and a missing or unusable directory is reported as such rather than quietly replaced by a fresh clone. Other computers keep using the project's GitHub repositories or the workspace repositories.
 
 ## Add a GitHub repository
 
@@ -36,17 +49,17 @@ A resource's `ref` sets the branch, tag, or commit that later checkouts use by d
 
 The UI for adding a local directory is Desktop-only, because browsers cannot pick folders on your computer.
 
-<Callout type="warning">
-**This is an escape hatch, not a more convenient default.** `local_directory` exists for people who have no other option — the canonical case is a game project whose checkout is tens of gigabytes, where re-cloning per run is simply not viable.
+<Callout type="info">
+**A local directory is the default way to give a project code, not an escape hatch.** When the project has a local directory on the computer claiming a run, that is what the run uses; a repository is the fallback for machines that hold no copy of the code.
 
-If your directory is an ordinary git repo you can clone, **use `github_repo` instead**: it uses worktree mode by default, allowing unlimited concurrent runs on the same repo. A `local_directory` processes **one run at a time by default**; if the directory is a git repo you can opt into worktree mode to get concurrency back (see "How runs share the directory"). Read "When to pick" below before you commit to it.
+The folder does not have to be a Git repository. See "Create a local Git repository, or not" below for what you give up when it is not.
 </Callout>
 
 
 1. Make sure Desktop's local daemon is online.
 2. Open the project's **Resources**, or the **Local directory** tab of the create-project dialog — the same choice is available before the project exists.
 3. Choose "Add local directory", then pick the folder to use.
-4. Pick how runs should use it — **Direct** or **Parallel**, described under "How runs share the directory". A new directory always starts on **Direct**: runs happen in the folder you just picked, which costs no extra disk. **Parallel** is an explicit choice because it makes a full working copy per run on your own drive; the dialog names the folder those copies land in before you pick it. Change it right there, or later from **Resources** with the pencil next to the directory.
+4. Pick how runs should use it — **Direct**, **Parallel** or **Shared**, described under "How runs share the directory". A new directory always starts on **Direct**: runs happen in the folder you just picked, which costs no extra disk. **Parallel** is an explicit choice because it makes a full working copy per run on your own drive; the dialog names the folder those copies land in before you pick it. Change it right there, or later from **Resources** with the pencil next to the directory.
 
 A directory linked earlier keeps the mode it was saved with — an existing setup is never switched under you.
 
@@ -54,7 +67,13 @@ The directory must be an absolute path, must already exist, and must be readable
 
 A project can link **several** local directories on one computer — four unrelated plain folders, or a repository plus a separate docs checkout. What it cannot link twice is the same directory (matched on its resolved real path, so a symlink and its target count as one) or a second checkout of a repository it already has on that computer. Different computers can each link their own directories for the same project.
 
-**One run writes one directory.** Runs on a computer use the first local directory for that computer in the resource list; drag the list to change which. The others are handed to the agent read-only and named in its brief, so it can read them without treating them as a second place to work.
+**One run writes one directory.** Which one follows a two-step rule, computed once on the server and handed to both the runtime and the UI: if the task names a resource explicitly, that resource is used, or the run fails saying why it cannot be; otherwise the run takes **the first local directory for that computer in the list**. The first entry is therefore this machine's default working directory — drag the list, or use the move controls on that computer's directories, to change it. The remaining directories are handed to the agent read-only and named in its brief, so it can read them without treating them as a second place to work.
+
+### Create a local Git repository, or not
+
+A plain folder works as a local directory: bind it and the agent edits it in place, with no Git involved at all. When you add such a folder, Desktop offers to create a local Git repository inside it — and that offer has **nothing to do with GitHub**: a repository created here records changes on this computer and uploads nothing. You can skip it, and the row keeps a "no version control" badge.
+
+What skipping costs you is any record of what happened: there is no `git diff`, no branch to fall back on, and no way to restore a file the agent overwrote. For a folder whose contents you care about, creating the local repository is the cheap insurance.
 
 <Callout type="warning">
 In the default `in_place` mode a local directory is not an isolated environment: the agent directly sees and modifies your current branch and uncommitted files, and Multica does not automatically switch branches, stash, commit, push, or open PRs. Worktree mode changes this — see "How runs share the directory" below.
@@ -64,7 +83,19 @@ In the default `in_place` mode a local directory is not an isolated environment:
 
 ## How runs share the directory
 
-A local directory has two execution modes, set per resource with `execution_mode`. Desktop labels them **Direct** and **Parallel**; the API, the CLI and the rest of this page use the identifiers.
+A local directory has three execution modes, set per resource with `execution_mode`. Desktop labels them **Direct**, **Parallel** and **Shared**; the API, the CLI and the rest of this page use the identifiers.
+
+Direct and Parallel are the two that matter for an ordinary repository; the trade-off, before the detail:
+
+| | Direct (`in_place`) — the default | Parallel (`worktree`) |
+| --- | --- | --- |
+| Disk | Uses no extra space | A full working copy per run, plus that copy's own dependencies, on your project's disk |
+| Concurrency | One run at a time in the directory; later runs queue | Any number of runs on the same directory |
+| The scene after a failure | Your own directory — the agent edits your working copy as it works, and what it leaves is right where you already are | The working copy beside your repository, which you can open; your own working copy is never touched |
+| Who clears it | There is nothing to clear | You do, by default; automatic cleanup is opt-in and removes only merged, clean copies |
+| Risk | The agent and your editor write to the same tree | The runs are isolated from each other |
+
+**Direct is the default**, and it is the cheap one: no extra disk and nothing to clean up. Parallel is for a directory that genuinely carries several tasks at once — it buys concurrency with disk on your own machine, and a working copy you are responsible for clearing.
 
 ### `in_place` (default) — "Direct"
 
@@ -92,7 +123,11 @@ What the agent sees, and what you get back:
 
 Two things persist in your repo: the branch, and one hidden ref per branch under `refs/multica/local-state/` recording who owns it and what your directory looked like when it was last continued. The hidden refs never appear in `git branch`; list them with `git for-each-ref refs/multica`. Multica deletes each one with its branch, and drops any whose branch you deleted yourself the next time a run starts on that repo — or you can remove them at once with `git for-each-ref --format='%(refname)' refs/multica | xargs -n1 git update-ref -d`.
 
-#### Clearing out working copies
+### `shared` — "Shared"
+
+Runs execute at the same time in your directory with **no lock at all**. Shared mode is for a directory that holds several repositories or several separate bodies of work, where each task isolates itself with its own per-repo worktrees rather than relying on Multica to serialize the folder. Nothing is copied and nothing waits; nothing is locked either, so two runs that do touch the same tree can step on each other. Choose it only when the work inside that directory is genuinely independent. Unlike Parallel, it needs no git repository and no branch hand-back — that part is your own convention.
+
+### Clearing out working copies
 
 A run that finishes cleanly removes its own working copy. One that survives is one a run could **not** finish — an unresolved merge, a commit that failed, a machine that went down — and it stays on disk on purpose: it is the only place that run's state can still be inspected.
 
@@ -118,9 +153,23 @@ You can also clear a single copy from that list. That says *which* copy, not "ig
 Worktree mode covers git repositories. A plain non-git directory still runs serially — that is what `in_place` is for.
 </Callout>
 
+## When nothing is bound: the shared session folder
+
+A run with no local directory on its machine and no repository has no code to work in, only somewhere to leave files. It does not get a fresh task directory each time: every turn of a conversation uses one folder, so twenty questions in one thread do not leave twenty folders behind.
+
+The folder is on the computer running the agent, under the daemon's workspaces root, as `.sessions/<workspace-id>/sessions/<conversation-id>`. The workspaces root defaults to `~/multica_workspaces` (`~/multica_workspaces_<profile>` for a named profile) and can be moved with `MULTICA_WORKSPACES_ROOT`.
+
+This folder is Multica's, so it is cleaned automatically: **on by default**, unlike the parallel working copies on your own drive. A conversation's folder is removed only when Multica created it, no run is using it, and it has been idle past the retention window (14 days by default). Desktop's daemon settings show the folder, its size, and each conversation with the reason it would be kept or cleared; you can also clear one conversation there. The scan never leaves that root: a directory of yours, and a working copy beside a repository, are never candidates.
+
+## When the server cannot place a run
+
+Which directory a run writes is decided once, on the server, before a runtime claims the run — and the runtime verifies that decision instead of choosing again. When no answer can be worked out, the run fails with a code rather than falling back to another directory or to a fresh remote checkout: `daemon_cannot_run_mode`, `unknown_execution_mode`, `malformed_resource`, `pinned_resource_not_found`, `pinned_resource_other_machine`, `pinned_resource_unusable`. Each code, with the next step for it, is listed under [Troubleshooting](/troubleshooting#a-run-fails-with-a-code-source-error).
+
+Older runtimes are unaffected. The server narrows the resource list to what the claiming runtime declared it can handle, so a runtime that predates multiple local directories or the new working-copy location receives exactly the resources it did before — **no upgrade is required**, and its runs behave as they always have.
+
 ## What gets written during a run
 
-Beyond the code changes the agent makes, the runtime may also write into the directory the instruction files the current AI coding tool needs, plus `.multica/project/resources.json`. Add them to `.gitignore` if you do not want them under version control.
+Beyond the code changes the agent makes, the runtime may write into the working directory the instruction files the current AI coding tool needs, plus `.multica/project/resources.json`. Multica removes its own files again when the run ends, so a Direct run hands your folder back as it found it apart from the agent's changes; a Parallel run never writes into your folder at all, and a Shared run keeps Multica's files out of it.
 
 Multica never deletes a linked local directory when cleaning up run environments. The agent's changes to the directory are the same kind of changes as running an AI coding tool in your terminal yourself, and need the same review.
 

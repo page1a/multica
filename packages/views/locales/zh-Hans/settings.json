@@ -388,7 +388,8 @@
       "mcp": "MCP",
       "billing": "账单与套餐",
       "config_transfer": "配置导出/导入",
-      "routing": "路由"
+      "routing": "路由",
+      "project_sharing": "项目共享"
     },
     "groups": {
       "personal": "个人设置",
@@ -1362,6 +1363,29 @@
       "reason_in_use": "保留：现在有任务正在里面跑。",
       "reason_not_ours": "保留：不是 Multica 建的，轮不到 Multica 来删。",
       "reason_unknown": "保留：读不到它的状态，而「不确定」不等于可以删。"
+    },
+    "shared_scratch": {
+      "title": "公用会话文件夹",
+      "description": "没绑本地目录、也没有仓库的问答，文件都放在这一个文件夹里，按会话归档，不再每个任务新建一个目录。这里清的只是这个文件夹：不会动你自己的目录，也不会动仓库旁边的工作副本。",
+      "scanning": "正在查看公用会话文件夹…",
+      "daemon_offline": "启动本机守护进程后才能看到这台机器上的公用会话文件夹。",
+      "load_failed": "读取公用会话文件夹失败。",
+      "location_title": "位置",
+      "location_description": "这台机器上就这一个。每个工作区的会话都在它下面，按会话分开。",
+      "size_title": "当前占用",
+      "summary": "{{count}} 个会话 · 占用 {{total}} · 已闲置可清 {{reclaimable}}",
+      "enable_title": "自动清理闲置会话",
+      "enable_description": "默认打开。只删除 Multica 自己建的、当前没在用、而且超过下面的天数没再写过的会话目录。跟着守护进程原有的清理一起跑。",
+      "retention_title": "至少保留",
+      "retention_description": "一个会话最后一次使用之后，过多少天才可以清掉它的目录。",
+      "empty": "这台机器上还没有公用会话。",
+      "last_used": "{{days}} 天前用过",
+      "in_use": "正在用，不会清",
+      "not_ours": "不是 Multica 建的，不会清",
+      "remove": "清掉",
+      "removed": "会话目录已清掉",
+      "clean_expired": "清掉过期的",
+      "cleaned": "过期的会话目录已清掉"
     }
   },
   "members": {
@@ -1670,7 +1694,7 @@
     "gateway_pair_incomplete": "端点要两半都填。只填一半时走的仍是部署共用端点。",
     "gateway_default_model": "该部署自己的默认模型是 {{model}}。",
     "filters_title": "候选筛选层",
-    "filters_placeholder": "以后支持，本版不实现。今天的候选只按方向预筛加置信度过闸。",
+    "filters_placeholder": "取消、归档、停用、运行时不可达、已死亡或额度用尽的席位，会在下一次分配前被排除。供应商额度只是提示：某一家没有新鲜数据，不会把这家的席位全部判死。",
     "health_checking": "自检中…",
     "health_recheck": "重新自检",
     "health_connected": "已连通 · {{when}}自检",
@@ -1697,6 +1721,47 @@
         "chip": "未生效",
         "detail": "模型被拒、连不通、已删除，或正在失败后的冷却期。完全走原版，票上不会出现任何提示。"
       }
-    }
+    },
+    "context_title": "分配上下文",
+    "policy_label": "路由提示词",
+    "policy_description": "这段文字决定档位怎么选。普通工作落在中或强；简单、明确、低风险的工作可以用弱；只有复杂或高风险才上探强或最强。它不能改状态，也不能执行动作。",
+    "policy_restore": "恢复系统默认提示词",
+    "policy_save_error": "保存失败，编辑内容还在。",
+    "policy_saving": "保存中…",
+    "policy_saved": "已保存",
+    "quota_title": "供应商额度",
+    "quota_description": "Claude、Codex、Grok 最近一次上报。没有或过期的数字显示未知。额度不能决定某个席位是否还活着。",
+    "quota_unknown": "未知",
+    "quota_exhausted": "已用尽",
+    "quota_available": "已用 {{percent}}%",
+    "quota_resets": "{{when}} 重置",
+    "quota_updated": "更新于 {{when}}",
+    "seats_title": "候选席位",
+    "seats_empty": "还没有候选席位。"
+  },
+  "project_sharing": {
+    "title": "项目共享",
+    "description": "按项目管理工作区成员可以看到的内容。",
+    "section_title": "项目",
+    "section_description": "修改项目范围会同步更新该项目当前包含的所有任务和仓库。",
+    "loading": "正在加载项目…",
+    "empty": "还没有项目。",
+    "visibility_private": "仅自己",
+    "visibility_project": "项目成员",
+    "visibility_workspace": "全工作区",
+    "members": "{{count}} 名成员",
+    "guests": "{{count}} 名访客",
+    "resources": "{{count}} 项资源",
+    "no_members": "目前只有你，别人暂时看不到。",
+    "manage_members": "管理项目成员",
+    "read_only": "访客可以查看共享项目，但不能修改共享范围。",
+    "change_for": "修改 {{name}} 的共享范围",
+    "confirm_title": "更新 {{name}} 的共享范围？",
+    "confirm_description": "将把 {{count}} 项资源更新为“{{visibility}}”，其中 {{privateCount}} 项当前为私有。",
+    "cancel": "取消",
+    "confirm": "应用",
+    "saving": "应用中…",
+    "preview_loading": "正在加载预览…预览准备好之前不能确认。",
+    "preview_failed": "预览加载失败，请重试后再确认。"
   }
 }

@@ -124,6 +124,15 @@ func (r *Router) Route(ctx context.Context, workspaceID, issueID string) (Outcom
 		return Outcome{State: state, Action: ActionSkipped, Reason: "assignee is a person"}, nil
 	}
 
+	// A child issue is execution-only. It may still receive an executor at
+	// `todo`, but acceptance is a single parent-level handoff. Keep this guard
+	// before the status switch so a manually assigned reviewer, a stale child
+	// row, or a direct `issue route` call cannot start an independent review
+	// chain.
+	if issue.ParentIssueID != "" && issue.Status == "in_review" {
+		return Outcome{State: state, Action: ActionNoop, Reason: "sub-issue has no acceptance route"}, nil
+	}
+
 	switch issue.Status {
 	case "todo":
 		return r.routeTodo(ctx, workspaceID, settings, issue)
@@ -173,7 +182,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	out := Outcome{State: StateEnabled, Action: ActionDeclined}
 
 	needExecutor := issue.AssigneeType == ""
-	needReviewer := issue.Reviewer.Empty()
+	needReviewer := issue.ParentIssueID == "" && issue.Reviewer.Empty()
 
 	if !needExecutor && !needReviewer {
 		// Both slots already hold a value, whoever wrote them. Repeated status
@@ -194,21 +203,29 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	if len(candidates) == 0 {
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "ladder has no seat in this workspace"}, nil
 	}
+	eligible, state, err := r.decisionContext(ctx, workspaceID, settings, issue, direction, candidates)
+	if err != nil {
+		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+	}
+	if len(eligible) == 0 {
+		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "no eligible seat"}, nil
+	}
 
 	// A tier label on the ticket is an answer, not a hint: when it names a
-	// rung that exists, the executor slot is filled from it and the judge is
-	// never asked about strength. A ticket that also needs a reviewer still
-	// goes to the judge — for the reviewer question only.
+	// rung that exists AND that seat can take work, the executor slot is
+	// filled from it and the judge is never asked about strength. A dead
+	// labelled seat is not an answer — the judge chooses among the seats
+	// that are still eligible.
 	requestedTier, labelled := r.Ladder.RequestedTier(issue.Labels)
 	labelSeat, labelSeatOK := Seat{}, false
 	if labelled {
-		labelSeat, labelSeatOK = SeatByTier(candidates, requestedTier)
+		labelSeat, labelSeatOK = SeatByTier(eligible, requestedTier)
 	}
 	executorFromLabel := needExecutor && labelSeatOK
 
 	var verdict Verdict
 	if needReviewer || !executorFromLabel {
-		v, err := r.Judge.Assign(ctx, settings.Target(), r.judgeState(issue, direction, candidates))
+		v, err := r.Judge.Assign(ctx, settings.Target(), state)
 		if err != nil {
 			return r.reportUnavailable(ctx, workspaceID, issue, err)
 		}
@@ -218,29 +235,45 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 
 	threshold := settings.Threshold()
 
+	// The observation can go stale between the question and the write. Read
+	// it again and only then pick. A seat that died in that gap is not
+	// written; another eligible seat is, when one remains.
+	fresh, err := r.eligibleNow(ctx, workspaceID, settings, candidates)
+	if err != nil {
+		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+	}
+
 	// --- executor slot ---------------------------------------------------
-	// Routing always dispatches. A verdict under the threshold is a weak
-	// answer, not a missing one: it lands on the ladder's fallback rung — the
-	// generic strong seat — instead of leaving the ticket in todo for somebody
-	// to notice. The confidence stays visible in the decision comment, and
-	// changing a seat is one click; a ticket nobody picked up is invisible.
+	// A verdict under the threshold is a weak answer, not a missing one: it
+	// lands on the ladder's fallback rung — the generic strong seat — instead
+	// of leaving the ticket in todo for somebody to notice. A seat the
+	// snapshot says cannot take work is not a fallback. The confidence stays
+	// visible in the decision comment.
 	var executor *Seat
 	var notes []string
 	executorSource := ""
+	if labelled && !labelSeatOK {
+		notes = append(notes, "labelled tier "+requestedTier+" was not eligible")
+	}
 	if needExecutor {
-		seat, source, why := r.pickExecutor(candidates, labelSeat, labelSeatOK, verdict, threshold)
-		written, err := r.Store.AssignAgentIfUnassigned(ctx, workspaceID, issue.ID, seat)
-		if err != nil {
-			return out, err
-		}
-		if written {
-			executor, executorSource = &seat, source
-			out.ExecutorWritten = &seat
-			if why != "" {
-				notes = append(notes, "executor fell back to "+seat.Name+": "+why)
-			}
+		if len(fresh) == 0 {
+			notes = append(notes, "executor not filled: no eligible seat")
 		} else {
-			notes = append(notes, "executor not filled: the slot was taken before this call wrote it")
+			labelStill := labelSeatOK && seatIn(fresh, labelSeat)
+			seat, source, why := r.pickExecutor(fresh, labelSeat, labelStill, verdict, threshold)
+			written, err := r.Store.AssignAgentIfUnassigned(ctx, workspaceID, issue.ID, seat)
+			if err != nil {
+				return out, err
+			}
+			if written {
+				executor, executorSource = &seat, source
+				out.ExecutorWritten = &seat
+				if why != "" {
+					notes = append(notes, "executor fell back to "+seat.Name+": "+why)
+				}
+			} else {
+				notes = append(notes, "executor not filled: the slot was taken before this call wrote it")
+			}
 		}
 	}
 
@@ -258,7 +291,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	// the person for the call it cannot make.
 	humanSignoff := needReviewer && verdict.Reviewer == ReviewerHuman
 	if needReviewer {
-		ref, ok := r.decideReviewer(verdict, candidates, executor, issue)
+		ref, ok := r.decideReviewer(verdict, fresh, executor, issue)
 		why := ""
 		switch {
 		case !ok && humanSignoff:
@@ -271,20 +304,24 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		}
 		if !ok {
 			var ladderWhy string
-			ref, ladderWhy = r.fallbackReviewer(candidates, executor, issue)
+			ref, ladderWhy = r.fallbackReviewer(fresh, executor, issue)
 			reviewerFallback = true
 			fallbackWhy = ladderWhy
 			notes = append(notes, "reviewer fell back to "+ref.Label()+": "+why)
 		}
-		written, err := r.Store.SetReviewerIfUnset(ctx, workspaceID, issue.ID, ref)
-		if err != nil {
-			return out, err
-		}
-		if written {
-			reviewer = ref
-			out.ReviewerWritten = ref
+		if ref.Kind == ReviewerAgent && !seatIn(fresh, Seat{ID: ref.ID}) {
+			notes = append(notes, "reviewer not filled: seat became ineligible")
 		} else {
-			notes = append(notes, "reviewer not filled: the slot was taken before this call wrote it")
+			written, err := r.Store.SetReviewerIfUnset(ctx, workspaceID, issue.ID, ref)
+			if err != nil {
+				return out, err
+			}
+			if written {
+				reviewer = ref
+				out.ReviewerWritten = ref
+			} else {
+				notes = append(notes, "reviewer not filled: the slot was taken before this call wrote it")
+			}
 		}
 	}
 
@@ -434,6 +471,9 @@ func (r *Router) decideReviewer(v Verdict, candidates []Seat, executor *Seat, is
 // but it still runs at most once per issue, because the handoff comment is
 // posted at most once per issue.
 func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings Settings, issue Issue) (Outcome, error) {
+	if issue.ParentIssueID != "" {
+		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "sub-issue has no acceptance route"}, nil
+	}
 	out := Outcome{State: StateEnabled, Action: ActionHandedOff}
 	decidedHere := false
 	if issue.Reviewer.Empty() {
@@ -498,6 +538,13 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 	if issue.AssigneeType == "agent" && issue.AssigneeID == seatAgent.ID {
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer already holds the issue"}, nil
 	}
+	facts, err := r.Store.RoutingFacts(ctx, workspaceID, []string{seatAgent.ID}, settings.ProviderKeys())
+	if err != nil {
+		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+	}
+	if snap, ok := facts.Seats[seatAgent.ID]; ok && Unselectable(snap.Availability) {
+		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer seat is not eligible"}, nil
+	}
 	if err := r.Store.Handoff(ctx, workspaceID, issue.ID, "agent", seatAgent.ID); err != nil {
 		return out, err
 	}
@@ -541,20 +588,35 @@ func (r *Router) decideReviewerNow(ctx context.Context, workspaceID string, sett
 	if len(candidates) == 0 {
 		return ReviewerRef{}, noop("ladder has no seat in this workspace"), nil
 	}
+	eligible, state, err := r.decisionContext(ctx, workspaceID, settings, issue, direction, candidates)
+	if err != nil {
+		return ReviewerRef{}, Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+	}
+	if len(eligible) == 0 {
+		return ReviewerRef{}, noop("no eligible seat"), nil
+	}
 
-	verdict, err := r.Judge.Assign(ctx, settings.Target(), r.judgeState(issue, direction, candidates))
+	verdict, err := r.Judge.Assign(ctx, settings.Target(), state)
 	if err != nil {
 		out, err := r.reportUnavailable(ctx, workspaceID, issue, err)
 		return ReviewerRef{}, out, err
 	}
 	r.Breaker.Succeed(workspaceID)
 
+	fresh, err := r.eligibleNow(ctx, workspaceID, settings, candidates)
+	if err != nil {
+		return ReviewerRef{}, Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+	}
+
 	// executor is nil on purpose: at this row the ticket is already held by
 	// whoever did the work, and decideReviewer reads that holder off the
 	// issue to keep a seat from reviewing its own output.
-	ref, ok := r.decideReviewer(verdict, candidates, nil, issue)
+	ref, ok := r.decideReviewer(verdict, fresh, nil, issue)
 	if !ok || verdict.ReviewerConfidence < settings.Threshold() {
-		ref, _ = r.fallbackReviewer(candidates, nil, issue)
+		ref, _ = r.fallbackReviewer(fresh, nil, issue)
+	}
+	if ref.Kind == ReviewerAgent && !seatIn(fresh, Seat{ID: ref.ID}) {
+		return ReviewerRef{}, noop("reviewer seat is not eligible"), nil
 	}
 	if ref.Empty() {
 		// Nothing nameable. The slot stays empty rather than holding a
@@ -600,7 +662,11 @@ func (r *Router) routeBlocked(ctx context.Context, workspaceID string, settings 
 		return out, err
 	}
 	candidates := ladder.Candidates(direction, roster)
-	advice, err := r.Judge.Unblock(ctx, settings.Target(), r.judgeState(issue, direction, candidates))
+	_, state, err := r.decisionContext(ctx, workspaceID, settings, issue, direction, candidates)
+	if err != nil {
+		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+	}
+	advice, err := r.Judge.Unblock(ctx, settings.Target(), state)
 	if err != nil {
 		return r.reportUnavailable(ctx, workspaceID, issue, err)
 	}
@@ -722,6 +788,55 @@ func mentionLink(m Member) string {
 		name = "there"
 	}
 	return "[@" + name + "](mention://member/" + m.UserID + ")"
+}
+
+// decisionContext loads the seat and provider summary, drops seats that are
+// definitely ineligible, and builds the judge payload. The payload still
+// lists the dropped seats so the request shows why a rung is missing.
+// candidate_tiers contains only the seats the judge may choose.
+func (r *Router) decisionContext(ctx context.Context, workspaceID string, settings Settings, issue Issue, direction string, candidates []Seat) ([]Seat, JudgeState, error) {
+	facts, err := r.Store.RoutingFacts(ctx, workspaceID, seatIDs(candidates), settings.ProviderKeys())
+	if err != nil {
+		return nil, JudgeState{}, err
+	}
+	eligible := EligibleSeats(candidates, facts.Seats)
+	state := r.judgeState(issue, direction, eligible)
+	state.RoutingPolicy = DefaultRoutingPolicy
+	state.PolicyPrompt = settings.EffectivePolicyPrompt()
+	state.Seats = OrderSeatViews(candidates, facts.Seats)
+	state.ProviderQuotas = EnsureProviderQuotas(facts.Providers, settings.ProviderKeys())
+	return eligible, state, nil
+}
+
+// eligibleNow re-reads the summary immediately before a conditional write.
+func (r *Router) eligibleNow(ctx context.Context, workspaceID string, settings Settings, candidates []Seat) ([]Seat, error) {
+	facts, err := r.Store.RoutingFacts(ctx, workspaceID, seatIDs(candidates), settings.ProviderKeys())
+	if err != nil {
+		return nil, err
+	}
+	return EligibleSeats(candidates, facts.Seats), nil
+}
+
+func seatIDs(candidates []Seat) []string {
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ID != "" {
+			ids = append(ids, candidate.ID)
+		}
+	}
+	return ids
+}
+
+func seatIn(seats []Seat, seat Seat) bool {
+	if seat.ID == "" {
+		return false
+	}
+	for _, candidate := range seats {
+		if candidate.ID == seat.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Router) judgeState(issue Issue, direction string, candidates []Seat) JudgeState {

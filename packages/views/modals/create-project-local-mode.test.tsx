@@ -147,6 +147,7 @@ vi.mock("../platform/local-directory", () => ({
     Promise.resolve({ ok: true, path: "/Users/dev/work/game-client", basename: "game-client" }),
   validateLocalDirectory: () => Promise.resolve({ ok: true, is_git_repo: pickedIsGitRepo }),
   validateWritablePath: async () => true,
+  initLocalGit: async () => ({ ok: false, reason: "unsupported" as const }),
   canSetLocalDirectorySharedOverride: () => true,
   setLocalDirectorySharedOverride: vi.fn().mockResolvedValue({ ok: true }),
 }));
@@ -229,6 +230,7 @@ describe("CreateProjectModal — local directory execution mode", () => {
     await pickLocalDirectory(user);
 
     expect(screen.getByRole("button", { name: /^Direct$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create local git/i })).toBeInTheDocument();
   });
 
   // Since DENE-617 every folder preselects direct, so this case is no longer

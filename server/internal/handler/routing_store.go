@@ -76,6 +76,9 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 		CreatorType:  row.CreatorType,
 		CreatorID:    util.UUIDToString(row.CreatorID),
 	}
+	if row.ParentIssueID.Valid {
+		out.ParentIssueID = util.UUIDToString(row.ParentIssueID)
+	}
 	// Falls back to updated_at exactly as ListStaleReviewIssues does, so the
 	// single-issue re-check cannot disagree with the query that selected it.
 	switch {

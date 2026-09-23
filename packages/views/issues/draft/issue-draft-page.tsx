@@ -145,17 +145,28 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
   // a same-tick double click reports the same issue twice, so this effect runs
   // again and again while the page is still on screen — and a router told to
   // replace the same URL forty times never commits the navigation at all.
+  //
+  // A confirm that could not apply a seat stays put instead. The panel is the
+  // only surface that shows it (the created issues themselves are ordinary
+  // unassigned issues by the time this page is gone), so replacing the URL the
+  // instant the rows are created would turn the notice into a frame nobody read
+  // — it would satisfy the letter of "the issue was still created" while losing
+  // the half of that requirement that says the person is told. The panel lists
+  // the created rows and links to each, so the landing the replace would have
+  // performed is one click away (DENE-694).
   const landingIssueId = issueDraftLandingIssueId(
     issueDraftParentIssueId(session.draft),
     session.createdIssueId,
   );
+  const droppedSeats = session.assignmentWarnings.length > 0;
   const navigatedToIssueRef = useRef<string | null>(null);
   useEffect(() => {
     if (!landingIssueId) return;
+    if (droppedSeats) return;
     if (navigatedToIssueRef.current === landingIssueId) return;
     navigatedToIssueRef.current = landingIssueId;
     navigation.replace(paths.issueDetail(landingIssueId));
-  }, [landingIssueId, navigation, paths]);
+  }, [droppedSeats, landingIssueId, navigation, paths]);
 
   if (session.missing) return null;
 
@@ -287,6 +298,7 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
               readOnly={record}
               producedIssueId={session.producedIssueId}
               createdIssues={session.createdIssues}
+              assignmentWarnings={session.assignmentWarnings}
               round={session.round}
               continuation={session.continuation}
               builtChildren={session.groupChildren}

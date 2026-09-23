@@ -1,0 +1,72 @@
+{
+  "button": {
+    "label": "로그 내보내기",
+    "tooltip": "이 실행의 로그 패키지 내보내기"
+  },
+  "dialog": {
+    "title": "실행 로그 내보내기",
+    "subtitle": "내려받거나 보고할 수 있는 마스킹된 로그 패키지 하나를 생성합니다",
+    "cancel": "취소"
+  },
+  "range": {
+    "section": "범위",
+    "run": "이번 실행",
+    "run_hint": "실행 {{id}}",
+    "hours": "최근 {{hours}}시간",
+    "hours_hint": "{{from}} 부터",
+    "hours_input": "되돌아볼 시간",
+    "task": "작업 전체",
+    "task_hint": "모든 실행 기록"
+  },
+  "action": {
+    "export": "로그 내보내기",
+    "reexport": "다시 내보내기",
+    "retry": "다시 시도",
+    "partial": "수집된 부분만 내보내기",
+    "widen": "작업 전체로 넓히기",
+    "report": "댓글 첨부로 보고하고 담당자에게 @ 하기",
+    "retry_comment": "댓글만 다시 보내기",
+    "copy_summary": "AI 요약 복사",
+    "copied": "복사됨",
+    "download": "로그 패키지 내려받기"
+  },
+  "state": {
+    "idle_title": "아직 내보낸 것이 없습니다",
+    "idle_body": "범위를 고른 뒤 \"{{action}}\"을 누르세요. 로그 패키지는 서버가 한 번에 생성합니다. 구조화 로그, 실행 메타데이터, 그리고 AI에 그대로 붙여넣을 수 있는 요약이 들어갑니다.",
+    "section": "내보내기 결과",
+    "collecting_title": "로그를 모으는 중",
+    "collecting_body": "구조화 로그, 실행 메타데이터, 마스킹된 요약을 읽고 있습니다.",
+    "collected": "{{n}}건 수집됨",
+    "received": "{{received}} / {{total}} 수신됨",
+    "empty_title": "이 범위에는 로그가 없습니다",
+    "empty_body": "\"{{range}}\"에 해당하는 기록을 찾지 못했습니다.",
+    "failed_title": "내보내기가 끝나지 않았습니다",
+    "partial_note": "로그 패키지는 서버가 한 번에 생성하므로 실패해도 반쪽짜리 결과물이 남지 않습니다. 마지막으로 성공한 패키지는 여기에 있습니다.",
+    "restored": "마지막으로 성공한 로그 패키지입니다."
+  },
+  "card": {
+    "entries": "{{n}}개 기록",
+    "runs": "{{n}}회 실행",
+    "truncated": "개수 상한에 도달했습니다 — 기록의 앞부분만 담겼습니다",
+    "redacted": "자동으로 마스킹됨",
+    "redaction_incomplete": "마스킹이 불완전합니다 — 그대로 외부에 내보내지 마세요",
+    "redaction_unknown": "마스킹 상태를 알 수 없습니다 — 그대로 외부에 내보내지 마세요",
+    "summary": "AI 요약",
+    "no_summary": "(요약 본문 없음)"
+  },
+  "report": {
+    "hint": "먼저 워크스페이스 로그 저장소로 푸시하고 댓글에는 링크만 남깁니다. 저장소를 쓸 수 없으면 댓글 첨부로 자동 전환합니다.",
+    "running": "보고하는 중…",
+    "success_git": "{{issue}}에 보고했습니다 — 로그 패키지는 {{repo}}에 푸시되었습니다.",
+    "success_attachment": "{{issue}}에 보고했습니다 — 로그 패키지가 댓글 첨부로 올라갔습니다.",
+    "fallback": "댓글 첨부로 전환했습니다: {{reason}}",
+    "push_landed": "로그 저장소로 푸시했지만 댓글이 전송되지 않았습니다: {{reason}}",
+    "failed": "보고 실패: {{reason}}",
+    "link": "로그 패키지 열기"
+  },
+  "error": {
+    "export_failed": "내보내기 실패",
+    "report_failed": "보고 실패",
+    "no_issue": "이 실행은 이슈에 연결되어 있지 않아 보고할 수 없습니다."
+  }
+}

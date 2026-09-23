@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,11 +39,14 @@ Ranges:
   hours   every run of the same issue whose entries fall in the last N hours
   task    the issue's whole run history
 
-To report the bundle on the issue instead of keeping it local, pass --report:
-the file is uploaded through the ordinary issue-comment attachment path and the
-comment mentions the human who owns the issue. An agent- or squad-assigned
-issue mentions its human creator instead, so reporting can never queue another
-agent run; name one explicitly with --mention to override that.`,
+To report the bundle on the issue instead of keeping it local, pass --report.
+The bundle is pushed into the workspace's log repository when one is
+configured, and the comment keeps a link to the committed file along with the
+human owner's mention; with no repository — or a push that fails — the file is
+uploaded through the ordinary issue-comment attachment path instead, so the
+report is never lost. An agent- or squad-assigned issue mentions its human
+creator rather than the assignee, so reporting can never queue another agent
+run; name one explicitly with --mention to override that.`,
 	Example: `  # Export the run's log bundle into the current directory
   $ multica logs export 01a0b577-06b6-786e-8df6-3ebf70edf6d2
 
@@ -65,7 +69,7 @@ func init() {
 	logsExportCmd.Flags().StringP("output-dir", "o", ".", "Directory to write the bundle into")
 	logsExportCmd.Flags().String("output-file", "", "Exact path to write the bundle to (overrides --output-dir)")
 	logsExportCmd.Flags().Bool("stdout", false, "Write the bundle JSON to stdout instead of a file")
-	logsExportCmd.Flags().Bool("report", false, "Also post the bundle as a comment attachment on the task's issue and mention its human owner")
+	logsExportCmd.Flags().Bool("report", false, "Also report the bundle on the task's issue: push it to the workspace log repo, or attach it as a comment, and mention its human owner")
 	logsExportCmd.Flags().String("mention", "", "Override the --report mention as <type>:<id> (member, agent, or squad; an agent/squad mention queues a run)")
 }
 
@@ -176,7 +180,7 @@ func runLogsExport(cmd *cobra.Command, args []string) error {
 	}
 
 	if report, _ := cmd.Flags().GetBool("report"); report {
-		reported, err := reportLogBundle(ctx, cmd, client, bundle, filename, body)
+		reported, err := reportLogBundle(ctx, cmd, client, args[0], bundle, filename, body)
 		if err != nil {
 			return err
 		}
@@ -239,13 +243,65 @@ func writeLogBundle(cmd *cobra.Command, filename string, body []byte) (string, e
 	return abs, nil
 }
 
-// reportLogBundle uploads the artifact through the existing issue-comment
-// attachment chain and posts a comment that mentions the issue's owner. It is
-// the same two calls the web dialog makes, so a CLI report and a UI report are
-// indistinguishable on the issue.
-func reportLogBundle(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, bundle exportedBundle, filename string, body []byte) (map[string]any, error) {
+// logExportPush mirrors the push response the web dialog consumes. The
+// pointer on RedactionComplete matters: a server that predates the marker
+// sends null, which must read as "not proven clean" rather than as clean.
+type logExportPush struct {
+	Pushed            bool   `json:"pushed"`
+	Filename          string `json:"filename"`
+	Path              string `json:"path"`
+	URL               string `json:"url"`
+	Branch            string `json:"branch"`
+	Repo              string `json:"repo"`
+	SummaryMarkdown   string `json:"summary_markdown"`
+	EntryCount        int    `json:"entry_count"`
+	RunCount          int    `json:"run_count"`
+	SizeBytes         int    `json:"size_bytes"`
+	RedactionComplete *bool  `json:"redaction_complete"`
+	RedactionNote     string `json:"redaction_note,omitempty"`
+	Truncated         bool   `json:"truncated"`
+}
+
+// reportLogBundle reports the artifact on its issue, preferring the workspace
+// log repository over a comment attachment.
+//
+// The order is the whole point of the repository path. This instance's upload
+// chain runs through Cloudflare, whose origin timeout kills a multi-megabyte
+// request outright, so a report that always uploaded would fail for exactly
+// the large bundles an operator most needs to hand over. The push request
+// carries only the scope — the server rebuilds the same document and commits
+// it — and the comment keeps a link. When no repository is configured, or the
+// push fails, the attachment path still runs and the report is not lost.
+func reportLogBundle(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, taskID string, bundle exportedBundle, filename string, body []byte) (map[string]any, error) {
 	if bundle.Task.IssueID == "" {
 		return nil, fmt.Errorf("--report needs an issue: this run is not linked to an issue")
+	}
+
+	mention, err := exportMention(ctx, cmd, client, bundle.Task.IssueID)
+	if err != nil {
+		return nil, err
+	}
+
+	push, pushErr := pushLogBundle(ctx, client, taskID, bundle)
+	if pushErr != nil && !isLogRepoUnconfigured(pushErr) {
+		fmt.Fprintln(os.Stderr, "Log repository push failed, reporting the attachment instead:", pushErr)
+	}
+	if pushErr == nil && push != nil && push.Pushed {
+		content := logExportReportComment(push.SummaryMarkdown, mention, push.URL)
+		var comment map[string]any
+		if err := client.PostJSON(ctx, "/api/issues/"+bundle.Task.IssueID+"/comments", map[string]any{"content": content}, &comment); err != nil {
+			return nil, fmt.Errorf("report log bundle: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "Pushed to the log repository and reported to issue", bundle.Task.IssueIdentifier)
+		return map[string]any{
+			"issue_id":   bundle.Task.IssueID,
+			"comment_id": comment["id"],
+			"mention":    mention,
+			"channel":    "git",
+			"url":        push.URL,
+			"path":       push.Path,
+			"branch":     push.Branch,
+		}, nil
 	}
 
 	attachmentID, err := client.UploadFile(ctx, body, filename, bundle.Task.IssueID)
@@ -254,10 +310,6 @@ func reportLogBundle(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 	}
 
 	content := strings.TrimSpace(bundle.SummaryMarkdown)
-	mention, err := exportMention(ctx, cmd, client, bundle.Task.IssueID)
-	if err != nil {
-		return nil, err
-	}
 	if mention != "" {
 		content = content + "\n\n" + mention
 	}
@@ -275,12 +327,70 @@ func reportLogBundle(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 	}
 
 	fmt.Fprintln(os.Stderr, "Reported to issue", bundle.Task.IssueIdentifier)
-	return map[string]any{
+	result := map[string]any{
 		"issue_id":      bundle.Task.IssueID,
 		"comment_id":    comment["id"],
 		"attachment_id": attachmentID,
 		"mention":       mention,
-	}, nil
+		"channel":       "attachment",
+	}
+	if pushErr != nil {
+		result["fallback_reason"] = pushErr.Error()
+	}
+	return result, nil
+}
+
+// pushLogBundle asks the server to commit the bundle into the workspace log
+// repository. The request carries the scope rather than the artifact: the
+// server rebuilds the document with the generator that produced the local
+// copy, so the bytes cross no size-limited upload path.
+//
+// The rebuild means the committed file's `generated_at` is seconds newer than
+// the local one, which is why the comment is composed from the summary the
+// server returns instead of the one this command already holds.
+func pushLogBundle(ctx context.Context, client *cli.APIClient, taskID string, bundle exportedBundle) (*logExportPush, error) {
+	payload := map[string]any{"scope": bundle.Task.Scope.Kind}
+	if bundle.Task.Scope.Kind == "hours" {
+		payload["hours"] = bundle.Task.Scope.Hours
+	}
+
+	var push logExportPush
+	if err := client.PostJSON(ctx, "/api/tasks/"+taskID+"/logs/export/push", payload, &push); err != nil {
+		return nil, err
+	}
+	return &push, nil
+}
+
+// isLogRepoUnconfigured reports the ordinary "this workspace has no log
+// repository" answer, which is a supported configuration rather than a
+// failure worth a warning line.
+func isLogRepoUnconfigured(err error) bool {
+	var httpErr *cli.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusConflict
+	}
+	return false
+}
+
+// logExportReportComment mirrors buildLogExportReportComment in
+// packages/core/logs/report.ts: the bundle's own summary, then the link to the
+// committed document, then the mention. Change one and change the other, or a
+// CLI report and a UI report stop reading the same on the issue.
+func logExportReportComment(summary, mention, link string) string {
+	parts := []string{}
+	if trimmed := strings.TrimSpace(summary); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	if href := strings.TrimSpace(link); href != "" {
+		parts = append(parts, "日志包：["+href+"]("+href+")")
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "运行日志导出")
+	}
+	if target := strings.TrimSpace(mention); target != "" {
+		parts = append(parts, target)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // exportMention resolves the mention link for --report. An explicit --mention

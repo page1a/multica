@@ -281,6 +281,10 @@ archived statuses remain readable via an explicit status filter.
   planning, and review all count as the work exactly when they are what the
   issue asks for (a review-the-PR issue is being worked the moment reviewing
   starts). Questions, discussion, or acknowledgements never move the status.
+  Acceptance is parent-scoped: a sub-issue with `parent_issue_id` is execution-only
+  and must not enter `in_review` or receive an independent 验收席. Its terminal
+  state is only an input to the parent's stage/barrier; after the full child tree
+  is complete, the parent is the one issue that moves to unified `in_review`.
   Squad leaders: dispatching members is not delivery — a dispatch turn
   leaves the parent `in_progress`, and it moves to `in_review` only when a
   later re-trigger confirms the overall goal is met.

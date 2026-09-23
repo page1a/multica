@@ -168,6 +168,11 @@ func TestRunLogsExportReportsViaCommentAttachment(t *testing.T) {
 				t.Fatalf("decode comment body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-11"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs/export/push"):
+			// The ordinary configuration: this workspace has no log repository,
+			// so the report must fall back to the comment attachment.
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"log export git repository is not configured"}`)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -213,6 +218,176 @@ func TestRunLogsExportReportsViaCommentAttachment(t *testing.T) {
 	}
 }
 
+// TestRunLogsExportReportPrefersTheLogRepository pins the order: when the
+// workspace has a log repository the bundle is committed there and the comment
+// keeps only a link, so a bundle too large for the upload path still gets
+// reported. The comment must also quote the summary the push returned — the
+// server rebuilds the document, so the local copy's summary describes a
+// slightly older file.
+func TestRunLogsExportReportPrefersTheLogRepository(t *testing.T) {
+	var (
+		commentBody map[string]any
+		pushBody    map[string]any
+		uploaded    bool
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/logs/export"):
+			_, _ = io.WriteString(w, logsExportArtifact)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs/export/push"):
+			if err := json.NewDecoder(r.Body).Decode(&pushBody); err != nil {
+				t.Fatalf("decode push body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"pushed":             true,
+				"filename":           "log-export-DENE-599-abcd1234-run-20260921T120500Z.json",
+				"path":               "logs/log-export-DENE-599-abcd1234-run-20260921T120500Z.json",
+				"url":                "https://github.com/o/r/blob/kun/logs/log-export-DENE-599-abcd1234-run-20260921T120500Z.json",
+				"branch":             "kun",
+				"repo":               "https://github.com/o/r",
+				"summary_markdown":   "## AI 摘要\n\n推送后的产物摘要",
+				"entry_count":        3,
+				"run_count":          1,
+				"size_bytes":         1024,
+				"redaction_complete": true,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/issue-9":
+			_ = json.NewEncoder(w).Encode(map[string]any{"assignee_type": "member", "assignee_id": "user-9"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/issue-9/comments":
+			if err := json.NewDecoder(r.Body).Decode(&commentBody); err != nil {
+				t.Fatalf("decode comment body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-11"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/upload-file":
+			uploaded = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "attachment-7"})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newLogsExportTestCmd()
+	_ = cmd.Flags().Set("output-dir", t.TempDir())
+	_ = cmd.Flags().Set("report", "true")
+
+	out, err := captureStdout(t, func() error { return runLogsExport(cmd, []string{logsExportTestTask}) })
+	if err != nil {
+		t.Fatalf("runLogsExport: %v", err)
+	}
+
+	// The push request carries the scope and nothing else: sending the
+	// artifact back up is the round trip the git path exists to avoid.
+	if pushBody["scope"] != "run" {
+		t.Fatalf("push body = %v, want scope run", pushBody)
+	}
+	if _, hasHours := pushBody["hours"]; hasHours {
+		t.Fatalf("push body carried hours for a run-scoped export: %v", pushBody)
+	}
+	if uploaded {
+		t.Fatalf("a successful push must not also upload the artifact")
+	}
+
+	content, _ := commentBody["content"].(string)
+	if !strings.Contains(content, "推送后的产物摘要") {
+		t.Fatalf("comment must quote the pushed document's summary: %q", content)
+	}
+	if !strings.Contains(content, "https://github.com/o/r/blob/kun/logs/") {
+		t.Fatalf("comment missing the committed file link: %q", content)
+	}
+	if !strings.Contains(content, "mention://member/user-9") {
+		t.Fatalf("comment missing the owner mention: %q", content)
+	}
+	if _, hasAttachment := commentBody["attachment_ids"]; hasAttachment {
+		t.Fatalf("link-only comment carried an attachment: %v", commentBody)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	report, _ := result["report"].(map[string]any)
+	if report["channel"] != "git" {
+		t.Fatalf("report = %v, want channel git", report)
+	}
+	if report["path"] != "logs/log-export-DENE-599-abcd1234-run-20260921T120500Z.json" {
+		t.Fatalf("report path = %v", report["path"])
+	}
+}
+
+// TestRunLogsExportReportKeepsTheReportWhenThePushFails is the other half: a
+// repository that exists but rejects the push must not cost the operator the
+// report. The attachment path still runs and the reason is reported.
+func TestRunLogsExportReportKeepsTheReportWhenThePushFails(t *testing.T) {
+	var (
+		commentBody map[string]any
+		uploaded    []byte
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/logs/export"):
+			_, _ = io.WriteString(w, logsExportArtifact)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs/export/push"):
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, `{"error":"git clone failed: could not read Username"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/issue-9":
+			_ = json.NewEncoder(w).Encode(map[string]any{"assignee_type": "member", "assignee_id": "user-9"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/upload-file":
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Fatalf("parse multipart: %v", err)
+			}
+			file, _, err := r.FormFile("file")
+			if err != nil {
+				t.Fatalf("form file: %v", err)
+			}
+			defer file.Close()
+			uploaded, _ = io.ReadAll(file)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "attachment-7"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/issue-9/comments":
+			_ = json.NewDecoder(r.Body).Decode(&commentBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-11"})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newLogsExportTestCmd()
+	_ = cmd.Flags().Set("output-dir", t.TempDir())
+	_ = cmd.Flags().Set("report", "true")
+
+	out, err := captureStdout(t, func() error { return runLogsExport(cmd, []string{logsExportTestTask}) })
+	if err != nil {
+		t.Fatalf("runLogsExport: %v", err)
+	}
+
+	if string(uploaded) != logsExportArtifact {
+		t.Fatalf("fallback uploaded %d bytes, want the verbatim artifact", len(uploaded))
+	}
+	ids, _ := commentBody["attachment_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "attachment-7" {
+		t.Fatalf("attachment_ids = %v", commentBody["attachment_ids"])
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	report, _ := result["report"].(map[string]any)
+	if report["channel"] != "attachment" {
+		t.Fatalf("report = %v, want channel attachment", report)
+	}
+	if reason, _ := report["fallback_reason"].(string); !strings.Contains(reason, "could not read Username") {
+		t.Fatalf("fallback_reason = %v", report["fallback_reason"])
+	}
+}
+
 func TestRunLogsExportReportMentionOverride(t *testing.T) {
 	var commentBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +399,11 @@ func TestRunLogsExportReportMentionOverride(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/issue-9/comments":
 			_ = json.NewDecoder(r.Body).Decode(&commentBody)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-11"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs/export/push"):
+			// The ordinary configuration: this workspace has no log repository,
+			// so the report must fall back to the comment attachment.
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"log export git repository is not configured"}`)
 		default:
 			// An explicit --mention must skip the issue lookup entirely.
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -268,6 +448,11 @@ func TestRunLogsExportReportDoesNotWakeAgentAssignee(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/issue-9/comments":
 			_ = json.NewDecoder(r.Body).Decode(&commentBody)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-11"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs/export/push"):
+			// The ordinary configuration: this workspace has no log repository,
+			// so the report must fall back to the comment attachment.
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"log export git repository is not configured"}`)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -312,6 +497,11 @@ func TestRunLogsExportReportSkipsMentionWhenNobodyHuman(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/issue-9/comments":
 			_ = json.NewDecoder(r.Body).Decode(&commentBody)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-11"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs/export/push"):
+			// The ordinary configuration: this workspace has no log repository,
+			// so the report must fall back to the comment attachment.
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"log export git repository is not configured"}`)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}

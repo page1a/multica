@@ -22,6 +22,7 @@ import {
   useDeleteProjectResource,
   useUpdateProjectResource,
 } from "@multica/core/projects";
+import { projectCodeDecisionOptions } from "@multica/core/projects/code-decision";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
@@ -44,6 +45,7 @@ import {
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
 import {
+  initLocalGit,
   isDesktopShell,
   pickDirectory,
   useLocalDaemonStatus,
@@ -57,6 +59,8 @@ import {
 // queries as it does in production, and a mocked barrel would strip it.
 import { findDuplicateSources } from "@multica/core/projects/source-rule";
 import { DuplicateSourceBanner } from "./duplicate-source-banner";
+import { CodeDecisionBanner } from "./code-decision-banner";
+import { isCodeDecision, isPlainFolder } from "./code-decision-view";
 import { LocalDirectoryModeDialog } from "./local-directory-mode-dialog";
 import { localDirectoryLabel } from "./local-directory-label";
 import {
@@ -144,6 +148,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   // list refetches, every arrow on screen would compute its patch from the old
   // order, so one is in flight for the whole list, not for one row.
   const [reordering, setReordering] = useState(false);
+  const [gitInitPending, setGitInitPending] = useState(false);
+  const [gitInitError, setGitInitError] = useState<string | null>(null);
 
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
@@ -158,6 +164,26 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   // browser.
   const desktopMode = isDesktopShell();
   const localDaemonId = daemonStatus.daemonId;
+  // Cache identity only. The decision itself comes back from the server;
+  // this string just says "the list the answer was about has changed".
+  const decisionInputKey = resources
+    .map(
+      (resource) =>
+        `${resource.position}:${resource.id}:${resource.resource_type}:${JSON.stringify(resource.resource_ref)}`,
+    )
+    .join("|");
+  const decisionQuery = useQuery({
+    ...projectCodeDecisionOptions(
+      wsId,
+      projectId,
+      localDaemonId ?? "",
+      decisionInputKey,
+    ),
+    enabled: desktopMode && !!wsId && !!localDaemonId,
+  });
+  const codeDecision = isCodeDecision(decisionQuery.data)
+    ? decisionQuery.data
+    : undefined;
 
   // The one thing the client must still check up front: whether this server
   // performs that gate at all. One declared boolean, no inference — servers
@@ -191,9 +217,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   // first one at pick time so the answer arrives while the folder is still on
   // screen, instead of as a 409 afterwards.
   //
-  // Which of them a run writes is no longer ambiguous either: resources are
-  // ordered, and the first local directory on this machine is the working
-  // directory. The rest reach the agent read-only.
+  // Which of them a run writes is the server's Decision, read from this
+  // order. The list shows that answer; it does not pick the directory.
   const boundIdentitiesForDialog = useMemo(() => {
     return resources
       .filter(isLocalDirectoryRef)
@@ -396,6 +421,114 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     } catch {
       // Unmeasurable is the same as unmeasured: the stored value is shown and
       // the daemon still has the final say.
+    }
+  };
+
+  const gitInitMessage = (reason?: string, error?: string) =>
+    reason === "inside_repo"
+      ? t(($) => $.resources.plain_folder_inside_repo)
+      : error || t(($) => $.resources.plain_folder_init_failed);
+
+  // Creates the repository, then re-measures. A success the measurement does
+  // not agree with is a failure: the badge would otherwise disappear while
+  // the folder is still not a repository.
+  const initGitAt = async (
+    path: string,
+  ): Promise<
+    | { ok: true; measured: ValidateLocalDirectoryResult }
+    | { ok: false; message: string }
+  > => {
+    const result = await initLocalGit(path);
+    if (!result.ok) {
+      const message = gitInitMessage(result.reason, result.error);
+      setGitInitError(message);
+      return { ok: false, message };
+    }
+    const measured = await validateLocalDirectory(path);
+    if (!measured.ok || measured.is_git_repo !== true) {
+      const message = gitInitMessage(undefined, measured.ok ? undefined : measured.error);
+      setGitInitError(message);
+      return { ok: false, message };
+    }
+    setGitInitError(null);
+    return { ok: true, measured };
+  };
+
+  const handleInitGitInDialog = async () => {
+    if (!modeDialog || gitInitPending) return;
+    setGitInitPending(true);
+    setGitInitError(null);
+    try {
+      const outcome = await initGitAt(modeDialog.path);
+      if (!outcome.ok) return;
+      const measured = outcome.measured;
+      setModeDialog((current) =>
+        current && current.path === modeDialog.path
+          ? {
+              ...current,
+              isGitRepo: true,
+              gitRoot: measured.git_root,
+              realPath: measured.real_path ?? current.realPath,
+              repoKey: measured.repo_key ?? current.repoKey,
+              defaultWorktreeRoot: measured.default_worktree_root,
+            }
+          : current,
+      );
+      if (modeDialog.resource) {
+        const ref = modeDialog.resource.resource_ref;
+        await updateResource.mutateAsync({
+          resourceId: modeDialog.resource.id,
+          data: {
+            resource_ref: {
+              ...ref,
+              is_git_repo: true,
+              ...(measured.real_path ? { real_path: measured.real_path } : {}),
+              ...(measured.repo_key ? { repo_key: measured.repo_key } : {}),
+            },
+          },
+        });
+      }
+    } catch (err) {
+      setGitInitError(
+        gitInitMessage(undefined, err instanceof Error ? err.message : undefined),
+      );
+    } finally {
+      setGitInitPending(false);
+    }
+  };
+
+  const handleInitGitOnRow = async (
+    resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
+  ) => {
+    if (gitInitPending) return;
+    setGitInitPending(true);
+    setGitInitError(null);
+    try {
+      const outcome = await initGitAt(resource.resource_ref.local_path);
+      if (!outcome.ok) {
+        toast.error(outcome.message);
+        return;
+      }
+      const measured = outcome.measured;
+      await updateResource.mutateAsync({
+        resourceId: resource.id,
+        data: {
+          resource_ref: {
+            ...resource.resource_ref,
+            is_git_repo: true,
+            ...(measured.real_path ? { real_path: measured.real_path } : {}),
+            ...(measured.repo_key ? { repo_key: measured.repo_key } : {}),
+          },
+        },
+      });
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : t(($) => $.resources.plain_folder_init_failed),
+      );
+    } finally {
+      setGitInitPending(false);
     }
   };
 
@@ -613,6 +746,12 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       </button>
       {open && (
         <div className="pl-2 space-y-1.5">
+          {codeDecision && <CodeDecisionBanner decision={codeDecision} />}
+          {decisionQuery.isError && !codeDecision && (
+            <p className="px-2 py-1 text-micro text-muted-foreground">
+              {t(($) => $.resources.code_decision_unavailable)}
+            </p>
+          )}
           {resources.length === 0 && (
             <p className="text-caption text-muted-foreground">
               {t(($) => $.resources.empty)}
@@ -686,6 +825,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                     // showing the stored value.
                     void refreshMeasuredDirectory(target.resource_ref.local_path);
                   }}
+                  onInitGit={(target) => void handleInitGitOnRow(target)}
+                  gitInitPending={gitInitPending}
                 />
               ))}
             </div>
@@ -799,11 +940,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   {t(($) => $.resources.local_daemon_offline_hint)}
                 </p>
               )}
-              {daemonStatus.running && attachedRealPaths.size > 0 && (
-                <p className="px-2 pt-0.5 text-micro text-muted-foreground">
-                  {t(($) => $.resources.local_directory_default_hint)}
-                </p>
-              )}
             </div>
           )}
         </div>
@@ -815,6 +951,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
             if (!next) {
               setModeDialog(null);
               setModeError(null);
+              setGitInitError(null);
             }
           }}
           path={modeDialog.path}
@@ -841,6 +978,10 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               : t(($) => $.resources.mode_add)
           }
           onConfirm={(mode) => void handleConfirmMode(mode)}
+          plainFolder={isPlainFolder(modeDialog.isGitRepo, modeDialog.gitRoot)}
+          onInitGit={() => void handleInitGitInDialog()}
+          initGitPending={gitInitPending}
+          initGitError={gitInitError ?? undefined}
         />
       )}
     </div>
@@ -866,6 +1007,10 @@ interface ResourceRowProps {
   onEditLocalDirectoryMode: (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
   ) => void;
+  onInitGit: (
+    resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
+  ) => void;
+  gitInitPending: boolean;
 }
 
 function ResourceRow({
@@ -880,6 +1025,8 @@ function ResourceRow({
   onRemove,
   onRenameLocalDirectory,
   onEditLocalDirectoryMode,
+  onInitGit,
+  gitInitPending,
 }: ResourceRowProps) {
   const { t } = useT("projects");
   if (isGithubRef(resource)) {
@@ -930,6 +1077,8 @@ function ResourceRow({
         onRemove={onRemove}
         onRename={onRenameLocalDirectory}
         onEditMode={onEditLocalDirectoryMode}
+        onInitGit={onInitGit}
+        gitInitPending={gitInitPending}
       />
     );
   }
@@ -975,6 +1124,10 @@ interface LocalDirectoryRowProps {
   onEditMode: (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
   ) => void;
+  onInitGit: (
+    resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
+  ) => void;
+  gitInitPending: boolean;
 }
 
 function LocalDirectoryRow({
@@ -989,6 +1142,8 @@ function LocalDirectoryRow({
   onRemove,
   onRename,
   onEditMode,
+  onInitGit,
+  gitInitPending,
 }: LocalDirectoryRowProps) {
   const { t } = useT("projects");
   const ref = resource.resource_ref;
@@ -1048,7 +1203,14 @@ function LocalDirectoryRow({
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="truncate flex-1">{display}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{display}</span>
+                {ref.is_git_repo === false && (
+                  <span className="block truncate text-micro text-amber-700 dark:text-amber-400">
+                    {t(($) => $.resources.plain_folder_badge)}
+                  </span>
+                )}
+              </span>
             }
           />
           <TooltipContent side="top">
@@ -1098,6 +1260,16 @@ function LocalDirectoryRow({
             {t(($) => $.resources.mode_badge_shared_tooltip)}
           </TooltipContent>
         </Tooltip>
+      )}
+      {ref.is_git_repo === false && !mismatch && canEdit && !editing && (
+        <button
+          type="button"
+          disabled={gitInitPending}
+          onClick={() => onInitGit(resource)}
+          className="shrink-0 text-micro text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+        >
+          {t(($) => $.resources.plain_folder_init)}
+        </button>
       )}
       {/* Reordering, not decoration: the first directory on this machine is the
           one a run writes, so these are how the user picks it. Rendered only

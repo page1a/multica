@@ -333,6 +333,7 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	title := sanitizeChildTitleForSystemComment(completed.Title)
 	parentID := uuidToString(parent.ID)
 	completedStatus := statuses.status(completed)
+	wrapUp := parentWrapUpInstruction(parent)
 
 	// Build the parent-assignee mention prefix. Empty when the parent has no
 	// assignee or the assignee row is missing (deleted member, archived
@@ -352,7 +353,7 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 			advanceHasCancelled = stageCancelled || batchClosedScopeHasCancelled(children, batchCompleted, closedStage, statuses.status)
 		}
 		summary, nextStage := stageProgressSummary(children, closedStage, statuses.status)
-		advance := stageAdvanceInstruction(nextStage, parentID, stageCancelledCount, advanceHasCancelled)
+		advance := stageAdvanceInstruction(nextStage, parentID, stageCancelledCount, advanceHasCancelled, parent.ParentIssueID.Valid)
 		if !stageCancelled {
 			// Keep the historical no-cancellation wording byte-identical for the
 			// named stage. A lower stage cancelled in the same batch can still add
@@ -393,13 +394,13 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 			// Keep the historical no-cancellation wording byte-identical.
 			if batch {
 				content = fmt.Sprintf(
-					"%sAll sub-issues are complete — they just finished together in a batch update, most recently [%s](mention://issue/%s) — \"%s\". Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.",
-					mentionPrefix, identifier, childID, title, parentID,
+					"%sAll sub-issues are complete — they just finished together in a batch update, most recently [%s](mention://issue/%s) — \"%s\".%s",
+					mentionPrefix, identifier, childID, title, wrapUp,
 				)
 			} else {
 				content = fmt.Sprintf(
-					"%sAll sub-issues are complete — the last one, [%s](mention://issue/%s) — \"%s\", just finished. Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.",
-					mentionPrefix, identifier, childID, title, parentID,
+					"%sAll sub-issues are complete — the last one, [%s](mention://issue/%s) — \"%s\", just finished.%s",
+					mentionPrefix, identifier, childID, title, wrapUp,
 				)
 			}
 		} else {
@@ -414,13 +415,13 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 					lastAction = "was just cancelled"
 				}
 				content = fmt.Sprintf(
-					"%sAll sub-issues are closed — the last one, [%s](mention://issue/%s) — \"%s\", %s.%s Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.",
-					mentionPrefix, identifier, childID, title, lastAction, warning, parentID,
+					"%sAll sub-issues are closed — the last one, [%s](mention://issue/%s) — \"%s\", %s.%s%s",
+					mentionPrefix, identifier, childID, title, lastAction, warning, wrapUp,
 				)
 			} else {
 				content = fmt.Sprintf(
-					"%sAll sub-issues are closed — they reached terminal states together in a batch update; most recently, [%s](mention://issue/%s) — \"%s\" — %s.%s Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.",
-					mentionPrefix, identifier, childID, title, lastAction, warning, parentID,
+					"%sAll sub-issues are closed — they reached terminal states together in a batch update; most recently, [%s](mention://issue/%s) — \"%s\" — %s.%s%s",
+					mentionPrefix, identifier, childID, title, lastAction, warning, wrapUp,
 				)
 			}
 		}
@@ -782,7 +783,7 @@ func anyCancelledChildren(children []db.Issue, statusOf func(db.Issue) string) b
 //     decides whether the warning renders at all; stageCancelled decides
 //     whether the warning can be specific. The server still does not decide
 //     the dependency question itself either way.
-func stageAdvanceInstruction(nextStage int32, parentID string, stageCancelled int, scopeCancelled bool) string {
+func stageAdvanceInstruction(nextStage int32, parentID string, stageCancelled int, scopeCancelled bool, parentIsChild ...bool) string {
 	var instruction string
 	if nextStage > 0 {
 		instruction = fmt.Sprintf(
@@ -790,6 +791,13 @@ func stageAdvanceInstruction(nextStage int32, parentID string, stageCancelled in
 			nextStage, parentID, nextStage,
 		)
 	} else {
+		if len(parentIsChild) > 0 && parentIsChild[0] {
+			instruction = " This sub-issue's child work is complete. Synthesize the results and finish this sub-issue through the close protocol; do not move it to `in_review` because acceptance belongs to the top-level parent."
+			if scopeCancelled {
+				instruction += " The just-closed work includes cancelled items: confirm that the cancelled work is not required by the top-level parent's remaining work before closing this sub-issue. If unsure, leave it as-is and post a comment to confirm first."
+			}
+			return instruction
+		}
 		verb := "Completing"
 		if stageCancelled > 0 {
 			verb = "Closing"
@@ -809,6 +817,17 @@ func stageAdvanceInstruction(nextStage int32, parentID string, stageCancelled in
 		return instruction + fmt.Sprintf(" The stage that just closed has %s cancelled: confirm that the cancelled work is not something Stage %d depends on before advancing. If unsure, do not promote yet; post a comment to confirm first.", subIssueCount(stageCancelled), nextStage)
 	}
 	return instruction + fmt.Sprintf(" The stage that just closed has %s cancelled: confirm that the cancelled work is not a dependency of whatever comes next before advancing. If unsure, do not create the next stage yet; post a comment to confirm first.", subIssueCount(stageCancelled))
+}
+
+// parentWrapUpInstruction keeps child-done comments safe for nested issue
+// trees. Only a top-level parent can enter the unified acceptance chain;
+// a nested parent must close as an execution sub-issue and let its own parent
+// consume that terminal result.
+func parentWrapUpInstruction(parent db.Issue) string {
+	if parent.ParentIssueID.Valid {
+		return " Continue this sub-issue: synthesize the children's results and finish it through the close protocol; do not move it to `in_review` because acceptance belongs to the top-level parent."
+	}
+	return fmt.Sprintf(" Continue the parent: synthesize the children's results and move it forward, or — if nothing remains — run `multica issue status %s in_review` to mark the parent ready for review.", uuidToString(parent.ID))
 }
 
 func unstagedCancellationInstruction() string {

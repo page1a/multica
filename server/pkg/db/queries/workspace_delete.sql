@@ -336,6 +336,15 @@ deleted_visibility_audits AS (
 deleted_module_visibility AS (
     DELETE FROM workspace_module_visibility WHERE workspace_id = $1
 ),
+-- Quota breakers and the one relay per failed task (DENE-771) are
+-- workspace-keyed and have no foreign key, so they outlive the seat
+-- unless swept here.
+deleted_agent_quota_relays AS (
+    DELETE FROM agent_quota_relay WHERE workspace_id = $1
+),
+deleted_agent_quota_breakers AS (
+    DELETE FROM agent_quota_breaker WHERE workspace_id = $1
+),
 -- Same no-FK chore for the resumable attachment staging (DENE-443). Both
 -- tables are keyed by workspace_id, so the teardown never has to assemble the
 -- (sha256, offset) pairs it is dropping first.

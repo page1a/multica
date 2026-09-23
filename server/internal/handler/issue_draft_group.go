@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -39,6 +40,44 @@ const (
 	maxIssueDraftChildKeyBytes = 64
 	maxIssueDraftChildStage    = 20
 )
+
+// issueDraftCoordinatorStatus is the status a group's ROOT is created with when
+// the payload has sub-issues. It mirrors ISSUE_DRAFT_COORDINATOR_STATUS in
+// packages/core/issue-drafts/group.ts, and it is applied here — at the final
+// write boundary — because the panel's save is not the only way a payload
+// reaches a confirm.
+//
+// A root with sub-issues coordinates: the stage barrier wakes it when a stage
+// closes so that it can promote the next one. `notifyParentOfChildDone` skips a
+// parent whose status is done, cancelled or backlog, so a backlog coordinator
+// would never be woken and every stage after the first would sit parked with
+// nobody told to move it. The root therefore stays ACTIVE, and the create path
+// keeps it out of the queue instead (service.IssueCreateOpts.SuppressAssigneeRun
+// below) — a rule about this confirm rather than a state the issue is left in.
+const issueDraftCoordinatorStatus = "in_progress"
+
+// issueDraftChildStatusForCreate mirrors the shared preview plan
+// (issueDraftChildStatus in packages/core/issue-drafts/group.ts) at the final
+// write boundary: a sub-issue's status is derived from its stage, never
+// authored, because stage is the field the alignment actually decides.
+//
+// This is what makes "stage 1 runs, stage 2 waits" a server guarantee rather
+// than a promise the client keeps. The payload is model- and user-authored, and
+// the confirm sends only a revision — so a payload saved by an older client, or
+// written straight into the draft, must not be able to put a stage-2 sub-issue
+// in the queue ahead of its predecessor.
+//
+// The assignee deliberately does NOT take part. An unassigned stage-1
+// sub-issue is created `todo` and starts nothing: `maybeEnqueueOnAssign` has no
+// assignee to enqueue for, and an issue the board shows as unassigned is how a
+// person finds the gap and fills it in. Parking it in Backlog instead would
+// hide the very gap the confirm panel warned about.
+func issueDraftChildStatusForCreate(stage *int32) string {
+	if stage == nil || *stage <= 1 {
+		return "todo"
+	}
+	return "backlog"
+}
 
 // issueDraftNodeNamespace is the fixed namespace node ids are derived under.
 // Never change it: it is half the input of every node id already minted, so
@@ -131,11 +170,18 @@ type issueDraftNode struct {
 // field applies here too — the draft is client-supplied, and an alignment
 // conversation must not become a way to assign work to an agent the caller
 // cannot invoke, or to name a parent in another workspace.
-func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, workspaceID string, session db.ChatSession, node issueDraftNode) (service.IssueCreateParams, bool) {
+//
+// The assignee is the one field that is dropped rather than refused: a pair the
+// caller cannot name — malformed, missing its target, archived, or not
+// invocable — leaves that node unassigned and comes back as the second return
+// value, so the confirm still creates the work (DENE-694). Title, status,
+// priority, project and parent stay hard gates. The security property is
+// unchanged: an assignee that fails the gate is never written.
+func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, workspaceID string, session db.ChatSession, node issueDraftNode) (service.IssueCreateParams, string, bool) {
 	title := strings.TrimSpace(node.Title)
 	if title == "" {
 		writeError(w, http.StatusBadRequest, "draft title is required")
-		return service.IssueCreateParams{}, false
+		return service.IssueCreateParams{}, "", false
 	}
 
 	status := node.Status
@@ -144,38 +190,23 @@ func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, w
 	}
 	status, ok := h.resolveIssueStatusKey(w, r, session.WorkspaceID, status)
 	if !ok {
-		return service.IssueCreateParams{}, false
+		return service.IssueCreateParams{}, "", false
 	}
 	priority := node.Priority
 	if priority == "" {
 		priority = "none"
 	}
 	if !validateIssueEnum(w, "priority", priority, validIssuePriorities) {
-		return service.IssueCreateParams{}, false
+		return service.IssueCreateParams{}, "", false
 	}
 
-	var assigneeType pgtype.Text
-	var assigneeID pgtype.UUID
-	if node.AssigneeType != nil {
-		assigneeType = pgtype.Text{String: *node.AssigneeType, Valid: true}
-	}
-	if node.AssigneeID != nil {
-		id, ok := parseUUIDOrBadRequest(w, *node.AssigneeID, "assignee_id")
-		if !ok {
-			return service.IssueCreateParams{}, false
-		}
-		assigneeID = id
-	}
-	if code, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID); code != 0 {
-		writeError(w, code, msg)
-		return service.IssueCreateParams{}, false
-	}
+	assigneeType, assigneeID, assigneeWarning := h.draftAssigneeFromNode(r, workspaceID, node)
 
 	var projectID pgtype.UUID
 	if node.ProjectID != nil && *node.ProjectID != "" {
 		id, ok := parseUUIDOrBadRequest(w, *node.ProjectID, "project_id")
 		if !ok {
-			return service.IssueCreateParams{}, false
+			return service.IssueCreateParams{}, "", false
 		}
 		projectID = id
 	}
@@ -183,7 +214,7 @@ func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, w
 	if node.ParentIssueID != nil && *node.ParentIssueID != "" {
 		id, ok := parseUUIDOrBadRequest(w, *node.ParentIssueID, "parent_issue_id")
 		if !ok {
-			return service.IssueCreateParams{}, false
+			return service.IssueCreateParams{}, "", false
 		}
 		// Project membership and the parent's workspace boundary are re-checked
 		// inside the create transaction atomically with the create; this read only
@@ -194,7 +225,7 @@ func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, w
 		})
 		if err != nil || !parent.ID.Valid {
 			writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
-			return service.IssueCreateParams{}, false
+			return service.IssueCreateParams{}, "", false
 		}
 		parentIssueID = id
 	}
@@ -223,7 +254,44 @@ func (h *Handler) issueParamsFromDraft(w http.ResponseWriter, r *http.Request, w
 		// read it. The duplicate guard's "did you mean this existing issue"
 		// prompt belongs to the quick-create path, not here.
 		AllowDuplicate: true,
-	}, true
+	}, assigneeWarning, true
+}
+
+// draftAssigneeFromNode resolves the assignee of one alignment node without
+// ever refusing the confirm.
+//
+// It returns the pair to write, or a zero pair plus the reason it was dropped.
+// The reasons are the ordinary create path's own — and the ordinary create path
+// still refuses on them. The difference is deliberate and belongs to this
+// endpoint alone: a confirm has a whole group behind it, and one row whose seat
+// cannot be applied (an agent archived between the suggestion and the click, a
+// picker pointed at something the caller cannot invoke) must not cost the user
+// the other rows. The issue is created unassigned, which is a state the board
+// already has, and the response says which rows those are.
+func (h *Handler) draftAssigneeFromNode(r *http.Request, workspaceID string, node issueDraftNode) (pgtype.Text, pgtype.UUID, string) {
+	typeRaw := ""
+	if node.AssigneeType != nil {
+		typeRaw = strings.TrimSpace(*node.AssigneeType)
+	}
+	idRaw := ""
+	if node.AssigneeID != nil {
+		idRaw = strings.TrimSpace(*node.AssigneeID)
+	}
+	if typeRaw == "" && idRaw == "" {
+		return pgtype.Text{}, pgtype.UUID{}, ""
+	}
+	if typeRaw == "" || idRaw == "" {
+		return pgtype.Text{}, pgtype.UUID{}, "assignee_type and assignee_id must be provided together"
+	}
+	id, err := util.ParseUUID(idRaw)
+	if err != nil {
+		return pgtype.Text{}, pgtype.UUID{}, "assignee_id is not a valid id"
+	}
+	assigneeType := pgtype.Text{String: typeRaw, Valid: true}
+	if code, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, id); code != 0 {
+		return pgtype.Text{}, pgtype.UUID{}, msg
+	}
+	return assigneeType, id, ""
 }
 
 // issueDraftGroupState is what this alignment has already produced, read once
@@ -315,15 +383,28 @@ func (h *Handler) issueDraftOwnedNodes(w http.ResponseWriter, r *http.Request, s
 // must not be refused over a node it is not touching. Its fields are never
 // rewritten either — the group is real work by then, edited by people and
 // agents, and a follow-up round is not grounds for overwriting that.
-func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Request, workspaceID string, session db.ChatSession, draft db.IssueDraft, state issueDraftGroupState) (service.IssueGroupParams, bool) {
+//
+// The second return value names the nodes whose assignee was dropped on the way
+// in. Only nodes this call builds params for can appear in it, which is what
+// keeps a warning about a node the confirm is not creating off the wire.
+func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Request, workspaceID string, session db.ChatSession, draft db.IssueDraft, state issueDraftGroupState) (service.IssueGroupParams, []IssueDraftAssignmentWarning, bool) {
 	var payload issueDraftPayload
 	if err := json.Unmarshal(draft.Draft, &payload); err != nil {
 		writeError(w, http.StatusBadRequest, "draft is not a valid issue draft")
-		return service.IssueGroupParams{}, false
+		return service.IssueGroupParams{}, nil, false
 	}
 	children, ok := issueDraftChildrenFromPayload(w, payload)
 	if !ok {
-		return service.IssueGroupParams{}, false
+		return service.IssueGroupParams{}, nil, false
+	}
+
+	// A payload with sub-issues describes a group, and a group's root is its
+	// coordinator whatever status the payload carries (see
+	// issueDraftCoordinatorStatus). A payload with no sub-issues is an ordinary
+	// single issue and keeps the status it was written with.
+	rootStatus := payload.Status
+	if len(children) > 0 {
+		rootStatus = issueDraftCoordinatorStatus
 	}
 
 	nodes := make([]issueDraftNode, 0, len(children)+1)
@@ -333,7 +414,7 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 		// produced before groups existed.
 		Title:         payload.Title,
 		Description:   payload.Description,
-		Status:        payload.Status,
+		Status:        rootStatus,
 		Priority:      payload.Priority,
 		AssigneeType:  payload.AssigneeType,
 		AssigneeID:    payload.AssigneeID,
@@ -345,7 +426,7 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 			Key:          child.Key,
 			Title:        child.Title,
 			Description:  child.Description,
-			Status:       child.Status,
+			Status:       issueDraftChildStatusForCreate(child.Stage),
 			Priority:     child.Priority,
 			AssigneeType: child.AssigneeType,
 			AssigneeID:   child.AssigneeID,
@@ -354,6 +435,25 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 	}
 
 	group := service.IssueGroupParams{Nodes: make([]service.IssueGroupNode, 0, len(nodes))}
+	var warnings []IssueDraftAssignmentWarning
+	// One node's params, plus the warning its assignee may have produced. A node
+	// the server cannot resolve at all still aborts the whole confirm; only the
+	// assignee degrades to a warning.
+	appendNode := func(node issueDraftNode) bool {
+		params, warning, ok := h.issueParamsFromDraft(w, r, workspaceID, session, node)
+		if !ok {
+			return false
+		}
+		if warning != "" {
+			warnings = append(warnings, IssueDraftAssignmentWarning{
+				Key:    node.Key,
+				Title:  node.Title,
+				Reason: warning,
+			})
+		}
+		group.Nodes = append(group.Nodes, service.IssueGroupNode{Params: params})
+		return true
+	}
 	if !state.HasRoot || draft.FinalizeRound == 0 {
 		// Not a continuation round. Either nothing exists yet and the whole
 		// payload is built, or the group is already committed and the caller
@@ -363,13 +463,28 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 		// children too". Reopening is the only thing that makes new keys an
 		// increment, and the only thing that moves the round counter.
 		for _, node := range nodes {
-			params, ok := h.issueParamsFromDraft(w, r, workspaceID, session, node)
-			if !ok {
-				return service.IssueGroupParams{}, false
+			if !appendNode(node) {
+				return service.IssueGroupParams{}, nil, false
 			}
-			group.Nodes = append(group.Nodes, service.IssueGroupNode{Params: params})
 		}
-		return group, true
+		// The root coordinates, so this confirm does not also hand it an
+		// implementation task: it keeps the assignee the payload gave it — that
+		// is the seat the stage barrier wakes — but its run is suppressed. The
+		// suppression is a property of THIS insert, which is why it is decided
+		// here (node 0 is the root only when this create inserts one; a
+		// continuation round passes RootIssueID and no root node at all) and
+		// only for a payload that actually has sub-issues. A single-issue
+		// confirm is untouched, and every later write to the root enqueues
+		// normally.
+		//
+		// A root whose assignee was dropped by the DENE-694 warning path is
+		// suppressed too: there is nothing to enqueue for it either way, and
+		// keeping the rule shaped as "the root of a group never runs on create"
+		// means the two rules cannot drift apart.
+		if len(children) > 0 {
+			group.Nodes[0].Opts.SuppressAssigneeRun = true
+		}
+		return group, warnings, true
 	}
 
 	group.RootIssueID = state.Root.ID
@@ -379,7 +494,7 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 	}
 	owned, ok := h.issueDraftOwnedNodes(w, r, session, origins)
 	if !ok {
-		return service.IssueGroupParams{}, false
+		return service.IssueGroupParams{}, nil, false
 	}
 	for i, node := range nodes {
 		if _, exists := owned[uuidToString(origins[i])]; exists {
@@ -388,13 +503,11 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 			// and a follow-up round is not grounds for overwriting that.
 			continue
 		}
-		params, ok := h.issueParamsFromDraft(w, r, workspaceID, session, node)
-		if !ok {
-			return service.IssueGroupParams{}, false
+		if !appendNode(node) {
+			return service.IssueGroupParams{}, nil, false
 		}
-		group.Nodes = append(group.Nodes, service.IssueGroupNode{Params: params})
 	}
-	return group, true
+	return group, warnings, true
 }
 
 // lookupIssueGroupRoot finds the group this alignment already produced, by the
@@ -450,12 +563,18 @@ func (h *Handler) loadIssueGroup(w http.ResponseWriter, r *http.Request, root db
 //
 // The partial unique index on issue (origin_id) WHERE origin_type =
 // 'issue_draft' is the authority for all of them. See §3.3 of the design.
-func (h *Handler) createIssueGroupForDraft(w http.ResponseWriter, r *http.Request, session db.ChatSession, state issueDraftGroupState, group service.IssueGroupParams) ([]db.Issue, bool) {
+//
+// `created` reports whether this call inserted anything. Every adoption path
+// answers false, and that is what lets the caller keep its assignment warnings
+// to the confirms that actually wrote the rows they describe: a warning about a
+// node the server adopted from an earlier confirm would name an issue this
+// request never created.
+func (h *Handler) createIssueGroupForDraft(w http.ResponseWriter, r *http.Request, session db.ChatSession, state issueDraftGroupState, group service.IssueGroupParams) ([]db.Issue, bool, bool) {
 	if group.RootIssueID.Valid {
 		if len(group.Nodes) == 0 {
 			// The whole payload already exists: the round adds nothing, and the
 			// group as it stands is also the answer a retry of this round gives.
-			return state.Group, true
+			return state.Group, false, true
 		}
 		h.prepareIssueGroupOpts(r, session, &group)
 		if _, err := h.IssueService.CreateGroup(r.Context(), group); err != nil {
@@ -467,17 +586,20 @@ func (h *Handler) createIssueGroupForDraft(w http.ResponseWriter, r *http.Reques
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
 				writeIssueDraftCreateError(w, r, err)
-				return nil, false
+				return nil, false, false
 			}
+			issues, ok := h.loadIssueGroup(w, r, state.Root)
+			return issues, false, ok
 		}
-		return h.loadIssueGroup(w, r, state.Root)
+		issues, ok := h.loadIssueGroup(w, r, state.Root)
+		return issues, true, ok
 	}
 
 	// Not a continuation round and the group is already committed. Adopting it
 	// whole is the whole point: a first confirm never appends to a group that
 	// exists (§3.3 timelines B and C).
 	if state.HasRoot {
-		return state.Group, true
+		return state.Group, false, true
 	}
 
 	rootOrigin := group.Nodes[0].Params.OriginID
@@ -485,17 +607,18 @@ func (h *Handler) createIssueGroupForDraft(w http.ResponseWriter, r *http.Reques
 
 	result, err := h.IssueService.CreateGroup(r.Context(), group)
 	if err == nil {
-		return result.Issues, true
+		return result.Issues, true, true
 	}
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		if won, lookupErr := h.lookupIssueGroupRoot(r, session, rootOrigin); lookupErr == nil {
-			return h.loadIssueGroup(w, r, won)
+			issues, ok := h.loadIssueGroup(w, r, won)
+			return issues, false, ok
 		}
 	}
 	writeIssueDraftCreateError(w, r, err)
-	return nil, false
+	return nil, false, false
 }
 
 // carryIssueDraftAttachments binds the files this alignment produced to the
@@ -562,6 +685,12 @@ func (h *Handler) carryIssueDraftAttachments(r *http.Request, session db.ChatSes
 // which agent the analytics event belongs to, the platform, and the
 // issue:created payload this transport broadcasts.
 //
+// It fills the TRANSPORT half of the options and leaves whatever the params
+// pass already decided (the group root's suppressed run) in place: the two are
+// decided by different questions — one by the payload's shape, one by the
+// request — and a caller reading either should not have to know about the
+// other.
+//
 // Both commit paths go through it, because an appended node is created exactly
 // like a first-round one — a follow-up round that skipped this would create
 // real work that no board ever heard about.
@@ -578,18 +707,18 @@ func (h *Handler) prepareIssueGroupOpts(r *http.Request, session db.ChatSession,
 		if params.AssigneeType.Valid && params.AssigneeType.String == "agent" {
 			analyticsAgentID = uuidToString(params.AssigneeID)
 		}
-		group.Nodes[i].Opts = service.IssueCreateOpts{
-			ActorID:          actorID,
-			AnalyticsAgentID: analyticsAgentID,
-			Platform:         platform,
-			BroadcastPayload: func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
-				payload := issueToResponse(issue, prefix)
-				fillCreated(&payload)
-				labelResponses := labelsToResponse(labels)
-				payload.Labels = &labelResponses
-				return map[string]any{"issue": payload}
-			},
+		opts := group.Nodes[i].Opts
+		opts.ActorID = actorID
+		opts.AnalyticsAgentID = analyticsAgentID
+		opts.Platform = platform
+		opts.BroadcastPayload = func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
+			payload := issueToResponse(issue, prefix)
+			fillCreated(&payload)
+			labelResponses := labelsToResponse(labels)
+			payload.Labels = &labelResponses
+			return map[string]any{"issue": payload}
 		}
+		group.Nodes[i].Opts = opts
 	}
 }
 

@@ -164,6 +164,9 @@ func (r *Router) routeStale(ctx context.Context, workspaceID string, settings Se
 	if issue.Status != "in_review" {
 		return noop("status is not in_review"), nil
 	}
+	if issue.ParentIssueID != "" {
+		return noop("sub-issue has no acceptance route"), nil
+	}
 	// Re-checked against the clock here as well as in SQL, so the single-issue
 	// entry point cannot act on a ticket that is not actually quiet.
 	quiet := issue.QuietFor(time.Now())

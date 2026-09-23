@@ -310,10 +310,14 @@ func Classify(rawError string) Reason {
 	//    messages and the stable Pi/OMP exit composite, rather than treating
 	//    the same broad substrings from local tools or MCP servers as retryable.
 	//    Mirror these Pi message shapes into the MUL-1949 offline backfill SQL.
+	//    DENE-727: DSH/Grok adapters wrap a dropped provider call as
+	//    "TRANSPORT: Connection error." after their own retry budget is
+	//    exhausted. The TRANSPORT: code token is the witness — a local
+	//    "connection error" without it stays on the Pi exact-match path.
 	//    Cursor can exit before its first stream event with a Node connect
 	//    ETIMEDOUT error. Keep that failed resume network-safe instead of
 	//    letting the exit-status wrapper trigger a fresh-session retry.
-	case isPiProviderNetworkError(lower), isCursorProviderNetworkError(lower),
+	case isPiProviderNetworkError(lower), isAdapterTransportError(lower), isCursorProviderNetworkError(lower),
 		containsAny(lower,
 			"stream disconnected",
 			opencodeStreamEndedPrefix,
@@ -559,6 +563,31 @@ func isPiProviderNetworkError(lower string) bool {
 	return false
 }
 
+// isAdapterTransportError reports DSH/Grok-style LLM error codes of the form
+// "TRANSPORT: <cause>". DENE-727's screenshot is the bare
+// "TRANSPORT: Connection error." The same wrap also arrives inside an ACP
+// RPC: "session/prompt: TRANSPORT: Connection error. (code=-32603)".
+//
+// The TRANSPORT: token is the witness. A local "connection error" without it
+// stays on isPiProviderNetworkError's exact-match path so MCP/tool failures
+// are not auto-retried.
+func isAdapterTransportError(lower string) bool {
+	if strings.HasPrefix(lower, "transport:") {
+		return true
+	}
+	return strings.Contains(lower, ": transport:")
+}
+
+// legacyAdapterTransportReasons are the buckets a daemon predating the
+// TRANSPORT: rule reports for this wrap: unknown when no earlier rule
+// matches, process_failure when an "exit status" trailer wins, and the
+// pre-MUL-1949 coarse agent_error.
+var legacyAdapterTransportReasons = map[string]bool{
+	string(ReasonAgentUnknown):        true,
+	string(ReasonAgentProcessFailure): true,
+	"agent_error":                     true,
+}
+
 // opencodeStreamEndedPrefix opens every failure the OpenCode terminal-signal
 // guard raises (pkg/agent/opencode.go). Exactly one code path emits it, and it
 // is a PREFIX of the whole error rather than a phrase somewhere inside it, so
@@ -681,6 +710,16 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	if legacyOpencodeStreamEndedReasons[reason] &&
 		(strings.HasPrefix(lowerError, opencodeStreamEndedPrefix) ||
 			strings.HasPrefix(lowerError, codeartsStreamEndedPrefix)) {
+		return ReasonAgentProviderNetwork
+	}
+	// DENE-727: same mixed-version gap on the adapter TRANSPORT wrap. An
+	// installed daemon predating isAdapterTransportError reports unknown
+	// (or process_failure when an exit-status trailer is glued on), which
+	// is off the retry allowlist — so a dropped provider call that already
+	// exhausted the adapter's own retries becomes a terminal failure on
+	// exactly the un-upgraded hosts hitting it. Upgrading here makes the
+	// platform retry the moment the server deploys.
+	if legacyAdapterTransportReasons[reason] && isAdapterTransportError(lowerError) {
 		return ReasonAgentProviderNetwork
 	}
 	// #7112: same mixed-version gap. A daemon predating the OpenClaw CLI

@@ -39,6 +39,10 @@ describe("parseRoutingHealth", () => {
       gateway_protocol: "openai",
       gateway_key_set: false,
       workspace_key_storable: false,
+      default_policy_prompt: "",
+      policy_prompt: "",
+      provider_quotas: [],
+      seats: [],
     });
   });
 
