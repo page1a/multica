@@ -1327,6 +1327,16 @@ type QuickAction struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ResourceShare struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ResourceType string             `json:"resource_type"`
+	ResourceID   string             `json:"resource_id"`
+	MemberID     pgtype.UUID        `json:"member_id"`
+	AddedBy      pgtype.UUID        `json:"added_by"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

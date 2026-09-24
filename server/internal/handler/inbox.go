@@ -184,7 +184,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if item.IssueID.Valid && !viewer.canSeeIssueFields(
-			item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
+			item.IssueID, item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
 			item.IssueAssigneeType, item.IssueAssigneeID) {
 			continue
 		}
@@ -231,7 +231,7 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if item.IssueID.Valid && !viewer.canSeeIssueFields(
-			item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
+			item.IssueID, item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
 			item.IssueAssigneeType, item.IssueAssigneeID) {
 			continue
 		}

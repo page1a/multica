@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,13 +16,14 @@ const memberState = vi.hoisted(() => ({ role: "admin" as string, userId: "u-admi
 vi.mock("@multica/core/api", () => ({ api }));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ id: "ws-1", slug: "acme" }),
-  useWorkspacePaths: () => ({ projectDetail: (id: string) => `/acme/projects/${id}` }),
 }));
 vi.mock("@multica/core/permissions", () => ({
   useCurrentMember: () => ({ ...memberState, member: null, isLoading: false }),
 }));
-vi.mock("../../navigation", () => ({
-  AppLink: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a>,
+vi.mock("../../common/share-scope-dialog", () => ({
+  ShareScopeDialog: ({ target }: { target: { resourceId: string; currentScope?: string } }) => (
+    <div role="dialog">share dialog {target.resourceId} {target.currentScope}</div>
+  ),
 }));
 
 import { ProjectSharingTab } from "./project-sharing-tab";
@@ -87,10 +87,20 @@ describe("ProjectSharingTab", () => {
     expect(await screen.findByRole("combobox", { name: "Change sharing for Roadmap" })).toBeDisabled();
   });
 
-  it("offers member management guidance when the project has no members", async () => {
+  it("opens the people picker when a specific-people project has nobody picked", async () => {
+    api.listProjects.mockResolvedValue({ projects: [{ ...project, visibility: "project" }], total: 1 });
+    api.listProjectMembers.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderTab();
+    expect(await screen.findByText(/No one picked yet/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Pick people" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("share dialog p1 project");
+  });
+
+  it("does not claim a private project is missing people", async () => {
     api.listProjectMembers.mockResolvedValue([]);
     renderTab();
-    expect(await screen.findByText("Only you can currently see this project. Others cannot see it yet.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Manage project members" })).toHaveAttribute("href", "/acme/projects/p1");
+    await screen.findByRole("combobox", { name: "Change sharing for Roadmap" });
+    expect(screen.queryByText(/No one picked yet/)).not.toBeInTheDocument();
   });
 });

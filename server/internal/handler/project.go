@@ -416,21 +416,20 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Priority:    priority,
 		StartDate:   startDate,
 		DueDate:     dueDate,
-		// A human-created project starts private (DENE-698). An agent-created
-		// project starts workspace visible so its owner can discover it, and
-		// records the agent's human owner as created_by so narrowing it to
-		// 'private' later still leaves that owner able to see it.
+		// Every project starts private (DENE-698): zero trust, nothing shared to
+		// human friends until the owner shares it. An agent-created project is
+		// no exception — it records the agent's human owner as created_by, and
+		// because that owner (the workspace owner or the agent's owner) always
+		// sees their own private projects (canSeeProject), private is safe to
+		// keep as the default here too.
 		Visibility: pgtype.Text{String: string(permission.DefaultVisibility), Valid: true},
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if actorType == "member" {
 		if creatorUUID, creatorErr := parseUUIDSafe(userID); creatorErr == nil {
 			createParams.CreatedBy = creatorUUID
-		} else if actorType == "agent" {
-			createParams.Visibility = pgtype.Text{String: string(permission.VisibilityWorkspace), Valid: true}
 		}
 	} else if actorType == "agent" {
-		createParams.Visibility = pgtype.Text{String: string(permission.VisibilityWorkspace), Valid: true}
 		// Agent requests carry the owner's user id in X-User-ID, but resolve
 		// the owner from the workspace-scoped agent row so fallback headers
 		// cannot assign ownership to an unrelated member.

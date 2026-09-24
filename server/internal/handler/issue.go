@@ -1306,7 +1306,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			visible := issues[:0]
 			for _, issue := range issues {
 				if openViewer.canSeeIssueFields(
-					issue.Visibility, issue.CreatorType, issue.CreatorID, issue.ProjectID,
+					issue.ID, issue.Visibility, issue.CreatorType, issue.CreatorID, issue.ProjectID,
 					issue.AssigneeType.String, issue.AssigneeID) {
 					visible = append(visible, issue)
 				}
@@ -4487,6 +4487,11 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 			}
 		} else if !errors.Is(contextErr, pgx.ErrNoRows) {
 			return issueDeleteResult{}, fmt.Errorf("load issue source context for delete: %w", contextErr)
+		}
+		if err := qtx.DeleteResourceSharesByResource(ctx, db.DeleteResourceSharesByResourceParams{
+			WorkspaceID: issue.WorkspaceID, ResourceType: "issue", ResourceID: uuidToString(issue.ID),
+		}); err != nil {
+			return issueDeleteResult{}, fmt.Errorf("delete issue shares: %w", err)
 		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("delete issue: %w", err)

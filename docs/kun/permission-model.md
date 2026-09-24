@@ -28,7 +28,7 @@ DENE-695 权限系统的判定规则。这篇是给人读的矩阵；可执行�
 
 ## 第一层：看不看得见
 
-「关系」三选一：**创建者**、**在项目里**（资源所属项目在此人的 `listAccessibleProjectIDs` 结果里）、**无关**。
+「关系」三选一：**创建者**、**在项目里**（资源所属项目在此人的 `listAccessibleProjectIDs` 结果里，**或**此人被直接点名分享了这个资源——`resource_share`）、**无关**。界面上 `project` 档叫「**指定的人**」。
 
 | 档位 | 范围 | 无关 | 在项目里 | 创建者 |
 | --- | --- | --- | --- | --- |
@@ -42,16 +42,17 @@ DENE-695 权限系统的判定规则。这篇是给人读的矩阵；可执行�
 | Guest | `project` | 不可见 | 可见 | 可见 |
 | Guest | `workspace` | **不可见** | **不可见** | 可见 |
 
-注：Owner / Admin 对工作区内**每一个**项目都算「在项目里」（管理兜底），所以他们和 `project` 范围的资源不存在「无关」这种关系。
+注：只有 **Owner** 对工作区内**每一个**项目都算「在项目里」（所有者兜底）。**Admin 不再自动算进名单**（kun fork）：「指定的人」就是被勾选的人，没被勾上的 Admin 和 Member 一样是「无关」。
 
 读这张表的几条要点：
 
 - **零信任**：新建资源默认 `private`。什么都没共享时，Member 与 Guest 那几行只剩「创建者」一列是可见——也就是只看得到自己建的，别人的一概不存在。
-- **`private` 对 Owner / Admin 同样不可见。** 管理兜底只覆盖 `project` 范围（它是「所有项目」的兜底，不是「所有资源」的兜底）。这和 `issue_view` 现在的行为一致。
+- **`private` 对 Owner / Admin 同样不可见。** 所有者兜底只覆盖 `project` 范围（它是「所有项目」的兜底，不是「所有资源」的兜底）。这和 `issue_view` 现在的行为一致。**例外：资源类型为「项目」时不适用**——见下条。
+- **「项目」这种资源多两条放宽（`canSeeProject` / `projectVisibilitySQL`，只对项目，不动 issue / repo）。** 一是 **Owner 看得见自己工作区里的每一个项目**，不论范围：`仅我可见` 的「我」就是工作区所有者，一个自己都看不见的 private 项目是把自己锁在门外，不是隐私（这条只给 Owner，不给 Admin，也不给人类朋友 member / guest）。二是 **由「本人拥有的 Agent」创建或担任 lead 的项目算本人自己的**（与 issue 里 owned-agent 折进创建者关系同构）：Agent 是这个人的分身，把它放到 lead 位不能让这个人看不见自己的 private 项目。
 - **`workspace` 不含访客**，哪怕访客恰好也在那个项目里。要给访客看，范围必须是 `project`。
 - **创建者永远看得见自己建的东西。** 访客不能新建，这一列对访客只在「原来是 Member、后来被降成访客」时才会出现：他还看得见自己以前建的，但已经只读。
 - **AI 不会切断真人归属。** 如果 issue 的创建者或被指派人是某个 agent，而该 agent 有 `owner_id`，这个 owner 按创建者/被指派人关系看到该 issue，即使 issue 仍是 `private`。这样 AI 执行的私有工作不会从 owner 的任务列表消失；其他成员仍然看不到。
-- `project` 范围只能设在属于某个项目的资源上（`permission.CanSetVisibility`）；不属于任何项目的资源只能 `private` 或 `workspace`。对「项目」这种资源，「所属项目」就是它自己。
+- **三档对所有资源都可设**，包括不属于任何项目的 issue / repo（`permission.CanSetVisibility`，migration 523 去掉了配对约束）。「指定的人」的名单 = 所属项目的成员（若有）+ 直接分享名单 `resource_share`（migration 520–522）。对「项目」这种资源，名单就是项目成员表。
 
 ## 第二层：能做什么
 
@@ -121,8 +122,8 @@ Guest 一整列除了「查看」全是否，没有任何关系能翻过来：�
 
 ## 留给后续票的边界
 
-- **lead 看不见自己带的 `private` 项目。** 如果 A 建了一个 `private` 项目并把 B 设成 lead，按矩阵 B 看不见它（`private` 只认创建者）。矩阵答案是唯一的，但体验上会怪；DENE-698 做「设 lead」时应提示把项目范围改成 `project`。
-- **创建者离开工作区后，他的 `private` 资源对所有人不可见**（包括 Owner）。需要产品决定：移除成员时转交给操作人，还是保留为孤儿。不决定也不会出错，只是那些资源谁也找不回来。
+- **人类 lead 看不见自己带的 `private` 项目。** 如果 A 建了一个 `private` 项目并把人类 B 设成 lead，按矩阵 B 看不见它（`private` 只认创建者）。矩阵答案是唯一的，但体验上会怪；DENE-698 做「设 lead」时应提示把项目范围改成 `project`。（**Agent lead 不在此坑内**：Agent 当 lead 时，拥有它的人按创建者关系看得见——见上面的项目放宽。）
+- **创建者离开工作区后，他的 `private` 资源对所有人不可见**（包括 Owner）。需要产品决定：移除成员时转交给操作人，还是保留为孤儿。不决定也不会出错，只是那些资源谁也找不回来。**「项目」不受此坑影响**：Owner 对所有项目恒可见（上面的项目放宽），孤儿 `private` 项目至少 Owner 还找得回来。issue / repo 仍有此欠债。
 - 模块级可见性（DENE-699）是叠在这两层之上的第三道「与」门，不改变这张矩阵的任何一格。见下方「模块级可见性」。
 
 ## 三档共享范围落地（DENE-698）
@@ -160,8 +161,8 @@ Guest 一整列除了「查看」全是否，没有任何关系能翻过来：�
 - `GET /api/projects/{id}/visibility/preview` 先回答「会扫到多少」：`affected_count` 与 `previously_private_count`，供确认弹窗用；正式写入返回同样两个数字加 `audience_size`。
 - 改项目范围 = 覆盖它当前持有的全部资源。之后进入项目的资源取项目当时的范围，随后各自独立，不再被项目带着走。
 - 新建资源默认 `private`，只有一个例外：**智能体创建的 issue 若不属于任何项目，落地就是 `workspace`**。`private` 的含义是「只有创建者看得见」，而智能体不是一个能被展示列表的人——这样的 issue 留在 `private` 会对所有人（包括让它干活的那个人）不可见。在项目里的仍然取项目当时的范围。规则写在 `service.CreateIssue`。
-- 智能体创建的项目同样不能落成无人可见的 `private` 孤儿项目，因此默认落地为 `workspace`；人类随后可以通过项目共享入口收紧范围。
-- `project` 档没有项目就不成立：接口先回 400（话说人话），数据库的配对约束兜底。issue 被移出全部项目时，`UpdateIssue` 的 SQL 把它降回 `private`——收紧是自动的，放宽永远不是。
+- 智能体创建的项目默认也是 `private`（kun fork）：拥有这个智能体的人按「本人 Agent 创建/任 lead 的项目算本人的」规则看得见，Owner 本来就看得见全部项目，所以不会成孤儿；需要给别人看时再在共享入口放宽。
+- `project` 档（指定的人）不再要求有项目：没挂项目的 issue / repo 用直接分享名单。名单读写：`GET/POST /api/issues/{id}/shares`、`DELETE /api/issues/{id}/shares/{memberId}`；`GET /api/repos/shares?url=`、`POST /api/repos/shares`、`DELETE /api/repos/shares?url=&member_id=`。改名单与改范围同一档权限（`ActionChangeVisibility`）。issue 被移出项目时，`UpdateIssue` 的 SQL 仍把它降回 `private`——收紧是自动的，放宽永远不是。删 issue、从工作区移除成员、从仓库列表删 repo 时，对应的分享行一并清理。
 - 每一次变更都写 `visibility_audit`：直接改写一行 `source='direct'`，被项目扫中的资源逐个写 `source='project_bulk'`（一条语句批量写入，避免扫一千个 issue 就来一千个往返）。
 
 ## 模块级可见性（DENE-699）

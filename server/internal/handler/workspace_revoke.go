@@ -218,6 +218,14 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	}); err != nil {
 		return empty, err
 	}
+	// Direct shares follow project membership out: a re-invite must not
+	// silently restore the issues and repos someone was once shown.
+	if err := qtx.DeleteResourceSharesByMember(ctx, db.DeleteResourceSharesByMemberParams{
+		WorkspaceID: workspaceID,
+		MemberID:    userID,
+	}); err != nil {
+		return empty, err
+	}
 
 	// issue_subscriber carries no FK either (same MUL-3515 rule as the two
 	// prunes above), and MUL-5483 gave agents a path that writes member

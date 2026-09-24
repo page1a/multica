@@ -160,8 +160,8 @@ RETURNING recipient_type, recipient_id;
 -- the viewer here, so the matrix is expressed directly against their member
 -- row rather than through the handler's visibilityViewer: creator or
 -- assignee, or workspace scope unless guest, or project scope through a
--- project they can reach (explicit membership, a project they lead, or the
--- owner/admin fallback over all projects). Keep in step with
+-- project they can reach (explicit membership, a project they lead, the
+-- owner fallback over all projects) or a direct share on the issue. Keep in step with
 -- visibilityViewer.issueVisibilitySQL in internal/handler/visibility.go.
 SELECT count(*) FROM inbox_item i
 LEFT JOIN issue iss ON iss.id = i.issue_id
@@ -181,8 +181,8 @@ WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
           WHERE a.id = iss.assignee_id AND a.workspace_id = iss.workspace_id AND a.owner_id = i.recipient_id
        ))
     OR (iss.visibility = 'workspace' AND COALESCE(m.role, '') <> 'guest')
-    OR (iss.visibility = 'project' AND iss.project_id IS NOT NULL AND (
-          COALESCE(m.role, '') IN ('owner', 'admin')
+    OR (iss.visibility = 'project' AND (
+          COALESCE(m.role, '') = 'owner'
           OR EXISTS (
               SELECT 1 FROM project_member pm
               WHERE pm.workspace_id = i.workspace_id
@@ -195,6 +195,13 @@ WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
                 AND p.workspace_id = i.workspace_id
                 AND p.lead_type = 'member'
                 AND p.lead_id = i.recipient_id
+          )
+          OR EXISTS (
+              SELECT 1 FROM resource_share rs
+              WHERE rs.workspace_id = i.workspace_id
+                AND rs.resource_type = 'issue'
+                AND rs.resource_id = iss.id::text
+                AND rs.member_id = i.recipient_id
           )
     ))
   );
@@ -235,8 +242,8 @@ FROM (
               WHERE a.id = iss.assignee_id AND a.workspace_id = iss.workspace_id AND a.owner_id = i.recipient_id
            ))
         OR (iss.visibility = 'workspace' AND m.role <> 'guest')
-        OR (iss.visibility = 'project' AND iss.project_id IS NOT NULL AND (
-              m.role IN ('owner', 'admin')
+        OR (iss.visibility = 'project' AND (
+              m.role = 'owner'
               OR EXISTS (
                   SELECT 1 FROM project_member pm
                   WHERE pm.workspace_id = i.workspace_id
@@ -249,6 +256,13 @@ FROM (
                     AND p.workspace_id = i.workspace_id
                     AND p.lead_type = 'member'
                     AND p.lead_id = i.recipient_id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM resource_share rs
+                  WHERE rs.workspace_id = i.workspace_id
+                    AND rs.resource_type = 'issue'
+                    AND rs.resource_id = iss.id::text
+                    AND rs.member_id = i.recipient_id
               )
         ))
       )

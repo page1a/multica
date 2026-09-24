@@ -78,6 +78,16 @@ export interface ProjectMember {
   avatar_url: string | null;
 }
 
+/** A person granted direct access to one issue or repository ("specific people" scope). */
+export interface ResourceShare {
+  member_id: string;
+  name: string;
+  email: string;
+  avatar_url: string | null;
+  added_by: string | null;
+  created_at: string;
+}
+
 // ProjectResource is a typed pointer from a project to an external resource.
 // The resource_ref shape depends on resource_type. New types add a case in
 // validateAndNormalizeResourceRef on the server and a renderer in the UI.

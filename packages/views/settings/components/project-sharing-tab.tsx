@@ -8,14 +8,13 @@ import { projectKeys, projectListOptions } from "@multica/core/projects";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useCurrentMember } from "@multica/core/permissions";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { useWorkspacePaths } from "@multica/core/paths";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { SettingsSection, SettingsTab } from "./settings-layout";
-import { AppLink } from "../../navigation";
+import { ShareScopeDialog } from "../../common/share-scope-dialog";
 import { useT } from "../../i18n";
 
 type Visibility = "private" | "project" | "workspace";
@@ -25,7 +24,6 @@ export function ProjectSharingTab() {
   const workspace = useCurrentWorkspace();
   const wsId = workspace?.id ?? "";
   const { role, userId, isLoading: memberLoading } = useCurrentMember(wsId);
-  const paths = useWorkspacePaths();
   const { data: projects = [], isLoading } = useQuery({ ...projectListOptions(wsId), enabled: !!wsId });
   const { data: members = [] } = useQuery({ ...memberListOptions(wsId), enabled: !!wsId });
   const memberQueries = useQueries({
@@ -44,6 +42,7 @@ export function ProjectSharingTab() {
   });
   const qc = useQueryClient();
   const [pending, setPending] = useState<{ id: string; title: string; visibility: Visibility } | null>(null);
+  const [pickingFor, setPickingFor] = useState<{ id: string; title: string; visibility: Visibility } | null>(null);
   const mutation = useMutation({
     mutationFn: ({ id, visibility }: { id: string; visibility: Visibility }) => api.setProjectVisibility(id, visibility),
     onSuccess: (_result, vars) => {
@@ -88,7 +87,7 @@ export function ProjectSharingTab() {
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption text-muted-foreground">
                       <span>{labels[visibility]}</span><span>{t(($) => $.project_sharing.members, { count: projectMembers.length })}</span><span>{t(($) => $.project_sharing.guests, { count: projectGuestCount })}</span><span>{t(($) => $.project_sharing.resources, { count: preview?.affected_count ?? project.resource_count + project.issue_count })}</span>
                     </div>
-                    {projectMembers.length === 0 ? <p className="mt-2 text-caption text-amber-600">{t(($) => $.project_sharing.no_members)} {canManage ? <AppLink className="underline" href={paths.projectDetail(project.id)}>{t(($) => $.project_sharing.manage_members)}</AppLink> : null}</p> : null}
+                    {visibility === "project" && projectMembers.length === 0 ? <p className="mt-2 text-caption text-amber-600">{t(($) => $.project_sharing.no_members)} {canManage ? <button type="button" className="underline" onClick={() => setPickingFor({ id: project.id, title: project.title, visibility })}>{t(($) => $.project_sharing.manage_members)}</button> : null}</p> : null}
                   </div>
                   <select aria-label={t(($) => $.project_sharing.change_for, { name: project.title })} className="h-9 rounded-md border border-input bg-background px-3 text-body" value={visibility} disabled={!canManage || mutation.isPending} onChange={(event) => {
                     const next = event.target.value as Visibility;
@@ -104,6 +103,13 @@ export function ProjectSharingTab() {
         </div>
         {!memberLoading && role === "guest" ? <p className="text-caption text-muted-foreground">{t(($) => $.project_sharing.read_only)}</p> : null}
       </SettingsSection>
+      {pickingFor ? (
+        <ShareScopeDialog
+          open
+          onOpenChange={(open) => { if (!open) setPickingFor(null); }}
+          target={{ kind: "project", resourceId: pickingFor.id, currentScope: pickingFor.visibility, resourceLabel: pickingFor.title }}
+        />
+      ) : null}
       <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>{t(($) => $.project_sharing.confirm_title, { name: pending?.title ?? "" })}</AlertDialogTitle><AlertDialogDescription>

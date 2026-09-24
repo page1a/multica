@@ -499,6 +499,7 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		s, _ := json.Marshal(merged)
 		params.Settings = s
 	}
+	var droppedRepoURLs []string
 	if req.Repos != nil {
 		var storedRepos []byte
 		if existing, err := h.Queries.GetWorkspace(r.Context(), idUUID); err == nil {
@@ -510,6 +511,13 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.Repos = reposJSON
+		// Repos dropped from the list take their direct shares with them.
+		kept := workspaceReposByURL(reposJSON)
+		for url := range workspaceReposByURL(storedRepos) {
+			if _, ok := kept[url]; !ok {
+				droppedRepoURLs = append(droppedRepoURLs, url)
+			}
+		}
 	}
 	if req.IssuePrefix != nil {
 		prefix, ok := normalizeIssuePrefix(*req.IssuePrefix)
@@ -542,6 +550,8 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update workspace: "+err.Error())
 		return
 	}
+
+	h.deleteRepoShares(r.Context(), ws.ID, droppedRepoURLs)
 
 	slog.Info("workspace updated", append(logger.RequestAttrs(r), "workspace_id", id)...)
 	userID := requestUserID(r)

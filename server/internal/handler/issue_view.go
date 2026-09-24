@@ -155,14 +155,16 @@ func (h *Handler) workspaceRole(ctx context.Context, wsUUID, userUUID pgtype.UUI
 
 // listAccessibleProjectIDs is the caller's project set for visibility='project'
 // reads: explicit project_member rows plus projects they lead, merged once.
-// Workspace owner/admin get every project in the workspace (management
-// fallback). Never JOIN this into ListIssueViewsForUser.
+// The workspace owner gets every project in the workspace. Admins do not:
+// "specific people" means the people picked, so an admin sees a project-scoped
+// resource only when they were added to it (kun fork). Never JOIN this into
+// ListIssueViewsForUser.
 func (h *Handler) listAccessibleProjectIDs(ctx context.Context, wsUUID, userUUID pgtype.UUID) ([]pgtype.UUID, error) {
 	member, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      userUUID,
 		WorkspaceID: wsUUID,
 	})
-	if err == nil && roleAllowed(member.Role, "owner", "admin") {
+	if err == nil && roleAllowed(member.Role, "owner") {
 		ids, err := h.Queries.ListProjectIDsInWorkspace(ctx, wsUUID)
 		if err != nil {
 			return nil, err
