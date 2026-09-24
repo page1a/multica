@@ -688,7 +688,7 @@ func TestIssueViewProjectVisibility(t *testing.T) {
 	}
 
 	listPath := "/api/issue-views?scope_type=project&scope_id=" + projectID
-	for _, uid := range []string{creatorID, memberID, leadID, adminID, testUserID} {
+	for _, uid := range []string{creatorID, memberID, leadID, testUserID} {
 		if !issueViewListed(listIssueViewsAs(t, uid, listPath), view.ID) {
 			t.Fatalf("user %s missing project view from list", uid)
 		}
@@ -697,6 +697,11 @@ func TestIssueViewProjectVisibility(t *testing.T) {
 
 	if issueViewListed(listIssueViewsAs(t, outsiderID, listPath), view.ID) {
 		t.Fatal("non-member listed a project-visibility view")
+	}
+	// Admins are not auto-included (kun fork): "specific people" means the
+	// people picked, and this admin was not picked.
+	if issueViewListed(listIssueViewsAs(t, adminID, listPath), view.ID) {
+		t.Fatal("unpicked admin listed a project-visibility view")
 	}
 	getIssueViewAs(t, outsiderID, view.ID, http.StatusNotFound)
 

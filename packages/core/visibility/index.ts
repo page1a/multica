@@ -11,3 +11,10 @@ export type {
   VisibilityResult,
   VisibilityScope,
 } from "./mutations";
+export {
+  resourceShareKeys,
+  resourceSharesOptions,
+  useAddResourceShare,
+  useRemoveResourceShare,
+} from "./shares";
+export type { ShareableResource } from "./shares";

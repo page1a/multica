@@ -39,7 +39,7 @@ import {
 } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
+import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import {
   githubInstallationRepositoriesOptions,
@@ -108,7 +108,6 @@ export function RepositoriesTab() {
   const { t } = useT("settings");
   const user = useAuthStore((state) => state.user);
   const workspace = useCurrentWorkspace();
-  const wsPaths = useWorkspacePaths();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
@@ -510,10 +509,6 @@ export function RepositoriesTab() {
               setShareAudienceSizes((current) => ({ ...current, [url]: result.audience_size! }));
             }
           }}
-          onManageMembers={selectedRepository.project_id ? () => {
-            setShareScopeIndex(null);
-            navigation.push(wsPaths.projectDetail(selectedRepository.project_id!));
-          } : undefined}
         />
       )}
 

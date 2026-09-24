@@ -16,7 +16,7 @@ import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { AppLink, useBackOrReplace, useNavigation } from "../../navigation";
+import { AppLink, useBackOrReplace } from "../../navigation";
 import {
   Archive,
   Calendar,
@@ -1166,7 +1166,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const id = issueId;
   const user = useAuthStore((s) => s.user);
   const paths = useWorkspacePaths();
-  const navigation = useNavigation();
   const openModal = useModalStore((state) => state.open);
 
   // Issue navigation — read from TQ list cache
@@ -3665,12 +3664,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           onSaved={(result) => {
             setShareAudienceSize(result.audience_size);
           }}
-          onManageMembers={issue.project_id ? () => {
-            const projectId = issue.project_id;
-            if (!projectId) return;
-            setShareScopeOpen(false);
-            navigation.push(paths.projectDetail(projectId));
-          } : undefined}
         />
       </div>
     </ImageSequenceProvider>

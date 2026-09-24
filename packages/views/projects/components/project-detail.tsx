@@ -633,13 +633,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         onSaved={(result) => {
           setShareAudienceSize(result.audience_size);
         }}
-        onManageMembers={() => {
-          setShareScopeOpen(false);
-          document.getElementById("project-members-section")?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-          });
-        }}
       />
 
       {/* Delete confirmation */}

@@ -1445,6 +1445,17 @@ export const ProjectMemberSchema = z.object({
 
 export const ProjectMemberListSchema = z.array(ProjectMemberSchema);
 
+export const ResourceShareSchema = z.object({
+  member_id: z.string(),
+  name: z.string().optional().default(""),
+  email: z.string().optional().default(""),
+  avatar_url: z.string().nullable().optional().default(null),
+  added_by: z.string().nullable().optional().default(null),
+  created_at: z.string().optional().default(""),
+}).loose();
+
+export const ResourceShareListSchema = z.array(ResourceShareSchema);
+
 export const EMPTY_PROJECT_MEMBER: ProjectMember = {
   id: "",
   workspace_id: "",

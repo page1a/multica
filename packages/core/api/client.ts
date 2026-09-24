@@ -112,6 +112,7 @@ import type {
   CancelTaskResponse,
   Project,
   ProjectMember,
+  ResourceShare,
   CreateProjectRequest,
   UpdateProjectRequest,
   ListProjectsResponse,
@@ -391,6 +392,8 @@ import {
   SearchProjectsResponseSchema,
   ProjectMemberListSchema,
   ProjectMemberSchema,
+  ResourceShareListSchema,
+  ResourceShareSchema,
   SquadSchema,
   SquadListSchema,
   SquadMemberListSchema,
@@ -3368,6 +3371,62 @@ export class ApiClient {
       "/api/repos/visibility",
       { method: "PUT", body: JSON.stringify({ url, visibility }) },
     );
+  }
+
+  // Direct "specific people" shares for issues and repositories.
+  async listIssueShares(issueId: string): Promise<ResourceShare[]> {
+    return this.parseShareList(
+      await this.fetch<unknown>(`/api/issues/${issueId}/shares`),
+      "GET /api/issues/:id/shares",
+    );
+  }
+
+  async addIssueShare(issueId: string, memberId: string): Promise<ResourceShare> {
+    return this.parseShare(
+      await this.fetch<unknown>(`/api/issues/${issueId}/shares`, {
+        method: "POST",
+        body: JSON.stringify({ member_id: memberId }),
+      }),
+      "POST /api/issues/:id/shares",
+    );
+  }
+
+  async removeIssueShare(issueId: string, memberId: string): Promise<void> {
+    await this.fetch(`/api/issues/${issueId}/shares/${memberId}`, { method: "DELETE" });
+  }
+
+  async listRepoShares(url: string): Promise<ResourceShare[]> {
+    return this.parseShareList(
+      await this.fetch<unknown>(`/api/repos/shares?url=${encodeURIComponent(url)}`),
+      "GET /api/repos/shares",
+    );
+  }
+
+  async addRepoShare(url: string, memberId: string): Promise<ResourceShare> {
+    return this.parseShare(
+      await this.fetch<unknown>("/api/repos/shares", {
+        method: "POST",
+        body: JSON.stringify({ url, member_id: memberId }),
+      }),
+      "POST /api/repos/shares",
+    );
+  }
+
+  async removeRepoShare(url: string, memberId: string): Promise<void> {
+    const params = new URLSearchParams({ url, member_id: memberId });
+    await this.fetch(`/api/repos/shares?${params.toString()}`, { method: "DELETE" });
+  }
+
+  private parseShareList(raw: unknown, endpoint: string): ResourceShare[] {
+    const parsed = parseWithFallback<ResourceShare[] | null>(raw, ResourceShareListSchema, null, { endpoint });
+    if (parsed === null) throw new Error(`${endpoint} failed schema validation`);
+    return parsed;
+  }
+
+  private parseShare(raw: unknown, endpoint: string): ResourceShare {
+    const parsed = parseWithFallback<ResourceShare | null>(raw, ResourceShareSchema, null, { endpoint });
+    if (parsed === null) throw new Error(`${endpoint} failed schema validation`);
+    return parsed;
   }
 
   async previewProjectVisibility(projectId: string) {

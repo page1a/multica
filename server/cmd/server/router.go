@@ -2003,6 +2003,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// ordinary edit: it has its own tier rule and its own
 					// audit row (DENE-698).
 					r.Put("/visibility", h.SetIssueVisibility)
+					// "Specific people": direct shares on this issue (kun fork).
+					r.Get("/shares", h.ListIssueShares)
+					r.Post("/shares", h.AddIssueShare)
+					r.Delete("/shares/{memberId}", h.RemoveIssueShare)
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
@@ -2105,6 +2109,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Repositories are JSONB entries in workspace.repos, not rows, so
 			// their scope is keyed by URL in the body rather than by path id.
 			r.With(h.RequireModule(permission.ModuleRepos)).Put("/api/repos/visibility", h.SetRepoVisibility)
+			r.With(h.RequireModule(permission.ModuleRepos)).Get("/api/repos/shares", h.ListRepoShares)
+			r.With(h.RequireModule(permission.ModuleRepos)).Post("/api/repos/shares", h.AddRepoShare)
+			r.With(h.RequireModule(permission.ModuleRepos)).Delete("/api/repos/shares", h.RemoveRepoShare)
 
 			r.Route("/api/projects", func(r chi.Router) {
 				r.Use(h.RequireModule(permission.ModuleProjects))

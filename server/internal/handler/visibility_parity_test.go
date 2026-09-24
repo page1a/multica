@@ -26,9 +26,24 @@ func TestIssueVisibilitySQLAgreesWithCanSeeIssue(t *testing.T) {
 	other := mustUUID(t, "22222222-2222-4222-8222-222222222222")
 	myProject := mustUUID(t, "33333333-3333-4333-8333-333333333333")
 	otherProject := mustUUID(t, "44444444-4444-4444-8444-444444444444")
+	// sharedIssue is shared directly with me (resource_share); plainIssue is not.
+	sharedIssue := mustUUID(t, "55555555-5555-4555-8555-555555555555")
+	plainIssue := mustUUID(t, "66666666-6666-4666-8666-666666666666")
+	zeroWorkspace := mustUUID(t, "00000000-0000-0000-0000-000000000000")
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO resource_share (workspace_id, resource_type, resource_id, member_id) VALUES ($1, 'issue', $2, $3)`,
+		zeroWorkspace, uuidToString(sharedIssue), me); err != nil {
+		t.Fatalf("seed share: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM resource_share WHERE workspace_id = $1`, zeroWorkspace)
+	})
+	sharedWithMe := map[string]struct{}{uuidToString(sharedIssue): {}}
 
 	viewers := map[string]visibilityViewer{
 		"member in no project": {userID: me, role: permission.RoleMember},
+		"guest in no project":  {userID: me, role: permission.RoleGuest},
 		"member in a project": {
 			userID: me, role: permission.RoleMember,
 			projectIDs: []pgtype.UUID{myProject},
@@ -47,7 +62,17 @@ func TestIssueVisibilitySQLAgreesWithCanSeeIssue(t *testing.T) {
 		"unidentified caller": {},
 	}
 
+	// The viewer loads its own shares; with the seeded row, every viewer that
+	// is me has the shared issue in its set.
+	for name, v := range viewers {
+		if v.userID.Valid {
+			v.sharedIssues = sharedWithMe
+			viewers[name] = v
+		}
+	}
+
 	type issueRow struct {
+		id           pgtype.UUID
 		visibility   string
 		creatorType  string
 		creatorID    pgtype.UUID
@@ -62,17 +87,19 @@ func TestIssueVisibilitySQLAgreesWithCanSeeIssue(t *testing.T) {
 				// Unassigned, assigned to the viewer, assigned to somebody
 				// else, and assigned to an agent: the assignee is a sharing
 				// relation of its own, so every tier is crossed with it.
-				rows = append(rows,
-					issueRow{vis, "member", creator, project, "", pgtype.UUID{}},
-					issueRow{vis, "member", creator, project, "member", me},
-					issueRow{vis, "member", creator, project, "member", other},
-					issueRow{vis, "member", creator, project, "agent", me},
-				)
+				for _, id := range []pgtype.UUID{plainIssue, sharedIssue} {
+					rows = append(rows,
+						issueRow{id, vis, "member", creator, project, "", pgtype.UUID{}},
+						issueRow{id, vis, "member", creator, project, "member", me},
+						issueRow{id, vis, "member", creator, project, "member", other},
+						issueRow{id, vis, "member", creator, project, "agent", me},
+					)
+				}
 			}
 		}
 		// An agent-created issue: creator_id points at an agent, so no human
 		// is ever its creator.
-		rows = append(rows, issueRow{vis, "agent", other, myProject, "", pgtype.UUID{}})
+		rows = append(rows, issueRow{plainIssue, vis, "agent", other, myProject, "", pgtype.UUID{}})
 	}
 
 	for viewerName, viewer := range viewers {
@@ -80,9 +107,9 @@ func TestIssueVisibilitySQLAgreesWithCanSeeIssue(t *testing.T) {
 			var args []any
 			addArg := func(v any) string {
 				args = append(args, v)
-				// $1..$6 carry the synthetic row, so the predicate's own
-				// arguments start at $7.
-				return fmt.Sprintf("$%d", len(args)+6)
+				// $1..$7 carry the synthetic row, so the predicate's own
+				// arguments start at $8.
+				return fmt.Sprintf("$%d", len(args)+7)
 			}
 			predicate := viewer.issueVisibilitySQL("i", addArg)
 			// EXISTS, not SELECT <predicate>: the predicate lives in a WHERE
@@ -95,25 +122,26 @@ func TestIssueVisibilitySQLAgreesWithCanSeeIssue(t *testing.T) {
 						SELECT $1::text AS visibility, $2::text AS creator_type,
 						       $3::uuid AS creator_id, $4::uuid AS project_id,
 						       $5::text AS assignee_type, $6::uuid AS assignee_id,
+						       $7::uuid AS id,
 						       '00000000-0000-0000-0000-000000000000'::uuid AS workspace_id
 					) AS i WHERE %s
 				)`, predicate)
 
 			params := append([]any{
 				row.visibility, row.creatorType, row.creatorID, row.projectID,
-				row.assigneeType, row.assigneeID,
+				row.assigneeType, row.assigneeID, row.id,
 			}, args...)
 			var inSQL bool
-			if err := testPool.QueryRow(context.Background(), query, params...).Scan(&inSQL); err != nil {
+			if err := testPool.QueryRow(ctx, query, params...).Scan(&inSQL); err != nil {
 				t.Fatalf("%s / %+v: predicate %q failed: %v", viewerName, row, predicate, err)
 			}
-			inGo := viewer.canSeeIssueFields(
+			inGo := viewer.canSeeIssueFields(row.id,
 				row.visibility, row.creatorType, row.creatorID, row.projectID,
 				row.assigneeType, row.assigneeID)
 			if inSQL != inGo {
-				t.Fatalf("%s disagrees about %s issue (creator_type=%s, mine=%t, in my project=%t, assigned to me=%t): SQL says %t, Go says %t",
+				t.Fatalf("%s disagrees about %s issue (creator_type=%s, mine=%t, in my project=%t, shared with me=%t, assigned to me=%t): SQL says %t, Go says %t",
 					viewerName, row.visibility, row.creatorType,
-					row.creatorID == me, row.projectID == myProject,
+					row.creatorID == me, row.projectID == myProject, row.id == sharedIssue,
 					row.assigneeType == "member" && row.assigneeID == me, inSQL, inGo)
 			}
 		}

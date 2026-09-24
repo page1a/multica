@@ -61,8 +61,14 @@ type Relation struct {
 	// InProject: the resource belongs to a project and that project is in the
 	// caller's accessible set, as returned by the handler's
 	// listAccessibleProjectIDs (project_member rows, led projects, and every
-	// project for owner/admin). Always false for a resource with no project.
+	// project for the workspace owner). Always false for a resource with no
+	// project.
 	InProject bool
+	// SharedWith: the resource was shared with the caller by name (a
+	// resource_share row). Only the 'project' scope — "specific people" —
+	// honours it; at private or workspace scope it grants nothing. Always
+	// false for a project, whose named people are its members (InProject).
+	SharedWith bool
 	// LeadsProject: the caller is the lead of the resource's project. Only
 	// consulted for ActionManageProjectMembers.
 	LeadsProject bool
@@ -162,7 +168,9 @@ func CanSee(role Role, vis Visibility, rel Relation) bool {
 		// way to show a guest anything.
 		return role != RoleGuest
 	case VisibilityProject:
-		return rel.InProject
+		// "Specific people": the project's members plus anyone the resource
+		// was shared with by name.
+		return rel.InProject || rel.SharedWith
 	default:
 		// private, and anything unrecognised.
 		return false
@@ -204,14 +212,13 @@ func AllowedInWorkspace(role Role, action WorkspaceAction) bool {
 	}
 }
 
-// CanSetVisibility reports whether a resource may be given scope vis.
-// hasProject is whether the resource belongs to a project: "project" scope
-// names that project's people, so without one it names nobody.
-func CanSetVisibility(vis Visibility, hasProject bool) bool {
-	if !vis.Valid() {
-		return false
-	}
-	return vis != VisibilityProject || hasProject
+// CanSetVisibility reports whether a resource may be given scope vis. Every
+// known scope is settable on every resource: "project" scope ("specific
+// people") names the project's members when there is a project and the
+// resource's own direct shares always, so a resource with no project can hold
+// it too.
+func CanSetVisibility(vis Visibility) bool {
+	return vis.Valid()
 }
 
 // Module is a product area that can be shared independently of any one

@@ -15,7 +15,9 @@ func allRelations() []Relation {
 	for _, creator := range []bool{false, true} {
 		for _, inProject := range []bool{false, true} {
 			for _, leads := range []bool{false, true} {
-				out = append(out, Relation{IsCreator: creator, InProject: inProject, LeadsProject: leads})
+				for _, shared := range []bool{false, true} {
+					out = append(out, Relation{IsCreator: creator, InProject: inProject, LeadsProject: leads, SharedWith: shared})
+				}
 			}
 		}
 	}
@@ -23,26 +25,26 @@ func allRelations() []Relation {
 }
 
 // The visibility layer, written out cell by cell: role x scope x relation.
-// Columns: not related / in the project / creator.
+// Columns: not related / in the project / shared by name / creator.
 func TestCanSeeMatrix(t *testing.T) {
 	type row struct {
-		role                        Role
-		vis                         Visibility
-		stranger, inProject, author bool
+		role                                Role
+		vis                                 Visibility
+		stranger, inProject, shared, author bool
 	}
 	rows := []row{
-		{RoleOwner, VisibilityPrivate, false, false, true},
-		{RoleOwner, VisibilityProject, false, true, true},
-		{RoleOwner, VisibilityWorkspace, true, true, true},
-		{RoleAdmin, VisibilityPrivate, false, false, true},
-		{RoleAdmin, VisibilityProject, false, true, true},
-		{RoleAdmin, VisibilityWorkspace, true, true, true},
-		{RoleMember, VisibilityPrivate, false, false, true},
-		{RoleMember, VisibilityProject, false, true, true},
-		{RoleMember, VisibilityWorkspace, true, true, true},
-		{RoleGuest, VisibilityPrivate, false, false, true},
-		{RoleGuest, VisibilityProject, false, true, true},
-		{RoleGuest, VisibilityWorkspace, false, false, true},
+		{RoleOwner, VisibilityPrivate, false, false, false, true},
+		{RoleOwner, VisibilityProject, false, true, true, true},
+		{RoleOwner, VisibilityWorkspace, true, true, true, true},
+		{RoleAdmin, VisibilityPrivate, false, false, false, true},
+		{RoleAdmin, VisibilityProject, false, true, true, true},
+		{RoleAdmin, VisibilityWorkspace, true, true, true, true},
+		{RoleMember, VisibilityPrivate, false, false, false, true},
+		{RoleMember, VisibilityProject, false, true, true, true},
+		{RoleMember, VisibilityWorkspace, true, true, true, true},
+		{RoleGuest, VisibilityPrivate, false, false, false, true},
+		{RoleGuest, VisibilityProject, false, true, true, true},
+		{RoleGuest, VisibilityWorkspace, false, false, false, true},
 	}
 	if len(rows) != len(Roles)*len(Visibilities) {
 		t.Fatalf("matrix has %d rows, want one per role x scope = %d", len(rows), len(Roles)*len(Visibilities))
@@ -55,6 +57,7 @@ func TestCanSeeMatrix(t *testing.T) {
 		}{
 			{"stranger", Relation{}, r.stranger},
 			{"in project", Relation{InProject: true}, r.inProject},
+			{"shared by name", Relation{SharedWith: true}, r.shared},
 			{"creator", Relation{IsCreator: true}, r.author},
 		}
 		for _, c := range cases {
@@ -211,7 +214,7 @@ func TestFailsClosed(t *testing.T) {
 		if CanSee(RoleOwner, vis, Relation{InProject: true}) {
 			t.Errorf("unknown scope %q is visible to a non-creator", vis)
 		}
-		if CanSetVisibility(vis, true) {
+		if CanSetVisibility(vis) {
 			t.Errorf("unknown scope %q can be set", vis)
 		}
 	}
@@ -275,14 +278,12 @@ func TestCanSeeModuleMatrix(t *testing.T) {
 	}
 }
 
-func TestProjectScopeNeedsAProject(t *testing.T) {
+// "Specific people" works without a project: the resource's own direct
+// shares are its audience then.
+func TestEveryScopeSettable(t *testing.T) {
 	for _, vis := range Visibilities {
-		if !CanSetVisibility(vis, true) {
-			t.Errorf("%s must be settable on a resource in a project", vis)
-		}
-		want := vis != VisibilityProject
-		if got := CanSetVisibility(vis, false); got != want {
-			t.Errorf("CanSetVisibility(%s, no project) = %v, want %v", vis, got, want)
+		if !CanSetVisibility(vis) {
+			t.Errorf("%s must be settable", vis)
 		}
 	}
 }

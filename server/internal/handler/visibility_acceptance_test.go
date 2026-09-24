@@ -83,10 +83,11 @@ func TestNewIssueIsPrivateAndInvisibleToAnotherMember(t *testing.T) {
 	}
 }
 
-// An issue in no project cannot be given 'project' scope: that tier names a
-// project's people, so without a project it names nobody. The API says so
-// before the CHECK constraint has to.
-func TestProjectScopeIsRejectedForAnIssueInNoProject(t *testing.T) {
+// An issue in no project can still take the 'specific people' scope (kun
+// fork): its audience is then exactly its direct shares. Before a share it
+// reaches only its creator; after one, the person named sees it and nobody
+// else does.
+func TestSpecificPeopleScopeWorksForAnIssueInNoProject(t *testing.T) {
 	requireDB(t)
 
 	author := visibilityTestMember(t, "Vis Loner", "vis-loner@multica.ai")
@@ -99,15 +100,41 @@ func TestProjectScopeIsRejectedForAnIssueInNoProject(t *testing.T) {
 	req := withURLParam(
 		newRequestAs(author, "PUT", "/api/issues/"+issueID+"/visibility", map[string]any{"visibility": "project"}),
 		"id", issueID)
-	testutil.Call(t, testHandler.SetIssueVisibility, req).Want(400)
+	testutil.Call(t, testHandler.SetIssueVisibility, req).Want(200)
 
-	// The constraint behind the API rejects the same write, so a client that
-	// skips the handler cannot produce the row either.
-	_, err := testPool.Exec(context.Background(),
-		`UPDATE issue SET visibility = 'project' WHERE id = $1`, issueID)
-	if err == nil {
-		t.Fatal("the database accepted 'project' scope on an issue that belongs to no project")
+	friend := visibilityTestMember(t, "Vis Friend", "vis-friend@multica.ai")
+	stranger := visibilityTestMember(t, "Vis Passerby", "vis-passerby@multica.ai")
+	get := func(userID string) *testutil.Response {
+		r := withURLParam(newRequestAs(userID, "GET", "/api/issues/"+issueID, nil), "id", issueID)
+		return testutil.Call(t, testHandler.GetIssue, r)
 	}
+	get(friend).Want(404)
+
+	// Only someone who may change the scope may name people.
+	share := func(asUser, memberID string) *testutil.Response {
+		r := withURLParam(newRequestAs(asUser, "POST", "/api/issues/"+issueID+"/shares",
+			map[string]any{"member_id": memberID}), "id", issueID)
+		return testutil.Call(t, testHandler.AddIssueShare, r)
+	}
+	share(author, friend).Want(201)
+	share(author, friend).Want(201) // idempotent
+	get(friend).Want(200)
+	get(stranger).Want(404)
+	share(friend, stranger).Want(403)
+
+	var listed []ResourceShareResponse
+	testutil.Call(t, testHandler.ListIssueShares,
+		withURLParam(newRequestAs(author, "GET", "/api/issues/"+issueID+"/shares", nil), "id", issueID)).
+		Want(200).JSON(&listed)
+	if len(listed) != 1 || listed[0].MemberID != friend {
+		t.Fatalf("shares = %+v, want just the friend", listed)
+	}
+
+	unshare := testutil.WithURLParams(
+		newRequestAs(author, "DELETE", "/api/issues/"+issueID+"/shares/"+friend, nil),
+		"id", issueID, "memberId", friend)
+	testutil.Call(t, testHandler.RemoveIssueShare, unshare).Want(204)
+	get(friend).Want(404)
 }
 
 // A project is the bulk shortcut: changing its scope overwrites everything it
@@ -297,9 +324,9 @@ func TestAgentOwnerSeesPrivateAgentIssue(t *testing.T) {
 	}
 }
 
-// Projects created through an agent request start workspace-visible so the
-// owner's first read can find them. Once narrowed to private, the same owner
-// must retain access through project.created_by while unrelated members lose
+// Projects created through an agent request start private like every other
+// project (kun fork: "仅我可见" by default). The agent's owner must still see
+// it through the owned-agent lead/creator rule while unrelated members lose
 // both list and detail access.
 func TestAgentCreatedProjectKeepsOwnerVisibilityAfterPrivate(t *testing.T) {
 	requireDB(t)
@@ -317,8 +344,8 @@ func TestAgentCreatedProjectKeepsOwnerVisibilityAfterPrivate(t *testing.T) {
 		Visibility string `json:"visibility"`
 	}
 	testutil.Call(t, testHandler.CreateProject, req).Want(201).JSON(&created)
-	if created.Visibility != "workspace" {
-		t.Fatalf("agent-created project visibility = %q, want workspace", created.Visibility)
+	if created.Visibility != "private" {
+		t.Fatalf("agent-created project visibility = %q, want private", created.Visibility)
 	}
 
 	setPrivate := withURLParam(newRequestAs(owner, "PUT", "/api/projects/"+created.ID+"/visibility",

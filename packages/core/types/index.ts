@@ -212,6 +212,7 @@ export type {
   ListProjectsResponse,
   ProjectVisibilityPreview,
   ProjectMember,
+  ResourceShare,
   ProjectResource,
   ProjectResourceType,
   ProjectResourceRef,
