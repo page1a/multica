@@ -40,6 +40,8 @@
       "hours": "{{count}}h",
       "days": "{{count}}d"
     },
+    "unread_count_one": "{{count}} unread notification",
+    "unread_count_other": "{{count}} unread notifications",
     "archived_title": "Archived",
     "archived_empty": "No archived notifications",
     "unarchive_tooltip": "Unarchive",
@@ -57,7 +59,21 @@
     "autopilot_quota_exceeded_body": "This workspace has reached its limit of {{limit}} autopilot runs for the current period. Further autopilot runs will not start until the allowance resets {{resetAt}}.",
     "autopilot_quota_upgrade": "View upgrade options",
     "archive": "Archive",
-    "unarchive": "Unarchive"
+    "unarchive": "Unarchive",
+    "access_request_mention_title": "{{requester}} mentioned {{agent}} and needs your approval",
+    "access_request_assign_title": "{{requester}} assigned {{agent}} and needs your approval",
+    "access_request_local_env_note": "This agent runs on your machine. Once approved, the task can use your local environment — keys, logins and files.",
+    "access_pass_prompt": "Also let them use it for a while:",
+    "access_pass_2h": "2 hours",
+    "access_pass_today": "Rest of today",
+    "access_pass_custom": "Until…",
+    "access_approve_once": "Approve this once",
+    "access_approve_with_pass": "Approve and issue pass",
+    "access_decline": "Decline",
+    "access_request_expires": "Expires {{until}}",
+    "access_status_approved": "Approved",
+    "access_status_declined": "Declined",
+    "access_status_expired": "Expired — nobody answered in time"
   },
   "types": {
     "issue_assigned": "Assigned",
@@ -80,7 +96,10 @@
     "quick_create_failed": "Create with agent failed",
     "quick_create_unconfirmed": "Create with agent unconfirmed",
     "autopilot_paused": "Autopilot paused",
-    "autopilot_quota_exceeded": "Autopilot run limit reached"
+    "autopilot_quota_exceeded": "Autopilot run limit reached",
+    "agent_access_request": "Agent access request",
+    "agent_access_approved": "Agent access approved",
+    "agent_access_declined": "Agent access declined"
   },
   "labels": {
     "set_status_to": "Set status to",
@@ -94,12 +113,19 @@
     "reacted_to_comment": "Reacted {{emoji}} to your comment",
     "created_with_agent": "Created with agent: {{identifier}}",
     "failed_with_detail": "Failed: {{detail}}",
-    "autopilot_quota_blocked": "Run blocked because the limit was reached"
+    "autopilot_quota_blocked": "Run blocked because the limit was reached",
+    "access_requested_by": "{{requester}} asked to use {{agent}}",
+    "access_approved_for": "Your request to use {{agent}} was approved",
+    "access_declined_for": "Your request to use {{agent}} was declined"
   },
   "toasts": {
     "source_context_retry_started": "Retry started with the original context",
     "archived": "Notification archived",
-    "unarchived": "Notification restored"
+    "unarchived": "Notification restored",
+    "access_approved": "Approved — the run is queued",
+    "access_approved_with_pass": "Approved — pass valid until {{until}}",
+    "access_approved_but_blocked": "Approved, but the run could not start — check the agent's runtime",
+    "access_declined": "Declined — the requester has been told"
   },
   "errors": {
     "archived_lookup_failed": "Failed to load the linked notification",
@@ -115,6 +141,9 @@
     "archive_completed_failed": "Failed to archive completed",
     "unarchive_failed": "Failed to unarchive",
     "archived_load_failed": "Failed to load archived notifications",
-    "filters_load_failed": "Could not load filters"
+    "filters_load_failed": "Could not load filters",
+    "access_request_not_pending": "This request was already resolved or has expired",
+    "access_request_failed": "Could not resolve the request",
+    "access_pass_expiry_invalid": "Pick an expiry in the future"
   }
 }

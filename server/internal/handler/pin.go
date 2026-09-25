@@ -72,11 +72,18 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 	// contract would let an old Desktop DESTROY the user's view pins just by
 	// opening the sidebar — so view rows only ship to clients that declare
 	// they understand them (?include=view).
-	includeViews := strings.Contains(r.URL.Query().Get("include"), "view")
+	// Chat pins (DENE-866) ship under the same rule: a client that has not
+	// asked for them would resolve the row as a project and auto-unpin it.
+	include := r.URL.Query().Get("include")
+	includeViews := strings.Contains(include, "view")
+	includeChats := strings.Contains(include, "chat")
 
 	resp := make([]PinnedItemResponse, 0, len(pins))
 	for _, p := range pins {
 		if p.ItemType == "view" && !includeViews {
+			continue
+		}
+		if p.ItemType == pinnedItemTypeChat && !includeChats {
 			continue
 		}
 		resp = append(resp, pinnedItemToResponse(p))
@@ -96,8 +103,8 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.ItemType != "issue" && req.ItemType != "project" && req.ItemType != "view" {
-		writeError(w, http.StatusBadRequest, "item_type must be 'issue', 'project' or 'view'")
+	if req.ItemType != "issue" && req.ItemType != "project" && req.ItemType != "view" && req.ItemType != pinnedItemTypeChat {
+		writeError(w, http.StatusBadRequest, "item_type must be 'issue', 'project', 'view' or 'chat'")
 		return
 	}
 	if req.ItemID == "" {
@@ -115,6 +122,7 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the item exists in this workspace
+	var chatSession db.ChatSession
 	switch req.ItemType {
 	case "issue":
 		if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -141,6 +149,14 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "view not found")
 			return
 		}
+	case pinnedItemTypeChat:
+		// The chat's own read gate: creator, or someone the chat is shared
+		// with. A chat the caller cannot see 404s, never 403s (DENE-840).
+		session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, req.ItemID)
+		if !ok {
+			return
+		}
+		chatSession = session
 	}
 
 	// Get max position to append at end
@@ -171,6 +187,10 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 
 	resp := pinnedItemToResponse(pin)
 	h.publish(protocol.EventPinCreated, workspaceID, "member", userID, map[string]any{"pin": resp})
+	if req.ItemType == pinnedItemTypeChat {
+		// The caller's Chat list sorts on this flag too.
+		h.publishChatPinned(workspaceID, userID, chatSession, true)
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -207,6 +227,14 @@ func (h *Handler) DeletePin(w http.ResponseWriter, r *http.Request) {
 		"item_type": itemType,
 		"item_id":   itemID,
 	})
+	if itemType == pinnedItemTypeChat {
+		// Best effort: a chat deleted meanwhile has no list row to re-sort.
+		if session, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+			ID: itemUUID, WorkspaceID: wsUUID,
+		}); err == nil {
+			h.publishChatPinned(workspaceID, userID, session, false)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

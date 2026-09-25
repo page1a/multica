@@ -128,5 +128,17 @@
   },
   "navigation": {
     "open_in_new_tab": "새 탭에서 열기"
+  },
+  "work_thread": {
+    "thread": "스레드 · {{state}}",
+    "queued_count": "{{count}}개 대기 중",
+    "continue": "계속",
+    "continue_aria": "작업 스레드 계속",
+    "interrupt": "중단",
+    "interrupt_aria": "작업 스레드 중단",
+    "queue": "대기열 추가",
+    "queue_aria": "작업 스레드에 입력 대기열 추가",
+    "insert": "끼워넣기",
+    "prioritize_aria": "{{id}} 우선 처리"
   }
 }

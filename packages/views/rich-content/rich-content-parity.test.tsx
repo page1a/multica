@@ -50,6 +50,9 @@ vi.mock("@multica/core/paths", () => ({
     projectDetail: (id: string) => `/test/projects/${id}`,
   }),
   useWorkspaceSlug: () => "test",
+  // Speaker names look up members of the current workspace. This file has no
+  // workspace route, so the lookup stays off and the message body still renders.
+  useCurrentWorkspace: () => null,
 }));
 
 vi.mock("../navigation", () => ({

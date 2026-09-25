@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
+import { useAuthStore } from "../auth";
+import { pinKeys } from "../pins/queries";
 import { chatKeys, sortChatSessions, QUICK_ACTIONS_PENDING_TIMEOUT_MS } from "./queries";
 import { createLogger } from "../logger";
 import type {
@@ -249,14 +251,17 @@ export function useSetChatSessionProjects() {
 }
 
 /**
- * Pins or unpins a chat. Optimistically flips `pinned` and re-sorts the cached
- * list (pinned first, then by activity) so the row jumps to / from the top
- * instantly; rolls back on error. The matching `chat:session_updated` WS event
- * carries the new pin state to other tabs/devices — see use-realtime-sync.ts.
+ * Pins or unpins a chat for the current user. Optimistically flips `pinned`
+ * and re-sorts the cached list (pinned first, then by activity) so the row
+ * jumps to / from the top instantly; rolls back on error. The pin is the
+ * user's own sidebar pin row (DENE-866), so the sidebar's pin list is
+ * refetched on settle. The matching `chat:session_updated` WS event carries
+ * the new pin state to other tabs/devices — see use-realtime-sync.ts.
  */
 export function useSetChatSessionPinned() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const userId = useAuthStore((s) => s.user?.id ?? "");
 
   return useMutation({
     mutationFn: (data: { sessionId: string; pinned: boolean }) => {
@@ -277,6 +282,41 @@ export function useSetChatSessionPinned() {
     },
     onError: (err, vars, ctx) => {
       logger.error("setChatSessionPinned.error.rollback", { sessionId: vars.sessionId, err });
+      if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+      qc.invalidateQueries({ queryKey: pinKeys.list(wsId, userId) });
+    },
+  });
+}
+
+/**
+ * Mark a chat as not needing a project. Optimistically flips the flag on the
+ * cached row so the reminder disappears immediately; the server row is what
+ * another browser reads. Does not re-sort — this is not activity.
+ */
+export function useDismissChatProjectNudge() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+
+  return useMutation({
+    mutationFn: (sessionId: string) => {
+      logger.info("dismissChatProjectNudge.start", { sessionId });
+      return api.dismissChatProjectNudge(sessionId);
+    },
+    onMutate: async (sessionId) => {
+      await qc.cancelQueries({ queryKey: chatKeys.sessions(wsId) });
+      const prevSessions = qc.getQueryData<ChatSession[]>(chatKeys.sessions(wsId));
+      qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), (old) =>
+        old?.map((s) =>
+          s.id === sessionId ? { ...s, project_nudge_dismissed: true } : s,
+        ),
+      );
+      return { prevSessions };
+    },
+    onError: (err, sessionId, ctx) => {
+      logger.error("dismissChatProjectNudge.error.rollback", { sessionId, err });
       if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
     },
     onSettled: () => {

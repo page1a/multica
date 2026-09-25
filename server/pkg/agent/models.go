@@ -150,10 +150,16 @@ var (
 const modelCacheTTL = 60 * time.Second
 
 // ListModels returns the models supported by the given agent provider.
-// For providers with a known static catalog it returns the baked-in
-// list; for providers with a CLI discovery mechanism (claude, codex,
-// opencode, pi, openclaw) it shells out with caching and falls back where the
-// provider has a safe static catalog.
+//
+// Every provider walks one chain. The first step that obtains a list stops
+// it: the dedicated discoverer declared for this runtime, then the endpoint
+// that runtime's own config names, then a readonly list command it
+// registered, then manual entry. A dedicated failure, an empty catalog, or a
+// static fallback does not stop the walk. A provider this build does not
+// know walks the same chain; with nothing registered the picker is told the
+// list is temporarily unavailable, and manual entry stays open. Runtimes
+// that cannot take a per-task model declare that and return an empty catalog
+// without probing.
 //
 // For claude, codex, opencode, pi, and kimi, the catalog carries per-model
 // thinking-level options taken from the local CLI. Claude and Codex discovery
@@ -166,146 +172,28 @@ const modelCacheTTL = 60 * time.Second
 // subprocess, so a wrapper that only reaches the real CLI through a
 // subcommand (`ccms start q36`) is enumerated as the CLI it actually runs
 // rather than as the wrapper (GH #7046).
+//
+// An agent custom_env on ctx (WithModelEnvOverlay) is applied by endpoint
+// readers. The machine config is what a request with no overlay sees.
 func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (Catalog, error) {
-	// Built-in runtime identities (e.g. "omp") declare their model discovery
-	// strategy in the descriptor. Resolve generically before the protocol-
-	// family switch so no runtime-specific case is needed below. When the
-	// descriptor has no ModelDiscovery strategy, return an empty catalog
-	// (not the family's default) — running a semantically incompatible
-	// discovery command (e.g. omp rejecting --list-models) is worse than
-	// degrading to manual entry.
-	if desc, ok := BuiltinRuntimeByID(providerType); ok {
-		if desc.ModelDiscovery != nil {
-			return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-				return discovered(desc.ModelDiscovery(ctx, runtimeCmd))
-			})
+	decl, declared := lookupModelDiscovery(providerType)
+	if declared && decl.Kind == modelDiscoveryManual {
+		return Catalog{Models: []Model{}}, nil
+	}
+	// Builtin identities (omp, devin) keep the discoverer on the descriptor.
+	// Copy it onto the declaration the chain walks. Do not substitute the
+	// protocol family's command: omp rejects `--list-models`, and a wrong
+	// command is worse than leaving the later steps unregistered.
+	if decl.Discover == nil {
+		if desc, ok := BuiltinRuntimeByID(providerType); ok && desc.ModelDiscovery != nil {
+			discover := desc.ModelDiscovery
+			decl.Discover = func(ctx context.Context, cmd Command) (Catalog, error) {
+				return discovered(discover(ctx, cmd))
+			}
 		}
-		return Catalog{Models: []Model{}}, nil
 	}
-	switch providerType {
-	case "claude":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discoverClaudeCatalog(ctx, runtimeCmd), nil
-		})
-	case "codex":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverCodexModels(ctx, runtimeCmd), nil)
-		})
-	case "antigravity":
-		// agy 1.0.6 added a `--model` flag plus an `agy models` catalog
-		// command (MUL-3125). Enumerate it on demand like the other
-		// dynamic-discovery backends.
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverAntigravityModels(ctx, runtimeCmd))
-		})
-	case "traecli":
-		// Official TRAE CLI is ACP-native: it returns its model catalog from
-		// session/new. Enumerate it on demand like the other ACP backends
-		// (requires a logged-in traecli; falls back to manual entry on error).
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverTraecliModels(ctx, runtimeCmd))
-		})
-	case "cursor":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discoverCursorModels(ctx, runtimeCmd)
-		})
-	case "copilot":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discoverCopilotModels(ctx, runtimeCmd)
-		})
-	case "hermes":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverHermesModels(ctx, runtimeCmd))
-		})
-	case "kimi":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverKimiModels(ctx, runtimeCmd))
-		})
-	case "reasonix":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverReasonixModels(ctx, runtimeCmd))
-		})
-	case "dsh":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverDshModels(ctx, runtimeCmd))
-		})
-	case "kiro":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverKiroModels(ctx, runtimeCmd))
-		})
-	case "qoder", "qoderclicn":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverQoderModels(ctx, runtimeCmd, qoderDefaultBinary(providerType)))
-		})
-	case "opencode":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverOpenCodeModels(ctx, runtimeCmd))
-		})
-	case "codearts":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverCodeArtsModels(ctx, runtimeCmd))
-		})
-	case "deveco":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverDevecoModels(ctx, runtimeCmd))
-		})
-	case "pi":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverPiModels(ctx, runtimeCmd))
-		})
-	case "openclaw":
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverOpenclawAgents(ctx, runtimeCmd))
-		})
-	case "codebuddy":
-		// discoverCodebuddyModels owns the thinking annotation too, so the one
-		// `--help` capture feeds both catalogs. Annotating out here would run
-		// the command a second time (MUL-5549).
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discoverCodebuddyModels(ctx, runtimeCmd)
-		})
-	case "qwen":
-		// Qwen Code has no account-independent headless model catalog. An
-		// empty list keeps the runtime default and manual model entry available
-		// without advertising a Token-Plan-specific model to other accounts.
-		return Catalog{Models: []Model{}}, nil
-	case "qwenpaw":
-		// QwenPaw's model selection is unsupported (session/set_model
-		// persists to agent scope, not session scope), so there is no
-		// consumer for a discovered catalog. Return an empty list to
-		// avoid spawning an ACP subprocess that has no effect. If upstream
-		// makes model selection session-scoped, restore a discovery helper
-		// here modelled on discoverTraecliModels.
-		return Catalog{Models: []Model{}}, nil
-	case "mcode":
-		// MCode's ACP server does not expose session-scoped model selection or
-		// a model catalog. The configured MCode runtime owns the model choice.
-		return Catalog{Models: []Model{}}, nil
-	case "grok":
-		// xAI Grok Build is ACP-native (`grok agent stdio`); model catalog
-		// comes from session/new. Falls back to a small static list so the
-		// UI picker stays usable offline / unauthenticated.
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discoverGrokModels(ctx, runtimeCmd)
-		})
-	case "dim":
-		// Dim (dimcode) is ACP-native (`dim acp`); its model catalog is
-		// advertised by session/new under models.availableModels. Enumeration
-		// requires a logged-in dim (OAuth); on any failure fall back to an
-		// empty catalog so the UI keeps manual entry available.
-		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discoverDimModels(ctx, runtimeCmd)
-		})
-	case "zeroclaw":
-		// ZeroClaw's ACP server advertises no catalog: session/new answers
-		// exactly {sessionId, workspaceDir} (verified against 0.8.4), and it
-		// has no session-scoped model selection to consume one anyway — see
-		// ModelSelectionSupported. Return an empty list rather than spawning
-		// an ACP subprocess that can only ever come back empty.
-		return Catalog{Models: []Model{}}, nil
-	default:
-		return Catalog{}, fmt.Errorf("unknown agent type: %q", providerType)
-	}
+	decl = applyModelDiscoveryProbe(ctx, decl)
+	return walkModelDiscoveryChain(ctx, providerType, runtimeCmd, decl)
 }
 
 // ModelSelectorMustBeProviderQualified reports whether a runtime's CLI

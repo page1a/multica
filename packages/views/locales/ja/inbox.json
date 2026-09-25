@@ -38,6 +38,7 @@
       "hours": "{{count}}時間",
       "days": "{{count}}日"
     },
+    "unread_count_other": "{{count}} 件の未読",
     "archived_title": "アーカイブ済み",
     "archived_empty": "アーカイブされた通知はありません",
     "unarchive_tooltip": "アーカイブ解除",
@@ -55,7 +56,21 @@
     "autopilot_quota_exceeded_body": "このワークスペースは現在の期間の自動化実行上限 {{limit}} 回に達しました。実行枠が {{resetAt}} にリセットされるまで、以降の自動化は開始されません。",
     "autopilot_quota_upgrade": "アップグレード方法を見る",
     "archive": "アーカイブ",
-    "unarchive": "アーカイブ解除"
+    "unarchive": "アーカイブ解除",
+    "access_request_mention_title": "{{requester}} が {{agent}} をメンションしました。承認が必要です",
+    "access_request_assign_title": "{{requester}} が {{agent}} に割り当てました。承認が必要です",
+    "access_request_local_env_note": "このエージェントはあなたのマシンで動作します。承認するとタスクはローカル環境（キー、ログイン、ファイル）にアクセスできます。",
+    "access_pass_prompt": "一定期間の利用も許可する：",
+    "access_pass_2h": "2 時間",
+    "access_pass_today": "今日中",
+    "access_pass_custom": "期限を指定…",
+    "access_approve_once": "今回のみ承認",
+    "access_approve_with_pass": "承認してパスを発行",
+    "access_decline": "拒否",
+    "access_request_expires": "{{until}} に期限切れ",
+    "access_status_approved": "承認済み",
+    "access_status_declined": "拒否済み",
+    "access_status_expired": "期限切れ：対応されませんでした"
   },
   "types": {
     "issue_assigned": "割り当て済み",
@@ -78,7 +93,10 @@
     "quick_create_failed": "エージェントでの作成に失敗",
     "quick_create_unconfirmed": "エージェントでの作成結果は未確認",
     "autopilot_paused": "自動化を一時停止しました",
-    "autopilot_quota_exceeded": "自動化の実行上限に達しました"
+    "autopilot_quota_exceeded": "自動化の実行上限に達しました",
+    "agent_access_request": "エージェント利用リクエスト",
+    "agent_access_approved": "エージェント利用が承認されました",
+    "agent_access_declined": "エージェント利用が拒否されました"
   },
   "labels": {
     "set_status_to": "ステータスを変更:",
@@ -92,12 +110,19 @@
     "reacted_to_comment": "あなたのコメントに {{emoji}} のリアクションをしました",
     "created_with_agent": "エージェントで作成: {{identifier}}",
     "failed_with_detail": "失敗: {{detail}}",
-    "autopilot_quota_blocked": "上限に達したため実行をブロックしました"
+    "autopilot_quota_blocked": "上限に達したため実行をブロックしました",
+    "access_requested_by": "{{requester}} が {{agent}} の利用を申請",
+    "access_approved_for": "{{agent}} の利用申請が承認されました",
+    "access_declined_for": "{{agent}} の利用申請が拒否されました"
   },
   "toasts": {
     "source_context_retry_started": "元のコンテキストで再試行を開始しました",
     "archived": "通知をアーカイブしました",
-    "unarchived": "通知を元に戻しました"
+    "unarchived": "通知を元に戻しました",
+    "access_approved": "承認しました。実行がキューに入りました",
+    "access_approved_with_pass": "承認しました。パスは {{until}} まで有効",
+    "access_approved_but_blocked": "承認しましたが実行を開始できませんでした。エージェントのランタイムを確認してください",
+    "access_declined": "拒否しました。申請者に通知済みです"
   },
   "errors": {
     "archived_lookup_failed": "リンク先の通知を読み込めませんでした",
@@ -113,6 +138,9 @@
     "archive_completed_failed": "完了した項目をアーカイブできませんでした",
     "unarchive_failed": "アーカイブ解除に失敗しました",
     "archived_load_failed": "アーカイブ済み通知を読み込めませんでした",
-    "filters_load_failed": "フィルターを読み込めませんでした"
+    "filters_load_failed": "フィルターを読み込めませんでした",
+    "access_request_not_pending": "このリクエストは既に処理済みか期限切れです",
+    "access_request_failed": "リクエストを処理できませんでした",
+    "access_pass_expiry_invalid": "未来の期限を選んでください"
   }
 }

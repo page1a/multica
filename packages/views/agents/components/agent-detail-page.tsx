@@ -1,17 +1,15 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
   Bot,
   Clock3,
   KeyRound,
-  Layers,
   Lock,
   MessageSquare,
   MoreHorizontal,
-  Pencil,
   Plus,
   Server,
   Trash2,
@@ -21,14 +19,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Agent,
   AgentRuntime,
-  AgentSwitchableModel,
-  AgentSwitchableModelRole,
   UpdateAgentRequest,
 } from "@multica/core/types";
 import {
   type AgentPresenceDetail,
   isAgentRuntimeBound,
-  selectAgentSwitchableModels,
   useWorkspacePresenceMap,
 } from "@multica/core/agents";
 import { api, ApiError } from "@multica/core/api";
@@ -67,6 +62,7 @@ import { AppLink, useNavigation } from "../../navigation";
 import { PAGE_GUTTER, PAGE_RAIL, PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
+import { providerSeatModelDisplay } from "./provider-seat-model";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
 import { SolidifyUnbindDialog } from "./solidify-unbind-dialog";
@@ -454,11 +450,6 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             ? () => setTabNavIntent("custom_args")
             : undefined
         }
-        onEditSwitchableModels={
-          canEdit.allowed && !isArchived
-            ? () => setTabNavIntent("general")
-            : undefined
-        }
       />
 
       {!canEdit.allowed && (
@@ -607,7 +598,6 @@ function DetailHeader({
   onAssign,
   onArchive,
   onOpenAccounts,
-  onEditSwitchableModels,
 }: {
   agent: Agent;
   runtime: AgentRuntime | null;
@@ -626,9 +616,6 @@ function DetailHeader({
   onArchive?: () => void;
   /** Jumps to the tab that explains account slots and sign-in commands. */
   onOpenAccounts?: () => void;
-  /** Jumps to the settings field that edits or clears the lineup. Absent for
-   *  readers and archived agents, who have nothing to open. */
-  onEditSwitchableModels?: () => void;
 }) {
   const { t } = useT("agents");
   const timeAgo = useTimeAgo();
@@ -674,7 +661,11 @@ function DetailHeader({
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{agent.model || t(($) => $.pickers.model_default)}</span>
+                  <span className="truncate">
+                    {agent.model
+                      ? providerSeatModelDisplay(agent.model)
+                      : t(($) => $.pickers.model_default)}
+                  </span>
                 </span>
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Server className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -700,10 +691,6 @@ function DetailHeader({
                   </button>
                 ) : null}
               </div>
-              <SwitchableModelsRow
-                models={agent.switchable_models}
-                onEdit={onEditSwitchableModels}
-              />
             </div>
           </div>
 
@@ -755,86 +742,6 @@ function DetailHeader({
         </div>
       </div>
     </header>
-  );
-}
-
-const SWITCHABLE_MODEL_GROUPS = [
-  { role: "default", separator: "/" },
-  { role: "fallback", separator: "→" },
-  { role: "batch", separator: "/" },
-] as const;
-
-function SwitchableModelsRow({
-  models,
-  onEdit,
-}: {
-  models: AgentSwitchableModel[] | undefined;
-  /** Opens the settings field that owns this lineup, so the row a reader
-   *  notices first is also where editing starts. */
-  onEdit?: () => void;
-}) {
-  const { t } = useT("agents");
-  // Same reader the inspector's editor uses, so this row and the switch there
-  // can never disagree about whether the agent is on a lineup or a single model.
-  const entries = selectAgentSwitchableModels({ switchable_models: models });
-  if (entries.length === 0) return null;
-
-  const roleLabel = (role: AgentSwitchableModelRole) => {
-    switch (role) {
-      case "default":
-        return t(($) => $.detail.switchable_role_default);
-      case "fallback":
-        return t(($) => $.detail.switchable_role_fallback);
-      case "batch":
-        return t(($) => $.detail.switchable_role_batch);
-      default:
-        return role;
-    }
-  };
-
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
-      <span className="inline-flex items-center gap-1.5">
-        <Layers className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        {t(($) => $.detail.switchable_models_label)}
-      </span>
-      {SWITCHABLE_MODEL_GROUPS.map(({ role, separator }) => {
-        const items = entries.filter((m) => m.role === role);
-        if (items.length === 0) return null;
-        return (
-          <span
-            key={role}
-            data-testid={`switchable-models-${role}`}
-            className="inline-flex min-w-0 flex-wrap items-center gap-1"
-          >
-            <span className="font-medium text-foreground">{roleLabel(role)}</span>
-            {items.map((m, index) => (
-              <Fragment key={`${m.model}-${index}`}>
-                {index > 0 ? <span aria-hidden="true">{separator}</span> : null}
-                <span
-                  className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-foreground"
-                  title={m.note || undefined}
-                  translate="no"
-                >
-                  {m.model}
-                </span>
-              </Fragment>
-            ))}
-          </span>
-        );
-      })}
-      {onEdit ? (
-        <button
-          type="button"
-          onClick={onEdit}
-          data-testid="switchable-models-edit"
-          className="inline-flex items-center gap-1.5 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-          {t(($) => $.detail.switchable_models_edit)}
-        </button>
-      ) : null}
-    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import type { ChatMessage } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import {
   canonicalAnswerText,
+  conversationToMarkdown,
   extractCopyText,
   splitTimeline,
 } from "./copy-text";
@@ -98,6 +99,24 @@ describe("canonicalAnswerText", () => {
         (content) => content.replace(/<agent_draft>[\s\S]*<\/agent_draft>/, ""),
       ),
     ).toBe("visible");
+  });
+});
+
+describe("conversationToMarkdown", () => {
+  it("renders title and both roles, skipping hidden rows", () => {
+    const kickoff: ChatMessage = {
+      ...message("INTERNAL"),
+      message_kind: "onboarding_kickoff",
+    };
+    const user: ChatMessage = { ...message("ship the API"), id: "u1", role: "user" };
+    const markdown = conversationToMarkdown(
+      "Deploy plan",
+      [kickoff, user, message("On it.")],
+      { user: "You", assistant: "Assistant" },
+    );
+    expect(markdown).toBe(
+      "# Deploy plan\n\n**You**\n\nship the API\n\n**Assistant**\n\nOn it.\n",
+    );
   });
 });
 

@@ -3,11 +3,12 @@ package dingtalk
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -17,26 +18,14 @@ import (
 
 func dingtalkInstallTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("no database: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("database not reachable: %v", err)
-	}
+	pool := testutil.OpenTestDatabase(ctx, t)
 	var migrated bool
 	if err := pool.QueryRow(ctx, `
 SELECT to_regclass('public.channel_installation') IS NOT NULL
    AND to_regclass('public.channel_media_pending_object') IS NOT NULL
 `).Scan(&migrated); err != nil || !migrated {
-		pool.Close()
-		t.Skip("channel installation tables not present (database not migrated)")
+		testutil.SkipUnmigrated(t, "channel installation tables not present")
 	}
 	t.Cleanup(pool.Close)
 	return pool

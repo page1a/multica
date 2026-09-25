@@ -229,6 +229,34 @@ func TestQwenBackendDeliversPromptOnStdin(t *testing.T) {
 	}
 }
 
+// TestQwenBackendPrependsSystemPromptOnStdin guards the shared
+// local_directory route: the brief is kept out of the cwd, so it must reach
+// Qwen ahead of the task prompt on stdin.
+func TestQwenBackendPrependsSystemPromptOnStdin(t *testing.T) {
+	t.Parallel()
+	stdinPath := filepath.Join(t.TempDir(), "qwen.stdin")
+	backend := newFakeQwenBackend(t, map[string]string{"QWEN_STDIN_FILE": stdinPath})
+	session, err := backend.Execute(context.Background(), "do the task", ExecOptions{
+		Model:        "qwen-test",
+		SystemPrompt: "# Runtime brief",
+		Timeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	_, result := awaitQwenResult(t, session)
+	if result.Status != "completed" {
+		t.Fatalf("result = %+v", result)
+	}
+	got, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read captured stdin: %v", err)
+	}
+	if want := "# Runtime brief\n\n---\n\ndo the task"; string(got) != want {
+		t.Fatalf("stdin content = %q, want %q", got, want)
+	}
+}
+
 func newQwenTestContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.Background())
 }

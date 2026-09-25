@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
@@ -95,33 +96,9 @@ func (r *Router) log() *slog.Logger {
 // reviewer property, its own comments, and the subscriber list — and the last
 // one only so a mention actually notifies.
 func (r *Router) Route(ctx context.Context, workspaceID, issueID string) (Outcome, error) {
-	settings, err := r.Store.Settings(ctx, workspaceID)
-	if err != nil {
-		return Outcome{State: StateOff, Action: ActionSkipped, Reason: "settings unreadable"}, err
-	}
-	state := settings.State()
-	if !state.Active() {
-		// Off and incomplete are the pre-existing code path, to the letter:
-		// no request, no write, no comment, and no mention.
-		return Outcome{State: state, Action: ActionSkipped, Reason: "routing not enabled"}, nil
-	}
-
-	// The breaker is checked before the issue is even loaded. While it is
-	// cooling down the workspace is "ineffective": the reason belongs in the
-	// settings section, and a ticket must not be told about it again.
-	if open, _, reason := r.Breaker.Open(workspaceID); open {
-		return Outcome{State: StateIneffective, Action: ActionSkipped, Reason: reason}, nil
-	}
-
-	issue, err := r.Store.Issue(ctx, workspaceID, issueID)
-	if err != nil {
-		return Outcome{State: state, Action: ActionSkipped, Reason: "issue unreadable"}, err
-	}
-
-	if issue.AssignedToHuman() && !humanHeldIsRoutable(issue) {
-		// A person's ticket is a person's ticket. Nothing is filled, nothing
-		// is said, nobody is pinged.
-		return Outcome{State: state, Action: ActionSkipped, Reason: "assignee is a person"}, nil
+	settings, issue, done, err := r.admit(ctx, workspaceID, issueID)
+	if done != nil {
+		return *done, err
 	}
 
 	// A child issue is execution-only. It may still receive an executor at
@@ -130,12 +107,12 @@ func (r *Router) Route(ctx context.Context, workspaceID, issueID string) (Outcom
 	// row, or a direct `issue route` call cannot start an independent review
 	// chain.
 	if issue.ParentIssueID != "" && issue.Status == "in_review" {
-		return Outcome{State: state, Action: ActionNoop, Reason: "sub-issue has no acceptance route"}, nil
+		return Outcome{State: settings.State(), Action: ActionNoop, Reason: "sub-issue has no acceptance route"}, nil
 	}
 
 	switch issue.Status {
 	case "todo":
-		return r.routeTodo(ctx, workspaceID, settings, issue)
+		return r.routeTodo(ctx, workspaceID, settings, issue, fillStarts)
 	case "in_review":
 		return r.routeInReview(ctx, workspaceID, settings, issue)
 	case "blocked":
@@ -144,12 +121,85 @@ func (r *Router) Route(ctx context.Context, workspaceID, issueID string) (Outcom
 		// in_progress: somebody is working, do not interrupt.
 		// backlog: nobody intends to work on it yet.
 		// done / cancelled: over.
-		return Outcome{State: state, Action: ActionNoop, Reason: "status has no routing behaviour"}, nil
+		return Outcome{State: settings.State(), Action: ActionNoop, Reason: "status has no routing behaviour"}, nil
 	default:
 		// Unknown category. Fail closed: an unrecognised status is not a
 		// licence to guess who should hold the ticket.
-		return Outcome{State: state, Action: ActionNoop, Reason: "unknown status category " + issue.Status}, nil
+		return Outcome{State: settings.State(), Action: ActionNoop, Reason: "unknown status category " + issue.Status}, nil
 	}
+}
+
+// RouteGroupNode is the create-time pass for an issue an alignment confirm
+// just wrote as part of a group (DENE-812). Route alone cannot seat such a
+// group: the root is created in_progress so it coordinates instead of running,
+// and every sub-issue past stage 1 is created in backlog so it waits — two
+// statuses the state table deliberately leaves alone. Without this pass a
+// confirmed group kept whatever seats the preview happened to hold, and the
+// rows the preview left empty stayed empty for good: the stage barrier woke
+// nobody on an unheld root, and a promoted child reached todo only if
+// somebody promoted it.
+//
+// It is the same todo row — same ladder, same judge, same fill-only-empty
+// slots, same one decision comment per issue — with one difference per node
+// kind, carried by the fill mode:
+//
+//   - a todo sub-issue (stage 1) is seated and its run starts, exactly as
+//     Route would do it;
+//   - a backlog sub-issue (a later stage) is seated and parked: nothing runs
+//     from backlog, so the seat starts when its stage is promoted to todo;
+//   - the root of a group is seated as the coordinator, reviewer slot
+//     included, and its run is NOT started — the stage barrier and the
+//     sub-issues' completions are what wake it.
+//
+// Anything else — a node somebody already moved on, a root without
+// sub-issues — gets exactly what Route gives it.
+func (r *Router) RouteGroupNode(ctx context.Context, workspaceID, issueID string) (Outcome, error) {
+	settings, issue, done, err := r.admit(ctx, workspaceID, issueID)
+	if done != nil {
+		return *done, err
+	}
+	switch {
+	case issue.ParentIssueID != "" && issue.Status == "backlog":
+		return r.routeTodo(ctx, workspaceID, settings, issue, fillParked)
+	case issue.ParentIssueID == "" && issue.HasChildren && issue.Status == "in_progress":
+		return r.routeTodo(ctx, workspaceID, settings, issue, fillCoordinator)
+	}
+	return r.Route(ctx, workspaceID, issueID)
+}
+
+// admit is the prelude every entry point shares: the switch, the breaker, the
+// issue itself, and the one ticket routing never touches. A non-nil Outcome
+// is the answer and the caller returns it with the error as is.
+func (r *Router) admit(ctx context.Context, workspaceID, issueID string) (Settings, Issue, *Outcome, error) {
+	settings, err := r.Store.Settings(ctx, workspaceID)
+	if err != nil {
+		return settings, Issue{}, &Outcome{State: StateOff, Action: ActionSkipped, Reason: "settings unreadable"}, err
+	}
+	state := settings.State()
+	if !state.Active() {
+		// Off and incomplete are the pre-existing code path, to the letter:
+		// no request, no write, no comment, and no mention.
+		return settings, Issue{}, &Outcome{State: state, Action: ActionSkipped, Reason: "routing not enabled"}, nil
+	}
+
+	// The breaker is checked before the issue is even loaded. While it is
+	// cooling down the workspace is "ineffective": the reason belongs in the
+	// settings section, and a ticket must not be told about it again.
+	if open, _, reason := r.Breaker.Open(workspaceID); open {
+		return settings, Issue{}, &Outcome{State: StateIneffective, Action: ActionSkipped, Reason: reason}, nil
+	}
+
+	issue, err := r.Store.Issue(ctx, workspaceID, issueID)
+	if err != nil {
+		return settings, Issue{}, &Outcome{State: state, Action: ActionSkipped, Reason: "issue unreadable"}, err
+	}
+
+	if issue.AssignedToHuman() && !humanHeldIsRoutable(issue) {
+		// A person's ticket is a person's ticket. Nothing is filled, nothing
+		// is said, nobody is pinged.
+		return settings, issue, &Outcome{State: state, Action: ActionSkipped, Reason: "assignee is a person"}, nil
+	}
+	return settings, issue, nil, nil
 }
 
 // humanHeldIsRoutable carves ONE case out of "a person holds it, do not
@@ -175,8 +225,22 @@ func humanHeldIsRoutable(issue Issue) bool {
 	return issue.Status == "in_review" && issue.Reviewer.Empty()
 }
 
+// fillMode is what an executor seat written by routeTodo does next.
+type fillMode int
+
+const (
+	// fillStarts — the todo row proper: the assignment starts the seat's run.
+	fillStarts fillMode = iota
+	// fillParked — a later-stage sub-issue: seated now, runs when its stage is
+	// promoted to todo. Nothing runs from backlog, so the write starts nothing.
+	fillParked
+	// fillCoordinator — the root of a group: seated to supervise its
+	// sub-issues, and its run is not started by the write.
+	fillCoordinator
+)
+
 // routeTodo is the only row that fills slots.
-func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Settings, issue Issue) (Outcome, error) {
+func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Settings, issue Issue, mode fillMode) (Outcome, error) {
 	// Declined until a write proves otherwise: the action is derived from what
 	// was written, at the bottom of this function.
 	out := Outcome{State: StateEnabled, Action: ActionDeclined}
@@ -261,7 +325,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		} else {
 			labelStill := labelSeatOK && seatIn(fresh, labelSeat)
 			seat, source, why := r.pickExecutor(fresh, labelSeat, labelStill, verdict, threshold)
-			written, err := r.Store.AssignAgentIfUnassigned(ctx, workspaceID, issue.ID, seat)
+			written, err := r.Store.AssignAgentIfUnassigned(ctx, workspaceID, issue.ID, seat, mode == fillStarts)
 			if err != nil {
 				return out, err
 			}
@@ -279,10 +343,10 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 
 	// --- reviewer slot ---------------------------------------------------
 	// Same rule for the second slot: an automatic dispatch fills both. An
-	// unusable verdict falls back to one rung above the executor — the
-	// ladder's own answer to "nobody checks their own work" — and one rung
-	// below when the executor already sits on the top rung. The slot never
-	// names a person: see decideReviewer.
+	// unusable verdict stays on the executor's rung and picks another model
+	// family, or one rung down when that rung has no second family. It never
+	// steps up, so the strongest rung appears only when the judge names it
+	// with confidence. The slot never names a person: see decideReviewer.
 	reviewer := ReviewerRef{}
 	reviewerFallback := false
 	fallbackWhy := ""
@@ -291,7 +355,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	// the person for the call it cannot make.
 	humanSignoff := needReviewer && verdict.Reviewer == ReviewerHuman
 	if needReviewer {
-		ref, ok := r.decideReviewer(verdict, fresh, executor, issue)
+		ref, ok := r.decideReviewer(verdict, ladder, direction, roster, fresh, executor, issue)
 		why := ""
 		switch {
 		case !ok && humanSignoff:
@@ -304,14 +368,22 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		}
 		if !ok {
 			var ladderWhy string
-			ref, ladderWhy = r.fallbackReviewer(fresh, executor, issue)
+			ref, ladderWhy = r.fallbackReviewer(ladder, direction, roster, fresh, executor, issue)
 			reviewerFallback = true
 			fallbackWhy = ladderWhy
 			notes = append(notes, "reviewer fell back to "+ref.Label()+": "+why)
 		}
 		if ref.Kind == ReviewerAgent && !seatIn(fresh, Seat{ID: ref.ID}) {
-			notes = append(notes, "reviewer not filled: seat became ineligible")
-		} else {
+			eligible, err := r.seatStillEligible(ctx, workspaceID, settings, ref.ID)
+			if err != nil {
+				return out, err
+			}
+			if !eligible {
+				notes = append(notes, "reviewer not filled: seat became ineligible")
+				ref = ReviewerRef{}
+			}
+		}
+		if !ref.Empty() {
 			written, err := r.Store.SetReviewerIfUnset(ctx, workspaceID, issue.ID, ref)
 			if err != nil {
 				return out, err
@@ -337,12 +409,19 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	// The one condition that earns an @: the ticket is in a state where
 	// nobody will move it. Here that means the executor slot is still empty,
 	// so the ticket sits in todo until a person notices.
+	// A parked sub-issue is the exception: it is not sitting in todo, and its
+	// stage's promotion routes it again, so an empty slot there is not yet a
+	// ticket nobody will move.
 	stillUnassigned := needExecutor && executor == nil
+	notify := stillUnassigned && mode != fillParked
 	body := r.assignmentComment(issue, match, candidates, verdict, threshold,
 		executor, executorSource, reviewer, reviewerFallback, fallbackWhy, humanSignoff,
-		needExecutor, needReviewer, stillUnassigned)
+		needExecutor, needReviewer, notify, mode)
+	if note := DemotionFootnote(ladder, roster, executor); note != "" {
+		body += "\n\n" + note
+	}
 
-	return r.deliver(ctx, workspaceID, issue, KindAssignment, body, stillUnassigned, out)
+	return r.deliver(ctx, workspaceID, issue, KindAssignment, body, notify, out)
 }
 
 // Where the executor seat came from, for the decision comment.
@@ -380,45 +459,137 @@ func (r *Router) pickExecutor(candidates []Seat, labelSeat Seat, labelled bool, 
 	return fallback, pickFallback, why
 }
 
+// PickAcceptanceSeat chooses a reviewer for an issue that is about to enter
+// in_review with an empty reviewer slot. It does not call the judge: the
+// rule is the ladder's, same rung and a different model family, or one rung
+// down when that rung has only one family. The seat that did the work is
+// never returned. ok is false when nothing else can check the work.
+func (r *Router) PickAcceptanceSeat(ctx context.Context, workspaceID string, issue Issue) (ReviewerRef, string, bool) {
+	if r == nil || r.Store == nil {
+		return ReviewerRef{}, "没有验收席名册", false
+	}
+	settings, err := r.Store.Settings(ctx, workspaceID)
+	if err != nil {
+		return ReviewerRef{}, "读不到工作区的席位设置", false
+	}
+	ladder := r.Ladder
+	if len(ladder.Tiers) == 0 {
+		ladder = DefaultLadder
+	}
+	ladder = ladder.WithProjects(settings.Projects)
+	direction := ladder.Direction(issue.ProjectName)
+	roster, err := r.Store.Roster(ctx, workspaceID)
+	if err != nil {
+		return ReviewerRef{}, "读不到席位名册", false
+	}
+	candidates := ladder.Candidates(direction, roster)
+	ref, why := r.fallbackReviewer(ladder, direction, roster, candidates, nil, issue)
+	if ref.Kind != ReviewerAgent || ref.ID == "" || ref.ID == issue.AssigneeID {
+		if why == "" {
+			why = "选不出和执行席不同的验收席"
+		}
+		return ReviewerRef{}, why, false
+	}
+	return ref, why, true
+}
+
 // fallbackReviewer is the reviewer the ladder implies when the judge cannot
-// name one. It never resolves to a person: the rung above whoever is doing the
-// work, because a seat may not accept its own output; the rung below when the
-// holder is already on top; and 「不需要验收」 when this workspace has no
-// second seat at all. The second return value is why, for the decision
-// comment, empty when nothing needed explaining.
-func (r *Router) fallbackReviewer(candidates []Seat, executor *Seat, issue Issue) (ReviewerRef, string) {
+// name one with confidence. It never resolves to a person, and it never
+// resolves to the strongest rung: that rung is written only when the judge
+// names it above the threshold. The check stays on the holder's rung and
+// changes model family, or moves one rung down when the rung has no second
+// family. 「不需要验收」 is the answer when this workspace has no second seat
+// at all. The second return value is why, for the decision comment.
+func (r *Router) fallbackReviewer(ladder Ladder, direction string, roster map[string]Agent, candidates []Seat, executor *Seat, issue Issue) (ReviewerRef, string) {
 	holder := Seat{}
 	switch {
 	case executor != nil:
 		holder = *executor
-	case issue.AssigneeType == "agent":
-		holder = Seat{ID: issue.AssigneeID}
+	case issue.AssigneeType == "agent" && issue.AssigneeID != "":
+		holder = seatFromRoster(ladder, roster, issue.AssigneeID)
 	default:
-		// Nobody is holding the ticket, so nothing here would be reviewing
-		// its own output and the top rung is free to accept it.
-		return seatReviewer(candidates[0]), "本票还没有执行席，交最强档验"
+		seat, ok := fallbackNotStrongest(ladder, candidates)
+		if !ok {
+			return ReviewerRef{Kind: ReviewerNoReview}, "没有不在最强档上的席位能验"
+		}
+		return seatReviewer(seat), "本票还没有执行席，交兜底档验"
 	}
-	if stronger, ok := StrongerThan(candidates, holder); ok {
-		return seatReviewer(stronger), "按「比执行席高一档」选的"
+	if holder.TierKey == "" {
+		if _, onLadder := SeatIndex(candidates, holder); !onLadder {
+			seat, ok := fallbackNotStrongest(ladder, candidates)
+			if ok && seat.ID != holder.ID {
+				return seatReviewer(seat), "执行席不在档位阶梯上，交兜底档验"
+			}
+		}
 	}
-	if _, onLadder := SeatIndex(candidates, holder); !onLadder {
-		// The work was done by a seat that carries no tier label — an
-		// off-ladder agent, or one whose label was never set. "No rung above"
-		// is then a statement about the ladder's ignorance, not about the
-		// ticket. The top rung is a valid reviewer for any of them, and it is
-		// by construction not the seat that did the work.
-		return seatReviewer(candidates[0]), "执行席不在档位阶梯上，交最强档验"
+	// The strongest rung is closed on this path even when the holder already
+	// sits on it: a same-tier swap would still be strongest, and the judge
+	// did not clear that bar.
+	if !strings.EqualFold(holder.TierKey, "strongest") {
+		if alt, ok := ladder.SameTierAlternate(holder, direction, roster); ok {
+			return seatReviewer(alt), "按「同档换一家模型」选的"
+		}
 	}
-	if weaker, ok := WeakerThan(candidates, holder); ok {
-		// The holder IS the top rung. Nothing above it can check it, and the
-		// slot may not name a person, so the rung below does — a reviewer
-		// checks, merges and closes, it does not redo the work.
-		return seatReviewer(weaker), "执行席已在最强档，改由下一档复核"
+	if down, ok := stepDown(candidates, holder.TierKey); ok && down.ID != holder.ID {
+		if strings.EqualFold(holder.TierKey, "strongest") {
+			return seatReviewer(down), "执行席已在最强档，同档不再派最强档，改由下一档复核"
+		}
+		return seatReviewer(down), "同档没有第二家模型，改由下一档复核"
 	}
-	// One seat on the whole ladder. Writing 「不需要验收」 is the truthful
-	// value: there is no second seat to check it, and an empty slot would be
-	// re-judged on every later status change.
 	return ReviewerRef{Kind: ReviewerNoReview}, "这个工作区只有一个席位，没有第二个席位能验"
+}
+
+// fallbackNotStrongest is the rung an unconfident reviewer may land on when
+// there is no holder to stay next to. The declared fallback is used when it
+// is not the strongest rung; otherwise the first weaker candidate is.
+func fallbackNotStrongest(ladder Ladder, candidates []Seat) (Seat, bool) {
+	if seat, ok := ladder.FallbackSeat(candidates); ok && !strings.EqualFold(seat.TierKey, "strongest") {
+		return seat, true
+	}
+	for _, seat := range candidates {
+		if !strings.EqualFold(seat.TierKey, "strongest") {
+			return seat, true
+		}
+	}
+	return Seat{}, false
+}
+
+// stepDown is the candidate one rung below tierKey. Candidates are ordered
+// strongest first, one seat per rung. It never walks onto the strongest rung.
+func stepDown(candidates []Seat, tierKey string) (Seat, bool) {
+	if tierKey == "" {
+		return Seat{}, false
+	}
+	for i, seat := range candidates {
+		if !strings.EqualFold(seat.TierKey, tierKey) || i+1 >= len(candidates) {
+			continue
+		}
+		next := candidates[i+1]
+		if strings.EqualFold(next.TierKey, "strongest") {
+			return Seat{}, false
+		}
+		return next, true
+	}
+	return Seat{}, false
+}
+
+func seatFromRoster(ladder Ladder, roster map[string]Agent, id string) Seat {
+	agent, ok := agentByID(roster, id)
+	if !ok {
+		return Seat{ID: id}
+	}
+	seat := Seat{ID: agent.ID, Name: agent.Name, Direction: ladder.seatDirection(agent.Name)}
+	key := ""
+	if tagged, ok := ladder.NormalizeTier(agent.Tier); ok && tagged != "" {
+		key = tagged
+	} else if named, ok := ladder.TierOf(agent.Name); ok {
+		key = named
+	}
+	seat.TierKey = key
+	if tier, ok := ladder.TierByKey(key); ok {
+		seat.TierLabel = tier.Label
+	}
+	return seat
 }
 
 func seatReviewer(s Seat) ReviewerRef {
@@ -427,8 +598,10 @@ func seatReviewer(s Seat) ReviewerRef {
 
 // decideReviewer turns a verdict branch into the reference to write. A
 // reviewer may never be the seat that did the work — checking your own output
-// is not a check — so a collision moves one rung up the ladder, or one rung
-// down when the colliding seat is already on top.
+// is not a check — so a collision stays on the judged rung and changes model
+// family, or moves one rung down when that rung has no second family. It does
+// not step up: a higher rung, including the strongest, is written only when
+// the judge named that rung.
 //
 // No branch here can produce a person. A ticket whose reviewer slot names a
 // member gets handed to that member at 待验收, and from that moment routing
@@ -436,7 +609,7 @@ func seatReviewer(s Seat) ReviewerRef {
 // the ticket freezes on somebody's desk. "This acceptance needs a person" is
 // handled instead by keeping the ticket on a seat and pinging the person —
 // see the human-signoff note in the decision comment.
-func (r *Router) decideReviewer(v Verdict, candidates []Seat, executor *Seat, issue Issue) (ReviewerRef, bool) {
+func (r *Router) decideReviewer(v Verdict, ladder Ladder, direction string, roster map[string]Agent, candidates []Seat, executor *Seat, issue Issue) (ReviewerRef, bool) {
 	switch v.Reviewer {
 	case ReviewerNone:
 		return ReviewerRef{Kind: ReviewerNoReview}, true
@@ -452,14 +625,13 @@ func (r *Router) decideReviewer(v Verdict, candidates []Seat, executor *Seat, is
 		collides := (executor != nil && seat.ID == executor.ID) ||
 			(executor == nil && issue.AssigneeType == "agent" && seat.ID == issue.AssigneeID)
 		if collides {
-			other, ok := StrongerThan(candidates, seat)
-			if !ok {
-				other, ok = WeakerThan(candidates, seat)
-			}
-			if !ok {
+			if alt, ok := ladder.SameTierAlternate(seat, direction, roster); ok {
+				seat = alt
+			} else if other, ok := stepDown(candidates, seat.TierKey); ok {
+				seat = other
+			} else {
 				return ReviewerRef{}, false
 			}
-			seat = other
 		}
 		return seatReviewer(seat), true
 	}
@@ -467,9 +639,18 @@ func (r *Router) decideReviewer(v Verdict, candidates []Seat, executor *Seat, is
 }
 
 // routeInReview hands the ticket to whoever accepts it. This row does not fill
-// a slot, it moves the ticket, so it is not governed by the fill-only rule —
-// but it still runs at most once per issue, because the handoff comment is
-// posted at most once per issue.
+// a slot, it moves the ticket, so it is not governed by the fill-only rule.
+//
+// It runs once per stay in review, not once per issue. A handoff comment from
+// an earlier stay used to be treated as "the reviewer has already been woken",
+// which is how a ticket could enter in_review again — reviewer already
+// decided, no run active — and sit there until a person typed an @ (DENE-617,
+// DENE-772). The comment is still posted at most once; the wake is not.
+//
+// A stay that still has a run in flight is left alone. The executor sets
+// in_review from inside the run that is about to finish, and starting the
+// reviewer in that window races the delivery. The completion callback calls
+// Route again once that run is gone.
 func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings Settings, issue Issue) (Outcome, error) {
 	if issue.ParentIssueID != "" {
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "sub-issue has no acceptance route"}, nil
@@ -500,17 +681,31 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 		}, nil
 	}
 
-	done, err := r.Store.HasComment(ctx, workspaceID, issue.ID, KindHandoff)
+	state, err := r.Store.Acceptance(ctx, workspaceID, issue)
 	if err != nil {
 		return out, err
 	}
-	if done {
-		// Already handed off once. Flipping the status back and forth must not
-		// reassign again or say the same thing twice.
-		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "already handed off"}, nil
+	if state.ActiveRun {
+		// The run that is still open — almost always the executor finishing
+		// the status write — owns the ticket until it ends. Completion calls
+		// this row again.
+		return Outcome{
+			State:           StateEnabled,
+			Action:          ActionNoop,
+			Reason:          "active run in progress",
+			ReviewerWritten: out.ReviewerWritten,
+		}, nil
 	}
 
 	if issue.Reviewer.Kind == ReviewerMember {
+		if state.MemberNotified {
+			return Outcome{
+				State:           StateEnabled,
+				Action:          ActionNoop,
+				Reason:          "already notified this round",
+				ReviewerWritten: out.ReviewerWritten,
+			}, nil
+		}
 		// A person is named in the slot — by hand, or by a routing version
 		// that still wrote people there. The ticket is NOT handed over: an
 		// issue a person holds is one routing never touches again, so
@@ -520,38 +715,165 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 		target := Member{UserID: issue.Reviewer.ID, Name: issue.Reviewer.Name}
 		out.Action = ActionAdvised
 		out.Reason = "reviewer slot names a person: notified, ticket not reassigned"
+		// The inbox row is the notice, and NotifyMember is its only writer.
+		// deliverTo would insert another one on a different connection from
+		// the stay check, so a status-change hook and the completion callback
+		// could each leave a routing_needs_you. The comment is still once per
+		// issue; a later stay finds it already posted and only refreshes the
+		// notice.
 		body := r.reviewerIsPersonComment(issue, target, decidedHere)
-		return r.deliverTo(ctx, workspaceID, issue, KindHandoff, body, target, out)
+		if target.UserID != "" {
+			body += "\n\n" + mentionLink(target)
+		}
+		written, err := r.Store.PostComment(ctx, workspaceID, issue.ID, KindHandoff, body)
+		if err != nil {
+			return out, err
+		}
+		if written {
+			out.Commented = true
+		}
+		wrote, err := r.Store.NotifyMember(ctx, workspaceID, issue.ID, target)
+		if err != nil {
+			return out, err
+		}
+		if !wrote {
+			return Outcome{
+				State:           StateEnabled,
+				Action:          ActionNoop,
+				Reason:          "already notified this round",
+				ReviewerWritten: out.ReviewerWritten,
+				Commented:       out.Commented,
+			}, nil
+		}
+		out.Mentioned = true
+		return out, nil
+	}
+
+	if state.AgentEngaged {
+		// This stay already put the ticket on the reviewer and started a run.
+		// A second status flip, the completion callback, and a manual re-route
+		// all land here. The stale sweep is the one path that may wake them
+		// again, and it does not come through this check.
+		return Outcome{
+			State:           StateEnabled,
+			Action:          ActionNoop,
+			Reason:          "already handed off this round",
+			ReviewerWritten: out.ReviewerWritten,
+		}, nil
 	}
 
 	// An agent reviewer. The reference is resolved against the roster on the
 	// spot: a seat that has since been archived is no longer a reviewer, and
-	// saying so beats handing the ticket to a seat that cannot run.
+	// saying so beats handing the ticket to a seat that cannot run. A seat
+	// that is only switched off is still a reviewer — the wake moves to
+	// another family instead of vanishing.
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {
 		return out, err
 	}
 	seatAgent, ok := agentByID(roster, issue.Reviewer.ID)
 	if !ok {
-		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer seat not in roster"}, nil
-	}
-	if issue.AssigneeType == "agent" && issue.AssigneeID == seatAgent.ID {
-		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer already holds the issue"}, nil
+		card, found, err := r.Store.OffRosterSeat(ctx, workspaceID, issue.Reviewer.ID)
+		if err != nil {
+			return out, err
+		}
+		if !found {
+			return Outcome{
+				State:           StateEnabled,
+				Action:          ActionNoop,
+				Reason:          "reviewer seat not in roster",
+				ReviewerWritten: out.ReviewerWritten,
+			}, nil
+		}
+		return r.handOffToSubstitute(ctx, workspaceID, settings, issue, roster, card, out)
 	}
 	facts, err := r.Store.RoutingFacts(ctx, workspaceID, []string{seatAgent.ID}, settings.ProviderKeys())
 	if err != nil {
 		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
 	}
 	if snap, ok := facts.Seats[seatAgent.ID]; ok && Unselectable(snap.Availability) {
+		if snap.Availability == AvailabilityDisabled {
+			return r.handOffToSubstitute(ctx, workspaceID, settings, issue, roster, seatAgent, out)
+		}
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer seat is not eligible"}, nil
 	}
 	if err := r.Store.Handoff(ctx, workspaceID, issue.ID, "agent", seatAgent.ID); err != nil {
 		return out, err
 	}
 	// No mention: assignment itself starts the seat's run, so an @ here would
-	// only be noise to somebody who is not needed.
+	// only be noise to somebody who is not needed. The comment is once per
+	// issue; a later stay still hands off above, it just does not repeat the
+	// explanation.
 	body := r.handoffComment(issue, seatAgent.Name, decidedHere)
 	return r.deliver(ctx, workspaceID, issue, KindHandoff, body, false, out)
+}
+
+// handOffToSubstitute covers an acceptance wake whose reviewer cannot take
+// work. The slot already names them, so they stay the designated reviewer:
+// recovery may give the ticket back only before the cover has started.
+func (r *Router) handOffToSubstitute(ctx context.Context, workspaceID string, settings Settings, issue Issue, roster map[string]Agent, disabled Agent, out Outcome) (Outcome, error) {
+	ladder := r.Ladder.WithProjects(settings.Projects)
+	direction := ladder.Direction(issue.ProjectName)
+	holder := seatFromRoster(ladder, map[string]Agent{disabled.Name: disabled}, disabled.ID)
+	if holder.Name == "" {
+		holder.Name = disabled.Name
+	}
+	if holder.ID == "" {
+		holder.ID = disabled.ID
+	}
+	var avoid []string
+	if issue.AssigneeType == "agent" && issue.AssigneeID != "" && issue.AssigneeID != disabled.ID {
+		avoid = append(avoid, issue.AssigneeID)
+	}
+	replacement, steppedDown, ok := SubstituteSeat(ladder, holder, roster, avoid, direction)
+	if !ok {
+		body := disabledReviewerStuck(disabled.Name)
+		stuck, err := r.deliver(ctx, workspaceID, issue, CommentKind("reviewer_off:"+disabled.ID), body, true, out)
+		if err != nil {
+			return stuck, err
+		}
+		stuck.Action = ActionAdvised
+		stuck.Reason = "reviewer seat is off and no replacement"
+		return stuck, nil
+	}
+	ref := seatReviewer(replacement)
+	written, err := r.Store.ReplaceReviewer(ctx, workspaceID, issue.ID, disabled.ID, ref)
+	if err != nil {
+		return out, err
+	}
+	if !written {
+		return Outcome{
+			State:           StateEnabled,
+			Action:          ActionNoop,
+			Reason:          "reviewer slot changed",
+			ReviewerWritten: out.ReviewerWritten,
+		}, nil
+	}
+	if err := r.Store.RememberReviewerRelay(ctx, workspaceID, issue.ID, ReviewerRelay{
+		OriginalID:      disabled.ID,
+		OriginalName:    disabled.Name,
+		ReplacementID:   replacement.ID,
+		ReplacementName: replacement.Name,
+		Designated:      true,
+		CoveredAt:       time.Now().UTC(),
+	}); err != nil {
+		return out, err
+	}
+	issue.Reviewer = ref
+	out.ReviewerWritten = ref
+	if err := r.Store.Handoff(ctx, workspaceID, issue.ID, "agent", replacement.ID); err != nil {
+		return out, err
+	}
+	note := disabledReviewerNote(disabled.Name, replacement.Name, steppedDown)
+	body := note + "\n\n" + r.handoffComment(issue, replacement.Name, false)
+	delivered, err := r.deliver(ctx, workspaceID, issue, KindHandoff, body, false, out)
+	if err != nil {
+		return delivered, err
+	}
+	if !delivered.Commented {
+		return r.deliver(ctx, workspaceID, issue, CommentKind("reviewer_off:"+disabled.ID+":"+replacement.ID), note, false, delivered)
+	}
+	return delivered, nil
 }
 
 // agentByID finds a seat in the roster by id. The roster is keyed by name
@@ -611,12 +933,18 @@ func (r *Router) decideReviewerNow(ctx context.Context, workspaceID string, sett
 	// executor is nil on purpose: at this row the ticket is already held by
 	// whoever did the work, and decideReviewer reads that holder off the
 	// issue to keep a seat from reviewing its own output.
-	ref, ok := r.decideReviewer(verdict, fresh, nil, issue)
+	ref, ok := r.decideReviewer(verdict, ladder, direction, roster, fresh, nil, issue)
 	if !ok || verdict.ReviewerConfidence < settings.Threshold() {
-		ref, _ = r.fallbackReviewer(fresh, nil, issue)
+		ref, _ = r.fallbackReviewer(ladder, direction, roster, fresh, nil, issue)
 	}
 	if ref.Kind == ReviewerAgent && !seatIn(fresh, Seat{ID: ref.ID}) {
-		return ReviewerRef{}, noop("reviewer seat is not eligible"), nil
+		eligible, err := r.seatStillEligible(ctx, workspaceID, settings, ref.ID)
+		if err != nil {
+			return ReviewerRef{}, Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
+		}
+		if !eligible {
+			return ReviewerRef{}, noop("reviewer seat is not eligible"), nil
+		}
 	}
 	if ref.Empty() {
 		// Nothing nameable. The slot stays empty rather than holding a
@@ -825,6 +1153,25 @@ func seatIDs(candidates []Seat) []string {
 		}
 	}
 	return ids
+}
+
+// seatStillEligible re-reads one seat that was not in the one-per-rung
+// candidate list. A same-tier alternate is chosen from the roster, so the
+// candidate recheck never saw it. Missing data stays eligible: unknown is
+// not a reason to drop the seat.
+func (r *Router) seatStillEligible(ctx context.Context, workspaceID string, settings Settings, id string) (bool, error) {
+	if id == "" {
+		return false, nil
+	}
+	facts, err := r.Store.RoutingFacts(ctx, workspaceID, []string{id}, settings.ProviderKeys())
+	if err != nil {
+		return false, err
+	}
+	snap, ok := facts.Seats[id]
+	if ok && Unselectable(snap.Availability) {
+		return false, nil
+	}
+	return true, nil
 }
 
 func seatIn(seats []Seat, seat Seat) bool {

@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentHasBegunWorkOnIssue = `-- name: AgentHasBegunWorkOnIssue :one
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue
+    WHERE issue_id = $1::uuid
+      AND agent_id = $2::uuid
+      AND status IN ('dispatched', 'running', 'waiting_local_directory', 'completed', 'failed')
+      AND created_at >= $3::timestamptz
+)::bool
+`
+
+type AgentHasBegunWorkOnIssueParams struct {
+	IssueID pgtype.UUID        `json:"issue_id"`
+	AgentID pgtype.UUID        `json:"agent_id"`
+	Since   pgtype.Timestamptz `json:"since"`
+}
+
+// True once a run for this seat has left the queue since the cover began.
+// A still-queued row has not started: recovery may cancel it and give the
+// ticket back. Work from an earlier stay does not count.
+func (q *Queries) AgentHasBegunWorkOnIssue(ctx context.Context, arg AgentHasBegunWorkOnIssueParams) (bool, error) {
+	row := q.db.QueryRow(ctx, agentHasBegunWorkOnIssue, arg.IssueID, arg.AgentID, arg.Since)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const assignIssueIfUnassigned = `-- name: AssignIssueIfUnassigned :one
 
 UPDATE issue
@@ -238,6 +264,69 @@ func (q *Queries) CreateRoutingComment(ctx context.Context, arg CreateRoutingCom
 	return i, err
 }
 
+const hasAcceptanceNoticeSince = `-- name: HasAcceptanceNoticeSince :one
+SELECT EXISTS (
+    SELECT 1 FROM inbox_item
+    WHERE issue_id = $1::uuid
+      AND workspace_id = $2::uuid
+      AND recipient_type = 'member'
+      AND recipient_id = $3::uuid
+      AND type = 'routing_needs_you'
+      AND created_at >= $4::timestamptz - interval '30 seconds'
+)::bool
+`
+
+type HasAcceptanceNoticeSinceParams struct {
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RecipientID pgtype.UUID        `json:"recipient_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+// The person named as reviewer already got the acceptance notice for THIS
+// stay. Same 30s skew as HasReviewerRunSince, and for the same reason.
+func (q *Queries) HasAcceptanceNoticeSince(ctx context.Context, arg HasAcceptanceNoticeSinceParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasAcceptanceNoticeSince,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.Since,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const hasReviewerRunSince = `-- name: HasReviewerRunSince :one
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue
+    WHERE issue_id = $1::uuid
+      AND agent_id = $2::uuid
+      AND status <> 'cancelled'
+      AND created_at >= $3::timestamptz - interval '30 seconds'
+)::bool
+`
+
+type HasReviewerRunSinceParams struct {
+	IssueID pgtype.UUID        `json:"issue_id"`
+	AgentID pgtype.UUID        `json:"agent_id"`
+	Since   pgtype.Timestamptz `json:"since"`
+}
+
+// The reviewer seat already has a run for THIS stay in review.
+//
+// Cancelled rows do not count: a wake that was cancelled never happened.
+// The 30s skew covers the activity row landing a moment AFTER the run the
+// status-change hook just started — the listener is asynchronous, and a
+// strict "created_at >= entered_review_at" would miss the run it itself
+// caused and start a second one.
+func (q *Queries) HasReviewerRunSince(ctx context.Context, arg HasReviewerRunSinceParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasReviewerRunSince, arg.IssueID, arg.AgentID, arg.Since)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const hasRoutingComment = `-- name: HasRoutingComment :one
 SELECT EXISTS (
     SELECT 1 FROM comment
@@ -293,6 +382,77 @@ func (q *Queries) LastEnteredReviewAt(ctx context.Context, arg LastEnteredReview
 	var created_at pgtype.Timestamptz
 	err := row.Scan(&created_at)
 	return created_at, err
+}
+
+const listIssuesRelayedFromReviewer = `-- name: ListIssuesRelayedFromReviewer :many
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
+WHERE workspace_id = $1
+  AND status = 'in_review'
+  AND metadata @> jsonb_build_object(
+        'reviewer_relay',
+        jsonb_build_object('original_id', $2::text)
+      )
+`
+
+type ListIssuesRelayedFromReviewerParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OriginalID  string      `json:"original_id"`
+}
+
+// Tickets whose acceptance was covered for this seat while it was switched off.
+// Containment hits idx_issue_metadata_gin. The caller still checks that the
+// cover has not started and that the slot still names the replacement.
+func (q *Queries) ListIssuesRelayedFromReviewer(ctx context.Context, arg ListIssuesRelayedFromReviewerParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, listIssuesRelayedFromReviewer, arg.WorkspaceID, arg.OriginalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.Revision,
+			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRecentTaskSpansByAgents = `-- name: ListRecentTaskSpansByAgents :many
@@ -497,15 +657,88 @@ type ReassignIssueParams struct {
 }
 
 // The in-review handoff. Unlike the two above this is not a fill: it moves a
-// ticket that already has an assignee to whoever accepts it. It is still
-// guarded — by the one-comment-per-kind index on the handoff comment — so a
-// status flipped back and forth cannot reassign twice.
+// ticket that already has an assignee to whoever accepts it.
+//
+// The one-comment-per-kind index does NOT guard this write. That index only
+// keeps the explanation comment to one per issue. A later stay — the work
+// was sent back, redone, and the ticket entered in_review again — calls this
+// again and starts another run. Two callbacks in the SAME stay collapse on
+// the pending-task unique index, not on the comment.
 func (q *Queries) ReassignIssue(ctx context.Context, arg ReassignIssueParams) (Issue, error) {
 	row := q.db.QueryRow(ctx, reassignIssue,
 		arg.AssigneeType,
 		arg.AssigneeID,
 		arg.ID,
 		arg.WorkspaceID,
+	)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
+const replaceIssueReviewerIfCurrent = `-- name: ReplaceIssueReviewerIfCurrent :one
+UPDATE issue
+SET reviewer_type = 'agent',
+    reviewer_id = $1::uuid,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = $2::uuid
+  AND workspace_id = $3::uuid
+  AND reviewer_type = 'agent'
+  AND reviewer_id = $4::uuid
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+`
+
+type ReplaceIssueReviewerIfCurrentParams struct {
+	ReviewerID        pgtype.UUID `json:"reviewer_id"`
+	ID                pgtype.UUID `json:"id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	CurrentReviewerID pgtype.UUID `json:"current_reviewer_id"`
+}
+
+// Overwrites the reviewer slot while it still names the seat we are covering
+// for. A person who changed the slot between the read and this write wins:
+// no row, and the caller does not hand the ticket to a stale substitute.
+func (q *Queries) ReplaceIssueReviewerIfCurrent(ctx context.Context, arg ReplaceIssueReviewerIfCurrentParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, replaceIssueReviewerIfCurrent,
+		arg.ReviewerID,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.CurrentReviewerID,
 	)
 	var i Issue
 	err := row.Scan(

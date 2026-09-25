@@ -91,8 +91,12 @@ const (
 
 	// ReasonTaskTimeLimit: the workspace-configured wall-clock limit
 	// (`agent_task_timeout_minutes`) stopped a healthy running task.
-	// Written by FailTasksOverWorkspaceTimeLimit. Deliberately terminal:
-	// retrying would spend the same budget the limit exists to protect.
+	// Written by FailTasksOverWorkspaceTimeLimit. The limit is a round
+	// boundary, not a verdict that the work was wrong, so the auto-retry
+	// path continues that same CLI session and workdir until the task's
+	// attempt budget is spent. The continue prompt tells the agent to close
+	// out what is already on disk and split whatever is left. Exhausting the
+	// budget blocks the issue instead of leaving it in todo.
 	ReasonTaskTimeLimit Reason = "task_time_limit"
 
 	// ReasonIterationLimit: the agent reached its per-run iteration

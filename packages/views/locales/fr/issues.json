@@ -598,7 +598,9 @@
       "resolve_failed": "Échec de la résolution du fil",
       "unresolve_failed": "Échec de la réouverture du fil"
     },
-    "align_action": "Alignez d'abord cette tâche"
+    "align_action": "Alignez d'abord cette tâche",
+    "trigger_blocked_access_requested": "Le propriétaire de l'agent a été sollicité pour approuver : l'exécution démarrera ensuite",
+    "trigger_blocked_short_access_requested": "En attente du propriétaire"
   },
   "reply": {
     "placeholder": "Laisser une réponse...",
@@ -1189,7 +1191,14 @@
     "record_created_title": "Cet alignement a produit une tâche",
     "record_issue_link": "Ouvrir la tâche",
     "record_abandoned_title": "Cet alignement a été abandonné",
-    "record_abandoned_hint": "Aucune tâche n'a été créée."
+    "record_abandoned_hint": "Aucune tâche n'a été créée.",
+    "project_will_create": "Sera créé : {{name}}",
+    "project_create_hint": "Ce projet sera créé en même temps que les tâches.",
+    "project_use_existing": "Utiliser un projet existant",
+    "project_skip": "Ne pas rattacher de projet",
+    "project_suggestion": "Suggestion : {{name}}",
+    "confirm_with_project": "Créer le projet et {{count}} tâches",
+    "project_directory_failed": "Le dossier n'a pas été créé, donc rien d'autre non plus."
   },
   "sub_issue_accordion": {
     "count_one": "{{count}} sous-tâche",

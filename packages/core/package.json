@@ -71,6 +71,8 @@
     "./chat/queries": "./chat/queries.ts",
     "./chat/mutations": "./chat/mutations.ts",
     "./chat/project-context": "./chat/project-context.ts",
+    "./chat/project-bar": "./chat/project-bar.ts",
+    "./chat/project-bar-store": "./chat/project-bar-store.ts",
     "./chat/project-follow": "./chat/project-follow.ts",
     "./chat/pending": "./chat/pending.ts",
     "./chat/message-cache": "./chat/message-cache.ts",

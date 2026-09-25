@@ -57,6 +57,8 @@
     "ai_team_group": "Équipe IA",
     "show_more_pins": "Afficher {{count}} de plus…",
     "show_fewer_pins": "Afficher moins",
+    "pin_drop_hint": "Déposer ici pour épingler",
+    "chat_untitled": "Nouvelle discussion",
     "unread_overflow": "99+",
     "discord_card": {
       "title": "Rejoignez notre Discord",

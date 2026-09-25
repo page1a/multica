@@ -31,35 +31,99 @@ WHERE cs.id = $1
   );
 
 -- name: ListChatSessionsByCreator :many
--- IM-style list: each active session with its unread *count* (assistant
--- messages after the read cursor), a preview of the latest message, and
--- ordered by most-recent activity so a new reply bumps a session to the top.
+-- IM-style list of the chats this viewer may see (DENE-840): their own, plus
+-- project-scoped chats whose project they belong to, plus chats shared with
+-- them. Unread is counted from THIS viewer's cursor, not the session's.
 SELECT cs.*,
        (SELECT count(*) FROM chat_message m
           WHERE m.chat_session_id = cs.id
-            AND m.role = 'assistant'
-            AND m.created_at > cs.last_read_at)::int AS unread_count,
+            AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+            AND m.created_at > COALESCE(
+                  (SELECT r.last_read_at FROM chat_session_read r
+                    WHERE r.chat_session_id = cs.id AND r.user_id = sqlc.arg(viewer_id)),
+                  CASE WHEN cs.creator_id = sqlc.arg(viewer_id) THEN cs.last_read_at ELSE now() END
+                )
+            AND (
+              m.role = 'assistant'
+              OR (m.role = 'user' AND COALESCE(m.sender_user_id, cs.creator_id) <> sqlc.arg(viewer_id))
+            ))::int AS unread_count,
        COALESCE(lm.content, '') AS last_message_content,
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       lm.sender_user_id AS last_message_sender_id,
+       CASE
+         WHEN cs.creator_id = sqlc.arg(viewer_id) THEN 'owner'
+         WHEN cs.visibility = 'project' AND (
+           EXISTS (
+             SELECT 1 FROM chat_session_project csp
+             WHERE csp.chat_session_id = cs.id
+               AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+           )
+           OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+         ) THEN 'speak'
+         ELSE COALESCE((
+           SELECT rs.access FROM resource_share rs
+           WHERE rs.workspace_id = cs.workspace_id
+             AND rs.resource_type = 'chat_session'
+             AND rs.resource_id = cs.id::text
+             AND rs.member_id = sqlc.arg(viewer_id)
+         ), 'view')
+       END::text AS viewer_access,
+       (SELECT count(*) FROM resource_share rs
+          WHERE rs.workspace_id = cs.workspace_id
+            AND rs.resource_type = 'chat_session'
+            AND rs.resource_id = cs.id::text)::int AS extra_count,
+       COALESCE(ag.name, '') AS agent_name,
+       COALESCE(ag.runtime_id IS NOT NULL, false)::bool AS agent_runtime_bound,
+       COALESCE(ag.archived_at IS NOT NULL, false)::bool AS agent_archived,
+       (pin.id IS NOT NULL)::bool AS pinned
 FROM chat_session cs
+LEFT JOIN agent ag ON ag.id = cs.agent_id
+-- The viewer's own sidebar pin (DENE-866): pinned is per person, not per chat.
+LEFT JOIN pinned_item pin
+       ON pin.workspace_id = cs.workspace_id
+      AND pin.user_id = sqlc.arg(viewer_id)
+      AND pin.item_type = 'chat'
+      AND pin.item_id = cs.id
 LEFT JOIN LATERAL (
-  SELECT content, role, created_at, failure_reason, message_kind
+  SELECT content, role, created_at, failure_reason, message_kind, sender_user_id
     FROM chat_message m
    WHERE m.chat_session_id = cs.id
      AND m.message_kind != 'channel_command'
    ORDER BY m.created_at DESC
    LIMIT 1
 ) lm ON true
-WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
+WHERE cs.workspace_id = sqlc.arg(workspace_id)
+  AND cs.status = 'active'
+  AND (
+    cs.creator_id = sqlc.arg(viewer_id)
+    OR (
+      cs.visibility = 'project'
+      AND (
+        EXISTS (
+          SELECT 1 FROM resource_share rs
+          WHERE rs.workspace_id = cs.workspace_id
+            AND rs.resource_type = 'chat_session'
+            AND rs.resource_id = cs.id::text
+            AND rs.member_id = sqlc.arg(viewer_id)
+        )
+        OR EXISTS (
+          SELECT 1 FROM chat_session_project csp
+          WHERE csp.chat_session_id = cs.id
+            AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+        )
+        OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+      )
+    )
+  )
   AND (
     cs.explicitly_created_at IS NOT NULL
     OR
     lm.created_at IS NOT NULL
   )
-ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC;
+ORDER BY (pin.id IS NOT NULL) DESC, pin.position ASC, COALESCE(lm.created_at, cs.updated_at) DESC;
 
 -- name: ListAllChatSessionsByCreator :many
 -- Unlike ListChatSessionsByCreator this returns archived sessions too (for the
@@ -73,30 +137,93 @@ SELECT cs.*,
        CASE WHEN cs.status = 'archived' THEN 0
             ELSE (SELECT count(*) FROM chat_message m
                     WHERE m.chat_session_id = cs.id
-                      AND m.role = 'assistant'
-                      AND m.created_at > cs.last_read_at)
+                      AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+                      AND m.created_at > COALESCE(
+                            (SELECT r.last_read_at FROM chat_session_read r
+                              WHERE r.chat_session_id = cs.id AND r.user_id = sqlc.arg(viewer_id)),
+                            CASE WHEN cs.creator_id = sqlc.arg(viewer_id) THEN cs.last_read_at ELSE now() END
+                          )
+                      AND (
+                        m.role = 'assistant'
+                        OR (m.role = 'user' AND COALESCE(m.sender_user_id, cs.creator_id) <> sqlc.arg(viewer_id))
+                      ))
        END::int AS unread_count,
        COALESCE(lm.content, '') AS last_message_content,
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       lm.sender_user_id AS last_message_sender_id,
+       CASE
+         WHEN cs.creator_id = sqlc.arg(viewer_id) THEN 'owner'
+         WHEN cs.visibility = 'project' AND (
+           EXISTS (
+             SELECT 1 FROM chat_session_project csp
+             WHERE csp.chat_session_id = cs.id
+               AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+           )
+           OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+         ) THEN 'speak'
+         ELSE COALESCE((
+           SELECT rs.access FROM resource_share rs
+           WHERE rs.workspace_id = cs.workspace_id
+             AND rs.resource_type = 'chat_session'
+             AND rs.resource_id = cs.id::text
+             AND rs.member_id = sqlc.arg(viewer_id)
+         ), 'view')
+       END::text AS viewer_access,
+       (SELECT count(*) FROM resource_share rs
+          WHERE rs.workspace_id = cs.workspace_id
+            AND rs.resource_type = 'chat_session'
+            AND rs.resource_id = cs.id::text)::int AS extra_count,
+       COALESCE(ag.name, '') AS agent_name,
+       COALESCE(ag.runtime_id IS NOT NULL, false)::bool AS agent_runtime_bound,
+       COALESCE(ag.archived_at IS NOT NULL, false)::bool AS agent_archived,
+       (pin.id IS NOT NULL)::bool AS pinned
 FROM chat_session cs
+LEFT JOIN agent ag ON ag.id = cs.agent_id
+-- The viewer's own sidebar pin (DENE-866): pinned is per person, not per chat.
+LEFT JOIN pinned_item pin
+       ON pin.workspace_id = cs.workspace_id
+      AND pin.user_id = sqlc.arg(viewer_id)
+      AND pin.item_type = 'chat'
+      AND pin.item_id = cs.id
 LEFT JOIN LATERAL (
-  SELECT content, role, created_at, failure_reason, message_kind
+  SELECT content, role, created_at, failure_reason, message_kind, sender_user_id
     FROM chat_message m
    WHERE m.chat_session_id = cs.id
      AND m.message_kind != 'channel_command'
    ORDER BY m.created_at DESC
    LIMIT 1
 ) lm ON true
-WHERE cs.workspace_id = $1 AND cs.creator_id = $2
+WHERE cs.workspace_id = sqlc.arg(workspace_id)
+  AND (
+    cs.creator_id = sqlc.arg(viewer_id)
+    OR (
+      cs.visibility = 'project'
+      AND (
+        EXISTS (
+          SELECT 1 FROM resource_share rs
+          WHERE rs.workspace_id = cs.workspace_id
+            AND rs.resource_type = 'chat_session'
+            AND rs.resource_id = cs.id::text
+            AND rs.member_id = sqlc.arg(viewer_id)
+        )
+        OR EXISTS (
+          SELECT 1 FROM chat_session_project csp
+          WHERE csp.chat_session_id = cs.id
+            AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+        )
+        OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+      )
+    )
+  )
   AND (
     cs.explicitly_created_at IS NOT NULL
     OR
     lm.created_at IS NOT NULL
   )
-ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC;
+ORDER BY (pin.id IS NOT NULL) DESC, pin.position ASC, COALESCE(lm.created_at, cs.updated_at) DESC;
 
 -- name: ListAgentBuilderSessionsByCreator :many
 -- The caller's unfinished agent-creation conversations.
@@ -312,14 +439,12 @@ UPDATE chat_session SET title = @new_title, updated_at = now()
 WHERE id = @id AND title = @expected_title
 RETURNING *;
 
--- name: SetChatSessionPinned :one
--- Pin/unpin a chat. Deliberately does NOT touch updated_at: pinning is a
--- list-ordering preference, not activity, so it must not bump the session's
--- last-activity sort key (which would make an unpinned chat jump the list).
--- pinned = true stamps pinned_at only when it was NULL, so re-pinning keeps
--- the original pin order; pinned = false clears it.
+-- name: DismissChatSessionProjectNudge :one
+-- Record that this chat does not need a project, so the bind reminder stays
+-- gone on every device. COALESCE keeps the original dismissal. Does NOT touch
+-- updated_at: dismissing a prompt is not conversation activity.
 UPDATE chat_session
-SET pinned_at = CASE WHEN @pinned::bool THEN COALESCE(pinned_at, now()) ELSE NULL END
+SET project_nudge_dismissed_at = COALESCE(project_nudge_dismissed_at, now())
 WHERE id = $1
 RETURNING *;
 
@@ -1132,7 +1257,7 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, accountable_user_id, force_fresh_session, runtime_mcp_overlay,
     runtime_connected_apps, originator_source, trigger_evidence_kind, trigger_evidence_ref_id,
-    fire_at, channel_context_revision, id
+    fire_at, channel_context_revision, work_thread_id, id
 )
 SELECT
     $1, $2, NULL,
@@ -1148,6 +1273,11 @@ SELECT
     sqlc.narg(trigger_evidence_ref_id),
     sqlc.narg('fire_at')::timestamptz,
     sqlc.narg('channel_context_revision')::bigint,
+    COALESCE((SELECT wt.id FROM work_thread wt
+              WHERE wt.chat_session_id = $4 AND wt.agent_id = $1 AND wt.runtime_id = $2
+                AND wt.model IS NOT DISTINCT FROM (SELECT a.model FROM agent a WHERE a.id = $1)
+                AND wt.permission_mode IS NOT DISTINCT FROM (SELECT a.permission_mode FROM agent a WHERE a.id = $1)
+              ORDER BY wt.updated_at DESC, wt.id DESC LIMIT 1), gen_random_uuid()),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows($1, NULL, $2)
 RETURNING *;
@@ -1463,7 +1593,7 @@ FROM prioritized;
 -- atq.chat_session_id IS NOT NULL is redundant given the JOIN, but stated
 -- explicitly so the planner can prove the query predicate is a subset of the
 -- idx_agent_task_queue_chat_pending_v3 partial-index predicate and use it.
-SELECT atq.id AS task_id, atq.status, atq.chat_session_id, cs.agent_id
+SELECT atq.id AS task_id, atq.status, atq.chat_session_id, cs.agent_id, cs.creator_id
 FROM agent_task_queue atq
 JOIN chat_session cs ON cs.id = atq.chat_session_id
 WHERE atq.chat_session_id IS NOT NULL
@@ -1471,8 +1601,28 @@ WHERE atq.chat_session_id IS NOT NULL
   -- Exclude background quick-actions regeneration passes: they own no assistant
   -- turn and must not surface as "running" chat work (MUL-5149 refresh follow-up).
   AND atq.regenerate_quick_actions_for IS NULL
-  AND cs.workspace_id = $1
-  AND cs.creator_id = $2
+  AND cs.workspace_id = sqlc.arg(workspace_id)
+  AND (
+    cs.creator_id = sqlc.arg(viewer_id)
+    OR (
+      cs.visibility = 'project'
+      AND (
+        EXISTS (
+          SELECT 1 FROM resource_share rs
+          WHERE rs.workspace_id = cs.workspace_id
+            AND rs.resource_type = 'chat_session'
+            AND rs.resource_id = cs.id::text
+            AND rs.member_id = sqlc.arg(viewer_id)
+        )
+        OR EXISTS (
+          SELECT 1 FROM chat_session_project csp
+          WHERE csp.chat_session_id = cs.id
+            AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+        )
+        OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+      )
+    )
+  )
 ORDER BY atq.created_at DESC;
 
 -- name: HasPendingChatTasksByCreator :one
@@ -1495,8 +1645,28 @@ SELECT EXISTS (
     -- never light the FAB "running" indicator (MUL-5149 refresh follow-up).
     AND atq.regenerate_quick_actions_for IS NULL
     AND cs.workspace_id = sqlc.arg(workspace_id)
-    AND cs.creator_id = sqlc.arg(creator_id)
-    AND cs.agent_id = ANY(sqlc.arg(agent_ids)::uuid[])
+    AND (
+      (cs.creator_id = sqlc.arg(viewer_id) AND cs.agent_id = ANY(sqlc.arg(agent_ids)::uuid[]))
+      OR (
+        cs.creator_id <> sqlc.arg(viewer_id)
+        AND cs.visibility = 'project'
+        AND (
+          EXISTS (
+            SELECT 1 FROM resource_share rs
+            WHERE rs.workspace_id = cs.workspace_id
+              AND rs.resource_type = 'chat_session'
+              AND rs.resource_id = cs.id::text
+              AND rs.member_id = sqlc.arg(viewer_id)
+          )
+          OR EXISTS (
+            SELECT 1 FROM chat_session_project csp
+            WHERE csp.chat_session_id = cs.id
+              AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+          )
+          OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+        )
+      )
+    )
 ) AS has_pending;
 
 -- name: MarkChatSessionRead :exec
@@ -1730,4 +1900,25 @@ WHERE workspace_id = $1
   AND agent_id = $3
   AND status = 'active'
 ORDER BY created_at ASC
+LIMIT 1;
+
+-- name: CountHandoffChatMessages :one
+-- Visible turns a takeover read may describe. Channel commands and the hidden
+-- onboarding kickoff are not part of the conversation a new session continues.
+SELECT count(*)::int AS count
+FROM chat_message
+WHERE chat_session_id = $1
+  AND message_kind <> 'channel_command'
+  AND message_kind <> 'onboarding_kickoff';
+
+-- name: GetEarliestHandoffUserMessage :one
+-- The first thing the person asked, so a summary can say what the session is
+-- about without paging the whole transcript into the new session.
+SELECT content
+FROM chat_message
+WHERE chat_session_id = $1
+  AND role = 'user'
+  AND message_kind <> 'channel_command'
+  AND message_kind <> 'onboarding_kickoff'
+ORDER BY created_at ASC, id ASC
 LIMIT 1;

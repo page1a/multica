@@ -4,6 +4,27 @@
     "select_prompt": "대화를 선택하거나 +로 새로 시작하세요",
     "agent_link_no_access": "이 에이전트와 채팅할 권한이 없습니다."
   },
+  "project_bar": {
+    "all": "전체",
+    "more": "⋯ 더보기 ({{count}})",
+    "menu_title": "프로젝트",
+    "done": "완료",
+    "search": "프로젝트 검색…",
+    "pinned": "고정 (끌어 순서 변경)",
+    "pinned_empty": "고정한 프로젝트가 없습니다",
+    "other": "다른 프로젝트 (최근 채팅순)",
+    "none": "프로젝트 없음",
+    "chat_count_other": "채팅 {{count}}개",
+    "pin": "고정",
+    "unpin": "고정 해제",
+    "drag": "끌어 순서 변경",
+    "empty": "이 프로젝트에는 아직 채팅이 없습니다",
+    "unread": "읽지 않음"
+  },
+  "project_nudge": {
+    "bind": "프로젝트에 연결",
+    "casual": "가벼운 채팅이라 프로젝트가 필요 없습니다"
+  },
   "fab": {
     "running": "Multica가 작업 중입니다...",
     "unread_other": "읽지 않은 채팅 {{count}}개",
@@ -242,14 +263,23 @@
     "archive": "보관",
     "unarchive": "보관 해제",
     "archived_title": "보관됨",
-    "row_actions_aria": "채팅 작업"
+    "row_actions_aria": "채팅 작업",
+    "edit_access": "권한 편집",
+    "private_tag": "비공개",
+    "extra_tag": "추가 멤버"
   },
   "header": {
     "view_profile": "Agent 프로필 보기",
     "rename": "이름 변경",
     "delete": "채팅 삭제",
     "archive": "채팅 보관",
-    "unarchive": "채팅 보관 해제"
+    "unarchive": "채팅 보관 해제",
+    "copy_link": "세션 링크 복사",
+    "link_copied": "세션 링크를 복사했습니다",
+    "copy_conversation": "대화 전체를 Markdown으로 복사",
+    "conversation_copied": "대화를 복사했습니다",
+    "copy_role_user": "나",
+    "copy_role_assistant": "어시스턴트"
   },
   "provider_quota": {
     "label": "할당량",
@@ -258,5 +288,34 @@
     "used": "{{percent}}%",
     "resets": "{{when}} 초기화",
     "updated": "{{when}} 업데이트"
+  },
+  "sharing": {
+    "title": "권한 편집",
+    "follow": "프로젝트 따르기",
+    "follow_hint_bound": "{{projects}} 멤버는 보고 말할 수 있습니다",
+    "follow_hint_unbound": "선택하려면 먼저 프로젝트를 연결하세요",
+    "extra": "프로젝트 따르기 + 추가 인원",
+    "extra_hint": "프로젝트 멤버와 아래에 더한 사람",
+    "private": "비공개",
+    "private_hint": "나만 볼 수 있습니다. 다른 사람 목록에는 나오지 않습니다",
+    "view": "보기만",
+    "speak": "말할 수 있음",
+    "add": "멤버 추가…",
+    "remove": "제거",
+    "save": "저장",
+    "cancel": "취소",
+    "note_bound": "비공개로 바꾸면 다른 사람 목록에서 바로 사라집니다. 언제든 되돌릴 수 있습니다.",
+    "note_unbound": "프로젝트가 없는 채팅은 비공개입니다.",
+    "view_only": "이 채팅은 볼 수 있지만 말할 수는 없습니다.",
+    "header_private": "나만",
+    "header_project": "프로젝트 멤버는 보고 말할 수 있습니다",
+    "header_extra": "프로젝트 멤버와 추가 인원",
+    "search": "멤버 검색…"
+  },
+  "notice": {
+    "title": "일부 채팅이 이제 프로젝트 멤버에게 보입니다",
+    "body": "프로젝트 멤버가 볼 수 있는 채팅이 {{count}}개 있습니다.",
+    "make_private": "선택한 항목을 비공개로",
+    "dismiss": "알겠습니다"
   }
 }

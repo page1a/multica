@@ -194,9 +194,12 @@ func (b *codeartsBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	// nobody is consuming its stdout. Closing stdin is what ends the prompt —
 	// CodeArts reads it to EOF (`await Bun.stdin.text()`), so a stdin left open
 	// hangs the run forever. Close on every path, success or error.
+	// CodeArts reads its context files only from the cwd; a shared-mode brief
+	// kept out of the cwd arrives as SystemPrompt and rides the same stdin.
+	userText := withSystemPrompt(opts.SystemPrompt, prompt)
 	writeErrCh := make(chan error, 1)
 	go func() {
-		_, err := io.WriteString(stdin, prompt)
+		_, err := io.WriteString(stdin, userText)
 		closeStdin()
 		writeErrCh <- err
 	}()

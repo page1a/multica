@@ -1,5 +1,6 @@
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
+import type { WorkThreadSnapshot } from "../types/work_thread";
 import { configStore } from "../config";
 import type {
   Issue,
@@ -243,6 +244,12 @@ import type {
   TaskLogExportPush,
   TaskLogExportScope,
   CodeDecision,
+  AgentAccessRequest,
+  AgentAccessRequestList,
+  AgentAccessPass,
+  ApproveAgentAccessRequestBody,
+  ApproveAgentAccessRequestResponse,
+  CreateAgentAccessPassRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -2141,7 +2148,15 @@ export class ApiClient {
    */
   async finalizeIssueDraft(
     sessionId: string,
-    data: { expected_revision: number },
+    data: {
+      expected_revision: number;
+      new_project?: {
+        title: string;
+        icon?: string;
+        description?: string;
+        directory?: Record<string, unknown>;
+      };
+    },
   ): Promise<IssueDraftFinalizeResult> {
     const raw = await this.fetch<unknown>(
       `/api/issue-drafts/${sessionId}/finalize`,
@@ -2196,6 +2211,48 @@ export class ApiClient {
     return this.fetch(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+  }
+
+  // --- Agent borrowing: doorbell requests + timed passes (DENE-808) ---
+
+  async listAgentAccessRequests(): Promise<AgentAccessRequestList> {
+    return this.fetch("/api/agent-access-requests");
+  }
+
+  async approveAgentAccessRequest(
+    id: string,
+    body: ApproveAgentAccessRequestBody = {},
+  ): Promise<ApproveAgentAccessRequestResponse> {
+    return this.fetch(`/api/agent-access-requests/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async declineAgentAccessRequest(id: string): Promise<AgentAccessRequest> {
+    return this.fetch(`/api/agent-access-requests/${id}/decline`, {
+      method: "POST",
+    });
+  }
+
+  async listAgentAccessPasses(agentId: string): Promise<AgentAccessPass[]> {
+    return this.fetch(`/api/agents/${agentId}/access-passes`);
+  }
+
+  async createAgentAccessPass(
+    agentId: string,
+    body: CreateAgentAccessPassRequest,
+  ): Promise<AgentAccessPass> {
+    return this.fetch(`/api/agents/${agentId}/access-passes`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async revokeAgentAccessPass(agentId: string, passId: string): Promise<AgentAccessPass> {
+    return this.fetch(`/api/agents/${agentId}/access-passes/${passId}`, {
+      method: "DELETE",
     });
   }
 
@@ -2902,6 +2959,20 @@ export class ApiClient {
     });
   }
 
+  async setAgentCLIFollow(runtimeId: string, follow: boolean): Promise<void> {
+    await this.fetch(`/api/runtimes/${runtimeId}/agent-cli/follow`, {
+      method: "POST",
+      body: JSON.stringify({ follow }),
+    });
+  }
+
+  async requestAgentCLIUpdate(runtimeId: string): Promise<void> {
+    await this.fetch(`/api/runtimes/${runtimeId}/agent-cli/update`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
   async getUpdateResult(
     runtimeId: string,
     updateId: string,
@@ -2916,9 +2987,13 @@ export class ApiClient {
   // fabricated empty catalog or an endless spinner (MUL-5444).
   async initiateListModels(
     runtimeId: string,
-    options: { force?: boolean } = {},
+    options: { force?: boolean; agentId?: string } = {},
   ): Promise<RuntimeModelListRequest> {
-    const query = options.force === true ? "?force=true" : "";
+    const params = new URLSearchParams();
+    if (options.force === true) params.set("force", "true");
+    if (options.agentId) params.set("agent_id", options.agentId);
+    const encoded = params.toString();
+    const query = encoded === "" ? "" : `?${encoded}`;
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/models${query}`,
       {
@@ -3093,6 +3168,22 @@ export class ApiClient {
 
   async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {
     return this.fetch(`/api/issues/${issueId}/active-task`);
+  }
+
+  async getIssueWorkThread(issueId: string): Promise<WorkThreadSnapshot | null> {
+    return this.fetch(`/api/issues/${issueId}/work-thread`);
+  }
+
+  async issueWorkThreadAction(
+    issueId: string,
+    action: "continue" | "interrupt" | "queue" | "prioritize",
+    summary?: string,
+    taskId?: string,
+  ): Promise<{ action: string; state: string; task_id?: string; thread_id?: string; session_id?: string }> {
+    return this.fetch(`/api/issues/${issueId}/work-thread/action`, {
+      method: "POST",
+      body: JSON.stringify({ action, summary, task_id: taskId }),
+    });
   }
 
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
@@ -4296,6 +4387,38 @@ export class ApiClient {
     });
   }
 
+  async getChatAccess(sessionId: string): Promise<import("../types").ChatAccessSettings> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/access`);
+  }
+
+  async putChatAccess(
+    sessionId: string,
+    body: {
+      mode: "project" | "extra" | "private";
+      shares?: { user_id: string; access: "view" | "speak" }[];
+    },
+  ): Promise<import("../types").ChatAccessSettings> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/access`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async getChatVisibilityNotice(): Promise<import("../types").ChatVisibilityNotice> {
+    return this.fetch("/api/chat/visibility-notice");
+  }
+
+  async dismissChatVisibilityNotice(): Promise<void> {
+    await this.fetch("/api/chat/visibility-notice/dismiss", { method: "POST" });
+  }
+
+  async makeChatSessionsPrivate(sessionIds: string[]): Promise<{ updated: number }> {
+    return this.fetch("/api/chat/sessions/make-private", {
+      method: "POST",
+      body: JSON.stringify({ session_ids: sessionIds }),
+    });
+  }
+
   async getChatSession(id: string): Promise<ChatSession> {
     const raw: unknown = await this.fetch(`/api/chat/sessions/${id}`);
     return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
@@ -4363,6 +4486,15 @@ export class ApiClient {
     return this.fetch(`/api/chat/sessions/${id}/pin`, {
       method: "PATCH",
       body: JSON.stringify({ pinned }),
+    });
+  }
+
+  /** Remember that this chat does not need a project. One-way; the row is
+   *  what makes the reminder stay gone in another browser. */
+  async dismissChatProjectNudge(id: string): Promise<ChatSession> {
+    return this.fetch(`/api/chat/sessions/${id}/project-nudge`, {
+      method: "PATCH",
+      body: JSON.stringify({ dismissed: true }),
     });
   }
 
@@ -4485,6 +4617,21 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/pending-task`);
     return parseWithFallback(raw, ChatPendingTaskSchema, EMPTY_CHAT_PENDING_TASK, {
       endpoint: "GET /api/chat/sessions/:id/pending-task",
+    });
+  }
+
+  async getChatWorkThread(sessionId: string): Promise<WorkThreadSnapshot | null> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/work-thread`);
+  }
+
+  async chatWorkThreadAction(
+    sessionId: string,
+    action: "continue" | "interrupt" | "queue",
+    summary?: string,
+  ): Promise<{ action: string; state: string; task_id?: string; thread_id?: string; session_id?: string }> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/work-thread/action`, {
+      method: "POST",
+      body: JSON.stringify({ action, summary }),
     });
   }
 
@@ -4619,9 +4766,18 @@ export class ApiClient {
       }
       throw err;
     }
+    const originalContentType = res.headers.get("X-Original-Content-Type") ?? "";
+    const contentType = res.headers.get("Content-Type") ?? "";
+    // The preview proxy always answers `text/plain` and stamps the original
+    // MIME. A 200 `text/html` document without that header is a frontend
+    // fallback (the SPA shell), not the file. Rendering it as Markdown
+    // produces an empty white pane instead of the failure message.
+    if (!originalContentType && /^\s*text\/html\b/i.test(contentType)) {
+      throw new Error("attachment preview returned a document instead of the file");
+    }
     return {
       text: await res.text(),
-      originalContentType: res.headers.get("X-Original-Content-Type") ?? "",
+      originalContentType,
     };
   }
 
@@ -5167,10 +5323,11 @@ export class ApiClient {
 
   // Pins
   async listPins(): Promise<PinnedItem[]> {
-    // include=view is the capability opt-in: the server withholds view pins
+    // include=view,chat is the capability opt-in: the server withholds view
+    // and chat pins
     // from clients that don't declare support (old builds treated any
     // non-issue pin as a project pin and auto-deleted it on 404).
-    return this.fetch("/api/pins?include=view");
+    return this.fetch("/api/pins?include=view,chat");
   }
 
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {

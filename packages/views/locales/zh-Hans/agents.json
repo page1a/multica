@@ -212,11 +212,6 @@
     "assign_work": "分配工作",
     "more_actions_aria": "智能体操作",
     "updated": "{{when}}更新",
-    "switchable_models_label": "可换档",
-    "switchable_role_default": "默认档",
-    "switchable_role_fallback": "降级链",
-    "switchable_role_batch": "可借档",
-    "switchable_models_edit": "编辑",
     "accounts_entry": "账号与登录"
   },
   "inspector": {
@@ -241,11 +236,10 @@
     "prop_concurrency": "并发",
     "prop_work_enabled": "承接工作",
     "prop_work_enabled_hint": "关闭后，这个席位仍在列表里，但不会被自动选派、指派也不会唤醒，也不会领取新的运行。已经在跑的运行不会中断。",
+    "prop_work_pause_balance": "平台已暂停：账号余额用完了（402），不会自己恢复。充值或换账号后，把这里重新打开即可；已经转给别的席位的票不会拉回来。",
+    "prop_work_pause_quota": "平台已暂停：模型额度用完了，额度重置后会自动恢复。",
     "prop_auto_retry": "自动重试",
     "prop_auto_retry_hint": "关闭后，容量不足、网络抖动等失败会直接报出来，不再由平台自动重试。仍可手动重试运行。",
-    "prop_switchable_models": "可换档",
-    "prop_switchable_models_hint_on": "该智能体记录了一套档位：默认档、按顺序的降级链，以及跑批时可借用的模型。仅用于展示，实际派单始终跑上面那个模型。",
-    "prop_switchable_models_hint_off": "关闭即单模型：只展示上面那一个模型。要记录降级链或可借档，把它打开。",
     "prop_runtime_inherit": "跟随基础角色的运行时",
     "prop_runtime_inherit_hint_on": "运行时、模型、思考强度和速度都来自基础角色，并随它一起更新。关闭后可在此单独配置。",
     "prop_runtime_inherit_hint_off": "该特化使用自己的运行时、模型、思考强度和速度。开启后重新跟随基础角色。",
@@ -535,16 +529,6 @@
     "remove": "移除建议 {{number}}",
     "preview_label": "新对话预览",
     "preview_defaults": "以上是内置的默认值。在上方添加一条建议即可整组替换。"
-  },
-  "switchable_models": {
-    "add": "添加模型",
-    "model_label": "第 {{number}} 个模型 ID",
-    "model_placeholder": "claude-opus-5",
-    "role_label": "第 {{number}} 个模型的档位",
-    "note_label": "第 {{number}} 个模型的备注",
-    "note_placeholder": "什么时候用这一档",
-    "remove": "移除第 {{number}} 个模型",
-    "blank_ignored": "没填模型 ID 的那几行不会保存。"
   },
   "tab_body": {
     "common": {
@@ -1065,7 +1049,29 @@
     "public_group": "公开访问",
     "owner_only_readonly": "只有该智能体的所有者可以更改谁能调用它。",
     "members_empty": "没有可选择的工作区成员",
-    "composio_switch_hint": "提示——该智能体已启用 Composio 应用。共享后，所有获得访问权限的人都可以通过该智能体使用这些应用。"
+    "composio_switch_hint": "提示——该智能体已启用 Composio 应用。共享后，所有获得访问权限的人都可以通过该智能体使用这些应用。",
+    "borrow_section_title": "借用",
+    "doorbell_title": "门铃",
+    "doorbell_desc": "名单外的人 @ 或指派这个智能体时，先问你而不是直接拒绝。批准后的任务会在你的电脑上运行。",
+    "doorbell_save_failed": "门铃设置保存失败",
+    "pass_issue_title": "发通行证",
+    "pass_issue_desc": "让某位成员在截止时间前使用这个智能体，到点自动失效。",
+    "pass_member_label": "成员",
+    "pass_member_placeholder": "选择成员",
+    "pass_member_required": "先选一位成员",
+    "pass_2h": "2 小时",
+    "pass_today": "今天内",
+    "pass_custom": "自定义截止…",
+    "pass_issue_action": "发通行证",
+    "pass_issued": "已给 {{name}} 发通行证，有效至 {{until}}",
+    "pass_issue_failed": "发通行证失败",
+    "pass_expiry_invalid": "请选择一个未来的截止时间",
+    "pass_active_title": "有效通行证",
+    "pass_active_empty": "暂无有效通行证",
+    "pass_until": "有效至 {{until}}",
+    "pass_revoke": "撤销",
+    "pass_revoked": "通行证已撤销",
+    "pass_revoke_failed": "撤销失败"
   },
   "profile_card": {
     "unavailable": "智能体不可用",

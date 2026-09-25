@@ -71,7 +71,7 @@ func TestAgentWorkEnabledGetAndUpdate(t *testing.T) {
 	})
 }
 
-func TestAgentWorkEnabledDisablesDirectSpecialisations(t *testing.T) {
+func TestAgentWorkEnabledSyncsDirectSpecialisations(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -114,8 +114,19 @@ func TestAgentWorkEnabledDisablesDirectSpecialisations(t *testing.T) {
 	if !read(parentID) {
 		t.Fatal("base role did not re-enable")
 	}
-	if read(childID) {
-		t.Fatal("re-enabling base role should not re-enable specialisation")
+	if !read(childID) {
+		t.Fatal("re-enabling base role did not re-enable its specialisation")
+	}
+	if !read(otherID) {
+		t.Fatal("unrelated role changed")
+	}
+
+	// A specialisation switched off on its own still follows the base role's
+	// next toggle: the base role is the one switch for the whole tree.
+	update(childID, false)
+	update(parentID, true)
+	if !read(childID) {
+		t.Fatal("base role toggle did not bring its specialisation back in sync")
 	}
 }
 

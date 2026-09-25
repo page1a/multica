@@ -101,6 +101,38 @@ func (q *Queries) GetMaxPinnedItemPosition(ctx context.Context, arg GetMaxPinned
 	return max_position, err
 }
 
+const getPinnedItemByItem = `-- name: GetPinnedItemByItem :one
+SELECT id, workspace_id, user_id, item_type, item_id, position, created_at FROM pinned_item
+WHERE workspace_id = $1 AND user_id = $2 AND item_type = $3 AND item_id = $4
+`
+
+type GetPinnedItemByItemParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	ItemType    string      `json:"item_type"`
+	ItemID      pgtype.UUID `json:"item_id"`
+}
+
+func (q *Queries) GetPinnedItemByItem(ctx context.Context, arg GetPinnedItemByItemParams) (PinnedItem, error) {
+	row := q.db.QueryRow(ctx, getPinnedItemByItem,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.ItemType,
+		arg.ItemID,
+	)
+	var i PinnedItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.ItemType,
+		&i.ItemID,
+		&i.Position,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listPinnedItems = `-- name: ListPinnedItems :many
 SELECT id, workspace_id, user_id, item_type, item_id, position, created_at FROM pinned_item
 WHERE workspace_id = $1 AND user_id = $2

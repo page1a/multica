@@ -13,6 +13,7 @@ import {
   stripIssueDraftDirectives,
 } from "@multica/core/issue-drafts";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { projectListOptions } from "@multica/core/projects/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import {
@@ -88,6 +89,7 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
     record || session.pending || session.stage === "creating" || session.stage === "created";
 
   const runtimesQuery = useQuery(runtimeListOptions(wsId));
+  const projectsQuery = useQuery(projectListOptions(wsId));
   const membersQuery = useQuery(memberListOptions(wsId));
   // Asked only once the draft has converged: every answer is a routing-model
   // call per row, and a draft still being aligned changes under it. Built from
@@ -290,6 +292,7 @@ export function IssueDraftPage({ draftId }: { draftId: string }) {
               runtimes={runtimesQuery.data ?? []}
               runtimesLoading={runtimesQuery.isLoading}
               members={membersQuery.data ?? []}
+              projects={projectsQuery.data ?? []}
               assigneeSuggestions={assigneeSuggestionsQuery.data}
               assigneeSuggestionsLoading={assigneeSuggestionsQuery.isLoading}
               assigneeSuggestionsError={assigneeSuggestionsQuery.isError}

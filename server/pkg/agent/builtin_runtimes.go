@@ -60,12 +60,13 @@ type BuiltinRuntime struct {
 	ProviderLabel string
 
 	// ModelDiscovery is the strategy for discovering available models.
-	// When set, it replaces the protocol family's discovery entirely — omp
-	// uses `omp models --json`, a different command and output shape from
-	// pi's `--list-models`. When nil, ListModels returns an empty catalog
-	// rather than falling back to the family's command: running a
-	// semantically incompatible one (omp exits non-zero on `--list-models`)
-	// is worse than degrading to manual entry.
+	// When set, it is step 1 of the shared chain and replaces the protocol
+	// family's discovery entirely — omp uses `omp models --json`, a different
+	// command and output shape from pi's `--list-models`. When nil, ListModels
+	// does not run the family's command (omp exits non-zero on `--list-models`).
+	// The chain continues with whatever endpoint or readonly list command the
+	// discovery declaration registers, and otherwise says the list is
+	// temporarily unavailable.
 	ModelDiscovery ModelDiscoveryFunc
 }
 

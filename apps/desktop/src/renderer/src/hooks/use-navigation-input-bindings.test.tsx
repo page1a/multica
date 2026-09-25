@@ -22,6 +22,7 @@ function seedHistory() {
             resourceKey: "/acme/issues/abc",
             title: "",
             pinned: false,
+            groupId: null,
             history: {
               stack: ["/acme/issues", "/acme/issues/abc"],
               index: 1,
@@ -33,6 +34,7 @@ function seedHistory() {
         recentTabIds: ["t1"],
         browsingHistory: ["/acme/issues/abc", "/acme/issues"],
         browsingHistoryTitles: {},
+        groups: [],
       },
     },
   });

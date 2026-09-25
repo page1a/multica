@@ -402,6 +402,7 @@ func TestAgentAutoRetrySwitchGatesRetryEligible(t *testing.T) {
 		"timeout",
 		"codex_semantic_inactivity",
 		"skill_bundle_unavailable",
+		"cancelled",
 	}
 	for _, reason := range reasons {
 		if !retryEligible(reason, mkTask(), retryEnabledAgent()) {
@@ -441,6 +442,15 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		// tells the operator to switch the agent's account/seat instead.
 		{reason: "agent_error.provider_quota_limit", wantType: "agent_error", wantResumeOK: true, wantRetry: false},
 		{reason: "runtime_recovery", wantType: "runtime", wantResumeOK: true, wantRetry: true},
+		// DENE-813: the daemon reports this when its process context dies
+		// while the row is still running. Resume-safe so the retry keeps the
+		// session and workdir. A person's cancel-task/halt does not use this
+		// reason.
+		{reason: "cancelled", wantType: "cancelled", wantResumeOK: true, wantRetry: true},
+		// DENE-857: the workspace wall clock stopped a healthy run. Resume-safe
+		// so the next attempt keeps the session, and retryable until the
+		// attempt budget is spent.
+		{reason: "task_time_limit", wantType: "timeout", wantResumeOK: true, wantRetry: true},
 		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
 		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
 		{reason: "agent_error.context_overflow", wantType: "agent_error", wantResumeOK: false, wantRetry: false},

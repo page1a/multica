@@ -4,6 +4,28 @@
     "select_prompt": "Pick a conversation, or start a new one with +",
     "agent_link_no_access": "You don't have access to chat with this agent."
   },
+  "project_bar": {
+    "all": "All",
+    "more": "⋯ More ({{count}})",
+    "menu_title": "Projects",
+    "done": "Done",
+    "search": "Search projects…",
+    "pinned": "Pinned — drag to reorder",
+    "pinned_empty": "Nothing pinned yet",
+    "other": "Other projects — most recent chat first",
+    "none": "No project",
+    "chat_count_one": "{{count}} chat",
+    "chat_count_other": "{{count}} chats",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "drag": "Drag to reorder",
+    "empty": "No chats for this project yet",
+    "unread": "Unread"
+  },
+  "project_nudge": {
+    "bind": "Bind to a project",
+    "casual": "This is a casual chat and doesn't need a project"
+  },
   "fab": {
     "running": "Multica is working...",
     "unread_one": "{{count}} unread chat",
@@ -246,14 +268,23 @@
     "archive": "Archive",
     "unarchive": "Unarchive",
     "archived_title": "Archived",
-    "row_actions_aria": "Chat actions"
+    "row_actions_aria": "Chat actions",
+    "edit_access": "Edit access",
+    "private_tag": "Private",
+    "extra_tag": "Extra people"
   },
   "header": {
     "view_profile": "View agent profile",
     "rename": "Rename chat",
     "archive": "Archive chat",
     "unarchive": "Unarchive chat",
-    "delete": "Delete chat"
+    "delete": "Delete chat",
+    "copy_link": "Copy session link",
+    "link_copied": "Session link copied",
+    "copy_conversation": "Copy conversation as Markdown",
+    "conversation_copied": "Conversation copied",
+    "copy_role_user": "You",
+    "copy_role_assistant": "Assistant"
   },
   "provider_quota": {
     "label": "Quota",
@@ -262,5 +293,34 @@
     "used": "{{percent}}%",
     "resets": "resets {{when}}",
     "updated": "updated {{when}}"
+  },
+  "sharing": {
+    "title": "Edit access",
+    "follow": "Follow the project",
+    "follow_hint_bound": "Members of {{projects}} can see this chat and speak in it",
+    "follow_hint_unbound": "Bind a project before choosing this",
+    "extra": "Follow the project + extra people",
+    "extra_hint": "Project members, plus the people below",
+    "private": "Private",
+    "private_hint": "Only you can see it. It disappears from everyone else's list",
+    "view": "Can view",
+    "speak": "Can speak",
+    "add": "Add a person…",
+    "remove": "Remove",
+    "save": "Save",
+    "cancel": "Cancel",
+    "note_bound": "Making it private hides it from other people's lists right away. You can change it back.",
+    "note_unbound": "A chat with no project stays private.",
+    "view_only": "You can read this chat, but you can't send messages.",
+    "header_private": "Only you",
+    "header_project": "Project members can see and speak",
+    "header_extra": "Project members, plus extra people",
+    "search": "Search people…"
+  },
+  "notice": {
+    "title": "Some of your chats are now visible to project members",
+    "body": "You have {{count}} chats that project members can now see.",
+    "make_private": "Make selected private",
+    "dismiss": "Got it"
   }
 }

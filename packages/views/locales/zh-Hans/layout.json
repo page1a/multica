@@ -60,6 +60,8 @@
     "ai_team_group": "AI 团队",
     "show_more_pins": "再显示 {{count}} 项...",
     "show_fewer_pins": "收起",
+    "pin_drop_hint": "拖到这里置顶",
+    "chat_untitled": "新聊天",
     "unread_overflow": "99+",
     "discord_card": {
       "title": "加入 Discord",

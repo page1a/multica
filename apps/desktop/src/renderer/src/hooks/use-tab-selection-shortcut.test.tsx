@@ -22,6 +22,7 @@ function makeTab(index: number): TabSession {
     resourceKey: url,
     title: `Tab ${index}`,
     pinned: index === 1,
+    groupId: null,
     history: { stack: [url, `${url}?view=detail`], index: 1 },
     memento: {
       scroll: { [`${url}::main`]: { top: index * 10, height: 1000 } },
@@ -41,6 +42,7 @@ function seedTabs(count: number, activeIndex = 1): void {
         recentTabIds: [],
         browsingHistory: tabs.map((tab) => tab.url).reverse(),
         browsingHistoryTitles: {},
+        groups: [],
       },
     },
   });

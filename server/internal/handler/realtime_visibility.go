@@ -63,10 +63,109 @@ func (h *Handler) FilterRealtimeBroadcast(ctx context.Context, scopeType, scopeI
 		return nil
 	}
 
+	if realtimeChatEvent(eventType) {
+		if eventType == protocol.EventChatSessionRead {
+			return chatReaderDecision(payload, frame)
+		}
+		return h.chatVisibilityDecision(ctx, stringField(payload, "chat_session_id"), frame)
+	}
+
 	if !realtimeIssueEvent(eventType) {
 		return nil
 	}
 	return h.issueVisibilityDecision(ctx, realtimeIssueID(payload), frame)
+}
+
+// realtimeChatEvent lists chat frames that carry conversation content.
+// session_deleted and session_invalidated are absent on purpose: the row may
+// already be gone or the recipient may have just lost it, and those frames
+// exist so a client can drop what it cached.
+func realtimeChatEvent(eventType string) bool {
+	switch eventType {
+	case protocol.EventChatMessage,
+		protocol.EventChatDone,
+		protocol.EventChatQuickActions,
+		protocol.EventChatCancelFinalized,
+		protocol.EventChatSessionCreated,
+		protocol.EventChatSessionUpdated,
+		protocol.EventChatSessionRead:
+		return true
+	default:
+		return false
+	}
+}
+
+// chatReaderDecision delivers a read-cursor frame only to the person who
+// read. Someone else's cursor must not clear this client's unread.
+func chatReaderDecision(payload map[string]any, frame []byte) realtime.BroadcastDecision {
+	reader := stringField(payload, "reader_user_id")
+	if reader == "" {
+		return nil
+	}
+	return func(userID string) ([]byte, bool) {
+		if userID == reader {
+			return frame, true
+		}
+		return nil, false
+	}
+}
+
+// chatVisibilityDecision resolves one chat and answers, per recipient,
+// whether that person may see it. A chat that cannot be loaded is suppressed
+// for everyone — the same fail-closed answer the HTTP read gives.
+func (h *Handler) chatVisibilityDecision(ctx context.Context, sessionID string, frame []byte) realtime.BroadcastDecision {
+	if sessionID == "" {
+		return nil
+	}
+	sessionUUID, err := parseUUIDSafe(sessionID)
+	if err != nil {
+		return nil
+	}
+	session, err := h.Queries.GetChatSession(ctx, sessionUUID)
+	if err != nil {
+		return suppressEveryRecipient
+	}
+	projectRows, err := h.Queries.ListChatSessionProjectIDs(ctx, session.ID)
+	if err != nil {
+		return suppressEveryRecipient
+	}
+	shares, err := h.Queries.ListChatShareMemberAccess(ctx, db.ListChatShareMemberAccessParams{
+		WorkspaceID: session.WorkspaceID,
+		ResourceID:  uuidToString(session.ID),
+	})
+	if err != nil {
+		return suppressEveryRecipient
+	}
+	shareAccess := make(map[string]string, len(shares))
+	for _, share := range shares {
+		shareAccess[uuidToString(share.MemberID)] = share.Access
+	}
+	viewers := newRecipientViewers(h, ctx, session.WorkspaceID)
+	creatorID := uuidToString(session.CreatorID)
+	return func(userID string) ([]byte, bool) {
+		if userID == creatorID {
+			return frame, true
+		}
+		if session.Visibility != "project" {
+			return nil, false
+		}
+		if _, ok := shareAccess[userID]; ok {
+			return frame, true
+		}
+		viewer, ok := viewers.get(userID)
+		if !ok {
+			return nil, false
+		}
+		for _, projectID := range projectRows {
+			if viewer.inProject(projectID) {
+				return frame, true
+			}
+		}
+		if viewer.inProject(session.ProjectID) {
+			return frame, true
+		}
+		return nil, false
+	}
 }
 
 // issueVisibilityDecision resolves the issue once and then answers per

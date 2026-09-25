@@ -231,18 +231,23 @@ UPDATE agent SET
     -- TRUE makes it follow its base role again. Setting it back to "not
     -- applicable" belongs to SetAgentParentAgent, which owns the detach.
     runtime_inherited = COALESCE(sqlc.narg('runtime_inherited')::boolean, runtime_inherited),
+    -- Doorbell switch (DENE-808): same omitted-preserves / present-sets
+    -- contract as work_enabled. FALSE keeps the plain refusal for members
+    -- outside the allow-list; TRUE turns that refusal into an approval request.
+    doorbell_enabled = COALESCE(sqlc.narg('doorbell_enabled')::boolean, doorbell_enabled),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
 
--- name: DisableAgentSpecialisations :many
--- Turning off a base role also turns off its direct specialisations. This is
--- intentionally one-way: re-enabling the base role must not override a
--- specialisation's own work setting.
+-- name: SetAgentSpecialisationsWorkEnabled :many
+-- A specialisation is its base role plus extra prompt, skills and MCP, so its
+-- work switch follows the base role in both directions: turning the base role
+-- off or on sets every direct specialisation to the same value. Only rows that
+-- actually change are returned, so callers broadcast just those.
 UPDATE agent
-SET work_enabled = FALSE, updated_at = now()
-WHERE parent_agent_id = $1
-  AND work_enabled = TRUE
+SET work_enabled = sqlc.arg('work_enabled')::boolean, updated_at = now()
+WHERE parent_agent_id = sqlc.arg('parent_agent_id')::uuid
+  AND work_enabled <> sqlc.arg('work_enabled')::boolean
 RETURNING *;
 
 -- name: SetAgentParentAgent :one
@@ -506,7 +511,7 @@ INSERT INTO agent_task_queue (
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
     squad_id, context, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id, trigger_evidence_kind, trigger_evidence_ref_id,
-    id
+    work_thread_id, id
 )
 SELECT
     $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
@@ -531,6 +536,11 @@ SELECT
     sqlc.narg(rerun_of_task_id),
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
+    COALESCE((SELECT wt.id FROM work_thread wt
+              WHERE wt.issue_id = $3 AND wt.agent_id = $1 AND wt.runtime_id = $2
+                AND wt.model IS NOT DISTINCT FROM (SELECT a.model FROM agent a WHERE a.id = $1)
+                AND wt.permission_mode IS NOT DISTINCT FROM (SELECT a.permission_mode FROM agent a WHERE a.id = $1)
+              ORDER BY wt.updated_at DESC, wt.id DESC LIMIT 1), gen_random_uuid()),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows($1, $3, $2)
 RETURNING *;
@@ -548,7 +558,7 @@ INSERT INTO agent_task_queue (
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
     squad_id, context, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id,
-    trigger_evidence_kind, trigger_evidence_ref_id, fire_at,
+    trigger_evidence_kind, trigger_evidence_ref_id, fire_at, work_thread_id,
     id
 )
 SELECT
@@ -574,6 +584,11 @@ SELECT
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
     @fire_at,
+    COALESCE((SELECT wt.id FROM work_thread wt
+              WHERE wt.issue_id = $3 AND wt.agent_id = $1 AND wt.runtime_id = $2
+                AND wt.model IS NOT DISTINCT FROM (SELECT a.model FROM agent a WHERE a.id = $1)
+                AND wt.permission_mode IS NOT DISTINCT FROM (SELECT a.permission_mode FROM agent a WHERE a.id = $1)
+              ORDER BY wt.updated_at DESC, wt.id DESC LIMIT 1), gen_random_uuid()),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows($1, $3, $2)
 RETURNING *;
@@ -730,7 +745,8 @@ INSERT INTO agent_task_queue (
     originator_source, delegated_from_task_id, rule_version_id,
     trigger_evidence_kind, trigger_evidence_ref_id, retry_of_task_id,
     chat_input_task_id, fire_at,
-    channel_context_revision, id
+    channel_context_revision, failure_input_version,
+    work_thread_id, context_generation, continuity_break_reason, id
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
@@ -750,7 +766,12 @@ SELECT
     p.originator_source, p.delegated_from_task_id, p.rule_version_id,
     p.trigger_evidence_kind, p.trigger_evidence_ref_id, p.id,
     p.chat_input_task_id, sqlc.narg(fire_at),
-    p.channel_context_revision,
+    p.channel_context_revision, p.failure_input_version,
+    p.work_thread_id,
+    CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity'
+         THEN p.context_generation + 1 ELSE p.context_generation END,
+    CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity'
+         THEN 'resume_unsafe_failure' ELSE p.continuity_break_reason END,
     -- Named new_task_id, not id: $1 above is the PARENT task's id.
     COALESCE(sqlc.narg('new_task_id')::uuid, gen_random_uuid())
 FROM agent_task_queue p
@@ -995,7 +1016,8 @@ WHERE id = (
           WHERE active.agent_id = atq.agent_id
             AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
             AND (
-              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+              (atq.work_thread_id IS NOT NULL AND active.work_thread_id = atq.work_thread_id)
+              OR (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL
@@ -1507,6 +1529,8 @@ SET status = 'failed',
     completed_at = now(),
     error = $2,
     failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),
+    failure_input_version = sqlc.narg('failure_input_version'),
+    failure_fingerprint = sqlc.narg('failure_fingerprint'),
     session_id = CASE WHEN sqlc.arg('session_rollout_missing') THEN NULL ELSE COALESCE(sqlc.narg('session_id'), session_id) END,
     work_dir = COALESCE(sqlc.narg('work_dir'), work_dir),
     durable_work_dir = COALESCE(sqlc.narg('durable_work_dir'), durable_work_dir),
@@ -1516,6 +1540,19 @@ SET status = 'failed',
     prepare_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
 RETURNING *;
+
+-- name: CountConsecutiveFailureFingerprint :one
+SELECT COUNT(*)::bigint
+FROM (
+    SELECT failure_fingerprint
+    FROM agent_task_queue
+    WHERE failure_input_version = sqlc.arg('failure_input_version')
+      AND status = 'failed'
+      AND failure_fingerprint IS NOT NULL
+    ORDER BY completed_at DESC NULLS LAST, id DESC
+    LIMIT 2
+) recent
+WHERE failure_fingerprint = sqlc.arg('failure_fingerprint');
 
 -- name: UpdateAgentTaskSession :exec
 -- Pins the resume pointer mid-flight so a daemon crash leaves a usable
@@ -3110,3 +3147,16 @@ SELECT comment_thread_root_id(@comment_id::uuid)::uuid AS id;
 UPDATE agent_task_queue
 SET code_decision = sqlc.arg('code_decision')
 WHERE id = sqlc.arg('id');
+
+-- name: UpdateAgentPlanLimits :execrows
+-- Stores the daemon's normalized, credential-free provider snapshot for THIS
+-- agent's own CLI account, which is how an agent bound to a numbered account
+-- shows its own windows instead of the runtime's default one (DENE-715).
+-- Same IS DISTINCT FROM guard as UpdateAgentRuntimePlanLimits: the snapshot is
+-- a pure function of the account's live state, so an unchanged observation
+-- costs zero writes and zero broadcasts.
+UPDATE agent
+SET plan_limits = @plan_limits
+WHERE id = @id
+  AND workspace_id = @workspace_id
+  AND plan_limits IS DISTINCT FROM @plan_limits;

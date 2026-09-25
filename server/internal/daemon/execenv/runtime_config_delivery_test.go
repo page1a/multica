@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -267,6 +268,26 @@ func TestBriefChannelDeliveryCopyIgnoresServerVerdict(t *testing.T) {
 	}
 }
 
+// neutralizeChannelBrief replaces every known channel display name with one
+// token. Longer names go first so a later, shorter name cannot eat a prefix.
+func neutralizeChannelBrief(brief string) string {
+	names := []string{
+		ChannelDisplayName(ChannelTypeFeishu),
+		ChannelDisplayName(ChannelTypeDingtalk),
+		ChannelDisplayName(ChannelTypeWecom),
+		ChannelDisplayName(ChannelTypeSlack),
+	}
+	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
+	out := brief
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		out = strings.ReplaceAll(out, name, "<CHANNEL>")
+	}
+	return out
+}
+
 // TestBriefChannelDeliveryCopyIsPlatformNeutral is the structural form of the
 // rule the phrase lists above state one wording at a time.
 //
@@ -277,10 +298,15 @@ func TestBriefChannelDeliveryCopyIgnoresServerVerdict(t *testing.T) {
 // promise or a denial about the last hop, and the brief may carry neither,
 // because that hop is a deployment fact stated per turn (MUL-4899).
 //
-// So this substitutes the display name out and requires the briefs to be
-// byte-identical. A per-platform position fails here whatever words it is
-// written in. The phrase lists stay: they name the wordings, and they fail
-// beside the copy rather than on a whole-brief diff.
+// So this substitutes every known channel display name and requires the briefs
+// to be byte-identical. Substituting only the brief's own platform name is not
+// enough: shared copy can name a brand that is also a platform (the title-style
+// line keeps "Slack" in English on every channel). ReplaceAll on the Slack
+// brief would rewrite that shared example, and the Feishu and WeCom briefs
+// would keep it, which is not a file-delivery position. A sentence that treats
+// one platform differently still fails, because the words around the name
+// remain. The phrase lists stay: they name the wordings, and they fail beside
+// the copy rather than on a whole-brief diff.
 //
 // A channel type added to channel_type.go belongs in the list below — the
 // constants are the only enumeration of them that exists.
@@ -295,7 +321,7 @@ func TestBriefChannelDeliveryCopyIsPlatformNeutral(t *testing.T) {
 			AgentName:                "Eve",
 			AgentID:                  "eve-1",
 		})
-		return strings.ReplaceAll(out, ChannelDisplayName(channelType), "<CHANNEL>")
+		return neutralizeChannelBrief(out)
 	}
 
 	// Both verdicts, because the tempting place to write a denial is the

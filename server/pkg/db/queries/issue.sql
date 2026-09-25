@@ -114,6 +114,53 @@ WHERE workspace_id = sqlc.arg('workspace_id')
     OR metadata @> sqlc.arg('waiting_on_id')::jsonb
   );
 
+-- name: ListIssuesBlockedByToken :many
+-- DENE-850: waiters whose block.blocked_by list names this identifier or UUID.
+-- Commas are the token boundaries, so DENE-80 does not match DENE-806.
+-- close.waiting_on stays on ListIssuesWaitingOn; callers dedupe the two.
+SELECT * FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND (
+    ',' || replace(COALESCE(metadata->>'block.blocked_by', ''), ' ', '') || ','
+  ) LIKE ('%,' || sqlc.arg('token')::text || ',%');
+
+-- name: ListBlockPatrolCandidates :many
+-- DENE-850 patrol. Only rows stamped block.watched after this feature began
+-- watching them, so a deploy does not walk tickets already sitting in review.
+-- Clocks are compared as UTC text. The writer uses RFC3339 with a Z suffix.
+-- Casting to timestamptz would abort every workspace's sweep on one bad value.
+SELECT * FROM issue
+WHERE status IN ('blocked', 'in_review')
+  AND COALESCE(metadata->>'block.watched', '') = '1'
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = issue.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+  AND (
+    (
+      COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+      AND metadata->>'block.wake_at' <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    )
+    OR (
+      COALESCE(metadata->>'block.wait_timeout', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+      AND metadata->>'block.wait_timeout' <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    )
+    OR (
+      COALESCE(last_activity_at, updated_at) < sqlc.arg('quiet_before')::timestamptz
+    )
+  )
+ORDER BY
+  CASE
+    WHEN COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+      AND metadata->>'block.wake_at' <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') THEN 0
+    WHEN COALESCE(metadata->>'block.blocked_by', '') = ''
+      AND COALESCE(metadata->>'close.waiting_on', '') = '' THEN 1
+    ELSE 2
+  END,
+  COALESCE(last_activity_at, updated_at)
+LIMIT sqlc.arg('row_limit')::int;
+
 -- name: LockIssueForChannelMediaBind :one
 -- Channel media resolves after /issue creation. Hold a key-share lock while
 -- the attachment row is written so a concurrent issue delete cannot land
@@ -352,6 +399,24 @@ UPDATE issue AS i SET
     END,
     updated_at = now()
 WHERE i.id = $1 AND i.workspace_id = $3
+RETURNING *;
+
+-- name: PromoteBacklogIssueToTodo :one
+-- Stage advance only. A child still in backlog moves to todo; a second close
+-- that arrives after the first already promoted the row matches nothing, so
+-- the caller does not start another run. Repositioning matches UpdateIssueStatus.
+UPDATE issue AS i SET
+    status = 'todo',
+    position = (
+        SELECT COALESCE(MIN(target.position), 0) - 1
+        FROM issue AS target
+        WHERE target.workspace_id = i.workspace_id
+          AND target.status = 'todo'
+    ),
+    revision = i.revision + 1,
+    last_activity_at = GREATEST(COALESCE(i.last_activity_at, i.updated_at), now()),
+    updated_at = now()
+WHERE i.id = sqlc.arg('id') AND i.workspace_id = sqlc.arg('workspace_id') AND i.status = 'backlog'
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one

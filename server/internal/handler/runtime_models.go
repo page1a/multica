@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -69,6 +72,10 @@ type ModelListRequest struct {
 	CreatedAt         time.Time               `json:"created_at"`
 	UpdatedAt         time.Time               `json:"updated_at"`
 	RunStartedAt      *time.Time              `json:"-"`
+	// EnvOverlay is the requesting agent's custom_env. It is persisted for the
+	// daemon claim and never serialized on the HTTP response: a json tag here
+	// would hand the browser the same secrets the env endpoint audits.
+	EnvOverlay map[string]string `json:"-"`
 	// Cached marks a response answered from the server-side catalog cache
 	// instead of a live daemon round trip (MUL-5444). Purely informational —
 	// Status is already "completed" and Models is already populated, so a client
@@ -170,7 +177,9 @@ const (
 // implementation can honour the heartbeat-side timeout that gates a
 // slow shared store from stalling the rest of the heartbeat.
 type ModelListStore interface {
-	Create(ctx context.Context, runtimeID string) (*ModelListRequest, error)
+	// envOverlay is the requesting agent's custom_env, or nil for the machine
+	// config. Empty and nil are the same: the runtime catalog cache may answer.
+	Create(ctx context.Context, runtimeID string, envOverlay map[string]string) (*ModelListRequest, error)
 	Get(ctx context.Context, id string) (*ModelListRequest, error)
 	// HasPending is a cheap read-only probe used by the heartbeat hot path
 	// to gate the side-effecting PopPending. A spurious "true" is fine —
@@ -220,7 +229,7 @@ func NewInMemoryModelListStore() *InMemoryModelListStore {
 	return &InMemoryModelListStore{requests: make(map[string]*ModelListRequest)}
 }
 
-func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID string) (*ModelListRequest, error) {
+func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID string, envOverlay map[string]string) (*ModelListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -238,9 +247,10 @@ func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID string) (*M
 		Status:    ModelListPending,
 		// Default to true; the daemon overrides this in the report
 		// for providers that don't support per-agent model selection.
-		Supported: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Supported:  true,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		EnvOverlay: cloneModelListEnv(envOverlay),
 	}
 	s.requests[req.ID] = req
 	return req, nil
@@ -329,6 +339,98 @@ func modelListRequestTerminal(status ModelListStatus) bool {
 // Handlers
 // ---------------------------------------------------------------------------
 
+func cloneModelListEnv(overlay map[string]string) map[string]string {
+	if len(overlay) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(overlay))
+	for key, value := range overlay {
+		copied[key] = value
+	}
+	return copied
+}
+
+// pendingModelListPayload is what the heartbeat hands the daemon. The overlay
+// is copied so a later store mutation cannot change the in-flight probe.
+func pendingModelListPayload(req *ModelListRequest) *protocol.DaemonHeartbeatPendingModelList {
+	if req == nil {
+		return nil
+	}
+	return &protocol.DaemonHeartbeatPendingModelList{
+		ID:         req.ID,
+		EnvOverlay: cloneModelListEnv(req.EnvOverlay),
+	}
+}
+
+// modelListEnvOverlay loads the named agent's custom_env when this caller is
+// allowed to use it for discovery on this runtime. Any miss — unknown agent,
+// a different runtime, an agent actor, a member who cannot manage that env —
+// returns nil and the picker reads the machine config. The map is not written
+// to the HTTP response.
+func (h *Handler) modelListEnvOverlay(r *http.Request, rt db.AgentRuntime) map[string]string {
+	if h == nil || h.Queries == nil || r == nil {
+		return nil
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if agentID == "" {
+		return nil
+	}
+	userID := requestUserID(r)
+	if userID == "" {
+		return nil
+	}
+	workspaceID := uuidToString(rt.WorkspaceID)
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	agentUUID, err := util.ParseUUID(agentID)
+	if err != nil {
+		return nil
+	}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return nil
+	}
+	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          agentUUID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		return nil
+	}
+	memberUUID, err := util.ParseUUID(userID)
+	if err != nil {
+		return nil
+	}
+	member, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+		UserID:      memberUUID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		return nil
+	}
+	return agentEnvOverlayForModelList(actorType, agent, member, uuidToString(rt.ID))
+}
+
+// agentEnvOverlayForModelList decides whether this actor may point discovery
+// at one agent's endpoint. The agent's runtime has to be the runtime being
+// asked: the overlay contains secrets, and it may only travel to the daemon
+// that already runs that agent.
+func agentEnvOverlayForModelList(actorType string, agent db.Agent, member db.Member, runtimeID string) map[string]string {
+	if actorType == "agent" || agent.Kind != "user" {
+		return nil
+	}
+	if uuidToString(agent.RuntimeID) == "" || uuidToString(agent.RuntimeID) != runtimeID {
+		return nil
+	}
+	if !canManageAgentEnv(agent, member) {
+		return nil
+	}
+	env := unmarshalCustomEnv(agent)
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
 // InitiateListModels answers a "list this runtime's models" request.
 //
 // Fast path: unless force=true, a cached catalog younger than
@@ -355,7 +457,11 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	resolvedRuntimeID := uuidToString(rt.ID)
 
-	if r.URL.Query().Get("force") != "true" {
+	envOverlay := h.modelListEnvOverlay(r, rt)
+	// An agent overlay must not be answered from, or written into, the
+	// runtime-wide catalog. That cache is the machine's list; one agent's
+	// endpoint would otherwise become every other agent's dropdown.
+	if len(envOverlay) == 0 && r.URL.Query().Get("force") != "true" {
 		if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {
 			age := cached.Age(time.Now())
 			if age >= modelCatalogRevalidateAfter {
@@ -381,7 +487,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	req, err := h.ModelListStore.Create(r.Context(), resolvedRuntimeID)
+	req, err := h.ModelListStore.Create(r.Context(), resolvedRuntimeID, envOverlay)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue model list request: "+err.Error())
 		return
@@ -431,7 +537,7 @@ func (h *Handler) revalidateModelCatalog(ctx context.Context, runtimeID string) 
 	if pending {
 		return
 	}
-	if _, err := h.ModelListStore.Create(ctx, runtimeID); err != nil {
+	if _, err := h.ModelListStore.Create(ctx, runtimeID, nil); err != nil {
 		slog.Debug("model catalog revalidate enqueue failed", "error", err, "runtime_id", runtimeID)
 		return
 	}
@@ -556,7 +662,7 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 		// models are a static stand-in, so they are neither fresh truth to
 		// store nor grounds to discard a real catalog we already hold. Treat it
 		// like a failure and leave the cache untouched (MUL-5549).
-		if h.ModelCatalogCache != nil {
+		if h.ModelCatalogCache != nil && len(existing.EnvOverlay) == 0 {
 			switch modelCatalogCacheDecision(body.Models, supported, body.Fallback) {
 			case modelCatalogCacheStore:
 				if err := h.ModelCatalogCache.Put(r.Context(), runtimeID, body.Models, body.UnavailableModels, supported); err != nil {

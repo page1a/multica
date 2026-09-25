@@ -50,6 +50,15 @@ func TestPolicyPromptForbidsStatusWritesAndNamesThePreference(t *testing.T) {
 	if !strings.Contains(executorInstruction, "do not change status") || !strings.Contains(executorInstruction, "medium or strong") {
 		t.Error("system one instruction does not carry the tier preference")
 	}
+	if !strings.Contains(reviewerTierInstr, "policy_prompt") || !strings.Contains(reviewerTierInstr, "do not change status") {
+		t.Error("reviewer tier instruction does not follow policy_prompt")
+	}
+	if strings.Contains(reviewerTierInstr, "at least as demanding") {
+		t.Error("reviewer tier instruction still pushes the tier up")
+	}
+	if !strings.Contains(assignSystemPrompt, "reviewer_tier") {
+		t.Error("assign prompt does not apply policy_prompt to the reviewer tier")
+	}
 }
 
 func TestSnapshotOmitsUnobservedNumbers(t *testing.T) {

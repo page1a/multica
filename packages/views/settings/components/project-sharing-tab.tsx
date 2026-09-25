@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { FolderKanban, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { projectKeys, projectListOptions } from "@multica/core/projects";
@@ -42,13 +43,16 @@ export function ProjectSharingTab() {
   });
   const qc = useQueryClient();
   const [pending, setPending] = useState<{ id: string; title: string; visibility: Visibility } | null>(null);
-  const [pickingFor, setPickingFor] = useState<{ id: string; title: string; visibility: Visibility } | null>(null);
+  const [pickingFor, setPickingFor] = useState<{ id: string; title: string; visibility: Visibility; initialScope?: Visibility } | null>(null);
   const mutation = useMutation({
     mutationFn: ({ id, visibility }: { id: string; visibility: Visibility }) => api.setProjectVisibility(id, visibility),
     onSuccess: (_result, vars) => {
       qc.invalidateQueries({ queryKey: projectKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: [...projectKeys.detail(wsId, vars.id), "visibility-preview"] });
       setPending(null);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error && error.message ? error.message : t(($) => $.project_sharing.save_failed));
     },
   });
   const canManageProject = (project: (typeof projects)[number]) =>
@@ -87,12 +91,19 @@ export function ProjectSharingTab() {
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption text-muted-foreground">
                       <span>{labels[visibility]}</span><span>{t(($) => $.project_sharing.members, { count: projectMembers.length })}</span><span>{t(($) => $.project_sharing.guests, { count: projectGuestCount })}</span><span>{t(($) => $.project_sharing.resources, { count: preview?.affected_count ?? project.resource_count + project.issue_count })}</span>
                     </div>
-                    {visibility === "project" && projectMembers.length === 0 ? <p className="mt-2 text-caption text-amber-600">{t(($) => $.project_sharing.no_members)} {canManage ? <button type="button" className="underline" onClick={() => setPickingFor({ id: project.id, title: project.title, visibility })}>{t(($) => $.project_sharing.manage_members)}</button> : null}</p> : null}
+                    {visibility === "project" ? (
+                      <p className={projectMembers.length === 0 ? "mt-2 text-caption text-amber-600" : "mt-2 text-caption text-muted-foreground"}>
+                        {projectMembers.length === 0 ? <>{t(($) => $.project_sharing.no_members)} </> : null}
+                        {canManage ? <button type="button" className="underline" onClick={() => setPickingFor({ id: project.id, title: project.title, visibility })}>{t(($) => $.project_sharing.manage_members)}</button> : null}
+                      </p>
+                    ) : null}
                   </div>
                   <select aria-label={t(($) => $.project_sharing.change_for, { name: project.title })} className="h-9 rounded-md border border-input bg-background px-3 text-body" value={visibility} disabled={!canManage || mutation.isPending} onChange={(event) => {
                     const next = event.target.value as Visibility;
                     if (next === visibility) return;
-                    setPending({ id: project.id, title: project.title, visibility: next });
+                    // Specific people needs a pick list, so go straight to the picker.
+                    if (next === "project") setPickingFor({ id: project.id, title: project.title, visibility, initialScope: next });
+                    else setPending({ id: project.id, title: project.title, visibility: next });
                   }}>
                     <option value="private">{labels.private}</option><option value="project">{labels.project}</option><option value="workspace">{labels.workspace}</option>
                   </select>
@@ -108,6 +119,7 @@ export function ProjectSharingTab() {
           open
           onOpenChange={(open) => { if (!open) setPickingFor(null); }}
           target={{ kind: "project", resourceId: pickingFor.id, currentScope: pickingFor.visibility, resourceLabel: pickingFor.title }}
+          initialScope={pickingFor.initialScope}
         />
       ) : null}
       <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>

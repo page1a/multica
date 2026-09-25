@@ -657,9 +657,9 @@ func sweepTaskTimeLimits(ctx context.Context, taskSvc *service.TaskService) {
 		return
 	}
 	slog.Info("task sweeper: stopped tasks over workspace time limit", "count", len(stopped))
-	// Notify first: HandleFailedTasks resets a stranded in_progress issue to
-	// todo, and the notice reports the status the run was stopped in.
-	taskSvc.NotifyTaskTimeLimit(ctx, stopped)
+	// HandleFailedTasks continues a time-limit stop on the same session while
+	// the attempt budget remains, and blocks the issue once that budget is
+	// spent. The notice is posted there, next to the retry decision.
 	taskSvc.HandleFailedTasks(ctx, stopped)
 }
 

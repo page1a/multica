@@ -7,7 +7,10 @@ import enChat from "../../locales/en/chat.json";
 const updateMutate = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/paths", () => ({
-  useWorkspacePaths: () => ({ agentDetail: (id: string) => `/agents/${id}` }),
+  useWorkspacePaths: () => ({
+    agentDetail: (id: string) => `/agents/${id}`,
+    chatSession: (id: string) => `/acme/chat/${id}`,
+  }),
 }));
 
 vi.mock("@multica/core/chat/mutations", () => ({
@@ -21,12 +24,20 @@ vi.mock("@multica/core/chat", () => ({
     selector({ setActiveSession: vi.fn() }),
 }));
 
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (s: { user: { id: string } }) => unknown) =>
+    selector({ user: { id: "user-1" } }),
+}));
+
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: () => null,
 }));
 
 vi.mock("../../navigation", () => ({
   AppLink: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  useNavigation: () => ({
+    getShareableUrl: (path: string) => `https://example.test${path}`,
+  }),
 }));
 
 import { ChatSessionHeader } from "./chat-session-header";

@@ -24,18 +24,31 @@ type Backend interface {
 	Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error)
 }
 
+// withSystemPrompt prepends the runtime brief to the task prompt, the shape
+// every inline-brief backend sends: brief, a Markdown rule, then the task.
+// An empty systemPrompt returns prompt unchanged.
+func withSystemPrompt(systemPrompt, prompt string) string {
+	if systemPrompt == "" {
+		return prompt
+	}
+	return systemPrompt + "\n\n---\n\n" + prompt
+}
+
 // ExecOptions configures a single execution.
 type ExecOptions struct {
 	Cwd   string
 	Model string
 	// SystemPrompt carries the Multica runtime brief for the few providers
-	// that cannot pick it up from disk. The daemon leaves it empty for every
-	// other provider (see daemon.providerNeedsInlineSystemPrompt), because the
-	// brief is already delivered as a per-task context file in the workdir —
-	// CLAUDE.md, AGENTS.md, CODEBUDDY.md or QWEN.md depending on the runtime.
+	// that cannot pick it up from disk (daemon.providerNeedsInlineSystemPrompt),
+	// and for shared local_directory runs, where the daemon keeps the brief
+	// file out of the cwd (daemon.sharedModeBriefDelivery == sharedBriefInline).
+	// Otherwise it is empty: the brief is already a per-task context file in
+	// the workdir — CLAUDE.md, AGENTS.md, CODEBUDDY.md or QWEN.md.
 	//
 	// A backend must therefore NOT assume this is populated, and adding a new
 	// backend that only reads SystemPrompt will silently receive nothing.
+	// A backend listed as sharedBriefInline MUST deliver it when set
+	// (withSystemPrompt), or shared-mode tasks run without their brief.
 	SystemPrompt string
 	ThreadName   string
 	MaxTurns     int
@@ -299,6 +312,11 @@ type Result struct {
 	// its model catalog, and that the process tree was reaped afterwards.
 	// Like codexInitializeRetrySafe it is not part of the public contract.
 	codexStartupRefreshRetrySafe bool
+	// SessionRestartReason is set when this run had a prior CLI session and
+	// had to open a new one because that session could not be resumed.
+	// Empty when the run continued the prior session, or never had one.
+	// The server posts it on the issue; it is not a failure reason.
+	SessionRestartReason string
 }
 
 // Config configures a Backend instance.

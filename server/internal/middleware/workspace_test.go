@@ -4,10 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -18,18 +19,8 @@ const testResolverSlug = "middleware-resolver-test"
 // require a DB in environments where one isn't available.
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
-	pool, err := pgxpool.New(context.Background(), dbURL)
-	if err != nil {
-		t.Skipf("skipping: could not connect to database: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		t.Skipf("skipping: database not reachable: %v", err)
-	}
+	ctx := context.Background()
+	pool := testutil.OpenTestDatabase(ctx, t)
 	return pool
 }
 

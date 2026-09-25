@@ -2,6 +2,7 @@ package routing
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 // separate one would have to be found, would not be readable by the person the
 // decision affects, and would drift from what the ticket actually shows.
 
-const changeSlotFooter = "改右侧任一格即可，改完那一格不会被自动改回。"
+const changeSlotFooter = "改右侧任一格即可，改完那一格不会被自动改回。改执行人不会取消原来的 run；原来的席位如果还在跑，要停就取消那个 run。改到最强档要在评论里写明理由。"
 
 func pct(v float64) string {
 	return strconv.FormatFloat(v*100, 'f', 0, 64) + "%"
@@ -49,23 +50,33 @@ func (r *Router) assignmentComment(
 	humanSignoff bool,
 	needExecutor, needReviewer bool,
 	stillUnassigned bool,
+	mode fillMode,
 ) string {
 	var b strings.Builder
 	b.WriteString("## 自动选派\n\n")
+
+	// What the written seat does next. Only the todo row starts a run.
+	next := "已派出，run 已启动"
+	switch mode {
+	case fillParked:
+		next = "已就位，run 没启动——所在阶段提到待办时才开跑"
+	case fillCoordinator:
+		next = "已就位做**协调席**，run 没启动——子票推进到阶段收口时会叫醒它"
+	}
 
 	// Executor slot.
 	switch {
 	case !needExecutor:
 		b.WriteString("- **执行席**：由你指定，未改动\n")
 	case executor != nil && executorSource == pickLabel:
-		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，按票上的「%s」标签选的，没问模型）→ 已派出，run 已启动\n",
-			executor.Name, executor.TierLabel, executor.TierLabel))
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，按票上的「%s」标签选的，没问模型）→ %s\n",
+			executor.Name, executor.TierLabel, executor.TierLabel, next))
 	case executor != nil && executorSource == pickFallback:
-		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，**兜底档**——裁决置信度 %s 低于阈值 %s，或它点的档位这里没有席位）→ 仍然派出，run 已启动。觉得档位不对直接改，改了路由不会再碰\n",
-			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold)))
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，**兜底档**——裁决置信度 %s 低于阈值 %s，或它点的档位这里没有席位）→ 仍然%s。觉得档位不对直接改，改了路由不会再碰\n",
+			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold), next))
 	case executor != nil:
-		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，置信度 %s ≥ 阈值 %s）→ 已派出，run 已启动\n",
-			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold)))
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，置信度 %s ≥ 阈值 %s）→ %s\n",
+			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold), next))
 	default:
 		b.WriteString("- **执行席**：⚠️ 未填——这一格在本次裁决与写入之间被别人占了\n")
 	}
@@ -98,16 +109,80 @@ func (r *Router) assignmentComment(
 	b.WriteString("\n")
 
 	if humanSignoff && reviewer.Kind == ReviewerAgent {
-		b.WriteString(fmt.Sprintf("这次验收里有需要人拍板的部分：**%s** 先做检查、合并、关票，遇到只有人能定的事，由它在票下 @ 对应的人。票不会被改派给人。\n\n",
+		b.WriteString(fmt.Sprintf("这次验收里有需要人拍板的部分：**%s** 先做检查、合并、关票，遇到只有人能定的事，由它在票下 @ 对应的人。票不会被改派给人。这句不是停票的理由：检查通过就合并、关票；真有一件只有人能定的事，才 @ 那个人，并把人和那件事写明。\n\n",
 			reviewer.Label()))
 	}
 
+	if mode == fillCoordinator {
+		b.WriteString(coordinatorNote)
+	}
 	if stillUnassigned {
 		b.WriteString("⚠️ 执行席没派出去，这张票会一直躺在待办，所以 @ 你一次。\n\n")
 	}
 	b.WriteString(changeSlotFooter)
 	b.WriteString("\n\n**路由没有改过状态** —— 状态是事实，只有干活的席位知道。")
 	return b.String()
+}
+
+// DemotionFootnote says why a repeatedly broken seat was not the first
+// choice, or why it still was when the rung had nobody else. Empty when
+// nobody on the chosen rung is demoted.
+func DemotionFootnote(ladder Ladder, roster map[string]Agent, chosen *Seat) string {
+	if chosen == nil {
+		return ""
+	}
+	var skipped []string
+	chosenDemoted := false
+	for _, agent := range roster {
+		if !agent.Demoted || agentTierKey(ladder, agent) != chosen.TierKey {
+			continue
+		}
+		if agent.ID == chosen.ID {
+			chosenDemoted = true
+			continue
+		}
+		skipped = append(skipped, agent.Name)
+	}
+	sort.Strings(skipped)
+	if len(skipped) > 0 {
+		return "同档的" + strings.Join(skipped, "、") + " 24 小时内熔断了至少两次。恢复后新票先不派给这一席，直到它自己做成一单。"
+	}
+	if chosenDemoted {
+		return chosen.Name + " 24 小时内熔断了至少两次。这档没有别的席位可派，所以仍由它接。做成一单之后才会重新优先。"
+	}
+	return ""
+}
+
+func agentTierKey(ladder Ladder, agent Agent) string {
+	if key, ok := ladder.NormalizeTier(agent.Tier); ok && key != "" {
+		return key
+	}
+	if key, ok := ladder.TierOf(agent.Name); ok {
+		return key
+	}
+	return ""
+}
+
+// coordinatorNote is the division of labour a group root's decision comment
+// states once, where both the coordinator and the sub-issues' executors read
+// it: the work lives in the sub-issues, the root supervises (DENE-812).
+const coordinatorNote = "**分工**：这张是父票，活在子票里——每张子票有自己的执行席，一步步往前推；父票的执行席只做监督：盯子票进度、阶段收口后把下一阶段提到待办、疏通卡住的子票、子票没人就派人，全部收口后把父票整体交验收。父票不替子票干活，子票之外冒出的新活开新子票。\n\n"
+
+func disabledReviewerNote(from, to string, steppedDown bool) string {
+	if from == "" {
+		from = "原验收席"
+	}
+	if steppedDown {
+		return fmt.Sprintf("验收席 %s 已停用，不接新活。同档没有另一家还能接的席位，复审改由下一档的 %s 接手，避开了执行席本人。原席位恢复后不会自动抢回；只有它仍是这张票指定的验收人、而且新席位还没开跑时才会换回去。", from, to)
+	}
+	return fmt.Sprintf("验收席 %s 已停用，不接新活。复审改由同档另一家模型的 %s 接手，避开了执行席本人。原席位恢复后不会自动抢回；只有它仍是这张票指定的验收人、而且新席位还没开跑时才会换回去。", from, to)
+}
+
+func disabledReviewerStuck(from string) string {
+	if from == "" {
+		from = "原验收席"
+	}
+	return fmt.Sprintf("验收席 %s 已停用，不接新活。同档没有另一家供应商，降一档也没有能接的席位。这张票停在待验收，需要人指定验收席。", from)
 }
 
 // handoffComment is the in-review-row comment. Every handoff it describes is
@@ -126,6 +201,7 @@ func (r *Router) handoffComment(issue Issue, to string, decidedHere bool) string
 	}
 	b.WriteString("- 指派本身就是叫醒，这个席位的 run 已启动\n")
 	b.WriteString("\n验收席只做检查、合并、关票，不重做这张票的活；认为要返工就把票改回执行席并说明原因。遇到只有人能定的事，在票下 @ 对应的人，不要把票改派给人。\n")
+	b.WriteString("验收通过、且这次改动自己的检查是绿的，就在这一轮合并并关票。主干上本来就红的检查，以及路由写的「需要人拍板」，都不是停在待验收的理由。只有票上写明在等哪个人做哪个决定时，才停在待验收。\n")
 	b.WriteString("\n**路由没有改过状态。**")
 	return b.String()
 }

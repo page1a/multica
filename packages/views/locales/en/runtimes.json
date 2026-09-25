@@ -284,6 +284,21 @@
       "timeout": "Timeout"
     }
   },
+  "agent_cli": {
+    "versions": "{{current}} / {{latest}}",
+    "update_available": "Update available",
+    "up_to_date": "Up to date",
+    "follow": "Auto-follow latest",
+    "update_now": "Update now",
+    "updating": "Updating…",
+    "waiting": "Waiting until this machine is idle",
+    "unsupported": "This CLI cannot be updated automatically",
+    "binary": "This copy: {{path}}",
+    "check_failed": "Could not check the latest version",
+    "follow_failed": "Could not save auto-follow",
+    "update_request_failed": "Could not start the update",
+    "read_only": "Only the runtime owner or a workspace admin can update this CLI"
+  },
   "charts": {
     "heatmap_less": "Less",
     "heatmap_more": "More",

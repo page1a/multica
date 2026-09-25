@@ -17,7 +17,7 @@ SET status = 'cancelled', completed_at = now(),
     cancelled_by_type = 'system', cancelled_by_id = NULL, cancelled_by_name = NULL
 WHERE (runtime_id = ANY($1::uuid[]) OR agent_id = ANY($2::uuid[]))
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, code_decision
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, code_decision, failure_input_version, failure_fingerprint, work_thread_id, context_generation, context_message_limit, context_token_budget, continuity_break_reason
 `
 
 type CancelAgentTasksByRuntimeOrAgentParams struct {
@@ -117,6 +117,13 @@ func (q *Queries) CancelAgentTasksByRuntimeOrAgent(ctx context.Context, arg Canc
 			&i.CancelledByName,
 			&i.IssueSnapshot,
 			&i.CodeDecision,
+			&i.FailureInputVersion,
+			&i.FailureFingerprint,
+			&i.WorkThreadID,
+			&i.ContextGeneration,
+			&i.ContextMessageLimit,
+			&i.ContextTokenBudget,
+			&i.ContinuityBreakReason,
 		); err != nil {
 			return nil, err
 		}
@@ -219,7 +226,7 @@ SET status = 'failed', completed_at = now(), error = 'runtime went offline',
 FROM victims
 WHERE task.id = victims.id
   AND task.status IN ('dispatched', 'running', 'waiting_local_directory')
-RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.branch_name, task.durable_work_dir, task.channel_context_revision, task.comment_thread_id, task.cancelled_by_type, task.cancelled_by_id, task.cancelled_by_name, task.issue_snapshot, task.code_decision
+RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.branch_name, task.durable_work_dir, task.channel_context_revision, task.comment_thread_id, task.cancelled_by_type, task.cancelled_by_id, task.cancelled_by_name, task.issue_snapshot, task.code_decision, task.failure_input_version, task.failure_fingerprint, task.work_thread_id, task.context_generation, task.context_message_limit, task.context_token_budget, task.continuity_break_reason
 `
 
 type FailTasksForOfflineRuntimesParams struct {
@@ -305,6 +312,13 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context, arg FailTasks
 			&i.CancelledByName,
 			&i.IssueSnapshot,
 			&i.CodeDecision,
+			&i.FailureInputVersion,
+			&i.FailureFingerprint,
+			&i.WorkThreadID,
+			&i.ContextGeneration,
+			&i.ContextMessageLimit,
+			&i.ContextTokenBudget,
+			&i.ContinuityBreakReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1119,6 +1133,30 @@ func (q *Queries) MarkRuntimesOfflineByIDs(ctx context.Context, arg MarkRuntimes
 	return items, nil
 }
 
+const mergeAgentRuntimeCLIUpdate = `-- name: MergeAgentRuntimeCLIUpdate :execrows
+UPDATE agent_runtime
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('cli_update', $1::jsonb),
+    updated_at = now()
+WHERE id = $2
+  AND COALESCE(metadata->'cli_update', 'null'::jsonb) IS DISTINCT FROM $1::jsonb
+`
+
+type MergeAgentRuntimeCLIUpdateParams struct {
+	CliUpdate []byte      `json:"cli_update"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+// Stores the agent-CLI updater snapshot (current/latest/phase/error) under
+// metadata.cli_update. IS DISTINCT FROM skips the write when nothing the
+// page shows has changed, so a 10-minute check does not broadcast.
+func (q *Queries) MergeAgentRuntimeCLIUpdate(ctx context.Context, arg MergeAgentRuntimeCLIUpdateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, mergeAgentRuntimeCLIUpdate, arg.CliUpdate, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reassignAgentsToRuntime = `-- name: ReassignAgentsToRuntime :execrows
 UPDATE agent
 SET runtime_id = $1
@@ -1378,7 +1416,7 @@ const unbindUserAgentsFromRuntime = `-- name: UnbindUserAgentsFromRuntime :many
 UPDATE agent
 SET runtime_id = NULL, updated_at = now()
 WHERE runtime_id = $1 AND kind = 'user'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled
 `
 
 // MUL-5559: the runtime-delete replacement for archive-then-hard-delete. Every
@@ -1436,6 +1474,8 @@ func (q *Queries) UnbindUserAgentsFromRuntime(ctx context.Context, runtimeID pgt
 			&i.RuntimeInherited,
 			&i.RoutingTier,
 			&i.WorkEnabled,
+			&i.PlanLimits,
+			&i.DoorbellEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -1667,7 +1707,12 @@ DO UPDATE SET
     runtime_mode = EXCLUDED.runtime_mode,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    -- Registration rebuilds metadata from the probe. cli_update is written by
+    -- the agent-CLI updater between registers; keep it or the page blanks
+    -- every time a version refresh upserts the row.
+    metadata = EXCLUDED.metadata || jsonb_strip_nulls(jsonb_build_object(
+        'cli_update', agent_runtime.metadata->'cli_update'
+    )),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
@@ -1775,7 +1820,9 @@ DO UPDATE SET
     provider = EXCLUDED.provider,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    metadata = EXCLUDED.metadata || jsonb_strip_nulls(jsonb_build_object(
+        'cli_update', agent_runtime.metadata->'cli_update'
+    )),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()

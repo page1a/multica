@@ -188,6 +188,7 @@ const (
 	PendingWorkKindProviderConfig   = "provider_config"
 	PendingWorkKindLocalSkills      = "local_skills"
 	PendingWorkKindLocalSkillImport = "local_skill_import"
+	PendingWorkKindAgentCLI         = "agent_cli"
 )
 
 // PendingWorkPayload is sent from server to daemon as a wakeup hint when a
@@ -276,6 +277,9 @@ type ChatMessagePayload struct {
 	Content       string `json:"content"`
 	TaskID        string `json:"task_id,omitempty"`
 	CreatedAt     string `json:"created_at"`
+	// SenderUserID is the person who typed this user message. Empty on
+	// assistant rows and on agent-authored turns.
+	SenderUserID string `json:"sender_user_id,omitempty"`
 }
 
 // Chat message kinds (chat_message.message_kind). Additive: unknown values
@@ -370,6 +374,15 @@ type ChatCancelFinalizedPayload struct {
 // Fires to other devices so their unread counts stay in sync.
 type ChatSessionReadPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
+	// ReaderUserID is whose cursor moved. Other people keep their own.
+	ReaderUserID string `json:"reader_user_id,omitempty"`
+}
+
+// ChatSessionInvalidatedPayload is the id-only frame sent when sharing
+// changes. It is delivered even to people who can no longer see the chat,
+// so their client drops the cached row. It carries no title or transcript.
+type ChatSessionInvalidatedPayload struct {
+	ChatSessionID string `json:"chat_session_id"`
 }
 
 type ChatSessionCreatedPayload struct {
@@ -416,8 +429,12 @@ type ChatSessionUpdatedPayload struct {
 	Pinned *bool `json:"pinned,omitempty"`
 	// Status is set only by the archive/unarchive path ("active"/"archived");
 	// nil on rename/pin so a receiver leaves the existing status untouched.
-	Status    *string `json:"status,omitempty"`
-	UpdatedAt string  `json:"updated_at"`
+	Status *string `json:"status,omitempty"`
+	// ProjectNudgeDismissed is set only when the creator marks the chat as
+	// not needing a project. nil on every other update so a receiver leaves
+	// the existing flag untouched.
+	ProjectNudgeDismissed *bool  `json:"project_nudge_dismissed,omitempty"`
+	UpdatedAt             string `json:"updated_at"`
 }
 
 // DaemonHeartbeatRequestPayload is sent from daemon to server over WebSocket
@@ -428,6 +445,17 @@ type DaemonHeartbeatRequestPayload struct {
 	RuntimeID           string              `json:"runtime_id"`
 	SupportsBatchImport bool                `json:"supports_batch_import,omitempty"`
 	PlanLimits          *PlanLimitsSnapshot `json:"plan_limits,omitempty"`
+	// AgentPlanLimits carries one snapshot per AGENT whose CLI account is not
+	// the daemon-default one, keyed by agent id (DENE-715).
+	//
+	// It exists because agent_runtime.plan_limits is one row per
+	// (workspace, daemon, provider) while a single Claude runtime serves every
+	// Claude seat on that machine: an agent switched to a numbered account
+	// (custom_env CLAUDE_CONFIG_DIR) cannot be told apart from its unbound
+	// siblings by the runtime row alone. PlanLimits stays the runtime's default
+	// account snapshot, so a daemon that never fills this map — or an agent it
+	// has not run yet — keeps exactly the previous behavior.
+	AgentPlanLimits map[string]PlanLimitsSnapshot `json:"agent_plan_limits,omitempty"`
 	// Jev is the host-level JEV (fast judgement layer) status observed by the
 	// daemon. There is one state directory per machine, so every runtime frame
 	// of a daemon carries the same snapshot. Daemons that predate the field
@@ -518,6 +546,7 @@ type DaemonHeartbeatAckPayload struct {
 	ServerCapabilities      []string                                `json:"server_capabilities,omitempty"`
 	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
 	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
+	PendingAgentCLI         *DaemonHeartbeatPendingAgentCLI         `json:"pending_agent_cli,omitempty"`
 	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
 	PendingProviderConfig   *DaemonHeartbeatPendingProviderConfig   `json:"pending_provider_config,omitempty"`
 	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
@@ -540,10 +569,27 @@ type DaemonHeartbeatPendingUpdate struct {
 	TargetVersion string `json:"target_version"`
 }
 
+// DaemonHeartbeatPendingAgentCLI is a follow-switch or a one-shot upgrade of
+// the agent CLI behind this runtime. Follow is omitted when the user has not
+// changed it. FollowID identifies that one click so the server can drop it
+// after the daemon applies it; the next click gets a new id. The daemon keeps
+// its own default (on) until a value arrives.
+type DaemonHeartbeatPendingAgentCLI struct {
+	Follow    *bool  `json:"follow,omitempty"`
+	FollowID  string `json:"follow_id,omitempty"`
+	UpdateNow bool   `json:"update_now,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
 // DaemonHeartbeatPendingModelList describes a request for the daemon to
 // enumerate the runtime's supported models.
+//
+// EnvOverlay is the requesting agent's custom_env, when the picker named one
+// agent. It rides the daemon heartbeat only. The browser's model-list
+// response does not carry it, and nothing in the catalog result may echo it.
 type DaemonHeartbeatPendingModelList struct {
-	ID string `json:"id"`
+	ID         string            `json:"id"`
+	EnvOverlay map[string]string `json:"env_overlay,omitempty"`
 }
 
 // DaemonHeartbeatPendingProviderConfig describes a request for the daemon to

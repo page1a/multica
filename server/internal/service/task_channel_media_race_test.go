@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -588,7 +589,7 @@ func TestDeferredChannelIssueTaskConflictsWithQueuedSiblingAtDatabase(t *testing
 		t.Fatalf("load pending-task index: %v", err)
 	}
 	if !strings.Contains(indexDefinition, "channel_issue_media_pending") {
-		t.Skip("channel-media pending-task uniqueness migration is not applied")
+		testutil.SkipUnmigrated(t, "channel-media pending-task uniqueness migration is not applied")
 	}
 
 	q := db.New(pool)

@@ -4,8 +4,10 @@ import type { RuntimeModelsResult } from "../types/agent";
 
 export const runtimeModelsKeys = {
   all: () => ["runtimes", "models"] as const,
-  forRuntime: (runtimeId: string) =>
-    [...runtimeModelsKeys.all(), runtimeId] as const,
+  forRuntime: (runtimeId: string, agentId?: string | null) =>
+    agentId
+      ? ([...runtimeModelsKeys.all(), runtimeId, agentId] as const)
+      : ([...runtimeModelsKeys.all(), runtimeId] as const),
 };
 
 const POLL_INTERVAL_MS = 500;
@@ -67,12 +69,18 @@ export const MODELS_GC_TIME_MS = 30 * 60_000;
 // window past what the server itself promises.
 export async function resolveRuntimeModels(
   runtimeId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; agentId?: string } = {},
 ): Promise<RuntimeModelsResult> {
-  const initial =
-    options.force === true
-      ? await api.initiateListModels(runtimeId, { force: true })
-      : await api.initiateListModels(runtimeId);
+  const listOptions =
+    options.force || options.agentId
+      ? {
+          ...(options.force ? { force: true as const } : {}),
+          ...(options.agentId ? { agentId: options.agentId } : {}),
+        }
+      : undefined;
+  const initial = listOptions
+    ? await api.initiateListModels(runtimeId, listOptions)
+    : await api.initiateListModels(runtimeId);
   const start = Date.now();
   let current = initial;
   while (current.status === "pending" || current.status === "running") {
@@ -119,12 +127,18 @@ export function staleTimeFor(data: RuntimeModelsResult | undefined): number {
   return data.cached ? 0 : LIVE_MODELS_STALE_TIME_MS;
 }
 
-export function runtimeModelsOptions(runtimeId: string | null | undefined) {
+export function runtimeModelsOptions(
+  runtimeId: string | null | undefined,
+  agentId?: string | null,
+) {
   return queryOptions({
     queryKey: runtimeId
-      ? runtimeModelsKeys.forRuntime(runtimeId)
+      ? runtimeModelsKeys.forRuntime(runtimeId, agentId)
       : runtimeModelsKeys.all(),
-    queryFn: () => resolveRuntimeModels(runtimeId as string),
+    queryFn: () =>
+      resolveRuntimeModels(runtimeId as string, {
+        ...(agentId ? { agentId } : {}),
+      }),
     enabled: Boolean(runtimeId),
     staleTime: (query) => staleTimeFor(query.state.data),
     gcTime: MODELS_GC_TIME_MS,
@@ -139,10 +153,15 @@ export function runtimeModelsOptions(runtimeId: string | null | undefined) {
 export function refreshRuntimeModels(
   queryClient: QueryClient,
   runtimeId: string,
+  agentId?: string | null,
 ): Promise<RuntimeModelsResult> {
   return queryClient.fetchQuery({
-    ...runtimeModelsOptions(runtimeId),
-    queryFn: () => resolveRuntimeModels(runtimeId, { force: true }),
+    ...runtimeModelsOptions(runtimeId, agentId),
+    queryFn: () =>
+      resolveRuntimeModels(runtimeId, {
+        force: true,
+        ...(agentId ? { agentId } : {}),
+      }),
     staleTime: 0,
   });
 }

@@ -384,6 +384,14 @@ export interface AgentTask {
   id: string;
   agent_id: string;
   runtime_id: string;
+  /** Durable continuity boundary shared by turns for the same work item. */
+  work_thread_id?: string;
+  /** Increments when the provider context must be rebuilt after compression/overflow. */
+  context_generation?: number;
+  /** Server-enforced upper bound for issue/comment context included in a claim. */
+  context_message_limit?: number;
+  /** Conservative token budget for the inline context snapshot. */
+  context_token_budget?: number;
   // Empty string ("") when the task has no linked issue — either chat- or
   // autopilot-spawned. Check chat_session_id / autopilot_run_id to tell
   // which source produced it.
@@ -597,6 +605,14 @@ export interface MikaBootstrapResponse extends Agent {
   onboarding_session?: ChatSession;
 }
 
+export interface AgentWorkPause {
+  reason: string;
+  detail?: string;
+  condition?: string;
+  recover_at?: string;
+  opened_at: string;
+}
+
 export interface Agent {
   id: string;
   workspace_id: string;
@@ -685,6 +701,19 @@ export interface Agent {
    * alongside `has_custom_env`. Treat `undefined` as zero. MUL-2600.
    */
   custom_env_key_count?: number;
+  /**
+   * This agent's own subscription windows, reported by the daemon that runs it
+   * (DENE-715).
+   *
+   * Plan limits live on the runtime, but one runtime serves every CLI seat on
+   * the machine: an agent switched to a numbered account still shares its
+   * runtime row with its unbound siblings. The daemon therefore reports the
+   * bound agent's own account snapshot here, and readers prefer it over
+   * `runtime.plan_limits`. Absent or `null` means "no agent-specific snapshot"
+   * — the agent has no account binding, or the daemon has not run it yet — and
+   * the runtime's value is the correct fallback.
+   */
+  plan_limits?: PlanLimitsSnapshot | null;
   /**
    * MCP server configuration forwarded to runtimes that consume
    * `agent.mcp_config` (see providerSupportsMcpConfig). Each backend
@@ -780,11 +809,20 @@ export interface Agent {
    */
   work_enabled?: boolean;
   /**
-   * Display-only model lineup (kun fork, DENE-200): the default model, the
-   * ordered fallback chain and models borrowable for batch work. Never used
-   * for routing. Older servers omit it; treat undefined as [].
+   * Why the platform turned the seat off (DENE-870), from its open quota
+   * breaker. Absent for a seat a person turned off. `recover_at` is absent
+   * when only a person can bring it back (reason `balance_exhausted`: top
+   * up, then re-enable).
    */
-  switchable_models?: AgentSwitchableModel[];
+  work_pause?: AgentWorkPause;
+  /**
+   * Doorbell (kun fork, DENE-808). When on, a member who is not allowed to
+   * invoke this agent does not get a plain refusal: their @mention or
+   * assignment becomes a pending access request the owner approves or
+   * declines from the inbox. Default off; only the owner can flip it. Older
+   * backends omit the field; treat `undefined` as off.
+   */
+  doorbell_enabled?: boolean;
   owner_id: string | null;
   skills: AgentSkillSummary[];
   /** Runtime-local skills this agent must not inherit. Older servers omit it. */
@@ -1021,8 +1059,6 @@ export interface UpdateAgentRequest {
    * `""` takes the seat off the ladder, and a tier key sets the rung.
    */
   routing_tier?: string;
-  /** Replaces the display-only model lineup wholesale; `[]` clears it. */
-  switchable_models?: AgentSwitchableModel[];
   /**
    * Platform auto-retry switch. Omitted preserves the saved value; `false`
    * turns platform auto-retry off without affecting manual rerun.
@@ -1033,6 +1069,8 @@ export interface UpdateAgentRequest {
    * stops the seat taking new work without archiving it.
    */
   work_enabled?: boolean;
+  /** Owner-only doorbell switch (DENE-808). Omitted preserves the saved value. */
+  doorbell_enabled?: boolean;
   /**
    * Re-parents this agent (DENE-301). Tri-state semantics:
    *   - field omitted → no change
@@ -1054,15 +1092,6 @@ export interface UpdateAgentRequest {
    * it was already running with.
    */
   runtime_inherited?: boolean;
-}
-
-export type AgentSwitchableModelRole = "default" | "fallback" | "batch";
-
-/** One entry of `Agent.switchable_models`. */
-export interface AgentSwitchableModel {
-  model: string;
-  role: AgentSwitchableModelRole;
-  note: string;
 }
 
 /**
@@ -1767,4 +1796,84 @@ export interface RuntimeProviderPresetsResult {
   presets: RuntimeProviderPreset[];
   active: RuntimeProviderPresetActive | null;
   clearedActive: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Agent borrowing: doorbell requests + timed access passes (kun fork, DENE-808)
+// ---------------------------------------------------------------------------
+
+export type AgentAccessRequestStatus = "pending" | "approved" | "declined" | "expired";
+export type AgentAccessTriggerKind = "mention" | "assign";
+
+/** One member's ask to use an agent they cannot normally invoke. */
+export interface AgentAccessRequest {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  agent_name: string;
+  requester_id: string;
+  requester_name: string;
+  requester_email: string;
+  requester_avatar_url: string | null;
+  issue_id: string | null;
+  issue_number: number | null;
+  issue_title: string | null;
+  comment_id: string | null;
+  trigger_kind: AgentAccessTriggerKind;
+  summary: string;
+  status: AgentAccessRequestStatus;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface AgentAccessRequestList {
+  /** Requests waiting on agents the caller owns. */
+  incoming: AgentAccessRequest[];
+  /** Requests the caller raised. */
+  outgoing: AgentAccessRequest[];
+}
+
+/** A time-limited grant letting one member invoke one agent. */
+export interface AgentAccessPass {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  user_avatar_url: string | null;
+  granted_by: string;
+  expires_at: string;
+  revoked_at: string | null;
+  request_id: string | null;
+  created_at: string;
+  active: boolean;
+}
+
+export interface ApproveAgentAccessRequestBody {
+  /** Absolute expiry for a pass issued alongside the approval. */
+  pass_expires_at?: string;
+  /** Relative alternative to `pass_expires_at`. */
+  pass_duration_minutes?: number;
+}
+
+/** Server-side admission result of replaying the approved trigger. */
+export interface AgentAccessReplayOutcome {
+  status: "queued" | "coalesced" | "deferred" | "blocked" | string;
+  reason_code: string;
+  task_id?: string | null;
+}
+
+export interface ApproveAgentAccessRequestResponse {
+  request: AgentAccessRequest;
+  pass: AgentAccessPass | null;
+  replay: AgentAccessReplayOutcome | null;
+}
+
+export interface CreateAgentAccessPassRequest {
+  user_id: string;
+  expires_at?: string;
+  duration_minutes?: number;
 }

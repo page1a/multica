@@ -159,6 +159,9 @@ func (h *Handler) loadIssueDraftSession(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return db.ChatSession{}, false
 	}
+	if !denyUnlessChatCreator(w, session, userID) {
+		return db.ChatSession{}, false
+	}
 	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat agent")
@@ -847,6 +850,21 @@ func (h *Handler) writeIssueDraftWriteConflict(w http.ResponseWriter, r *http.Re
 
 type FinalizeIssueDraftRequest struct {
 	ExpectedRevision *int64 `json:"expected_revision"`
+	// NewProject, when set, is created in the same transaction as the issues.
+	// The carrier never sends this: the confirm panel does, after the person
+	// has accepted a proposal. A directory the panel already created is named
+	// by Directory; if this request fails before commit, that directory is the
+	// caller's to remove.
+	NewProject *FinalizeNewProjectRequest `json:"new_project,omitempty"`
+}
+
+// FinalizeNewProjectRequest is the project the confirm will create.
+// Directory is a local_directory resource_ref; absent means no directory.
+type FinalizeNewProjectRequest struct {
+	Title       string          `json:"title"`
+	Description *string         `json:"description"`
+	Icon        *string         `json:"icon"`
+	Directory   json.RawMessage `json:"directory,omitempty"`
 }
 
 type FinalizeIssueDraftResponse struct {
@@ -948,6 +966,16 @@ func (h *Handler) FinalizeIssueDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A project the person accepted is created with the issues, and only on
+	// the confirm that inserts the root. A retry that finds the group already
+	// committed adopts it and must not create a second project.
+	if req.NewProject != nil && !state.HasRoot && !group.RootIssueID.Valid {
+		project, projectOK := h.issueGroupProjectFromRequest(w, r, session, userID, group, req.NewProject)
+		if !projectOK {
+			return
+		}
+		group.Project = project
+	}
 	issues, created, ok := h.createIssueGroupForDraft(w, r, session, state, group)
 	if !ok {
 		return
@@ -965,6 +993,13 @@ func (h *Handler) FinalizeIssueDraft(w http.ResponseWriter, r *http.Request) {
 	// an adopted group belongs to the confirm that created it.
 	if created {
 		completed.AssignmentWarnings = warnings
+		// The rows this confirm wrote never went through the create hook, so
+		// routing seats them here: every node the preview left unheld gets an
+		// executor, and the root its reviewer (DENE-812). Filling only empty
+		// slots makes an adopted node in the same group a no-op.
+		for _, issue := range issues {
+			h.RouteGroupNodeAsync(r, uuidToString(session.WorkspaceID), uuidToString(issue.ID))
+		}
 	}
 	writeJSON(w, http.StatusOK, *completed)
 }
@@ -1047,7 +1082,7 @@ func (h *Handler) admitIssueDraftForFinalize(w http.ResponseWriter, r *http.Requ
 func (h *Handler) completeIssueDraft(w http.ResponseWriter, r *http.Request, session db.ChatSession, issues []db.Issue) (*FinalizeIssueDraftResponse, bool) {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to complete issue draft")
+		writeErrorCode(w, http.StatusInternalServerError, "committed", "failed to complete issue draft")
 		return nil, false
 	}
 	defer tx.Rollback(r.Context())
@@ -1058,7 +1093,7 @@ func (h *Handler) completeIssueDraft(w http.ResponseWriter, r *http.Request, ses
 		WorkspaceID:   session.WorkspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to lock issue draft")
+		writeErrorCode(w, http.StatusInternalServerError, "committed", "failed to lock issue draft")
 		return nil, false
 	}
 	completed := locked
@@ -1072,15 +1107,15 @@ func (h *Handler) completeIssueDraft(w http.ResponseWriter, r *http.Request, ses
 			// Never swallowed: returning 200 with a zero-valued draft here
 			// would tell the client an issue was created and hand it an empty
 			// id for the issue that actually exists.
-			writeError(w, http.StatusInternalServerError, "failed to complete issue draft")
+			writeErrorCode(w, http.StatusInternalServerError, "committed", "failed to complete issue draft")
 			return nil, false
 		}
 	} else if !completed.IssueID.Valid {
-		writeError(w, http.StatusInternalServerError, "completed draft has no issue")
+		writeErrorCode(w, http.StatusInternalServerError, "committed", "completed draft has no issue")
 		return nil, false
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit issue draft finalize")
+		writeErrorCode(w, http.StatusInternalServerError, "committed", "failed to commit issue draft finalize")
 		return nil, false
 	}
 	return &FinalizeIssueDraftResponse{
@@ -1097,20 +1132,22 @@ func (h *Handler) completeIssueDraft(w http.ResponseWriter, r *http.Request, ses
 // absent by construction: a draft is confirmed by a human who has just read it,
 // so the confirm passes AllowDuplicate.
 func writeIssueDraftCreateError(w http.ResponseWriter, r *http.Request, err error) {
+	// rolled_back: the group transaction did not commit, so a directory the
+	// client created for a new project is an orphan and should be removed.
 	switch {
 	case errors.Is(err, service.ErrParentIssueNotFound):
-		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
+		writeErrorCode(w, http.StatusBadRequest, "rolled_back", "parent issue not found in this workspace")
 	case errors.Is(err, service.ErrProjectNotFound):
-		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		writeErrorCode(w, http.StatusBadRequest, "rolled_back", "project not found in this workspace")
 	case errors.Is(err, service.ErrIssueStatusUnavailable):
-		writeError(w, http.StatusConflict,
+		writeErrorCode(w, http.StatusConflict, "rolled_back",
 			"the target status was archived while this request was in flight; reload the status list and retry")
 	default:
 		if writeIssueLimitReached(w, err) {
 			return
 		}
 		slog.Warn("finalize issue draft failed", append(logger.RequestAttrs(r), "error", err)...)
-		writeError(w, http.StatusInternalServerError, "failed to create issue from draft")
+		writeErrorCode(w, http.StatusInternalServerError, "rolled_back", "failed to create issue from draft")
 	}
 }
 

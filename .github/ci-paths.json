@@ -40,6 +40,15 @@
     "scripts/ci-scope.mjs",
     "scripts/ci-scope.test.mjs"
   ],
+  "migrations": [
+    "server/migrations/**",
+    "server/internal/migrations/migrations_lint_test.go",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    ".github/ci-paths.json",
+    "scripts/ci-scope.mjs",
+    "scripts/ci-scope.test.mjs"
+  ],
   "runtime": [
     "packages/core/runtimes/cli-version.ts",
     "scripts/agent-cli-command-names.txt",
@@ -94,6 +103,8 @@
     "scripts/helm-config.test.sh",
     "scripts/entrypoint.test.sh",
     "scripts/makefile-build.test.sh",
+    "scripts/migration-new.sh",
+    "scripts/migration-new.test.sh",
     "deploy/helm/**",
     "docker/entrypoint.sh",
     ".env.example",

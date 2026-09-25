@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>聊天按项目管理 + 权限 · 对齐稿 v2</title>
+<style>
+  :root{--bg:#fafafa;--panel:#fff;--line:#e6e6e6;--muted:#737373;--fg:#171717;--accent:#2563eb;--accent-soft:#eff4ff;--warn:#b45309;--warn-soft:#fff7ed;--ok:#15803d}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif;color:var(--fg);background:var(--bg)}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;max-width:1320px;margin:24px auto;padding:0 24px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 16px}
+  .app{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:grid;grid-template-columns:320px 1fr;height:640px;position:relative}
+  .side{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;position:relative}
+  .side-head{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 8px}
+  .side-head b{font-size:15px}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 10px;font:inherit;cursor:pointer}
+  .btn.primary{background:var(--fg);color:#fff;border-color:var(--fg)}
+  .btn.icon{padding:2px 7px;font-size:13px}
+  /* 顶部项目栏：一行，放不下的进「更多」 */
+  .projrow{display:flex;align-items:center;gap:6px;padding:4px 12px 10px;border-bottom:1px solid var(--line)}
+  .projbar{display:flex;gap:6px;overflow:hidden;flex:1;min-width:0}
+  .chip{flex:none;border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;font-size:13px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px}
+  .chip .n{color:var(--muted);font-size:12px}
+  .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .chip .pin{font-size:10px}
+  .chip.on{background:var(--fg);color:#fff;border-color:var(--fg)}
+  .chip.on .n{color:#d4d4d4}
+  .pop{position:absolute;top:84px;right:10px;left:10px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);z-index:5;display:none;max-height:470px;overflow:auto}
+  .pop.open{display:block}
+  .pop-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff}
+  .pop-sec{padding:6px 12px 2px;font-size:12px;color:var(--muted)}
+  .prow{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer}
+  .prow:hover{background:#f4f4f5}
+  .prow .grip{cursor:grab;color:#a3a3a3;user-select:none}
+  .prow .nm{flex:1}
+  .prow .n{color:var(--muted);font-size:12px}
+  .prow.dragging{opacity:.4}
+  .prow.over{box-shadow:inset 0 2px 0 var(--accent)}
+  .pinbtn{border:none;background:none;cursor:pointer;font-size:13px;opacity:.35}
+  .pinbtn.on{opacity:1}
+  .search{width:100%;border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;margin:8px 12px;width:calc(100% - 24px)}
+  .list{overflow-y:auto;flex:1;padding:6px}
+  .row{display:flex;gap:10px;align-items:center;padding:8px;border-radius:6px;cursor:pointer;position:relative}
+  .row:hover,.row.sel{background:#f4f4f5}
+  .row .more{visibility:hidden;border:none;background:none;cursor:pointer;font-size:16px;color:var(--muted)}
+  .row:hover .more,.row.sel .more{visibility:visible}
+  .av{width:32px;height:32px;border-radius:50%;background:#e0e7ff;display:grid;place-items:center;font-size:13px;flex:none}
+  .row .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .m{color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden}
+  .tag{font-size:11px;border-radius:4px;padding:0 5px;background:#f4f4f5;color:#525252}
+  .tag.priv{background:#fee2e2;color:#b91c1c}
+  .tag.extra{background:var(--accent-soft);color:var(--accent)}
+  .menu{position:absolute;right:8px;top:36px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:4;min-width:140px;padding:4px}
+  .menu div{padding:6px 10px;border-radius:5px;cursor:pointer}
+  .menu div:hover{background:#f4f4f5}
+  .menu .new{font-weight:600;color:var(--accent)}
+  .empty{color:var(--muted);text-align:center;padding:40px 12px}
+  .main{display:flex;flex-direction:column;min-width:0}
+  .main-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .main-head .title{font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vis{font-size:12px;color:var(--muted)}
+  .msgs{flex:1;padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:75%;padding:8px 12px;border-radius:10px;background:#f4f4f5}
+  .msg.me{align-self:flex-end;background:var(--accent-soft)}
+  .msg .who{font-size:12px;color:var(--muted)}
+  .composer{border-top:1px solid var(--line);padding:12px 16px;color:var(--muted)}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.3);display:none;place-items:center;z-index:10}
+  .mask.open{display:grid}
+  .dlg{background:#fff;border-radius:10px;width:460px;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.15)}
+  .dlg h3{margin:0 0 12px;font-size:16px}
+  .opt{display:flex;gap:10px;border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer}
+  .opt.on{border-color:var(--accent);background:var(--accent-soft)}
+  .opt.dis{opacity:.45;cursor:not-allowed}
+  .opt small{color:var(--muted);display:block}
+  .who-list{margin:10px 0;border-top:1px solid var(--line);padding-top:10px}
+  .who-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+  .who-row .nm{flex:1}
+  select{font:inherit;border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+  .note{background:var(--warn-soft);color:var(--warn);border-radius:6px;padding:8px 10px;font-size:12px;margin-top:8px}
+  .notes{font-size:13px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+  .card h4{margin:0 0 6px;font-size:14px}
+  .card ol,.card ul{margin:0;padding-left:18px}
+  .card li{margin:3px 0}
+  .card.done{border-left:3px solid var(--ok)}
+  .q{border-left:3px solid var(--warn)}
+  .rec{color:var(--accent);font-weight:500}
+  .chg{font-size:11px;background:#dcfce7;color:var(--ok);border-radius:4px;padding:0 5px;margin-left:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>聊天按项目管理 + 权限 · 对齐稿 v2</h1>
+    <p class="sub">这版造了 20 个项目。试试：① 点顶上的项目筛选 ② 点项目栏右边的「⋯ 更多」，可以置顶、拖动排序 ③ 鼠标移到聊天上点「⋯」→「编辑权限」。数据是假的，只看交互。</p>
+
+    <div class="app">
+      <aside class="side">
+        <div class="side-head"><b>聊天</b><button class="btn">＋ 新聊天</button></div>
+        <div class="projrow">
+          <div class="projbar" id="projbar"></div>
+          <button class="btn icon" id="moreBtn" title="全部项目：置顶 / 排序">⋯ 更多</button>
+        </div>
+        <div class="pop" id="pop">
+          <div class="pop-head"><b>项目栏</b><button class="btn icon" id="popClose">完成</button></div>
+          <input class="search" id="q" placeholder="搜项目…">
+          <div id="popBody"></div>
+        </div>
+        <div class="list" id="list"></div>
+      </aside>
+      <section class="main">
+        <div class="main-head">
+          <div class="title" id="curTitle"></div>
+          <span class="vis" id="curVis"></span>
+        </div>
+        <div class="msgs">
+          <div class="msg me"><div class="who">kunkunya</div>帮我看下验收逻辑还差什么</div>
+          <div class="msg"><div class="who">孙悟空</div>子任务全部完成后才进入验收，#288 还没合……</div>
+        </div>
+        <div class="composer">输入消息……</div>
+      </section>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="card done">
+      <h4>1. 项目多了怎么办 <span class="chg">v2 新增</span></h4>
+      <ul>
+        <li>顶上还是<b>一行</b>：<b>全部 · 置顶的项目 · 最近聊过的项目</b>，一行放不下的收进「⋯ 更多」。</li>
+        <li>「更多」里是全部项目：点 📌 置顶 / 取消置顶；拖 ⠿ 调置顶项目的先后顺序；上面有搜索框，20 个项目也能直接搜。</li>
+        <li>没置顶的项目按<b>最近聊天时间</b>自动排，不用手动管。</li>
+        <li>从「更多」里点一个没露出来的项目，它会临时显示在栏里并被选中。</li>
+        <li>置顶和顺序是<b>每个人自己的</b>，你排的不影响领导看到的。</li>
+      </ul>
+    </div>
+    <div class="card done">
+      <h4>2. 权限：默认跟着项目走 <span class="chg">按你的决定改</span></h4>
+      <ul>
+        <li>绑了项目的聊天（<b>包括老聊天</b>）默认 = <b>跟随项目</b>：谁有这个项目的权限，谁就能看这个聊天。比如 BNB 的老聊天，BNB 项目成员都能看到。</li>
+        <li>没绑项目的聊天：默认只有自己能看。</li>
+        <li>聊天的「⋯」菜单：<b>置顶 · 编辑权限 · 归档</b>。编辑权限里可以选：
+          <ul>
+            <li><b>跟随项目</b>（默认）</li>
+            <li><b>私密</b>：只有自己能看，别人那边直接看不到这条聊天，列表上带 🔒</li>
+            <li><b>跟随项目 + 额外加人</b>：比如单独拉领导进来</li>
+          </ul></li>
+        <li>绑了多个项目的聊天：<b>任一</b>项目的成员都能看。</li>
+      </ul>
+    </div>
+    <div class="card q">
+      <h4>还剩 3 个小问题（都有建议，你说「按建议」就行）</h4>
+      <ol>
+        <li>上线那一刻，老聊天会一下子对项目成员可见。<span class="rec">建议：上线后给每个人弹一次提示「你有 N 个聊天现在项目成员能看到，要检查一下吗」，点进去能批量设私密。</span></li>
+        <li>谁能改一个聊天的权限？<span class="rec">建议：只有创建这个聊天的人。</span></li>
+        <li>项目成员看到别人的聊天后，能不能在里面发言？<span class="rec">建议：默认只能看；「额外加人」时可以单独给「可发言」。发言时由原聊天的智能体回复，消息上标明是谁发的。</span></li>
+      </ol>
+    </div>
+    <div class="card">
+      <h4>你说的「终止」</h4>
+      <p style="margin:0">现在聊天菜单里是「置顶」和「<b>归档</b>」，我猜语音把「归档」听成了「终止」。「编辑权限」就加在这两个中间。</p>
+    </div>
+  </div>
+</div>
+
+<div class="mask" id="mask">
+  <div class="dlg">
+    <h3>编辑权限 ·「<span id="dlgTitle"></span>」</h3>
+    <div class="opt" data-v="project"><input type="radio" name="s"><div>跟随项目（默认）<small id="projHint"></small></div></div>
+    <div class="opt" data-v="extra"><input type="radio" name="s"><div>跟随项目 + 额外加人<small>项目成员 + 下面单独加的人</small></div></div>
+    <div class="who-list" id="whoList">
+      <div class="who-row"><span class="nm">领导</span><select><option>只能看</option><option selected>可发言</option></select><button class="btn">移除</button></div>
+      <div class="who-row"><span class="nm" style="color:var(--muted)">＋ 添加成员…</span></div>
+    </div>
+    <div class="opt" data-v="private"><input type="radio" name="s"><div>🔒 私密<small>只有你能看到，其他人的列表里直接不显示</small></div></div>
+    <div class="note" id="dlgNote"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" id="cancel">取消</button><button class="btn primary" id="save">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const projects=["Multica 魔改","AI100","game","bnb contract","tarot","Nexus-GPU","Agent mono仓库管理","RelayVPS","自媒体","官网改版","客服机器人","数据看板","小程序","周报自动化","招聘","财务对账","合同模板","内部培训","海外投放","供应链"];
+const chats=[
+  {t:"验收逻辑还差什么",p:["Multica 魔改"],u:1,perm:"extra",who:"孙悟空",at:20},
+  {t:"Tab 去重和分组",p:["Multica 魔改"],who:"孙悟空",at:19},
+  {t:"节点卡片排版",p:["AI100"],u:1,who:"布尔玛",at:18},
+  {t:"Game 记忆系统怎么拆",p:["game","Multica 魔改"],who:"孙悟饭",at:17},
+  {t:"合约审计清单（老聊天）",p:["bnb contract"],who:"比克",at:3},
+  {t:"BNB 私下算的收益",p:["bnb contract"],perm:"private",who:"比克",at:2},
+  {t:"塔罗牌文案",p:["tarot"],who:"布尔玛",at:12},
+  {t:"GPU 隧道常驻",p:["Nexus-GPU"],who:"拉蒂兹",at:14},
+  {t:"客服话术",p:["客服机器人"],who:"布尔玛",at:10},
+  {t:"看板指标口径",p:["数据看板"],who:"孙悟饭",at:9},
+  {t:"投放素材",p:["海外投放"],who:"布尔玛",at:8},
+  {t:"对账脚本",p:["财务对账"],who:"比克",at:7},
+  {t:"随便问问：周报怎么写",p:[],who:"孙悟空",at:1},
+];
+let pinned=["Multica 魔改","bnb contract"];
+let cur="全部",sel=0,temp=null,menuFor=null;
+const recent=p=>Math.max(0,...chats.filter(c=>c.p.includes(p)).map(c=>c.at));
+function order(){
+  const rest=projects.filter(p=>!pinned.includes(p)).sort((a,b)=>recent(b)-recent(a));
+  return [...pinned,...rest];
+}
+function inP(c,p){return p==="全部"||(p==="无项目"?c.p.length===0:c.p.includes(p))}
+function chip(p){
+  const cs=chats.filter(c=>inP(c,p)),unread=cs.some(c=>c.u)&&p!=="全部";
+  return `<button class="chip ${p===cur?"on":""}" data-p="${p}">${pinned.includes(p)?'<span class="pin">📌</span>':""}${unread?'<span class="dot"></span>':""}${p}<span class="n">${cs.length}</span></button>`;
+}
+function renderBar(){
+  const withChats=order().filter(p=>pinned.includes(p)||recent(p)>0);
+  let items=["全部",...withChats.slice(0,4)];
+  if(temp&&!items.includes(temp))items.push(temp);
+  projbar.innerHTML=items.map(chip).join("");
+  projbar.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{cur=b.dataset.p;renderBar();renderList()});
+  moreBtn.textContent=`⋯ 更多 (${projects.length})`;
+}
+function renderPop(){
+  const kw=q.value.trim(),f=p=>!kw||p.toLowerCase().includes(kw.toLowerCase());
+  const pr=p=>`<div class="prow" draggable="${pinned.includes(p)}" data-p="${p}">${pinned.includes(p)?'<span class="grip">⠿</span>':'<span style="width:10px"></span>'}<span class="nm">${p}</span><span class="n">${chats.filter(c=>c.p.includes(p)).length} 个聊天</span><button class="pinbtn ${pinned.includes(p)?"on":""}" data-pin="${p}" title="置顶">📌</button></div>`;
+  const rest=order().filter(p=>!pinned.includes(p));
+  popBody.innerHTML=`<div class="pop-sec">置顶（拖 ⠿ 调顺序）</div>${pinned.filter(f).map(pr).join("")||'<div class="prow" style="color:var(--muted)">还没有置顶</div>'}
+  <div class="pop-sec">其他项目（按最近聊天自动排）</div>${rest.filter(f).map(pr).join("")}
+  <div class="pop-sec">&nbsp;</div><div class="prow" data-p="无项目"><span style="width:10px"></span><span class="nm">无项目</span><span class="n">${chats.filter(c=>!c.p.length).length} 个聊天</span></div>`;
+  popBody.querySelectorAll(".pinbtn").forEach(b=>b.onclick=e=>{e.stopPropagation();const p=b.dataset.pin;pinned=pinned.includes(p)?pinned.filter(x=>x!==p):[...pinned,p];renderPop();renderBar()});
+  popBody.querySelectorAll(".prow[data-p]").forEach(r=>{
+    r.onclick=()=>{cur=r.dataset.p;temp=cur;pop.classList.remove("open");renderBar();renderList()};
+    r.ondragstart=()=>r.classList.add("dragging");
+    r.ondragend=()=>r.classList.remove("dragging");
+    r.ondragover=e=>{if(pinned.includes(r.dataset.p)){e.preventDefault();r.classList.add("over")}};
+    r.ondragleave=()=>r.classList.remove("over");
+    r.ondrop=e=>{e.preventDefault();const from=popBody.querySelector(".dragging")?.dataset.p,to=r.dataset.p;if(!from||from===to)return;pinned=pinned.filter(x=>x!==from);pinned.splice(pinned.indexOf(to),0,from);renderPop();renderBar()};
+  });
+}
+moreBtn.onclick=()=>{pop.classList.toggle("open");q.value="";renderPop()};
+popClose.onclick=()=>pop.classList.remove("open");
+q.oninput=renderPop;
+function permTag(c){
+  if(c.perm==="private")return '<span class="tag priv">🔒 私密</span>';
+  if(c.perm==="extra")return '<span class="tag extra">+额外成员</span>';
+  return "";
+}
+function renderList(){
+  const cs=chats.map((c,i)=>({...c,i})).filter(c=>inP(c,cur)).sort((a,b)=>b.at-a.at);
+  if(!cs.length){list.innerHTML='<div class="empty">这个项目下还没有聊天</div>';renderMain();return}
+  if(!cs.some(c=>c.i===sel))sel=cs[0].i;
+  list.innerHTML=cs.map(c=>`<div class="row ${c.i===sel?"sel":""}" data-i="${c.i}"><div class="av">${c.who[0]}</div><div style="min-width:0;flex:1"><div class="t">${c.t}</div><div class="m">${c.who}${c.p.map(p=>`<span class="tag">${p}</span>`).join("")}${permTag(c)}</div></div><button class="more" data-m="${c.i}">⋯</button>${menuFor===c.i?`<div class="menu"><div>置顶</div><div class="new" data-edit="${c.i}">编辑权限</div><div>归档</div></div>`:""}</div>`).join("");
+  list.querySelectorAll(".row").forEach(r=>r.onclick=()=>{sel=+r.dataset.i;menuFor=null;renderList()});
+  list.querySelectorAll(".more").forEach(b=>b.onclick=e=>{e.stopPropagation();menuFor=menuFor===+b.dataset.m?null:+b.dataset.m;renderList()});
+  list.querySelectorAll("[data-edit]").forEach(b=>b.onclick=e=>{e.stopPropagation();menuFor=null;openDlg(+b.dataset.edit)});
+  renderMain();
+}
+function visText(c){
+  if(c.perm==="private")return "🔒 仅自己可见";
+  if(!c.p.length)return "仅自己可见（没绑项目）";
+  return `${c.p.join("、")} 项目成员可见${c.perm==="extra"?" + 领导":""}`;
+}
+function renderMain(){const c=chats[sel];curTitle.textContent=c.t;curVis.textContent=visText(c)}
+let pick,editing;
+function setOpt(v){pick=v;document.querySelectorAll(".opt").forEach(o=>{o.classList.toggle("on",o.dataset.v===v);o.querySelector("input").checked=o.dataset.v===v});whoList.style.display=v==="extra"?"":"none"}
+document.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{if(!o.classList.contains("dis"))setOpt(o.dataset.v)});
+function openDlg(i){
+  editing=i;const c=chats[i],bound=c.p.length>0;
+  dlgTitle.textContent=c.t;
+  projHint.textContent=bound?`${c.p.join("、")} 的项目成员都能看到`:"这个聊天没绑项目，先绑项目才能选";
+  document.querySelectorAll('.opt[data-v="project"],.opt[data-v="extra"]').forEach(o=>o.classList.toggle("dis",!bound));
+  dlgNote.textContent=bound?"改成私密后，其他人的聊天列表里立刻看不到它；随时可以改回来。":"没绑项目的聊天默认就是私密。";
+  setOpt(c.perm||(bound?"project":"private"));mask.classList.add("open");
+}
+cancel.onclick=()=>mask.classList.remove("open");
+save.onclick=()=>{const c=chats[editing];c.perm=pick==="project"?undefined:pick;mask.classList.remove("open");renderList()};
+renderBar();renderList();
+</script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"289188e312914e85838fd1eb9a0b0da9","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>

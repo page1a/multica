@@ -1794,6 +1794,7 @@
     "confirm": "应用",
     "saving": "应用中…",
     "preview_loading": "正在加载预览…预览准备好之前不能确认。",
+    "save_failed": "共享范围没改成功，请重试。",
     "preview_failed": "预览加载失败，请重试后再确认。"
   }
 }

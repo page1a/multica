@@ -6,6 +6,7 @@ import { api, ApiError } from "@multica/core/api";
 import { chatKeys, chatMessagesOptions, pendingChatTaskOptions } from "@multica/core/chat/queries";
 import { upsertChatMessageToCaches } from "@multica/core/chat/message-cache";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { projectListOptions } from "@multica/core/projects/queries";
 import {
   issueDraftBuiltNodeKeys,
   issueDraftCanConfirm,
@@ -474,6 +475,12 @@ export function useIssueDraftSession(draftId: string): IssueDraftSession {
    * aligning a request that starts as a screenshot or a spec file works
    * without a second upload surface (DENE-369).
    */
+  const projectsQuery = useQuery(projectListOptions(wsId));
+  const knownProjects = useMemo(
+    () => (projectsQuery.data ?? []).map((project) => project.title),
+    [projectsQuery.data],
+  );
+
   const send = useCallback(
     async (
       content: string,
@@ -488,7 +495,7 @@ export function useIssueDraftSession(draftId: string): IssueDraftSession {
       if (!text || !draftId || pending || sending || !draft || isRecord) return false;
       setError(null);
       setSending(true);
-      const wire = encodeIssueDraftInput(text, draft);
+      const wire = encodeIssueDraftInput(text, draft, knownProjects);
       try {
         const result = await api.sendChatMessage(draftId, wire, attachmentIds);
         const createdAt = new Date().toISOString();
@@ -535,7 +542,7 @@ export function useIssueDraftSession(draftId: string): IssueDraftSession {
         setSending(false);
       }
     },
-    [draft, draftId, isRecord, pending, qc, sending, t],
+    [draft, draftId, isRecord, knownProjects, pending, qc, sending, t],
   );
 
   const save = useCallback(
@@ -595,7 +602,14 @@ export function useIssueDraftSession(draftId: string): IssueDraftSession {
     [messages, save],
   );
 
-  const confirm = useCallback(async (): Promise<boolean> => {
+  const confirm = useCallback(async (extra?: {
+    newProject?: {
+      title: string;
+      icon?: string;
+      description?: string;
+      directory?: Record<string, unknown>;
+    };
+  }): Promise<boolean> => {
     // An already-created alignment is not confirmable again: the server answers
     // a repeat with the issue it made, and the page's job for one is to show
     // that issue, not to ask for another.
@@ -605,6 +619,7 @@ export function useIssueDraftSession(draftId: string): IssueDraftSession {
       const result = await finalizeMutation.mutateAsync({
         draftId,
         expectedRevision: revision,
+        newProject: extra?.newProject,
       });
       setCreatedIssueId(result.issue_id);
       // The group the confirm reported, not just its root: the page shows what
@@ -627,7 +642,9 @@ export function useIssueDraftSession(draftId: string): IssueDraftSession {
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : t(($) => $.alignment.confirm_failed));
-      return false;
+      // Rethrow so the panel can remove a directory it created for a project
+      // the server did not keep. The message above is what the page shows.
+      throw err;
     }
   }, [draftId, finalizeMutation, isRecord, revision, t]);
 

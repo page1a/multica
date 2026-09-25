@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,7 +136,7 @@ func TestChatTitle_GeneratesSemanticTitleWhenConfigured(t *testing.T) {
 	original := "帮我看下为什么登录之后一直在几个页面之间来回跳转根本进不去首页"
 	session := newChatTitleTestSession(t, original)
 
-	updated, applied, err := testHandler.generateChatSessionTitle(context.Background(), session.ID, session.Title, original)
+	updated, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, session.Title, original)
 	if err != nil {
 		t.Fatalf("generateChatSessionTitle: unexpected error: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestChatTitle_FallsBackWhenLLMDisabled(t *testing.T) {
 	original := "please help debug my flaky test"
 	session := newChatTitleTestSession(t, original)
 
-	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), session.ID, session.Title, original)
+	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, session.Title, original)
 	if err != llm.ErrNotConfigured {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
@@ -194,7 +195,7 @@ func TestChatTitle_SilentFallbackOnUpstreamError(t *testing.T) {
 	original := "why does my query return duplicate rows"
 	session := newChatTitleTestSession(t, original)
 
-	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), session.ID, session.Title, original)
+	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, session.Title, original)
 	if err == nil {
 		t.Fatal("expected an error from the failing upstream")
 	}
@@ -228,7 +229,7 @@ func TestChatTitle_DoesNotClobberManualRename(t *testing.T) {
 		t.Fatalf("simulate manual rename: %v", err)
 	}
 
-	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), session.ID, original, original)
+	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, original, original)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -252,7 +253,7 @@ func TestChatTitle_FallsBackOnEmptyModelOutput(t *testing.T) {
 	original := "some opening message"
 	session := newChatTitleTestSession(t, original)
 
-	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), session.ID, session.Title, original)
+	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, session.Title, original)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -276,7 +277,7 @@ func TestChatTitle_AutoTitlesOnlyOnce(t *testing.T) {
 	session := newChatTitleTestSession(t, original)
 
 	// First generation applies against the observed original title.
-	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), session.ID, original, original)
+	_, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, original, original)
 	if err != nil || !applied {
 		t.Fatalf("first generation: applied=%v err=%v", applied, err)
 	}
@@ -287,7 +288,7 @@ func TestChatTitle_AutoTitlesOnlyOnce(t *testing.T) {
 	// A second run still observing the ORIGINAL title (as the first-message
 	// trigger would) must be a no-op: the CAS no longer matches, so the
 	// already-generated title is left intact.
-	_, applied2, err2 := testHandler.generateChatSessionTitle(context.Background(), session.ID, original, original)
+	_, applied2, err2 := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, original, original)
 	if err2 != nil {
 		t.Fatalf("second generation: unexpected error: %v", err2)
 	}
@@ -354,6 +355,8 @@ func TestSanitizeChatTitle(t *testing.T) {
 		want string
 	}{
 		{"plain", "Fix login bug", "Fix login bug"},
+		{"project middle dot", "Billing · retry invoices", "Billing · retry invoices"},
+		{"project colon", "Billing: retry invoices", "Billing: retry invoices"},
 		{"surrounding double quotes", `"Fix login bug"`, "Fix login bug"},
 		{"surrounding single quotes", `'Fix login bug'`, "Fix login bug"},
 		{"smart quotes", "“修复登录问题”", "修复登录问题"},
@@ -379,6 +382,50 @@ func TestSanitizeChatTitle(t *testing.T) {
 				t.Fatalf("sanitizeChatTitle(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestChatTitle_PromptCarriesLinkedProject(t *testing.T) {
+	requireDB(t)
+
+	var userPrompt string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		userPrompt = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Billing · retry invoices"},"finish_reason":"stop"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	withStubLLM(t, srv)
+
+	projectID := createChatProjectTestProject(t, testWorkspaceID, "Billing", "")
+	session := newChatTitleTestSession(t, "retry the failed invoices")
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO chat_session_project (workspace_id, chat_session_id, project_id, position)
+		VALUES ($1, $2, $3, 0)
+	`, testWorkspaceID, uuidToString(session.ID), projectID); err != nil {
+		t.Fatalf("link project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM chat_session_project WHERE chat_session_id = $1`, uuidToString(session.ID))
+	})
+
+	source := "retry the failed invoices"
+	updated, applied, err := testHandler.generateChatSessionTitle(context.Background(), testWorkspaceID, session.ID, session.Title, source)
+	if err != nil || !applied {
+		t.Fatalf("generate: applied=%v err=%v", applied, err)
+	}
+	if updated.Title != "Billing · retry invoices" {
+		t.Fatalf("title = %q", updated.Title)
+	}
+	if !strings.Contains(userPrompt, "Project: Billing") {
+		t.Fatalf("user prompt missing project\n%s", userPrompt)
+	}
+	if !strings.Contains(userPrompt, "Opening message:") || !strings.Contains(userPrompt, source) {
+		t.Fatalf("user prompt missing opening\n%s", userPrompt)
+	}
+	if strings.Contains(userPrompt, "任务") {
+		t.Fatalf("english opening received the Chinese glossary\n%s", userPrompt)
 	}
 }
 

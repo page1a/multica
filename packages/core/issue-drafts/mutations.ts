@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import { api } from "../api";
 import { issueKeys } from "../issues/queries";
+import { projectKeys } from "../projects/queries";
 import { chatKeys } from "../chat/queries";
 import { upsertChatMessageToCaches } from "../chat/message-cache";
 import type {
@@ -96,6 +97,12 @@ export function useStartIssueDraft(wsId: string) {
       /** What the user already typed at the entry point. */
       request: string;
       /**
+       * Existing project titles, so the carrier can match one by name. Titles
+       * only — an id in this list would be something the carrier could copy
+       * back, which it is not allowed to do.
+       */
+      knownProjects?: readonly string[];
+      /**
        * Attachments the request references. The draft does not exist yet when
        * they were uploaded, so they were bound to no owner; sending their ids
        * with the first turn is what attaches them to it. Same transport as any
@@ -152,7 +159,7 @@ export function useStartIssueDraft(wsId: string) {
       try {
         const sent = await api.sendChatMessage(
           draftId,
-          encodeIssueDraftInput(request, session.draft.draft),
+          encodeIssueDraftInput(request, session.draft.draft, input.knownProjects),
           input.attachmentIds,
         );
         // The same door every chat surface uses (MUL-5711): the send seeds the
@@ -165,7 +172,7 @@ export function useStartIssueDraft(wsId: string) {
             id: sent.message_id,
             chat_session_id: draftId,
             role: "user",
-            content: encodeIssueDraftInput(request, session.draft.draft),
+            content: encodeIssueDraftInput(request, session.draft.draft, input.knownProjects),
             task_id: sent.task_id,
             created_at: new Date().toISOString(),
           },
@@ -268,15 +275,26 @@ export function useAbandonIssueDraft(wsId: string) {
 export function useFinalizeIssueDraft(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { draftId: string; expectedRevision: number }) =>
+    mutationFn: (input: {
+      draftId: string;
+      expectedRevision: number;
+      newProject?: {
+        title: string;
+        icon?: string;
+        description?: string;
+        directory?: Record<string, unknown>;
+      };
+    }) =>
       api.finalizeIssueDraft(input.draftId, {
         expected_revision: input.expectedRevision,
+        ...(input.newProject ? { new_project: input.newProject } : {}),
       }),
     onSuccess: (result) => {
       applyDraftRow(qc, wsId, result.draft);
       void qc.invalidateQueries({ queryKey: issueDraftKeys.list(wsId) });
       // The issue now exists, so every surface that lists issues is stale.
       void qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      void qc.invalidateQueries({ queryKey: projectKeys.list(wsId) });
     },
     onError: () => {
       // A refused confirm is usually a superseded revision; re-read so the

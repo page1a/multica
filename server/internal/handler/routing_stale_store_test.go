@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -310,5 +312,446 @@ func TestCompleteFromReviewNotifiesParent(t *testing.T) {
 		t.Fatalf("the parent got no comment (%d -> %d): the last child of the stage "+
 			"finished and nothing told the parent, so the next stage never wakes",
 			before, after)
+	}
+}
+
+// Acceptance is per stay in review, not per issue. DENE-617 had a handoff
+// comment and a reviewer task from an earlier stay; the executor held the
+// ticket again and nothing was running. That must read as "not yet handed
+// off", while a live run and a notice from THIS stay must read as already
+// covered.
+func TestAcceptanceFollowsTheCurrentReviewStay(t *testing.T) {
+	ctx := context.Background()
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	store := testHandler.RoutingStore()
+
+	runtimeID := fx.Runtime(t, "acceptance-stay-runtime")
+	executor := fx.Agent(t, "acceptance-stay-executor", runtimeID)
+	reviewer := fx.Agent(t, "acceptance-stay-reviewer", runtimeID)
+	entered := time.Now().Add(-2 * time.Hour)
+
+	waiting := fx.Issue(t, "executor finished, reviewer not started", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   executor,
+		"reviewer_type": "agent",
+		"reviewer_id":   reviewer,
+	})
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     waiting,
+		"actor_type":   "agent",
+		"actor_id":     executor,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   entered,
+	})
+	fx.Comment(t, waiting, "上一轮交接", testutil.Cols{
+		"author_type":  "system",
+		"type":         "system",
+		"routing_kind": "handoff",
+		"created_at":   entered.Add(-48 * time.Hour),
+	})
+	fx.Task(t, reviewer, testutil.Cols{
+		"issue_id":   waiting,
+		"status":     "completed",
+		"runtime_id": runtimeID,
+		"created_at": entered.Add(-48 * time.Hour),
+	})
+
+	open := routing.Issue{
+		ID: waiting, Status: "in_review",
+		AssigneeType: "agent", AssigneeID: executor,
+		Reviewer: routing.ReviewerRef{Kind: routing.ReviewerAgent, ID: reviewer},
+	}
+	state, err := store.Acceptance(ctx, testWorkspaceID, open)
+	if err != nil {
+		t.Fatalf("acceptance: %v", err)
+	}
+	if state.ActiveRun || state.AgentEngaged {
+		t.Fatalf("state = %+v, want neither an active run nor an engaged reviewer — an earlier stay must not count", state)
+	}
+
+	fx.Task(t, executor, testutil.Cols{
+		"issue_id":   waiting,
+		"status":     "running",
+		"runtime_id": runtimeID,
+	})
+	state, err = store.Acceptance(ctx, testWorkspaceID, open)
+	if err != nil {
+		t.Fatalf("acceptance with a live run: %v", err)
+	}
+	if !state.ActiveRun || state.AgentEngaged {
+		t.Fatalf("state = %+v, want an active run and the reviewer still not engaged", state)
+	}
+
+	held := fx.Issue(t, "reviewer already holds this stay", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   reviewer,
+		"reviewer_type": "agent",
+		"reviewer_id":   reviewer,
+	})
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     held,
+		"actor_type":   "agent",
+		"actor_id":     executor,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   entered,
+	})
+	fx.Task(t, reviewer, testutil.Cols{
+		"issue_id":   held,
+		"status":     "completed",
+		"runtime_id": runtimeID,
+		"created_at": entered.Add(time.Minute),
+	})
+	state, err = store.Acceptance(ctx, testWorkspaceID, routing.Issue{
+		ID: held, Status: "in_review",
+		AssigneeType: "agent", AssigneeID: reviewer,
+		Reviewer: routing.ReviewerRef{Kind: routing.ReviewerAgent, ID: reviewer},
+	})
+	if err != nil {
+		t.Fatalf("acceptance for a held stay: %v", err)
+	}
+	if state.ActiveRun || !state.AgentEngaged {
+		t.Fatalf("state = %+v, want the reviewer engaged for this stay and no live run", state)
+	}
+
+	person := fx.Issue(t, "a person accepts this", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   executor,
+		"reviewer_type": "member",
+		"reviewer_id":   testUserID,
+	})
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     person,
+		"actor_type":   "member",
+		"actor_id":     testUserID,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   entered,
+	})
+	fx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   testUserID,
+		"type":           "routing_needs_you",
+		"severity":       "action_required",
+		"issue_id":       person,
+		"title":          "上一轮",
+		"created_at":     entered.Add(-48 * time.Hour),
+	})
+	member := routing.Issue{
+		ID: person, Status: "in_review",
+		AssigneeType: "agent", AssigneeID: executor,
+		Reviewer: routing.ReviewerRef{Kind: routing.ReviewerMember, ID: testUserID},
+	}
+	state, err = store.Acceptance(ctx, testWorkspaceID, member)
+	if err != nil {
+		t.Fatalf("acceptance for a person: %v", err)
+	}
+	if state.MemberNotified {
+		t.Fatal("an inbox row from the previous stay counted as this stay's notice")
+	}
+	fx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   testUserID,
+		"type":           "routing_needs_you",
+		"severity":       "action_required",
+		"issue_id":       person,
+		"title":          "这一轮",
+		"created_at":     entered.Add(time.Minute),
+	})
+	state, err = store.Acceptance(ctx, testWorkspaceID, member)
+	if err != nil {
+		t.Fatalf("acceptance after this stay's notice: %v", err)
+	}
+	if !state.MemberNotified {
+		t.Fatal("this stay's notice was not seen")
+	}
+}
+
+// Two callbacks for the same stay — the status change and the run finishing —
+// both used to read "not yet notified" and each insert a routing_needs_you.
+// The person is not reassigned. A later stay still gets its own notice.
+func TestNotifyMemberOncePerStayUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	store := testHandler.RoutingStore()
+
+	runtimeID := fx.Runtime(t, "notice-race-runtime")
+	executor := fx.Agent(t, "notice-race-executor", runtimeID)
+	issueID := fx.Issue(t, "person accepts, two callbacks at once", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   executor,
+		"reviewer_type": "member",
+		"reviewer_id":   testUserID,
+	})
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     issueID,
+		"actor_type":   "member",
+		"actor_id":     testUserID,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   testutil.Raw("now() - interval '2 hours'"),
+	})
+
+	const callers = 8
+	var wrote atomic.Int32
+	var failed atomic.Int32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := store.NotifyMember(ctx, testWorkspaceID, issueID, routing.Member{UserID: testUserID, Name: "Kun"})
+			if err != nil {
+				failed.Add(1)
+				t.Errorf("notify: %v", err)
+				return
+			}
+			if ok {
+				wrote.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if failed.Load() != 0 {
+		t.Fatalf("%d notify calls failed", failed.Load())
+	}
+	if got := wrote.Load(); got != 1 {
+		t.Fatalf("writers = %d, want 1", got)
+	}
+	if got := fx.Count(t, `SELECT COUNT(*) FROM inbox_item WHERE issue_id = $1 AND type = 'routing_needs_you'`, issueID); got != 1 {
+		t.Fatalf("notices = %d, want 1", got)
+	}
+	assertAssignee(t, issueID, "agent", executor)
+
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     issueID,
+		"actor_type":   "member",
+		"actor_id":     testUserID,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   testutil.Raw("now() + interval '2 minutes'"),
+	})
+	again, err := store.NotifyMember(ctx, testWorkspaceID, issueID, routing.Member{UserID: testUserID, Name: "Kun"})
+	if err != nil {
+		t.Fatalf("next stay: %v", err)
+	}
+	if !again {
+		t.Fatal("the next stay was treated as already notified")
+	}
+	if got := fx.Count(t, `SELECT COUNT(*) FROM inbox_item WHERE issue_id = $1 AND type = 'routing_needs_you'`, issueID); got != 2 {
+		t.Fatalf("notices after the next stay = %d, want 2", got)
+	}
+	assertAssignee(t, issueID, "agent", executor)
+}
+
+// Concurrent handoffs of one stay must enqueue one reviewer run. The pending
+// task unique index is what collapses the second insert; this is the regression
+// that it still does.
+func TestConcurrentHandoffStartsOneReviewerRun(t *testing.T) {
+	ctx := context.Background()
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	store := testHandler.RoutingStore()
+
+	runtimeID := fx.Runtime(t, "handoff-race-runtime")
+	executor := fx.Agent(t, "handoff-race-executor", runtimeID)
+	reviewer := fx.Agent(t, "handoff-race-reviewer", runtimeID)
+	issueID := fx.Issue(t, "two callbacks hand the ticket to the reviewer", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   executor,
+		"reviewer_type": "agent",
+		"reviewer_id":   reviewer,
+	})
+
+	const callers = 8
+	var failed atomic.Int32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := store.Handoff(ctx, testWorkspaceID, issueID, "agent", reviewer); err != nil {
+				failed.Add(1)
+				t.Errorf("handoff: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if failed.Load() != 0 {
+		t.Fatalf("%d handoffs failed", failed.Load())
+	}
+	if got := fx.Count(t, `SELECT COUNT(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status <> 'cancelled'`, issueID, reviewer); got != 1 {
+		t.Fatalf("reviewer runs = %d, want 1", got)
+	}
+	assertAssignee(t, issueID, "agent", reviewer)
+}
+
+// A finished stay leaves its handoff comment and its inbox row behind. The
+// next time the ticket enters in_review those rows are history: the reviewer
+// seat is started again, and a person in the slot is notified again. Eight
+// callbacks in the new stay still produce one notice, and the person is not
+// given the ticket.
+func TestNextReviewRoundWakesDespiteOldHandoffAndNotice(t *testing.T) {
+	ctx := context.Background()
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	store := testHandler.RoutingStore()
+
+	runtimeID := fx.Runtime(t, "next-round-runtime")
+	executor := fx.Agent(t, "next-round-executor", runtimeID)
+	reviewer := fx.Agent(t, "next-round-reviewer", runtimeID)
+	entered := time.Now().Add(-2 * time.Hour)
+	previous := entered.Add(-48 * time.Hour)
+
+	agentIssue := fx.Issue(t, "rework came back to review", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   executor,
+		"reviewer_type": "agent",
+		"reviewer_id":   reviewer,
+	})
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     agentIssue,
+		"actor_type":   "agent",
+		"actor_id":     executor,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   entered,
+	})
+	fx.Comment(t, agentIssue, "上一轮交接", testutil.Cols{
+		"author_type":  "system",
+		"type":         "system",
+		"routing_kind": "handoff",
+		"created_at":   previous,
+	})
+	fx.Task(t, reviewer, testutil.Cols{
+		"issue_id":   agentIssue,
+		"status":     "completed",
+		"runtime_id": runtimeID,
+		"created_at": previous,
+	})
+
+	state, err := store.Acceptance(ctx, testWorkspaceID, routing.Issue{
+		ID: agentIssue, Status: "in_review",
+		AssigneeType: "agent", AssigneeID: executor,
+		Reviewer: routing.ReviewerRef{Kind: routing.ReviewerAgent, ID: reviewer},
+	})
+	if err != nil {
+		t.Fatalf("acceptance before the next handoff: %v", err)
+	}
+	if state.ActiveRun || state.AgentEngaged {
+		t.Fatalf("state = %+v, the previous stay still counts as this one", state)
+	}
+	if err := store.Handoff(ctx, testWorkspaceID, agentIssue, "agent", reviewer); err != nil {
+		t.Fatalf("handoff: %v", err)
+	}
+	assertAssignee(t, agentIssue, "agent", reviewer)
+	pending := `SELECT COUNT(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched')`
+	if got := fx.Count(t, pending, agentIssue, reviewer); got != 1 {
+		t.Fatalf("new reviewer runs = %d, want 1 — the old completed run and the old handoff comment must not block this stay", got)
+	}
+	if err := store.Handoff(ctx, testWorkspaceID, agentIssue, "agent", reviewer); err != nil {
+		t.Fatalf("duplicate handoff: %v", err)
+	}
+	if got := fx.Count(t, pending, agentIssue, reviewer); got != 1 {
+		t.Fatalf("reviewer runs after the duplicate callback = %d, want 1", got)
+	}
+
+	personIssue := fx.Issue(t, "a person accepts the next round", testutil.Cols{
+		"status":        "in_review",
+		"assignee_type": "agent",
+		"assignee_id":   executor,
+		"reviewer_type": "member",
+		"reviewer_id":   testUserID,
+	})
+	fx.Insert(t, "activity_log", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"issue_id":     personIssue,
+		"actor_type":   "member",
+		"actor_id":     testUserID,
+		"action":       "status_changed",
+		"details":      testutil.Raw(`'{"from": "in_progress", "to": "in_review"}'::jsonb`),
+		"created_at":   entered,
+	})
+	fx.Comment(t, personIssue, "上一轮交接", testutil.Cols{
+		"author_type":  "system",
+		"type":         "system",
+		"routing_kind": "handoff",
+		"created_at":   previous,
+	})
+	fx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   testUserID,
+		"type":           "routing_needs_you",
+		"severity":       "action_required",
+		"issue_id":       personIssue,
+		"title":          "上一轮",
+		"created_at":     previous,
+	})
+
+	const callers = 8
+	var wrote atomic.Int32
+	var failed atomic.Int32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := store.NotifyMember(ctx, testWorkspaceID, personIssue, routing.Member{UserID: testUserID, Name: "Kun"})
+			if err != nil {
+				failed.Add(1)
+				t.Errorf("notify: %v", err)
+				return
+			}
+			if ok {
+				wrote.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if failed.Load() != 0 {
+		t.Fatalf("%d notify calls failed", failed.Load())
+	}
+	if got := wrote.Load(); got != 1 {
+		t.Fatalf("writers = %d, want 1 for this stay", got)
+	}
+	if got := fx.Count(t, `SELECT COUNT(*) FROM inbox_item WHERE issue_id = $1 AND type = 'routing_needs_you' AND archived = false`, personIssue); got != 2 {
+		t.Fatalf("notices = %d, want the previous stay's notice plus this one", got)
+	}
+	assertAssignee(t, personIssue, "agent", executor)
+}
+
+func assertAssignee(t *testing.T, issueID, wantType, wantID string) {
+	t.Helper()
+	var gotType, gotID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT assignee_type, assignee_id::text FROM issue WHERE id = $1`, issueID,
+	).Scan(&gotType, &gotID); err != nil {
+		t.Fatalf("assignee: %v", err)
+	}
+	if gotType != wantType || gotID != wantID {
+		t.Fatalf("assignee = %s/%s, want %s/%s", gotType, gotID, wantType, wantID)
 	}
 }

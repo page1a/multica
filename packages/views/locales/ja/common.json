@@ -128,5 +128,17 @@
   },
   "navigation": {
     "open_in_new_tab": "新しいタブで開く"
+  },
+  "work_thread": {
+    "thread": "スレッド · {{state}}",
+    "queued_count": "{{count}} 件待機中",
+    "continue": "続行",
+    "continue_aria": "作業スレッドを続行",
+    "interrupt": "中断",
+    "interrupt_aria": "作業スレッドを中断",
+    "queue": "キューに追加",
+    "queue_aria": "作業スレッドに入力をキュー",
+    "insert": "割り込み",
+    "prioritize_aria": "{{id}} を優先"
   }
 }

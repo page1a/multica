@@ -59,6 +59,8 @@
     "ai_team_group": "AI 팀",
     "show_more_pins": "{{count}}개 더 보기…",
     "show_fewer_pins": "접기",
+    "pin_drop_hint": "여기에 놓아 고정",
+    "chat_untitled": "새 채팅",
     "unread_overflow": "99+",
     "discord_card": {
       "title": "Discord 참여하기",

@@ -2,12 +2,12 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -15,17 +15,8 @@ import (
 const channelContextMigrationTestSchema = "channel_context_migration_test"
 
 func TestChannelChatContextGenerationMigrationsUpDownAndLegacyRows(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

@@ -207,8 +207,14 @@ func TestStatusRuleIsFactJudgmentAtBothMoments(t *testing.T) {
 		"the board should show the issue being worked while you work, not only after",
 		// No assignee gate: the judgment applies to whoever is running.
 		"whoever the assignee is",
-		// Delivery lands in in_review and the ceiling keeps `done` human.
-		"`done` stays human",
+		// Delivery lands in in_review. A pass releases through the
+		// verdict line (DENE-850): the platform merges and writes done.
+		// A person is in that path only when the ticket names them and
+		// the decision.
+		"--verdict pass` and the platform merges the open linked PR and sets `done`",
+		"A sentence that says 通过 is not a verdict",
+		"close.conclusion=awaiting_human",
+		"Do not leave a passed ticket in `in_review`",
 		// Acceptance is a parent-level decision; child delivery feeds the
 		// barrier instead of creating a second review chain.
 		"acceptance state belongs only to a top-level issue",
@@ -252,6 +258,10 @@ func TestStatusRuleIsFactJudgmentAtBothMoments(t *testing.T) {
 		"A turn that only answers, reviews, or consults",
 		"you only answered a question, reviewed, or discussed",
 		"in whatever form: code, research",
+		// DENE-810: a pass used to stop here for a person to click merge.
+		"`done` stays human",
+		// DENE-850: the seat no longer merges by hand; the verdict does.
+		"the acceptance seat merges and sets `done` in that same turn",
 	} {
 		if strings.Contains(out, banned) {
 			t.Errorf("brief still carries retired status gate %q (MUL-6417)\n---\n%s", banned, out)
@@ -519,6 +529,10 @@ func TestIssueWorkflowHonorsAgentIdentity(t *testing.T) {
 		// The blocked end-state keeps its own comment carve-out: an agent
 		// whose identity forbids comments must still be able to mark blocked.
 		"post a comment explaining the blocker unless your Agent Identity forbids issue comments",
+		// DENE-850: an agent's blocked write without a wait is rejected, so
+		// the brief names the wait flags on the same call.
+		"`--blocked-by <DENE-N>`",
+		"the server rejects an agent's `blocked` without one",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("issue brief missing identity-bound workflow text %q\n---\n%s", want, out)

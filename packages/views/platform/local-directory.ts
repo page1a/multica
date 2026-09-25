@@ -63,6 +63,13 @@ export type InitLocalGitResult = {
   error?: string;
 };
 
+export type ProvisionProjectDirectoryResult = {
+  ok: boolean;
+  path?: string;
+  reason?: "not_absolute" | "bad_name" | "exists" | "error" | "unsupported";
+  error?: string;
+};
+
 interface DesktopLocalDirectoryAPI {
   pickDirectory?: (defaultPath?: string) => Promise<PickDirectoryResult>;
   validateLocalDirectory?: (
@@ -70,6 +77,15 @@ interface DesktopLocalDirectoryAPI {
   ) => Promise<ValidateLocalDirectoryResult>;
   validateWritablePath?: (path: string) => Promise<{ ok: boolean }>;
   initLocalGit?: (path: string) => Promise<InitLocalGitResult>;
+  provisionProjectDirectory?: (input: {
+    root: string;
+    dirName: string;
+    gitInit: boolean;
+  }) => Promise<ProvisionProjectDirectoryResult>;
+  removeProvisionedDirectory?: (input: {
+    root: string;
+    path: string;
+  }) => Promise<{ ok: boolean; reason?: string }>;
   listLocalDirectorySharedOverrides?: () => Promise<
     LocalDirectorySharedOverride[]
   >;
@@ -120,6 +136,27 @@ export async function initLocalGit(path: string): Promise<InitLocalGitResult> {
   const api = readDesktopAPI();
   if (!api?.initLocalGit) return { ok: false, reason: "unsupported" };
   return api.initLocalGit(path);
+}
+
+/** Create a project subdirectory on this machine. Web reports unsupported. */
+export async function provisionProjectDirectory(input: {
+  root: string;
+  dirName: string;
+  gitInit: boolean;
+}): Promise<ProvisionProjectDirectoryResult> {
+  const api = readDesktopAPI();
+  if (!api?.provisionProjectDirectory) return { ok: false, reason: "unsupported" };
+  return api.provisionProjectDirectory(input);
+}
+
+/** Remove a subdirectory this flow created. Web reports unsupported. */
+export async function removeProvisionedDirectory(input: {
+  root: string;
+  path: string;
+}): Promise<{ ok: boolean; reason?: string }> {
+  const api = readDesktopAPI();
+  if (!api?.removeProvisionedDirectory) return { ok: false, reason: "unsupported" };
+  return api.removeProvisionedDirectory(input);
 }
 
 export async function validateWritablePath(path: string): Promise<boolean> {

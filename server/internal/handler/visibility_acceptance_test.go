@@ -423,3 +423,29 @@ func TestAgentCreatedProjectRequiresWorkspaceOwner(t *testing.T) {
 		})
 	}
 }
+
+// The owner sees every project in their workspace (canSeeProject), so they
+// must also be able to reshare one. Production had private projects with no
+// created_by: the owner could open them, but every scope change came back 403
+// and the settings page looked like it ignored the click.
+func TestOwnerCanChangeScopeOfPrivateProjectTheyDidNotCreate(t *testing.T) {
+	requireDB(t)
+
+	stranger := visibilityTestMember(t, "Vis Scope Stranger", "vis-scope-stranger@multica.ai")
+	projectID := dbfx.Project(t, "creatorless", testutil.Cols{"visibility": "private"})
+	dbfx.Cleanup(t, `DELETE FROM visibility_audit WHERE workspace_id = $1 AND resource_id = $2`,
+		testWorkspaceID, projectID)
+
+	for _, scope := range []string{"project", "workspace", "private"} {
+		testutil.Call(t, testHandler.SetProjectVisibility,
+			withURLParam(newRequest("PUT", "/api/projects/"+projectID+"/visibility",
+				map[string]any{"visibility": scope}), "id", projectID),
+		).Want(200)
+	}
+
+	// A plain member who cannot see it still cannot touch it.
+	testutil.Call(t, testHandler.SetProjectVisibility,
+		withURLParam(newRequestAs(stranger, "PUT", "/api/projects/"+projectID+"/visibility",
+			map[string]any{"visibility": "workspace"}), "id", projectID),
+	).Want(404)
+}

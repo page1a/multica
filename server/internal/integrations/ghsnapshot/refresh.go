@@ -2,6 +2,7 @@ package ghsnapshot
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -126,6 +127,14 @@ func (m *Manager) SetReadSelector(selector *dbreader.Selector) {
 
 // Enabled reports whether the pipeline will actually do anything.
 func (m *Manager) Enabled() bool { return m != nil && m.client.Enabled() }
+
+// MergePullRequest merges one linked pull request when the GitHub App can.
+func (m *Manager) MergePullRequest(ctx context.Context, installationID int64, owner, repo string, number int) error {
+	if !m.Enabled() {
+		return errors.New("github app is not configured")
+	}
+	return m.client.MergePullRequest(ctx, installationID, owner, repo, number)
+}
 
 // Start launches the worker pool and the TTL sweeper under ctx. No-op (and
 // safe) when the manager is disabled.

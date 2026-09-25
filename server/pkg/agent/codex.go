@@ -22,6 +22,7 @@ import (
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // codexBlockedArgs are flags hardcoded by the daemon that must not be
@@ -1569,10 +1570,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				)
 			}
 			resCh <- Result{
-				Status:         finalStatus,
-				Error:          finalError,
-				DurationMs:     time.Since(startTime).Milliseconds(),
-				ResumeRejected: isCodexResumeOverflow(opts, err),
+				Status:               finalStatus,
+				Error:                finalError,
+				DurationMs:           time.Since(startTime).Milliseconds(),
+				SessionID:            codexResumeKeptSession(opts, err),
+				ResumeRejected:       isCodexResumeOverflow(opts, err),
+				SessionRestartReason: c.sessionRestartReason,
 			}
 			return
 		}
@@ -1664,7 +1667,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 					finalStatus = "failed"
 					finalError = withAgentStderr(fmt.Sprintf("codex turn/start failed: %v", err), "codex", sanitizeCodexDiagnostic(stderrBuf.Tail()))
-					resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
+					// The thread already exists. A capacity miss lands here,
+					// before any turn output, and dropping the id is what made
+					// the platform retry open a new Codex conversation.
+					resCh <- Result{
+						Status:               finalStatus,
+						Error:                finalError,
+						DurationMs:           time.Since(startTime).Milliseconds(),
+						SessionID:            threadID,
+						SessionRestartReason: c.sessionRestartReason,
+					}
 					return
 				}
 			}
@@ -1906,6 +1918,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			Usage:                        usageMap,
 			PlanLimits:                   planLimitsFromCodexSession(scanned),
 			codexStartupRefreshRetrySafe: startupRefreshRetrySafe,
+			SessionRestartReason:         c.sessionRestartReason,
 		}
 	}()
 
@@ -2009,12 +2022,15 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 				return threadID, true, nil
 			}
 			logger.Warn("codex thread/resume returned no thread ID; falling back to thread/start", "prior_thread_id", priorThreadID)
+			c.noteSessionRestart("原来的 Codex 会话没有返回线程号，这次新开了对话。")
+		} else if isCodexTransportError(err) || codexCapacityFailure(err) {
+			// Capacity and transport failures are resume-safe. Opening a new
+			// thread here is what lost the conversation on a full model.
+			logger.Warn("codex thread/resume failed; keeping the prior thread for the platform retry", "prior_thread_id", priorThreadID, "error", err)
+			return "", false, fmt.Errorf("codex thread/resume failed: %w", err)
 		} else {
-			if isCodexTransportError(err) {
-				logger.Warn("codex thread/resume failed due to transport error; not falling back to thread/start", "prior_thread_id", priorThreadID, "error", err)
-				return "", false, fmt.Errorf("codex thread/resume failed: %w", err)
-			}
 			logger.Warn("codex thread/resume failed; falling back to thread/start", "prior_thread_id", priorThreadID, "error", err)
+			c.noteSessionRestart("原来的 Codex 会话恢复失败（" + codexRestartDetail(err) + "），这次新开了对话。")
 		}
 	}
 
@@ -2340,11 +2356,15 @@ type codexClient struct {
 	activeLaunches         int64
 	threadSetupMethod      string
 	threadSetupStarted     time.Time
-	threadIDMu             sync.RWMutex
-	threadID               string
-	turnIDMu               sync.RWMutex
-	turnID                 string
-	onMessage              func(Message)
+	// sessionRestartReason is set when this attempt had to open a new Codex
+	// thread because the prior one could not be resumed. Empty when the run
+	// continued the prior thread, or never had one.
+	sessionRestartReason string
+	threadIDMu           sync.RWMutex
+	threadID             string
+	turnIDMu             sync.RWMutex
+	turnID               string
+	onMessage            func(Message)
 	// onAgentMessageChunk reports whether a text chunk was handed to the
 	// daemon-facing message channel. Raw delta reconciliation advances only on
 	// true, so channel pressure cannot turn observed provider bytes into a false
@@ -2789,6 +2809,40 @@ func (c *codexClient) getProcessErr() error {
 // different failure and nothing about the session pointer would fix it.
 func isCodexResumeOverflow(opts ExecOptions, err error) bool {
 	return opts.ResumeSessionID != "" && errors.Is(err, bufio.ErrTooLong)
+}
+
+// codexResumeKeptSession is the prior thread a failed resume must still
+// name, so the platform retry continues it. An overflowed resume is the
+// exception: that thread cannot be read back, and an empty id is what tells
+// the daemon to start fresh.
+func codexResumeKeptSession(opts ExecOptions, err error) string {
+	if opts.ResumeSessionID == "" || err == nil || isCodexResumeOverflow(opts, err) {
+		return ""
+	}
+	return opts.ResumeSessionID
+}
+
+func codexCapacityFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	return taskfailure.Classify(err.Error()) == taskfailure.ReasonAgentProviderCapacityOrRateLimit
+}
+
+func (c *codexClient) noteSessionRestart(reason string) {
+	if c.sessionRestartReason == "" {
+		c.sessionRestartReason = reason
+	}
+}
+
+func codexRestartDetail(err error) string {
+	text := strings.TrimSpace(err.Error())
+	text = strings.ReplaceAll(text, "\n", " ")
+	const limit = 180
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "…"
 }
 
 func isCodexTransportError(err error) bool {

@@ -183,7 +183,8 @@
     "no_project": "Aucun projet",
     "empty": "Aucun projet pour l'instant",
     "search_placeholder": "Rechercher des projets...",
-    "clear_aria": "Effacer le projet"
+    "clear_aria": "Effacer le projet",
+    "create": "+ Nouveau projet « {{name}} »"
   },
   "chip": {
     "fallback_label": "Projet"
@@ -215,5 +216,32 @@
     "toast_add_failed": "Échec de l'ajout du membre",
     "toast_removed": "Membre retiré",
     "toast_remove_failed": "Échec du retrait du membre"
+  },
+  "new_project": {
+    "name": "Nom",
+    "icon": "Icône",
+    "icon_placeholder": "Un emoji",
+    "positioning": "À quoi sert ce projet",
+    "positioning_placeholder": "Une courte description du métier",
+    "directory_enable": "Créer un dossier sur cette machine",
+    "directory_unavailable": "Créer le dossier nécessite l'application de bureau.",
+    "directory_offline": "Le daemon local n'est pas lancé.",
+    "directory_root": "Racine des projets métier",
+    "directory_container": "Utiliser la racine elle-même (plusieurs dépôts)",
+    "directory_name": "Nom du dossier",
+    "directory_git": "Initialiser un dépôt Git",
+    "directory_mode": "Comment les tâches partagent ce dossier",
+    "directory_mode_auto": "Choisi d'après le dossier : {{mode}}. Vous pouvez changer.",
+    "directory_bad_name": "Le nom du dossier doit être un seul segment.",
+    "directory_exists": "Ce dossier existe déjà. Choisissez un autre nom.",
+    "directory_failed": "Le dossier n'a pas pu être créé, donc le projet non plus.",
+    "mode": {
+      "worktree": "Un worktree par tâche",
+      "shared": "Dossier partagé",
+      "in_place": "Une tâche à la fois"
+    },
+    "back": "Retour",
+    "submit": "Créer et sélectionner",
+    "failed": "Le projet n'a pas pu être créé."
   }
 }

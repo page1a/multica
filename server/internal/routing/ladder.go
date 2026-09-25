@@ -247,6 +247,12 @@ func (l Ladder) pickTagged(seats []Agent, direction string) (Agent, string, bool
 	if len(seats) == 0 {
 		return Agent{}, "", false
 	}
+	// A seat that keeps tripping the breaker is not the first choice on its
+	// rung. When everyone on the rung is demoted, the ordinary pick stands:
+	// the work still needs a seat.
+	if resting := withoutDemoted(seats); len(resting) > 0 {
+		seats = resting
+	}
 	if direction != "" {
 		for _, a := range seats {
 			if l.seatDirection(a.Name) == direction {
@@ -260,6 +266,16 @@ func (l Ladder) pickTagged(seats []Agent, direction string) (Agent, string, bool
 		}
 	}
 	return seats[0], l.seatDirection(seats[0].Name), true
+}
+
+func withoutDemoted(seats []Agent) []Agent {
+	out := make([]Agent, 0, len(seats))
+	for _, seat := range seats {
+		if !seat.Demoted {
+			out = append(out, seat)
+		}
+	}
+	return out
 }
 
 // seatDirection reads the direction off a seat name by the naming convention
@@ -317,6 +333,10 @@ type Agent struct {
 	// from the model id, because the same model at a different thinking level
 	// is a different rung and two seats may sit on one model deliberately.
 	Tier string
+	// Demoted is set when this seat opened two or more breakers in the last
+	// day and has not finished a task since. Routing still uses it when the
+	// rung has nobody else.
+	Demoted bool
 }
 
 // SeatByTier finds the candidate on a named rung.
@@ -488,6 +508,75 @@ func (l Ladder) RequestedTier(labels []string) (string, bool) {
 		found = key
 	}
 	return found, found != ""
+}
+
+// SameTierAlternate is another seat on the holder's rung, from a different
+// model family. A direction seat is preferred over the generic one. The
+// holder is never returned. A rung with only one family returns false: the
+// caller steps down, it does not step up.
+func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[string]Agent) (Seat, bool) {
+	tierKey := holder.TierKey
+	if tierKey == "" {
+		if key, ok := l.TierOf(holder.Name); ok {
+			tierKey = key
+		}
+	}
+	tier, ok := l.TierByKey(tierKey)
+	if !ok {
+		return Seat{}, false
+	}
+	holderProvider, _ := l.ProviderOf(holder.Name)
+	pool := make([]Seat, 0, len(roster))
+	seen := map[string]bool{}
+	if holder.ID != "" {
+		seen[holder.ID] = true
+	}
+	for _, agent := range roster {
+		if agent.ID == "" || seen[agent.ID] {
+			continue
+		}
+		seatTier := ""
+		if key, tagged := l.NormalizeTier(agent.Tier); tagged && key != "" {
+			seatTier = key
+		} else if key, named := l.TierOf(agent.Name); named {
+			seatTier = key
+		}
+		if seatTier != tier.Key {
+			continue
+		}
+		provider, known := l.ProviderOf(agent.Name)
+		if !known || provider == "" || provider == holderProvider {
+			continue
+		}
+		seen[agent.ID] = true
+		pool = append(pool, Seat{
+			ID:        agent.ID,
+			Name:      agent.Name,
+			TierKey:   tier.Key,
+			TierLabel: tier.Label,
+			Direction: l.seatDirection(agent.Name),
+		})
+	}
+	if len(pool) == 0 {
+		return Seat{}, false
+	}
+	sort.Slice(pool, func(i, j int) bool {
+		iSame := direction != "" && pool[i].Direction == direction
+		jSame := direction != "" && pool[j].Direction == direction
+		if iSame != jSame {
+			return iSame
+		}
+		iGeneric := pool[i].Direction == ""
+		jGeneric := pool[j].Direction == ""
+		if iGeneric != jGeneric {
+			return iGeneric
+		}
+		if pool[i].Name != pool[j].Name {
+			return pool[i].Name < pool[j].Name
+		}
+		return pool[i].ID < pool[j].ID
+	})
+	return pool[0], true
 }
 
 // FallbackSeat is the seat routing dispatches to when the judge's answer is

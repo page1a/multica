@@ -105,6 +105,37 @@ export interface TabSession {
    */
   history: { stack: string[]; index: number };
   memento: TabMemento;
+  /**
+   * Chrome-style strip group this tab belongs to, or null when it sits loose.
+   * Pinned tabs are never grouped. Membership is persisted with the tab.
+   */
+  groupId: string | null;
+}
+
+/**
+ * A named, collapsible cluster of tabs inside one workspace strip — the
+ * Chrome tab group, not the workspace's tab set (`WorkspaceTabGroup`).
+ * Colors are palette keys so the tab bar, not the store, picks the paint.
+ */
+export const TAB_STRIP_GROUP_COLORS = [
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "pink",
+  "purple",
+  "cyan",
+  "orange",
+] as const;
+
+export type TabStripGroupColor = (typeof TAB_STRIP_GROUP_COLORS)[number];
+
+export interface TabStripGroup {
+  id: string;
+  /** Empty string renders as the placeholder "Group". */
+  name: string;
+  collapsed: boolean;
+  color: TabStripGroupColor;
 }
 
 /** Back-compat alias — external consumers still say `Tab`. */
@@ -140,6 +171,11 @@ export interface WorkspaceTabGroup {
    * far away from it.
    */
   recentTabIds: string[];
+  /**
+   * Strip groups (Chrome tab groups) for this workspace. Empty groups are
+   * dropped; a tab's `groupId` always names one of these, or is null.
+   */
+  groups: TabStripGroup[];
 }
 
 interface TabStore {
@@ -216,6 +252,11 @@ interface TabStore {
    * In-tab navigation: update the active session's url/resourceKey and its
    * virtual history. This is the ONLY way a session's url changes; the
    * Coordinator reconciles the router afterwards.
+   *
+   * If a *different* tab already owns the destination's resourceKey, this
+   * focuses that tab instead of turning the current one into a duplicate.
+   * Chat sessions and inbox selections are adopted onto the existing tab;
+   * filters and hashes stay that tab's own view state.
    */
   navigateActiveSession: (url: string, opts?: { replace?: boolean }) => void;
   /** Session-driven back/forward (there is no router history to pop). */
@@ -278,6 +319,25 @@ interface TabStore {
    * preserve the "pinned tabs before unpinned tabs" invariant.
    */
   togglePin: (tabId: string) => void;
+  /**
+   * Put one unpinned tab in a fresh strip group and return the group id.
+   * Pinned tabs are refused (returns "").
+   */
+  createTabGroup: (tabId: string) => string;
+  /** Rename a strip group. Blank becomes the placeholder; capped at 80 chars. */
+  renameTabGroup: (groupId: string, name: string) => void;
+  /** Collapse or expand a strip group. Collapsed tabs stay open, just hidden. */
+  toggleTabGroupCollapsed: (groupId: string) => void;
+  /**
+   * Move an unpinned tab into an existing strip group (appended to it) and
+   * expand that group so the drop is visible. No-op for pinned tabs or an
+   * unknown group.
+   */
+  addTabToGroup: (tabId: string, groupId: string) => void;
+  /** Take one tab back out of its strip group, leaving it where it sits. */
+  removeTabFromGroup: (tabId: string) => void;
+  /** Dissolve a strip group. Its tabs stay open, in the same order, ungrouped. */
+  ungroupTabs: (groupId: string) => void;
   /**
    * After the workspace list arrives/changes (login, realtime delete), drop
    * any tab group whose slug is no longer in `validSlugs`, and repoint
@@ -362,6 +422,63 @@ function inboxSelectionKeyForUrl(url: string): string | null {
 }
 
 /**
+ * Query params that name WHICH item a container tab is showing. Changing
+ * one is "open this item", not view-state the way a filter or hash is.
+ */
+const CONTAINER_SELECTION_PARAM: Record<string, string> = {
+  chat: "session",
+  inbox: "issue",
+};
+
+function searchParamsOf(url: string): URLSearchParams {
+  const { suffix } = splitTabUrl(url);
+  if (!suffix.startsWith("?")) return new URLSearchParams();
+  const hashAt = suffix.indexOf("#");
+  const query = hashAt === -1 ? suffix.slice(1) : suffix.slice(1, hashAt);
+  return new URLSearchParams(query);
+}
+
+/**
+ * URL to keep when focusing a tab that already shows this pathname.
+ *
+ * Filters and hashes stay the tab's own view state (RFC §8.2). A chat
+ * session or inbox selection is the page the caller asked to open, so the
+ * existing tab adopts it instead of ignoring the request — and instead of
+ * a second tab being created for the same page.
+ */
+export function urlWhenFocusingExisting(
+  existingUrl: string,
+  requestedUrl: string,
+): string {
+  const existingPath = splitTabUrl(existingUrl).pathname;
+  const requestedPath = splitTabUrl(requestedUrl).pathname;
+  if (existingPath !== requestedPath) return existingUrl;
+  const segment = existingPath.split("/").filter(Boolean)[1] ?? "";
+  const param = CONTAINER_SELECTION_PARAM[segment];
+  if (!param) return existingUrl;
+  const requestedSelection = searchParamsOf(requestedUrl).get(param);
+  if (requestedSelection === null) return existingUrl;
+  if (requestedSelection === searchParamsOf(existingUrl).get(param)) {
+    return existingUrl;
+  }
+  return requestedUrl;
+}
+
+/** Replace the current history entry when a focused tab adopts a selection. */
+function withFocusedUrl(tab: TabSession, requestedUrl: string): TabSession {
+  const url = urlWhenFocusingExisting(tab.url, requestedUrl);
+  if (url === tab.url) return tab;
+  const stack = tab.history.stack.slice();
+  stack[tab.history.index] = url;
+  return {
+    ...tab,
+    url,
+    resourceKey: resourceKeyForUrl(url),
+    history: { stack, index: tab.history.index },
+  };
+}
+
+/**
  * Defensive: catch URLs that don't belong in the tab store, and normalize
  * the ones that do.
  *
@@ -422,6 +539,7 @@ function makeSession(url: string, title: string): TabSession {
     pinned: false,
     history: { stack: [url], index: 0 },
     memento: emptyMemento(),
+    groupId: null,
   };
 }
 
@@ -622,6 +740,102 @@ function normalizeBrowsingHistoryTitles(
 // Group helpers
 // ---------------------------------------------------------------------------
 
+function isStripGroupColor(value: unknown): value is TabStripGroupColor {
+  return (
+    typeof value === "string" &&
+    (TAB_STRIP_GROUP_COLORS as readonly string[]).includes(value)
+  );
+}
+
+/** Drop malformed persisted groups. Ids are unique; names are capped. */
+export function sanitizeStripGroups(value: unknown): TabStripGroup[] {
+  if (!Array.isArray(value)) return [];
+  const groups: TabStripGroup[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const raw = candidate as Record<string, unknown>;
+    if (typeof raw.id !== "string" || raw.id.length === 0 || seen.has(raw.id)) {
+      continue;
+    }
+    seen.add(raw.id);
+    groups.push({
+      id: raw.id,
+      name: typeof raw.name === "string" ? raw.name.slice(0, 80) : "",
+      collapsed: raw.collapsed === true,
+      color: isStripGroupColor(raw.color)
+        ? raw.color
+        : TAB_STRIP_GROUP_COLORS[groups.length % TAB_STRIP_GROUP_COLORS.length],
+    });
+  }
+  return groups;
+}
+
+/**
+ * Pinned tabs first, then unpinned tabs with each strip group packed into
+ * one contiguous run anchored where its first member sat. Loose tabs keep
+ * their relative order. Returns the input array when nothing moved.
+ */
+function packStrip(tabs: TabSession[]): TabSession[] {
+  const pinned: TabSession[] = [];
+  const rest: TabSession[] = [];
+  for (const tab of tabs) {
+    if (tab.pinned) {
+      pinned.push(tab.groupId ? { ...tab, groupId: null } : tab);
+    } else {
+      rest.push(tab);
+    }
+  }
+  const ordered: TabSession[] = [];
+  const emitted = new Set<string>();
+  for (const tab of rest) {
+    if (tab.groupId) {
+      if (emitted.has(tab.groupId)) continue;
+      emitted.add(tab.groupId);
+      for (const member of rest) {
+        if (member.groupId === tab.groupId) ordered.push(member);
+      }
+    } else {
+      ordered.push(tab);
+    }
+  }
+  const packed = [...pinned, ...ordered];
+  if (
+    packed.length === tabs.length &&
+    packed.every((tab, index) => tab === tabs[index])
+  ) {
+    return tabs;
+  }
+  return packed;
+}
+
+/**
+ * Clear group ids that don't name a live group (or sit on a pinned tab),
+ * pack the strip, and drop groups with no members left.
+ */
+function attachGroups(
+  tabs: TabSession[],
+  groups: TabStripGroup[],
+): { tabs: TabSession[]; groups: TabStripGroup[] } {
+  const known = new Set(groups.map((group) => group.id));
+  let mutated = false;
+  const cleaned = tabs.map((tab) => {
+    const id = tab.groupId ?? null;
+    if (!id || tab.pinned || !known.has(id)) {
+      if (id == null && tab.groupId == null) return tab;
+      mutated = true;
+      return { ...tab, groupId: null };
+    }
+    return tab;
+  });
+  const packed = packStrip(mutated ? cleaned : tabs);
+  const used = new Set(
+    packed.flatMap((tab) => (tab.groupId ? [tab.groupId] : [])),
+  );
+  const liveGroups = groups.filter((group) => used.has(group.id));
+  return { tabs: packed, groups: liveGroups };
+}
+
 /**
  * Build a group with its MRU order reconciled against the new (tabs,
  * activeTabId) pair. Every write that changes which tab is active or which
@@ -630,13 +844,16 @@ function normalizeBrowsingHistoryTitles(
  * `prev` is the group being replaced: when the active tab changes, the
  * outgoing tab becomes the most recent visit. Pass null when seeding a brand
  * new group (nothing has been visited yet).
+ *
+ * Strip groups ride along: dangling ids are cleared and empty groups drop.
  */
 function reconcileGroup(
   prev: WorkspaceTabGroup | null,
   tabs: TabSession[],
   activeTabId: string,
 ): WorkspaceTabGroup {
-  const live = new Set(tabs.map((t) => t.id));
+  const attached = attachGroups(tabs, prev?.groups ?? []);
+  const live = new Set(attached.tabs.map((t) => t.id));
   const carried =
     prev && prev.activeTabId !== activeTabId
       ? [prev.activeTabId, ...prev.recentTabIds]
@@ -650,11 +867,32 @@ function reconcileGroup(
     recentTabIds.push(id);
   }
   return {
-    tabs,
+    tabs: attached.tabs,
     activeTabId,
     browsingHistory: prev?.browsingHistory ?? [],
     browsingHistoryTitles: prev?.browsingHistoryTitles ?? {},
     recentTabIds,
+    groups: attached.groups,
+  };
+}
+
+/** Reveal the strip group of the tab we just focused, if it was collapsed. */
+function focusTab(
+  prev: WorkspaceTabGroup,
+  tabs: TabSession[],
+  tabId: string,
+): WorkspaceTabGroup {
+  const next = reconcileGroup(prev, tabs, tabId);
+  const tab = next.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab?.groupId) return next;
+  if (!next.groups.some((group) => group.id === tab.groupId && group.collapsed)) {
+    return next;
+  }
+  return {
+    ...next,
+    groups: next.groups.map((group) =>
+      group.id === tab.groupId ? { ...group, collapsed: false } : group,
+    ),
   };
 }
 
@@ -762,11 +1000,15 @@ export const useTabStore = create<TabStore>()(
             const key = resourceKeyForUrl(clean);
             const match = existing.tabs.find((t) => t.resourceKey === key);
             if (match) {
+              const adopted = withFocusedUrl(match, clean);
+              const nextTabs = existing.tabs.map((tab) =>
+                tab.id === adopted.id ? adopted : tab,
+              );
               const nextGroup = withBrowsingVisit(
-                reconcileGroup(existing, existing.tabs, match.id),
+                focusTab(existing, nextTabs, adopted.id),
                 slug,
-                match.url,
-                { title: match.title },
+                adopted.url,
+                { title: adopted.title },
               );
               set({
                 activeWorkspaceSlug: slug,
@@ -810,20 +1052,25 @@ export const useTabStore = create<TabStore>()(
         const group = byWorkspace[activeWorkspaceSlug];
         if (!group) return "";
 
-        // Dedup by resourceKey: the existing tab keeps its own url (its
-        // filters/anchor are its view state); we only focus it.
+        // Dedup by resourceKey. Filters/anchors stay the existing tab's
+        // view state; a chat session or inbox selection is adopted so the
+        // caller actually lands on the item they opened.
         const key = resourceKeyForUrl(clean);
         const existing = group.tabs.find((t) => t.resourceKey === key);
         if (existing) {
+          const adopted = withFocusedUrl(existing, clean);
+          const nextTabs = group.tabs.map((tab) =>
+            tab.id === adopted.id ? adopted : tab,
+          );
           const historyBase = withActiveSessionVisit(
             group,
             activeWorkspaceSlug,
           );
           const nextGroup = withBrowsingVisit(
-            reconcileGroup(historyBase, group.tabs, existing.id),
+            focusTab(historyBase, nextTabs, adopted.id),
             activeWorkspaceSlug,
-            existing.url,
-            { title: existing.title },
+            adopted.url,
+            { title: adopted.title },
           );
           set({
             byWorkspace: {
@@ -937,11 +1184,15 @@ export const useTabStore = create<TabStore>()(
           group.activeTabId === tabId
             ? nextActiveAfterClose(group, nextTabs, index)
             : group.activeTabId;
+        const nextGroup =
+          nextActiveTabId === group.activeTabId
+            ? reconcileGroup(group, nextTabs, nextActiveTabId)
+            : focusTab(group, nextTabs, nextActiveTabId);
 
         set({
           byWorkspace: {
             ...byWorkspace,
-            [slug]: reconcileGroup(group, nextTabs, nextActiveTabId),
+            [slug]: nextGroup,
           },
         });
       },
@@ -963,7 +1214,7 @@ export const useTabStore = create<TabStore>()(
           activeWorkspaceSlug: slug,
           byWorkspace: {
             ...byWorkspace,
-            [slug]: reconcileGroup(group, group.tabs, tabId),
+            [slug]: focusTab(group, group.tabs, tabId),
           },
         });
       },
@@ -1007,6 +1258,34 @@ export const useTabStore = create<TabStore>()(
 
         const current = group.tabs[index];
         if (current.url === clean) return;
+
+        // Same page already open in another tab: go there. Don't turn this
+        // tab into a second copy (the way chat-session opens used to, once
+        // a chat tab already existed beside the one you were navigating).
+        const key = resourceKeyForUrl(clean);
+        if (key !== current.resourceKey) {
+          const otherIndex = group.tabs.findIndex(
+            (tab) => tab.id !== current.id && tab.resourceKey === key,
+          );
+          if (otherIndex >= 0) {
+            const adopted = withFocusedUrl(group.tabs[otherIndex], clean);
+            const nextTabs = group.tabs.slice();
+            nextTabs[otherIndex] = adopted;
+            const nextGroup = withBrowsingVisit(
+              focusTab(group, nextTabs, adopted.id),
+              activeWorkspaceSlug,
+              adopted.url,
+              { title: adopted.title },
+            );
+            set({
+              byWorkspace: {
+                ...byWorkspace,
+                [activeWorkspaceSlug]: nextGroup,
+              },
+            });
+            return;
+          }
+        }
 
         const replace = opts?.replace === true;
         const stack = replace
@@ -1180,13 +1459,26 @@ export const useTabStore = create<TabStore>()(
           clampedTo = Math.max(boundary, Math.min(toIndex, group.tabs.length - 1));
         }
         if (clampedTo === fromIndex) return;
+        const target = group.tabs[clampedTo];
+        const moved = arrayMove(group.tabs, fromIndex, clampedTo);
+        const placed = moved.map((tab, index) => {
+          if (index !== clampedTo) return tab;
+          // Dropping on a grouped tab joins that group. Dropping on a loose
+          // tab leaves the group. Pinned tabs stay ungrouped.
+          if (source.pinned) return tab.groupId ? { ...tab, groupId: null } : tab;
+          const nextGroupId = target.groupId ?? null;
+          return tab.groupId === nextGroupId
+            ? tab
+            : { ...tab, groupId: nextGroupId };
+        });
         set({
           byWorkspace: {
             ...byWorkspace,
-            [activeWorkspaceSlug]: {
-              ...group,
-              tabs: arrayMove(group.tabs, fromIndex, clampedTo),
-            },
+            [activeWorkspaceSlug]: reconcileGroup(
+              group,
+              placed,
+              group.activeTabId,
+            ),
           },
         });
       },
@@ -1197,7 +1489,12 @@ export const useTabStore = create<TabStore>()(
         if (!hit) return;
         const { slug, group, index } = hit;
         const current = group.tabs[index];
-        const nextTab: TabSession = { ...current, pinned: !current.pinned };
+        // Pinning parks the tab outside any strip group (Chrome does the same).
+        const nextTab: TabSession = {
+          ...current,
+          pinned: !current.pinned,
+          groupId: current.pinned ? current.groupId : null,
+        };
 
         // Remove from current position, then insert at the new zone boundary:
         //   pinning   → end of pinned zone (just before first unpinned tab)
@@ -1217,9 +1514,155 @@ export const useTabStore = create<TabStore>()(
         set({
           byWorkspace: {
             ...byWorkspace,
-            [slug]: { ...group, tabs: nextTabs },
+            [slug]: reconcileGroup(group, nextTabs, group.activeTabId),
           },
         });
+      },
+
+      createTabGroup(tabId) {
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return "";
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+        if (current.pinned) return "";
+        const id = createId();
+        const created: TabStripGroup = {
+          id,
+          name: "",
+          collapsed: false,
+          color:
+            TAB_STRIP_GROUP_COLORS[
+              group.groups.length % TAB_STRIP_GROUP_COLORS.length
+            ],
+        };
+        const nextTabs = group.tabs.slice();
+        nextTabs[index] = { ...current, groupId: id };
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: reconcileGroup(
+              { ...group, groups: [...group.groups, created] },
+              nextTabs,
+              group.activeTabId,
+            ),
+          },
+        });
+        return id;
+      },
+
+      renameTabGroup(groupId, name) {
+        const { byWorkspace } = get();
+        const nextName = name.trim().slice(0, 80);
+        for (const slug of Object.keys(byWorkspace)) {
+          const group = byWorkspace[slug];
+          const index = group.groups.findIndex((candidate) => candidate.id === groupId);
+          if (index < 0) continue;
+          if (group.groups[index].name === nextName) return;
+          const groups = group.groups.slice();
+          groups[index] = { ...groups[index], name: nextName };
+          set({
+            byWorkspace: {
+              ...byWorkspace,
+              [slug]: { ...group, groups },
+            },
+          });
+          return;
+        }
+      },
+
+      toggleTabGroupCollapsed(groupId) {
+        const { byWorkspace } = get();
+        for (const slug of Object.keys(byWorkspace)) {
+          const group = byWorkspace[slug];
+          const index = group.groups.findIndex((candidate) => candidate.id === groupId);
+          if (index < 0) continue;
+          const groups = group.groups.slice();
+          groups[index] = {
+            ...groups[index],
+            collapsed: !groups[index].collapsed,
+          };
+          set({
+            byWorkspace: {
+              ...byWorkspace,
+              [slug]: { ...group, groups },
+            },
+          });
+          return;
+        }
+      },
+
+      addTabToGroup(tabId, groupId) {
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return;
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+        if (current.pinned) return;
+        if (!group.groups.some((candidate) => candidate.id === groupId)) return;
+        const without = group.tabs.filter((tab) => tab.id !== tabId);
+        let insertAt = without.length;
+        for (let i = without.length - 1; i >= 0; i--) {
+          if (without[i].groupId === groupId) {
+            insertAt = i + 1;
+            break;
+          }
+        }
+        const nextTabs = [
+          ...without.slice(0, insertAt),
+          { ...current, groupId },
+          ...without.slice(insertAt),
+        ];
+        const groups = group.groups.map((candidate) =>
+          candidate.id === groupId
+            ? { ...candidate, collapsed: false }
+            : candidate,
+        );
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: reconcileGroup(
+              { ...group, groups },
+              nextTabs,
+              group.activeTabId,
+            ),
+          },
+        });
+      },
+
+      removeTabFromGroup(tabId) {
+        const { byWorkspace } = get();
+        const hit = findTabLocation(byWorkspace, tabId);
+        if (!hit) return;
+        const { slug, group, index } = hit;
+        const current = group.tabs[index];
+        if (!current.groupId) return;
+        const nextTabs = group.tabs.slice();
+        nextTabs[index] = { ...current, groupId: null };
+        set({
+          byWorkspace: {
+            ...byWorkspace,
+            [slug]: reconcileGroup(group, nextTabs, group.activeTabId),
+          },
+        });
+      },
+
+      ungroupTabs(groupId) {
+        const { byWorkspace } = get();
+        for (const slug of Object.keys(byWorkspace)) {
+          const group = byWorkspace[slug];
+          if (!group.groups.some((candidate) => candidate.id === groupId)) continue;
+          const nextTabs = group.tabs.map((tab) =>
+            tab.groupId === groupId ? { ...tab, groupId: null } : tab,
+          );
+          set({
+            byWorkspace: {
+              ...byWorkspace,
+              [slug]: reconcileGroup(group, nextTabs, group.activeTabId),
+            },
+          });
+          return;
+        }
       },
 
       validateWorkspaceSlugs(validSlugs) {
@@ -1270,7 +1713,7 @@ export const useTabStore = create<TabStore>()(
     }),
     {
       name: "multica_tabs",
-      version: 5,
+      version: 6,
       storage: createJSONStorage(() => createPersistStorage(defaultStorage)),
       migrate: (persistedState, version) => {
         // v1 → v2: flat `tabs` array → per-workspace grouping.
@@ -1298,7 +1741,11 @@ export const useTabStore = create<TabStore>()(
         if (version < 5 && state && typeof state === "object") {
           state = migrateV4ToV5(state as V4Persisted);
         }
-        return state as V5Persisted;
+        // v5 → v6: Chrome-style strip groups. Existing tabs are ungrouped.
+        if (version < 6 && state && typeof state === "object") {
+          state = migrateV5ToV6(state as V5Persisted);
+        }
+        return state as V6Persisted;
       },
       partialize: (state) => ({
         activeWorkspaceSlug: state.activeWorkspaceSlug,
@@ -1315,11 +1762,13 @@ export const useTabStore = create<TabStore>()(
               recentTabIds: group.recentTabIds,
               browsingHistory: group.browsingHistory,
               browsingHistoryTitles: group.browsingHistoryTitles,
+              groups: group.groups,
               tabs: group.tabs.map((t) => ({
                 id: t.id,
                 url: t.url,
                 title: t.title,
                 pinned: t.pinned,
+                groupId: t.groupId,
                 history: t.history,
                 memento: t.memento,
               })),
@@ -1355,7 +1804,7 @@ export function mergePersistedTabs<T extends PersistedTabState>(
   persistedState: unknown,
   currentState: T,
 ): T {
-  const persisted = persistedState as Partial<V5Persisted> | undefined;
+  const persisted = persistedState as Partial<V6Persisted> | undefined;
   if (!persisted?.byWorkspace) return currentState;
 
   const byWorkspace: Record<string, WorkspaceTabGroup> = {};
@@ -1387,6 +1836,7 @@ export function mergePersistedTabs<T extends PersistedTabState>(
         resourceKey: resourceKeyForUrl(clean),
         title: pTab.title,
         pinned: pTab.pinned === true,
+        groupId: typeof pTab.groupId === "string" ? pTab.groupId : null,
         history: { stack, index },
         memento:
           pTab.memento && typeof pTab.memento.scroll === "object"
@@ -1407,9 +1857,10 @@ export function mergePersistedTabs<T extends PersistedTabState>(
     // user (or a buggy older write) persisted the pinned tabs out of
     // order. Stable sort preserves intra-group order.
     tabs.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
-    const activeTabId = tabs.some((t) => t.id === pGroup.activeTabId)
+    const attached = attachGroups(tabs, sanitizeStripGroups(pGroup.groups));
+    const activeTabId = attached.tabs.some((t) => t.id === pGroup.activeTabId)
       ? pGroup.activeTabId
-      : tabs[0].id;
+      : attached.tabs[0].id;
     // reconcileGroup filters the persisted MRU order down to live tab ids
     // (tabs dropped just above), drops the active tab from it, and dedupes.
     const browsingHistory = normalizeBrowsingHistory(
@@ -1418,7 +1869,7 @@ export function mergePersistedTabs<T extends PersistedTabState>(
     );
     byWorkspace[slug] = reconcileGroup(
       {
-        tabs,
+        tabs: attached.tabs,
         activeTabId,
         recentTabIds: Array.isArray(pGroup.recentTabIds)
           ? pGroup.recentTabIds.filter((id) => typeof id === "string")
@@ -1427,10 +1878,11 @@ export function mergePersistedTabs<T extends PersistedTabState>(
         browsingHistoryTitles: normalizeBrowsingHistoryTitles(
           pGroup.browsingHistoryTitles,
           browsingHistory,
-          tabs,
+          attached.tabs,
         ),
+        groups: attached.groups,
       },
-      tabs,
+      attached.tabs,
       activeTabId,
     );
   }
@@ -1592,6 +2044,31 @@ interface V5PersistedGroup extends V4PersistedGroup {
 interface V5Persisted {
   activeWorkspaceSlug: string | null;
   byWorkspace: Record<string, V5PersistedGroup>;
+}
+
+interface V6PersistedTab extends V4PersistedTab {
+  groupId?: string | null;
+}
+
+interface V6PersistedGroup extends Omit<V5PersistedGroup, "tabs"> {
+  tabs: V6PersistedTab[];
+  groups?: unknown;
+}
+
+interface V6Persisted {
+  activeWorkspaceSlug: string | null;
+  byWorkspace: Record<string, V6PersistedGroup>;
+}
+
+export function migrateV5ToV6(v5: V5Persisted): V6Persisted {
+  const byWorkspace: Record<string, V6PersistedGroup> = {};
+  for (const [slug, group] of Object.entries(v5.byWorkspace ?? {})) {
+    byWorkspace[slug] = { ...group, groups: [] };
+  }
+  return {
+    activeWorkspaceSlug: v5.activeWorkspaceSlug ?? null,
+    byWorkspace,
+  };
 }
 
 export function migrateV4ToV5(v4: V4Persisted): V5Persisted {

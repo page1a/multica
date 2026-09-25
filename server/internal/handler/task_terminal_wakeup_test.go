@@ -74,14 +74,25 @@ func TestTerminalTransitionsNotifyRuntime(t *testing.T) {
 	if w := completeTaskViaHandler(t, taskID, "done"); w.Code != http.StatusOK {
 		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := len(recorder.calls); got != 1 {
-		t.Fatalf("expected 1 terminal runtime wakeup, got %d", got)
+	// Completing an in_progress issue with nothing queued wakes twice: once for
+	// the terminal hint (no task id — the finished row is not claimable) and
+	// once for the stall-recovery closeout that HandleCompletedTasks enqueues.
+	if got := len(recorder.calls); got != 2 {
+		t.Fatalf("expected 2 runtime wakeups (terminal hint + stall recovery), got %d (%#v)", got, recorder.calls)
 	}
-	if recorder.calls[0].runtimeID != runtimeID {
-		t.Fatalf("wakeup runtime = %q, want %q", recorder.calls[0].runtimeID, runtimeID)
+	var terminal, recovery int
+	for _, call := range recorder.calls {
+		if call.runtimeID != runtimeID {
+			t.Fatalf("wakeup runtime = %q, want %q", call.runtimeID, runtimeID)
+		}
+		if call.taskID == "" {
+			terminal++
+		} else {
+			recovery++
+		}
 	}
-	if recorder.calls[0].taskID != "" {
-		t.Fatalf("terminal wakeup must omit completed task id, got %q", recorder.calls[0].taskID)
+	if terminal != 1 || recovery != 1 {
+		t.Fatalf("want one terminal wakeup and one recovery enqueue, got %#v", recorder.calls)
 	}
 
 	// Failure uses the daemon callback handler, matching production. It must

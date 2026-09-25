@@ -15,6 +15,27 @@ import { estimateCost } from "../../runtimes/utils";
 export type AgentQuotaKind = "windows" | "exhausted" | "metered";
 
 /**
+ * The subscription snapshot an agent's quota surface should read (DENE-715).
+ *
+ * Plan limits live on the runtime, but one runtime serves every CLI seat on
+ * the machine: an agent switched to a numbered account (`custom_env`
+ * `CLAUDE_CONFIG_DIR`) shares its runtime row with its unbound siblings, and
+ * that row can only ever carry the daemon-default account's windows. The daemon
+ * therefore reports the bound agent's own account snapshot on the agent, and
+ * this is where a reader prefers it.
+ *
+ * `null` and `undefined` both mean "nothing agent-specific to say" — the agent
+ * binds no account, or the daemon has not run it yet — and the runtime's
+ * snapshot is then the correct answer, exactly as it was before DENE-715.
+ */
+export function agentQuotaSnapshot(
+  agentPlanLimits: PlanLimitsSnapshot | null | undefined,
+  runtimePlanLimits: PlanLimitsSnapshot | null | undefined,
+): PlanLimitsSnapshot | null | undefined {
+  return agentPlanLimits ?? runtimePlanLimits;
+}
+
+/**
  * How an agent should present quota/usage:
  * - `windows`: subscription snapshot with live rolling percentages
  * - `exhausted`: 429 / session-limit with no live percentage (Claude, grok, …)

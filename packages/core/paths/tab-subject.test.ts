@@ -61,6 +61,7 @@ describe("parseTabSubject", () => {
     ],
     ["/acme/chat", { kind: "chat", sessionId: null }],
     ["/acme/chat?session=sess-1", { kind: "chat", sessionId: "sess-1" }],
+    ["/acme/chat/sess-1", { kind: "chat", sessionId: "sess-1" }],
     ["/acme/chat?agent=ag-1", { kind: "chat", sessionId: null }],
     // Members list route does not exist
     ["/acme/members", { kind: "unknown" }],
@@ -81,6 +82,10 @@ describe("parseTabSubject", () => {
       id: "bug-1",
     });
     expect(parseTabSubject("/acme/chat?session=s1#x")).toEqual({
+      kind: "chat",
+      sessionId: "s1",
+    });
+    expect(parseTabSubject("/acme/chat/s1#x")).toEqual({
       kind: "chat",
       sessionId: "s1",
     });

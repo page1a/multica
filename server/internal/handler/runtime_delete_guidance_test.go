@@ -730,8 +730,9 @@ func TestDeleteAgentRuntime_OfflineInstanceWithUnfinishedTaskDoesNotPromiseClean
 }
 
 // Builder sessions are creator-scoped reads, so an admin who is not the
-// creator gets 403 from list, switch and discard alike. Telling that admin to
-// reopen the session is another instruction they cannot carry out.
+// creator does not see the session in the list, and switch and discard answer
+// 404 (the session is not visible to them). Telling that admin to reopen the
+// session is another instruction they cannot carry out.
 // Regression contributed by review.
 func TestDeleteRuntimeProfile_BuilderRemedyAddressesTheSessionCreator(t *testing.T) {
 	if testHandler == nil {
@@ -765,13 +766,13 @@ func TestDeleteRuntimeProfile_BuilderRemedyAddressesTheSessionCreator(t *testing
 		t.Fatal("other member's private session unexpectedly visible")
 	}
 	w = switchBuilderRuntime(t, session.SessionID, runtimeID)
-	if w.Code != http.StatusForbidden {
+	if w.Code != http.StatusNotFound {
 		t.Fatalf("switch: %d %s", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
 	r := withURLParam(newRequest("DELETE", "/api/chat/sessions/"+session.SessionID, nil), "sessionId", session.SessionID)
 	testHandler.DeleteChatSession(w, withChatTestWorkspaceCtx(t, r))
-	if w.Code != http.StatusForbidden {
+	if w.Code != http.StatusNotFound {
 		t.Fatalf("discard: %d %s", w.Code, w.Body.String())
 	}
 	if strings.Contains(msg, "reopen the session") && !strings.Contains(msg, "creator") && !strings.Contains(msg, "owner") {

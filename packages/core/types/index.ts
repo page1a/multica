@@ -1,5 +1,5 @@
 export type { Issue, IssueStatus, BuiltInIssueStatus, IssuePriority, IssueAssigneeType, IssueReviewerType, IssueMetadata, IssueMetadataValue, IssueAgentGuardResponse, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext } from "./issue";
-export type { IssueDraft, IssueDraftStatus, IssueDraftPayload, IssueDraftChild, IssueDraftCreatedIssue, IssueDraftAssignmentWarning, IssueDraftPolicy, IssueDraftCapabilities, IssueDraftSession, IssueDraftSummary, IssueDraftFinalizeResult, IssueDraftRuntimeSwitch } from "./issue-draft";
+export type { IssueDraft, IssueDraftStatus, IssueDraftPayload, IssueDraftChild, IssueDraftProjectProposal, IssueDraftProjectChoice, IssueDraftCreatedIssue, IssueDraftAssignmentWarning, IssueDraftPolicy, IssueDraftCapabilities, IssueDraftSession, IssueDraftSummary, IssueDraftFinalizeResult, IssueDraftRuntimeSwitch } from "./issue-draft";
 export type {
   IssueStatusCategory,
   IssueStatusEntry,
@@ -11,8 +11,6 @@ export type {
 export type {
   Agent,
   AgentConversationStarter,
-  AgentSwitchableModel,
-  AgentSwitchableModelRole,
   AgentStatus,
   AgentRuntimeMode,
   AgentVisibility,
@@ -106,6 +104,15 @@ export type {
   IssueUsageSummary,
   MikaBootstrapResponse,
   CodeDecision,
+  AgentAccessRequestStatus,
+  AgentAccessTriggerKind,
+  AgentAccessRequest,
+  AgentAccessRequestList,
+  AgentAccessPass,
+  AgentAccessReplayOutcome,
+  ApproveAgentAccessRequestBody,
+  ApproveAgentAccessRequestResponse,
+  CreateAgentAccessPassRequest,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES, RUNTIME_PROFILE_RUNTIME_TYPES } from "./agent";
 export type { Workspace, WorkspaceRepo, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo, ModuleKey, ModuleVisibility, ModuleVisibilityList } from "./workspace";
@@ -183,6 +190,9 @@ export {
 export type {
   ChatSession,
   ChatLastMessage,
+  ChatShareGrant,
+  ChatAccessSettings,
+  ChatVisibilityNotice,
   ChatPinnedAgent,
   ChatMessage,
   ChatQuickAction,
@@ -368,3 +378,5 @@ export type {
   WorkspaceSubscriptionSeatReconcileResult,
   CreateWorkspaceSubscriptionPortalResponse,
 } from "./billing";
+
+export type { WorkThreadSnapshot, WorkThreadTurn, WorkThreadInput } from "./work_thread";

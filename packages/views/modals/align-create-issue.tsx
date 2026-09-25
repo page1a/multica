@@ -25,6 +25,7 @@ import {
   runtimeListOptions,
 } from "@multica/core/runtimes";
 import { contentReferencesAttachment, type IssueDraftSummary } from "@multica/core/types";
+import { projectListOptions } from "@multica/core/projects/queries";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -179,6 +180,7 @@ export function AlignCreatePanel({
     draft.align.capabilities ?? remembered?.capabilities ?? [];
 
   const draftsQuery = useQuery(issueDraftListOptions(wsId));
+  const projectsQuery = useQuery(projectListOptions(wsId));
   const runtimesQuery = useQuery(runtimeListOptions(wsId));
   // The picker names each machine's owner, so it needs the member list the
   // preview panel already reads for the same rows.
@@ -302,6 +304,7 @@ export function AlignCreatePanel({
         // that founds its own top-level issue, so the stored payload reads
         // exactly as it did before mid-flight alignment existed.
         ...(parentIssueId ? { parentIssueId } : {}),
+        knownProjects: (projectsQuery.data ?? []).map((project) => project.title),
       })
       // No session means no conversation to navigate to, and the reason is
       // already on screen: `entryFailureMessage` renders it from `start.error`,

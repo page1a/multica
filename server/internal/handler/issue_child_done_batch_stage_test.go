@@ -200,7 +200,12 @@ func TestBatchChildDonePreservesRepresentativeAndParentOrder(t *testing.T) {
 					}
 					children = append(children, ids)
 					if staged {
-						fx.Issue(t, "Next stage", testutil.Cols{"status": "backlog", "parent_issue_id": parent, "stage": 20})
+						fx.Issue(t, "Next stage", testutil.Cols{
+							"status":          "backlog",
+							"parent_issue_id": parent,
+							"stage":           20,
+							"description":     "需要人拍板，先确认后再推进",
+						})
 						fx.Issue(t, "Unstaged unknown status", testutil.Cols{"status": "missing", "parent_issue_id": parent})
 					}
 				}

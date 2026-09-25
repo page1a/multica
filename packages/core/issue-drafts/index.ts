@@ -12,6 +12,14 @@ export {
   type IssueDraftQuestionOption,
 } from "./protocol";
 export {
+  createChoice,
+  inferNewProjectExecutionMode,
+  provisionedDirectoryShouldBeRemoved,
+  resolveAlignmentProjectPlan,
+  sanitizeProjectDirectoryName,
+  type AlignmentProjectPlan,
+} from "./project-plan";
+export {
   planIssueDraftFold,
   sameIssueDraftValues,
   type IssueDraftFold,

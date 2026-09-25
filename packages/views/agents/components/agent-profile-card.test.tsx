@@ -217,6 +217,23 @@ describe("AgentProfileCard — Model row", () => {
     expect(screen.queryByText(enAgents.profile_card.model_unset)).toBeNull();
   });
 
+  // Regression (DENE-708): a provider-preset seat stores its model
+  // percent-encoded. The card is a read-only surface — the string it prints is
+  // the only one the user sees, so it must be the decoded `provider \u00b7 model`
+  // pair, never the raw `%2F`. Canonical matrix:
+  // `provider-seat-model.test.ts`.
+  it("renders a provider-preset seat model as the decoded pair", () => {
+    mockAgents.current = [
+      makeAgent({ model: "deepseek-official/deepseek-v4%2Fflash" }),
+    ];
+    const { container } = renderCard();
+
+    expect(
+      screen.getByText("deepseek-official \u00b7 deepseek-v4/flash"),
+    ).toBeInTheDocument();
+    expect(container.textContent).not.toContain("%2F");
+  });
+
   // Regression (Emacs code review): an agent with no pinned model but a
   // persisted thinking_level runs WITH that effort at run time. The badge
   // must render even though the model cell reads "Runtime default" — gating

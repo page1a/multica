@@ -9,10 +9,12 @@ import { ApiError } from "@multica/core/api";
 import { renderWithI18n } from "../test/i18n";
 import { AppSidebar } from "./app-sidebar";
 
-const { appForeground, chatSessions, chatStore, detail, deletePin, invitationApi, modules, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
+const { appForeground, chatDetail, chatSessions, chatStore, createPin, detail, deletePin, invitationApi, modules, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   appForeground: { current: true },
   sidebarState: { setOpenMobile: vi.fn() },
-  chatSessions: { current: [] as { id?: string; unread_count?: number }[] },
+  chatSessions: { current: [] as { id?: string; title?: string | null; unread_count?: number }[] },
+  createPin: vi.fn(),
+  chatDetail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
@@ -35,7 +37,7 @@ const { appForeground, chatSessions, chatStore, detail, deletePin, invitationApi
         id: "pin-1",
         workspace_id: "ws-1",
         user_id: "user-1",
-        item_type: "issue" as const,
+        item_type: "issue" as "issue" | "chat",
         item_id: "issue-1",
         position: 0,
         created_at: "2026-05-06T00:00:00Z",
@@ -66,7 +68,9 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   Sidebar: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarFooter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SidebarGroup: ({ children, onDragOver, onDrop }: { children: React.ReactNode; onDragOver?: React.DragEventHandler; onDrop?: React.DragEventHandler }) => (
+    <div data-testid="sidebar-group" onDragOver={onDragOver} onDrop={onDrop}>{children}</div>
+  ),
   SidebarGroupContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -143,6 +147,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     chat: () => "/acme/chat",
+    chatSession: (id: string) => `/acme/chat/${id}`,
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
@@ -189,7 +194,16 @@ vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
 }));
 vi.mock("@multica/core/issues/stores/draft-store", () => ({ useIssueDraftStore: () => false }));
 vi.mock("@multica/core/modals", () => ({ useModalStore: { getState: () => ({ modal: null, open: vi.fn() }) } }));
-vi.mock("@multica/core/pins/mutations", () => ({ useDeletePin: () => ({ mutate: deletePin }), useReorderPins: () => ({ mutate: vi.fn() }) }));
+vi.mock("@multica/core/pins/mutations", () => ({
+  CHAT_PIN_DRAG_TYPE: "application/x-multica-chat-session",
+  useCreatePin: () => ({ mutate: createPin }),
+  useDeletePin: () => ({ mutate: deletePin }),
+  useReorderPins: () => ({ mutate: vi.fn() }),
+}));
+vi.mock("@multica/core/chat/queries", () => ({
+  chatSessionsOptions: (wsId: string) => ({ queryKey: ["chat", wsId, "sessions"] }),
+  chatSessionOptions: (wsId: string, id: string) => ({ queryKey: ["chat", wsId, "session", id] }),
+}));
 vi.mock("@multica/core/pins/queries", () => ({ pinListOptions: () => ({ queryKey: ["pins"] }) }));
 vi.mock("@multica/core/projects/queries", () => ({ projectDetailOptions: () => ({ queryKey: ["project"] }) }));
 vi.mock("@multica/core/workspace/queries", () => ({
@@ -210,7 +224,8 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
     if (queryKey[0] === "workspaces" && queryKey[2] === "modules") return { data: modules.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
-    if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current };
+    if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current, isSuccess: true };
+    if (queryKey[0] === "chat" && queryKey[2] === "session") return chatDetail.current;
     return { data: [] };
   },
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: invitationApi.invalidateQueries }),
@@ -568,5 +583,84 @@ describe("Pending invitation self-heal", () => {
     }
     expect(invitationApi.accept).toHaveBeenCalledTimes(1);
     expect(invitationApi.decline).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("chat pins (DENE-866)", () => {
+  const chatPin = {
+    id: "pin-chat",
+    workspace_id: "ws-1",
+    user_id: "user-1",
+    item_type: "chat" as const,
+    item_id: "chat-1",
+    position: 1,
+    created_at: "2026-05-06T00:00:00Z",
+  };
+  const savedPins = pins.current;
+
+  beforeEach(() => {
+    createPin.mockReset();
+    deletePin.mockReset();
+    navigation.current.pathname = "/acme/issues";
+    detail.current = { isPending: false, isError: false, data: { identifier: "MUL-1", title: "Issue pin", status: "todo" }, error: null };
+    chatDetail.current = { isPending: false, isError: false, data: null, error: null };
+    chatSessions.current = [];
+    summary.current = [];
+    workspaces.current = [];
+    modules.current = undefined;
+  });
+
+  afterEach(() => {
+    pins.current = savedPins;
+  });
+
+  it("renders a pinned chat by its title from the loaded chat list", async () => {
+    pins.current = [...savedPins, chatPin];
+    chatSessions.current = [{ id: "chat-1", title: "Roadmap sync", unread_count: 0 }];
+    renderWithI18n(<AppSidebar />);
+    const button = (await screen.findByText("Roadmap sync")).closest("button");
+    expect(button).toHaveAttribute("data-href", "/acme/chat/chat-1");
+    expect(deletePin).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the untitled label for a pinned chat without a title", async () => {
+    pins.current = [...savedPins, chatPin];
+    chatSessions.current = [{ id: "chat-1", title: null, unread_count: 0 }];
+    renderWithI18n(<AppSidebar />);
+    expect(await screen.findByText("New chat")).toBeInTheDocument();
+  });
+
+  it("unpins a chat whose detail 404s after the list came back without it", async () => {
+    pins.current = [...savedPins, chatPin];
+    chatSessions.current = [{ id: "other", title: "Other", unread_count: 0 }];
+    chatDetail.current = { isPending: false, isError: true, data: null, error: new ApiError("missing", 404, "Not Found") };
+    renderWithI18n(<AppSidebar />);
+    await waitFor(() => expect(deletePin).toHaveBeenCalledWith({ itemType: "chat", itemId: "chat-1" }));
+  });
+
+  it("pins a chat dropped onto the pinned group, once", () => {
+    chatSessions.current = [{ id: "chat-9", title: "Dropped", unread_count: 0 }];
+    renderWithI18n(<AppSidebar />);
+    const group = screen.getAllByTestId("sidebar-group").find((el) => el.textContent?.includes("Issue pin"))!;
+    const dataTransfer = {
+      types: ["application/x-multica-chat-session"],
+      getData: (type: string) => (type === "application/x-multica-chat-session" ? "chat-9" : ""),
+      dropEffect: "none",
+    };
+    fireEvent.dragOver(group, { dataTransfer });
+    fireEvent.drop(group, { dataTransfer });
+    expect(createPin).toHaveBeenCalledTimes(1);
+    expect(createPin).toHaveBeenCalledWith({ item_type: "chat", item_id: "chat-9" });
+  });
+
+  it("ignores a drop of a chat that is already pinned", () => {
+    pins.current = [...savedPins, chatPin];
+    chatSessions.current = [{ id: "chat-1", title: "Roadmap sync", unread_count: 0 }];
+    renderWithI18n(<AppSidebar />);
+    const group = screen.getAllByTestId("sidebar-group").find((el) => el.textContent?.includes("Roadmap sync"))!;
+    fireEvent.drop(group, {
+      dataTransfer: { types: ["application/x-multica-chat-session"], getData: () => "chat-1", dropEffect: "none" },
+    });
+    expect(createPin).not.toHaveBeenCalled();
   });
 });

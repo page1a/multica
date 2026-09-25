@@ -26,6 +26,7 @@ function seedTabs() {
             resourceKey: "/acme/issues",
             title: "",
             pinned: false,
+            groupId: null,
             history: { stack: ["/acme/issues"], index: 0 },
             memento: { scroll: {}, view: {} },
           },
@@ -34,6 +35,7 @@ function seedTabs() {
         recentTabIds: ["t1"],
         browsingHistory: ["/acme/issues"],
         browsingHistoryTitles: {},
+        groups: [],
       },
     },
   });

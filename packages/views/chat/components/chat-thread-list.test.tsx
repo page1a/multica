@@ -17,6 +17,7 @@ import enIssues from "../../locales/en/issues.json";
 
 const setActiveSession = vi.fn();
 const archiveMutate = vi.fn();
+const updateMutate = vi.fn();
 
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: ({ actorId }: { actorId: string }) => (
@@ -41,10 +42,26 @@ vi.mock("@multica/core/chat", () => ({
     selector({ setActiveSession }),
 }));
 
+const authState = vi.hoisted(() => ({ userId: "user-1" as string | null }));
+
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (s: { user: { id: string } | null }) => unknown) =>
+    selector({ user: authState.userId ? { id: authState.userId } : null }),
+}));
+
+vi.mock("./chat-access-dialog", () => ({
+  ChatAccessDialog: () => null,
+}));
+
+vi.mock("./chat-visibility-notice", () => ({
+  ChatVisibilityNotice: () => null,
+}));
+
 vi.mock("@multica/core/chat/mutations", () => ({
   useDeleteChatSession: () => ({ mutate: vi.fn(), isPending: false }),
   useSetChatSessionPinned: () => ({ mutate: vi.fn(), isPending: false }),
   useSetChatSessionArchived: () => ({ mutate: archiveMutate, isPending: false }),
+  useUpdateChatSession: () => ({ mutate: updateMutate, isPending: false }),
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {
@@ -112,8 +129,13 @@ function renderList(
 
 const ARCHIVE_LABEL = enChat.list.archive;
 
+beforeEach(() => {
+  authState.userId = "user-1";
+});
+
 describe("ChatThreadList archive delegation", () => {
   beforeEach(() => {
+    authState.userId = "user-1";
     setActiveSession.mockClear();
     archiveMutate.mockClear();
   });
@@ -224,6 +246,7 @@ describe("ChatThreadList agent identity", () => {
 // Touch has no hover, so the hover strip's actions also live in a per-row menu.
 describe("ChatThreadList compact row menu", () => {
   beforeEach(() => {
+    authState.userId = "user-1";
     setActiveSession.mockClear();
     archiveMutate.mockClear();
   });
@@ -249,6 +272,30 @@ describe("ChatThreadList compact row menu", () => {
     openRowMenu(0);
 
     expect(await screen.findByRole("menuitem", { name: enChat.list.pin })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: enChat.list.edit_access })).toBeInTheDocument();
+  });
+
+  it("keeps pin but hides access and archive from someone who did not create the chat", async () => {
+    // Pins are per viewer (DENE-866): anyone who can see a shared chat may
+    // pin it for themselves, while manage actions stay with the creator.
+    authState.userId = "someone-else";
+    renderList(null);
+
+    openRowMenu(0);
+    expect(await screen.findByRole("menuitem", { name: enChat.list.pin })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: ARCHIVE_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: enChat.list.edit_access })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Chat s1" })).not.toBeInTheDocument();
+  });
+
+  it("marks active rows draggable with the chat-pin payload", () => {
+    renderList(null);
+
+    const row = screen.getByText("Chat s1").closest("[draggable]");
+    expect(row).toHaveAttribute("draggable", "true");
+    const setData = vi.fn();
+    fireEvent.dragStart(row!, { dataTransfer: { setData, effectAllowed: "none" } });
+    expect(setData).toHaveBeenCalledWith("application/x-multica-chat-session", "s1");
   });
 
   it("does not select the row when the menu opens", () => {
@@ -276,6 +323,40 @@ describe("ChatThreadList compact row menu", () => {
     expect(trigger.className).not.toMatch(/(^|\s)(sm|md|lg|xl|2xl):hidden/);
     expect(strip.className).toContain("[@media(hover:hover)]:group-hover/row:flex");
     expect(strip.className).not.toMatch(/(^|\s)(sm|md|lg|xl|2xl):group-/);
+  });
+});
+
+describe("ChatThreadList title rename", () => {
+  beforeEach(() => {
+    authState.userId = "user-1";
+    updateMutate.mockClear();
+  });
+
+  it("opens rename from the title and does not select the row", () => {
+    const { onSelectSession } = renderList(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat s1" }));
+
+    expect(onSelectSession).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("textbox", { name: enChat.session_history.row_rename_aria }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves the new title for the list to pick up", () => {
+    renderList(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat s1" }));
+    const input = screen.getByRole("textbox", {
+      name: enChat.session_history.row_rename_aria,
+    });
+    fireEvent.change(input, { target: { value: "Billing · retry invoices" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(updateMutate).toHaveBeenCalledWith({
+      sessionId: "s1",
+      title: "Billing · retry invoices",
+    });
   });
 });
 

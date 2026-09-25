@@ -2,27 +2,18 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 const issueCommentRevisionMigrationTestSchema = "issue_comment_revision_migration_test"
 
 func TestIssueCommentRevisionMigrationUpDownPreservesData(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

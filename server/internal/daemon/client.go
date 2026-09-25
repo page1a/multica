@@ -537,10 +537,10 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
-	return c.completeTaskWithRetrySchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, durableWorkDir, defaultTerminalRetrySchedule)
+	return c.completeTaskWithRetrySchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, durableWorkDir, "", defaultTerminalRetrySchedule)
 }
 
-func (c *Client) completeTaskWithRetrySchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, schedule []time.Duration) error {
+func (c *Client) completeTaskWithRetrySchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir, sessionRestartReason string, schedule []time.Duration) error {
 	body := map[string]any{"output": output}
 	if branchName != "" {
 		body["branch_name"] = branchName
@@ -560,6 +560,9 @@ func (c *Client) completeTaskWithRetrySchedule(ctx context.Context, taskID, outp
 	if retiredSessionID != "" {
 		body["retired_session_id"] = retiredSessionID
 	}
+	if sessionRestartReason != "" {
+		body["session_restart_reason"] = sessionRestartReason
+	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, schedule)
 }
 
@@ -573,10 +576,10 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 }
 
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
-	return c.failTaskWithRetrySchedule(ctx, taskID, errMsg, sessionID, workDir, branchName, failureReason, sessionRolloutMissing, retiredSessionID, durableWorkDir, defaultTerminalRetrySchedule)
+	return c.failTaskWithRetrySchedule(ctx, taskID, errMsg, sessionID, workDir, branchName, failureReason, sessionRolloutMissing, retiredSessionID, durableWorkDir, "", defaultTerminalRetrySchedule)
 }
 
-func (c *Client) failTaskWithRetrySchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, schedule []time.Duration) error {
+func (c *Client) failTaskWithRetrySchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir, sessionRestartReason string, schedule []time.Duration) error {
 	body := map[string]any{"error": errMsg}
 	if sessionID != "" {
 		body["session_id"] = sessionID
@@ -601,6 +604,9 @@ func (c *Client) failTaskWithRetrySchedule(ctx context.Context, taskID, errMsg, 
 	}
 	if retiredSessionID != "" {
 		body["retired_session_id"] = retiredSessionID
+	}
+	if sessionRestartReason != "" {
+		body["session_restart_reason"] = sessionRestartReason
 	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, schedule)
 }
@@ -664,18 +670,22 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 type (
 	HeartbeatResponse       = protocol.DaemonHeartbeatAckPayload
 	PendingUpdate           = protocol.DaemonHeartbeatPendingUpdate
+	PendingAgentCLI         = protocol.DaemonHeartbeatPendingAgentCLI
 	PendingModelList        = protocol.DaemonHeartbeatPendingModelList
 	PendingProviderConfig   = protocol.DaemonHeartbeatPendingProviderConfig
 	PendingLocalSkills      = protocol.DaemonHeartbeatPendingLocalSkills
 	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
 )
 
-func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, planLimits *protocol.PlanLimitsSnapshot, jev *protocol.JevStatusSnapshot) (*HeartbeatResponse, error) {
+// agentPlanLimits carries the per-seat snapshots of this runtime's
+// account-bound agents, keyed by agent id; nil when there are none (DENE-715).
+func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, planLimits *protocol.PlanLimitsSnapshot, agentPlanLimits map[string]protocol.PlanLimitsSnapshot, jev *protocol.JevStatusSnapshot) (*HeartbeatResponse, error) {
 	var resp HeartbeatResponse
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id":            runtimeID,
 		"supports_batch_import": true,
 		"plan_limits":           planLimits,
+		"agent_plan_limits":     agentPlanLimits,
 		"jev":                   jev,
 	}, &resp); err != nil {
 		return nil, err
@@ -686,6 +696,18 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, planLimits
 // ReportUpdateResult sends the CLI update result back to the server.
 func (c *Client) ReportUpdateResult(ctx context.Context, runtimeID, updateID string, result map[string]any) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/update/%s/result", runtimeID, updateID), result, nil)
+}
+
+// ReportAgentCLIStatus stores the current/latest/error snapshot for one
+// agent CLI on the runtime row the page reads.
+func (c *Client) ReportAgentCLIStatus(ctx context.Context, runtimeID string, body map[string]any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/agent-cli/status", runtimeID), body, nil)
+}
+
+// RefreshModelCatalog drops the cached model list and asks the server to
+// enqueue a fresh discovery. The next heartbeat claims that request.
+func (c *Client) RefreshModelCatalog(ctx context.Context, runtimeID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/model-catalog/refresh", runtimeID), map[string]any{}, nil)
 }
 
 // ReportModelListResult sends the model-discovery result back to the server.

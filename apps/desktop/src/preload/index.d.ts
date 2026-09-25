@@ -156,6 +156,22 @@ interface DesktopAPI {
     reason?: "not_absolute" | "not_a_directory" | "inside_repo" | "error";
     error?: string;
   }>;
+  /** Create a project subdirectory under a business root, optionally as a git repo. */
+  provisionProjectDirectory: (input: {
+    root: string;
+    dirName: string;
+    gitInit: boolean;
+  }) => Promise<{
+    ok: boolean;
+    path?: string;
+    reason?: "not_absolute" | "bad_name" | "exists" | "error";
+    error?: string;
+  }>;
+  /** Remove a subdirectory this flow created. Refuses the root and anything outside it. */
+  removeProvisionedDirectory: (input: {
+    root: string;
+    path: string;
+  }) => Promise<{ ok: boolean; reason?: string }>;
   /** Whether `path` (or its nearest existing ancestor) is writable. Used for
    *  worktree_root, which the first task often creates. */
   validateWritablePath: (path: string) => Promise<{ ok: boolean }>;

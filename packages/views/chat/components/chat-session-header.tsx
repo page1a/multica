@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, MoreHorizontal, Pencil, Trash2, UserRound } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Archive,
+  ArchiveRestore,
+  Copy,
+  Link2,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  UserRound,
+} from "lucide-react";
+import { copyText } from "@multica/ui/lib/clipboard";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
@@ -27,11 +38,13 @@ import {
   useSetChatSessionArchived,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
-import type { Agent, ChatSession } from "@multica/core/types";
+import type { Agent, ChatMessage, ChatSession } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { AppLink } from "../../navigation";
+import { AppLink, useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
+import { useAuthStore } from "@multica/core/auth";
+import { conversationToMarkdown } from "../lib/copy-text";
 
 /**
  * Per-session header for the conversation pane: agent avatar + editable chat
@@ -43,6 +56,7 @@ export function ChatSessionHeader({
   session,
   agent,
   onArchive,
+  loadAllMessages,
 }: {
   session: ChatSession;
   agent: Agent | null;
@@ -50,8 +64,22 @@ export function ChatSessionHeader({
   // next chat on desktop, back to the list on mobile), so the parent owns it —
   // see ChatPage.handleArchive. Falls back to a plain status flip if unwired.
   onArchive?: (session: ChatSession) => void;
+  // Full transcript for "copy conversation". The open pane may only have the
+  // recent page loaded; the parent fetches the rest when older messages exist.
+  loadAllMessages?: () => Promise<ChatMessage[]>;
 }) {
   const { t } = useT("chat");
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
+  const canManage = session.access === "owner" || session.creator_id === currentUserId;
+  const visibilityLabel =
+    session.visibility === "private"
+      ? t(($) => $.sharing.header_private)
+      : (session.extra_count ?? 0) > 0
+        ? t(($) => $.sharing.header_extra)
+        : session.visibility === "project"
+          ? t(($) => $.sharing.header_project)
+          : null;
+  const { getShareableUrl } = useNavigation();
   const wsPaths = useWorkspacePaths();
   const updateSession = useUpdateChatSession();
   const deleteSession = useDeleteChatSession();
@@ -123,6 +151,32 @@ export function ChatSessionHeader({
       ? onArchive(session)
       : setArchived.mutate({ sessionId: session.id, archived: true });
   const doUnarchive = () => setArchived.mutate({ sessionId: session.id, archived: false });
+
+  const copySessionLink = async () => {
+    const url = getShareableUrl(wsPaths.chatSession(session.id));
+    if (await copyText(url)) {
+      toast.success(t(($) => $.header.link_copied));
+    } else {
+      toast.error(t(($) => $.message_list.copy_failed_toast));
+    }
+  };
+
+  const copyConversation = async () => {
+    try {
+      const messages = (await loadAllMessages?.()) ?? [];
+      const markdown = conversationToMarkdown(title, messages, {
+        user: t(($) => $.header.copy_role_user),
+        assistant: t(($) => $.header.copy_role_assistant),
+      });
+      if (await copyText(markdown)) {
+        toast.success(t(($) => $.header.conversation_copied));
+      } else {
+        toast.error(t(($) => $.message_list.copy_failed_toast));
+      }
+    } catch {
+      toast.error(t(($) => $.message_list.copy_failed_toast));
+    }
+  };
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
@@ -199,13 +253,28 @@ export function ChatSessionHeader({
             {title}
           </button>
         )}
-        {agent && (
+        {(agent || session.agent_name) && (
           <div className="truncate text-caption text-muted-foreground">
-            {agent.name}
-            {agent.description ? ` · ${agent.description}` : ""}
+            {agent?.name || session.agent_name}
+            {agent?.description ? ` · ${agent.description}` : ""}
+            {visibilityLabel ? ` · ${visibilityLabel}` : ""}
           </div>
         )}
+        {!agent && !session.agent_name && visibilityLabel && (
+          <div className="truncate text-caption text-muted-foreground">{visibilityLabel}</div>
+        )}
       </div>
+
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground"
+        onClick={() => void copySessionLink()}
+        aria-label={t(($) => $.header.copy_link)}
+        title={t(($) => $.header.copy_link)}
+      >
+        <Link2 className="h-4 w-4" />
+      </Button>
 
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -214,9 +283,15 @@ export function ChatSessionHeader({
           <MoreHorizontal className="h-4 w-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
-          <DropdownMenuItem onClick={startRename}>
-            <Pencil className="h-4 w-4" />
-            {t(($) => $.header.rename)}
+          {canManage && (
+            <DropdownMenuItem onClick={startRename}>
+              <Pencil className="h-4 w-4" />
+              {t(($) => $.header.rename)}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={() => void copyConversation()}>
+            <Copy className="h-4 w-4" />
+            {t(($) => $.header.copy_conversation)}
           </DropdownMenuItem>
           {agent && (
             <DropdownMenuItem
@@ -226,25 +301,25 @@ export function ChatSessionHeader({
               {t(($) => $.header.view_profile)}
             </DropdownMenuItem>
           )}
-          <DropdownMenuSeparator />
-          {isArchived ? (
-            <>
-              <DropdownMenuItem onClick={doUnarchive}>
-                <ArchiveRestore className="h-4 w-4" />
-                {t(($) => $.header.unarchive)}
+          {canManage && <DropdownMenuSeparator />}
+          {canManage &&
+            (isArchived ? (
+              <>
+                <DropdownMenuItem onClick={doUnarchive}>
+                  <ArchiveRestore className="h-4 w-4" />
+                  {t(($) => $.header.unarchive)}
+                </DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="h-4 w-4" />
+                  {t(($) => $.header.delete)}
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem onClick={doArchive}>
+                <Archive className="h-4 w-4" />
+                {t(($) => $.header.archive)}
               </DropdownMenuItem>
-              {/* Hard delete is offered only once a chat is archived. */}
-              <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
-                <Trash2 className="h-4 w-4" />
-                {t(($) => $.header.delete)}
-              </DropdownMenuItem>
-            </>
-          ) : (
-            <DropdownMenuItem onClick={doArchive}>
-              <Archive className="h-4 w-4" />
-              {t(($) => $.header.archive)}
-            </DropdownMenuItem>
-          )}
+            ))}
         </DropdownMenuContent>
       </DropdownMenu>
 

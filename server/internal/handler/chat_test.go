@@ -64,6 +64,51 @@ func TestSendChatMessage_ReportsPositionInsteadOfQueuedStatus(t *testing.T) {
 	}
 }
 
+func TestSendChatMessage_UsesChatSessionAsWorkThread(t *testing.T) {
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "ChatWorkThreadAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	send := func(content string) string {
+		t.Helper()
+		req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{"content": content})
+		req = withURLParam(req, "sessionId", sessionID)
+		req = withChatTestWorkspaceCtx(t, req)
+		w := httptest.NewRecorder()
+		testHandler.SendChatMessage(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("SendChatMessage: expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var response SendChatMessageResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode send response: %v", err)
+		}
+		return response.TaskID
+	}
+
+	firstID := send("first")
+	secondID := send("second")
+	var got []string
+	if err := testPool.QueryRow(ctx, `
+		SELECT array_agg(work_thread_id::text ORDER BY created_at)
+		FROM agent_task_queue WHERE id = ANY($1::uuid[])
+	`, []string{firstID, secondID}).Scan(&got); err != nil {
+		t.Fatalf("read chat work threads: %v", err)
+	}
+	// Both turns share one durable thread, and that thread is keyed to the
+	// chat session (the work_thread entity has its own id since migration 531).
+	if len(got) != 2 || got[0] == "" || got[0] != got[1] {
+		t.Fatalf("chat tasks work threads = %v, want one shared thread", got)
+	}
+	var threadSession string
+	if err := testPool.QueryRow(ctx, `SELECT chat_session_id::text FROM work_thread WHERE id = $1`, got[0]).Scan(&threadSession); err != nil {
+		t.Fatalf("read work_thread: %v", err)
+	}
+	if threadSession != sessionID {
+		t.Fatalf("work_thread.chat_session_id = %s, want %s", threadSession, sessionID)
+	}
+}
+
 func TestSendChatMessage_DeferredPredecessorStaysHeadAcrossPromotion(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -379,12 +424,16 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 	}
 }
 
-// TestSetChatSessionPinned_TogglesPin confirms PATCH /pin stamps pinned_at on
-// pin and clears it on unpin, returns the new state, and does not bump
-// updated_at (pinning is a list-ordering preference, not activity).
+// TestSetChatSessionPinned_TogglesPin confirms PATCH /pin writes the caller's
+// own pinned_item row (DENE-866) on pin and removes it on unpin, returns the
+// new state, and does not bump updated_at (pinning is a list-ordering
+// preference, not activity).
 func TestSetChatSessionPinned_TogglesPin(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatPinAgent", []byte("[]"))
 	sessionID := createHandlerTestChatSession(t, agentID)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM pinned_item WHERE item_type = 'chat' AND item_id = $1`, sessionID)
+	})
 
 	var updatedBefore time.Time
 	if err := testPool.QueryRow(
@@ -412,40 +461,164 @@ func TestSetChatSessionPinned_TogglesPin(t *testing.T) {
 		}
 		return resp
 	}
+	pinRows := func() int {
+		var n int
+		if err := testPool.QueryRow(
+			context.Background(),
+			`SELECT count(*) FROM pinned_item WHERE workspace_id = $1 AND user_id = $2 AND item_type = 'chat' AND item_id = $3`,
+			testWorkspaceID, testUserID, sessionID,
+		).Scan(&n); err != nil {
+			t.Fatalf("count pin rows: %v", err)
+		}
+		return n
+	}
 
 	// Pin.
 	if resp := pin(true); !resp.Pinned {
 		t.Fatalf("pin=true response Pinned: want true, got false")
 	}
-	var pinnedAt *time.Time
+	if n := pinRows(); n != 1 {
+		t.Fatalf("pinned_item rows after pin: want 1, got %d", n)
+	}
 	var updatedAfter time.Time
 	if err := testPool.QueryRow(
 		context.Background(),
-		`SELECT pinned_at, updated_at FROM chat_session WHERE id = $1`,
+		`SELECT updated_at FROM chat_session WHERE id = $1`,
 		sessionID,
-	).Scan(&pinnedAt, &updatedAfter); err != nil {
-		t.Fatalf("query pinned_at: %v", err)
-	}
-	if pinnedAt == nil {
-		t.Fatalf("pinned_at: want non-null after pin, got null")
+	).Scan(&updatedAfter); err != nil {
+		t.Fatalf("query updated_at: %v", err)
 	}
 	if !updatedAfter.Equal(updatedBefore) {
 		t.Fatalf("updated_at must not change on pin: before %v, after %v", updatedBefore, updatedAfter)
+	}
+	// Re-pinning is idempotent, not a 409.
+	if resp := pin(true); !resp.Pinned {
+		t.Fatalf("second pin=true response Pinned: want true, got false")
+	}
+	if n := pinRows(); n != 1 {
+		t.Fatalf("pinned_item rows after re-pin: want 1, got %d", n)
+	}
+	if listed, ok := chatListed(listChatsAs(t, testUserID), sessionID); !ok || !listed.Pinned {
+		t.Fatalf("chat list must report the caller's pin: listed=%v pinned=%v", ok, listed.Pinned)
 	}
 
 	// Unpin.
 	if resp := pin(false); resp.Pinned {
 		t.Fatalf("pin=false response Pinned: want false, got true")
 	}
-	if err := testPool.QueryRow(
-		context.Background(),
-		`SELECT pinned_at FROM chat_session WHERE id = $1`,
-		sessionID,
-	).Scan(&pinnedAt); err != nil {
-		t.Fatalf("query pinned_at after unpin: %v", err)
+	if n := pinRows(); n != 0 {
+		t.Fatalf("pinned_item rows after unpin: want 0, got %d", n)
 	}
-	if pinnedAt != nil {
-		t.Fatalf("pinned_at: want null after unpin, got %v", *pinnedAt)
+}
+
+// TestChatPinIsPerViewer covers the DENE-866 constraint: on a chat shared with
+// a second person, each side's pin is their own. B pinning does not pin it for
+// A, and B may pin at all despite not being the creator. Deleting the chat
+// prunes both pin rows.
+func TestChatPinIsPerViewer(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatPinShareAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	bID := insertChatPerson(t, "chat-pin-b", "member")
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE chat_session SET visibility = 'project' WHERE id = $1`, sessionID); err != nil {
+		t.Fatalf("share chat: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO resource_share (workspace_id, resource_type, resource_id, member_id, access, added_by)
+		VALUES ($1, 'chat_session', $2, $3, 'view', $4)
+	`, testWorkspaceID, sessionID, bID, testUserID); err != nil {
+		t.Fatalf("insert share: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM resource_share WHERE resource_type = 'chat_session' AND resource_id = $1`, sessionID)
+		testPool.Exec(ctx, `DELETE FROM pinned_item WHERE item_type = 'chat' AND item_id = $1`, sessionID)
+	})
+
+	pinAs := func(userID string, pinned bool) {
+		req := chatAs(t, userID, newRequest("PATCH", "/api/chat/sessions/"+sessionID+"/pin", map[string]any{"pinned": pinned}))
+		req = withURLParam(req, "sessionId", sessionID)
+		w := httptest.NewRecorder()
+		testHandler.SetChatSessionPinned(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("pin as %s: expected 200, got %d: %s", userID, w.Code, w.Body.String())
+		}
+	}
+	pinnedFor := func(userID string) bool {
+		listed, ok := chatListed(listChatsAs(t, userID), sessionID)
+		if !ok {
+			t.Fatalf("chat not listed for %s", userID)
+		}
+		return listed.Pinned
+	}
+
+	pinAs(bID, true)
+	if !pinnedFor(bID) {
+		t.Fatal("B's own pin must show in B's list")
+	}
+	if pinnedFor(testUserID) {
+		t.Fatal("B's pin leaked into A's list")
+	}
+	pinAs(testUserID, true)
+	if !pinnedFor(testUserID) || !pinnedFor(bID) {
+		t.Fatal("both sides pinned independently must both read pinned")
+	}
+	pinAs(testUserID, false)
+	if pinnedFor(testUserID) {
+		t.Fatal("A's unpin did not clear A's pin")
+	}
+	if !pinnedFor(bID) {
+		t.Fatal("A's unpin removed B's pin")
+	}
+
+	// The generic sidebar pin list sees the same row.
+	req := chatAs(t, bID, newRequest("GET", "/api/pins?include=view,chat", nil))
+	w := httptest.NewRecorder()
+	testHandler.ListPins(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list pins: %d %s", w.Code, w.Body.String())
+	}
+	var pins []PinnedItemResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &pins); err != nil {
+		t.Fatalf("decode pins: %v", err)
+	}
+	found := false
+	for _, p := range pins {
+		if p.ItemType == "chat" && p.ItemID == sessionID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("B's sidebar pins lack the chat: %+v", pins)
+	}
+	// ...and only for clients that opted in.
+	req = chatAs(t, bID, newRequest("GET", "/api/pins?include=view", nil))
+	w = httptest.NewRecorder()
+	testHandler.ListPins(w, req)
+	pins = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &pins); err != nil {
+		t.Fatalf("decode pins: %v", err)
+	}
+	for _, p := range pins {
+		if p.ItemType == "chat" {
+			t.Fatalf("chat pin shipped to a client that did not ask for it: %+v", p)
+		}
+	}
+
+	// Deleting the chat prunes the pin rows.
+	delReq := newRequest("DELETE", "/api/chat/sessions/"+sessionID, nil)
+	delReq = withURLParam(delReq, "sessionId", sessionID)
+	delReq = withChatTestWorkspaceCtx(t, delReq)
+	w = httptest.NewRecorder()
+	testHandler.DeleteChatSession(w, delReq)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete chat: %d %s", w.Code, w.Body.String())
+	}
+	var n int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM pinned_item WHERE item_type = 'chat' AND item_id = $1`, sessionID).Scan(&n); err != nil {
+		t.Fatalf("count pins: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("pin rows after delete: want 0, got %d", n)
 	}
 }
 
@@ -909,6 +1082,10 @@ func TestListChatSessions_ArchivedSessionReportsZeroUnread(t *testing.T) {
 	if _, err := testPool.Exec(ctx,
 		`UPDATE chat_session SET last_read_at = 'epoch' WHERE id = $1`, sessionID); err != nil {
 		t.Fatalf("reset last_read_at: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		`UPDATE chat_session_read SET last_read_at = 'epoch' WHERE chat_session_id = $1`, sessionID); err != nil {
+		t.Fatalf("reset read cursor: %v", err)
 	}
 
 	unreadOf := func() (int, bool) {

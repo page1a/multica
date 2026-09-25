@@ -147,15 +147,23 @@ export function deduplicateInboxItems(items: InboxItem[]): InboxItem[] {
       newest.details?.comment_id ??
       group.find((item) => item.details?.comment_id)?.details?.comment_id;
 
+    const unreadCount = group.filter((item) => !item.read).length;
+
     if (commentId && newest.details?.comment_id !== commentId) {
       merged.push({
         ...newest,
+        read: unreadCount === 0,
+        unread_count: unreadCount,
         details: { ...(newest.details ?? {}), comment_id: commentId },
       });
       continue;
     }
 
-    merged.push(newest);
+    merged.push({
+      ...newest,
+      read: unreadCount === 0,
+      unread_count: unreadCount,
+    });
   }
   return merged.sort(
     (a, b) =>

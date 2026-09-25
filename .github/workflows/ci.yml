@@ -30,6 +30,7 @@ jobs:
       frontend: ${{ steps.decide.outputs.frontend }}
       backend: ${{ steps.decide.outputs.backend }}
       sqlc: ${{ steps.decide.outputs.sqlc }}
+      migrations: ${{ steps.decide.outputs.migrations }}
       runtime: ${{ steps.decide.outputs.runtime }}
       quality_only: ${{ steps.decide.outputs.quality_only }}
       scripts: ${{ steps.decide.outputs.scripts }}
@@ -90,6 +91,30 @@ jobs:
             printf 'Untracked generated SQL files:\n%s\n' "$untracked"
             exit 1
           fi
+
+  # Migration numbering is its own gate rather than one test lost inside the
+  # database-backed backend suite: a duplicate numeric prefix (two parallel
+  # branches each allocating the next number, see DENE-730/763/817) fails here
+  # in about a minute, with the offending filenames in the job summary, before
+  # the schema is ever applied. Needs no Postgres. Same command as
+  # `make migration-lint` and the release workflow's verify job.
+  migration-lint:
+    needs: changes
+    if: ${{ needs.changes.outputs.migrations == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      - name: Lint migration numbering and up/down pairing
+        run: make migration-lint
 
   # The frontend validation is split across four runners on purpose. A prior
   # split isolated build/typecheck/lint from the test suites; on a full test
@@ -478,7 +503,7 @@ jobs:
   # Preserve the existing required-check name while allowing tests, generated
   # SQL verification, and the vulnerability scan to run independently.
   backend:
-    needs: [changes, backend-tests, backend-agent-tests, sqlc-check, go-vulnerability-scan, macos-runtime, windows-execenv, script-checks, installer]
+    needs: [changes, backend-tests, backend-agent-tests, sqlc-check, migration-lint, go-vulnerability-scan, macos-runtime, windows-execenv, script-checks, installer]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -486,7 +511,7 @@ jobs:
       - name: Check backend job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-          JOB_SCOPES: '{"backend-tests":"backend","backend-agent-tests":"backend","sqlc-check":"sqlc","go-vulnerability-scan":"backend","macos-runtime":"full","windows-execenv":"runtime","script-checks":"scripts","installer":"installer"}'
+          JOB_SCOPES: '{"backend-tests":"backend","backend-agent-tests":"backend","sqlc-check":"sqlc","migration-lint":"migrations","go-vulnerability-scan":"backend","macos-runtime":"full","windows-execenv":"runtime","script-checks":"scripts","installer":"installer"}'
         run: node scripts/ci-scope.mjs gate
 
   windows-execenv:
@@ -847,6 +872,12 @@ jobs:
 
       - name: Test build output naming
         run: bash scripts/makefile-build.test.sh
+
+      # Fork-only. `make migration-new` is the only sanctioned way to pick a
+      # migration number, and its whole point is reading origin/kun instead of
+      # the local directory. The suite drives it against fixture repos, offline.
+      - name: Test migration number allocation
+        run: bash scripts/migration-new.test.sh
 
       # Fork-only. The release gate desktop-release.yml runs before it can
       # pass; covered here because a broken comparison would silently accept

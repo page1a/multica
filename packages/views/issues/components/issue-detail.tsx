@@ -155,6 +155,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { PAGE_GUTTER } from "../../layout/page-header";
 import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
+import { WorkThreadPanel } from "../../common/work-thread-panel";
 
 import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
@@ -2892,6 +2893,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 no runs. The range picker inside reaches the rest of the
                 history, so the header needs no run picker of its own. */}
             <IssueLogExportButton issueId={id} issueIdentifier={issue.identifier} />
+            <WorkThreadPanel kind="issue" id={id} />
             {onDone && !issueBehavesAsAny(issue, ["done", "closed"]) && (
               <Tooltip>
                 <TooltipTrigger

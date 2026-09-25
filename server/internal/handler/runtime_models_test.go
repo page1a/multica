@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // TestModelListStore_RunningRequestTimesOut pins the escape hatch for
@@ -17,7 +21,7 @@ import (
 func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -63,7 +67,7 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 func TestReportModelListResult_PreservesDefault(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -135,7 +139,7 @@ func TestInMemoryModelListStore_HasPending(t *testing.T) {
 		t.Fatalf("empty store should not report pending: has=%v err=%v", has, err)
 	}
 
-	if _, err := store.Create(ctx, "rt-1"); err != nil {
+	if _, err := store.Create(ctx, "rt-1", nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if has, err := store.HasPending(ctx, "rt-1"); err != nil || !has {
@@ -161,11 +165,11 @@ func TestInMemoryModelListStore_PopPendingPicksOldest(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
 
-	first, _ := store.Create(ctx, "rt-1")
+	first, _ := store.Create(ctx, "rt-1", nil)
 	// Force a measurable gap so the FIFO comparison isn't on equal
 	// CreatedAt values (possible on platforms with coarse clocks).
 	time.Sleep(2 * time.Millisecond)
-	second, _ := store.Create(ctx, "rt-1")
+	second, _ := store.Create(ctx, "rt-1", nil)
 
 	got, err := store.PopPending(ctx, "rt-1")
 	if err != nil {
@@ -173,5 +177,53 @@ func TestInMemoryModelListStore_PopPendingPicksOldest(t *testing.T) {
 	}
 	if got == nil || got.ID != first.ID {
 		t.Fatalf("expected first request, got %+v (second was %s)", got, second.ID)
+	}
+}
+
+func TestAgentEnvOverlayForModelListStaysOnThatRuntime(t *testing.T) {
+	const (
+		runtimeID = "00000000-0000-7000-8000-000000000001"
+		otherID   = "00000000-0000-7000-8000-000000000002"
+		ownerID   = "00000000-0000-7000-8000-000000000003"
+		stranger  = "00000000-0000-7000-8000-000000000004"
+		secret    = "sk-agent-do-not-leak"
+	)
+	agent := db.Agent{
+		Kind:      "user",
+		RuntimeID: util.MustParseUUID(runtimeID),
+		OwnerID:   util.MustParseUUID(ownerID),
+		CustomEnv: []byte(`{"OPENAI_BASE_URL":"http://127.0.0.1:9000/v1","OPENAI_API_KEY":"` + secret + `"}`),
+	}
+	owner := db.Member{UserID: agent.OwnerID, Role: "member"}
+
+	got := agentEnvOverlayForModelList("member", agent, owner, runtimeID)
+	if got["OPENAI_API_KEY"] != secret || got["OPENAI_BASE_URL"] != "http://127.0.0.1:9000/v1" {
+		t.Fatalf("owner overlay = %#v", got)
+	}
+	if agentEnvOverlayForModelList("member", agent, owner, otherID) != nil {
+		t.Fatal("overlay crossed onto a different runtime")
+	}
+	strangerMember := db.Member{UserID: util.MustParseUUID(stranger), Role: "member"}
+	if agentEnvOverlayForModelList("member", agent, strangerMember, runtimeID) != nil {
+		t.Fatal("a member who cannot manage the agent received its env")
+	}
+	if agentEnvOverlayForModelList("agent", agent, owner, runtimeID) != nil {
+		t.Fatal("an agent actor received another agent's env")
+	}
+
+	stored, err := NewInMemoryModelListStore().Create(context.Background(), runtimeID, got)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	body, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(body), secret) {
+		t.Fatalf("model-list response leaked the overlay: %s", body)
+	}
+	payload := pendingModelListPayload(stored)
+	if payload == nil || payload.EnvOverlay["OPENAI_API_KEY"] != secret {
+		t.Fatalf("daemon payload = %#v", payload)
 	}
 }

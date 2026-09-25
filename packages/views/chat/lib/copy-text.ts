@@ -51,6 +51,31 @@ export function canonicalAnswerText(
  * of inferring an answer from transcript position. Legacy rows with empty
  * content retain the previous visible-timeline fallback.
  */
+/**
+ * Whole conversation as Markdown. Hidden kickoff and channel-command rows are
+ * omitted; assistant quick-action footers are stripped the same way Copy does
+ * for one message.
+ */
+export function conversationToMarkdown(
+  title: string,
+  messages: ChatMessage[],
+  roles: { user: string; assistant: string },
+): string {
+  const heading = title.trim() || "Untitled";
+  const blocks = [`# ${heading}`, ""];
+  for (const message of messages) {
+    const kind = message.message_kind as string | undefined;
+    if (kind === "onboarding_kickoff" || kind === "channel_command") {
+      continue;
+    }
+    const body = canonicalAnswerText(message).trim();
+    if (!body) continue;
+    const who = message.role === "assistant" ? roles.assistant : roles.user;
+    blocks.push(`**${who}**`, "", body, "");
+  }
+  return `${blocks.join("\n").trim()}\n`;
+}
+
 export function extractCopyText(
   message: ChatMessage,
   timeline: ChatTimelineItem[],

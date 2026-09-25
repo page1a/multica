@@ -26,6 +26,7 @@ type modelListFixture struct {
 	listedProvider string
 	listedPath     string
 	listedPrefix   []string
+	listedOverlay  map[string]string
 	listCalls      int
 	report         map[string]any
 }
@@ -52,11 +53,12 @@ func newModelListFixture(t *testing.T) *modelListFixture {
 	fx.daemon = d
 
 	orig := listModels
-	listModels = func(_ context.Context, provider string, runtimeCmd agent.Command) (agent.Catalog, error) {
+	listModels = func(ctx context.Context, provider string, runtimeCmd agent.Command) (agent.Catalog, error) {
 		fx.mu.Lock()
 		fx.listedProvider = provider
 		fx.listedPath = runtimeCmd.Path
 		fx.listedPrefix = append([]string(nil), runtimeCmd.Prefix...)
+		fx.listedOverlay = agent.ModelEnvOverlay(ctx)
 		fx.listCalls++
 		fx.mu.Unlock()
 		return agent.Catalog{Models: []agent.Model{{
@@ -68,6 +70,36 @@ func newModelListFixture(t *testing.T) *modelListFixture {
 	t.Cleanup(func() { listModels = orig })
 
 	return fx
+}
+
+func TestHandleModelListForwardsAgentEnvOverlay(t *testing.T) {
+	fx := newModelListFixture(t)
+	d := fx.daemon
+	bin := fakeExecutable(t, "qwen")
+	d.cfg.Agents = map[string]AgentEntry{"qwen": {Path: bin}}
+	d.runtimeIndex["rt-qwen"] = Runtime{ID: "rt-qwen", Provider: "qwen"}
+
+	const secret = "sk-overlay-do-not-leak"
+	ctx := agent.WithModelEnvOverlay(context.Background(), map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:9000/v1",
+		"OPENAI_API_KEY":  secret,
+	})
+	d.handleModelList(ctx, d.runtimeIndex["rt-qwen"], "req-overlay")
+
+	fx.mu.Lock()
+	overlay := fx.listedOverlay
+	fx.mu.Unlock()
+	if overlay["OPENAI_BASE_URL"] != "http://127.0.0.1:9000/v1" || overlay["OPENAI_API_KEY"] != secret {
+		t.Fatalf("discovery overlay = %#v", overlay)
+	}
+	_, _, _, report := fx.snapshot()
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	if strings.Contains(string(raw), secret) || strings.Contains(string(raw), "127.0.0.1:9000") {
+		t.Fatalf("model-list report echoed the overlay: %s", raw)
+	}
 }
 
 func (fx *modelListFixture) snapshot() (provider, path string, calls int, report map[string]any) {

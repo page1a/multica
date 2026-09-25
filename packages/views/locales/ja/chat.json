@@ -4,6 +4,27 @@
     "select_prompt": "会話を選ぶか、＋ で新規作成してください",
     "agent_link_no_access": "このエージェントとチャットする権限がありません。"
   },
+  "project_bar": {
+    "all": "すべて",
+    "more": "⋯ その他 ({{count}})",
+    "menu_title": "プロジェクト",
+    "done": "完了",
+    "search": "プロジェクトを検索…",
+    "pinned": "ピン留め（ドラッグで並べ替え）",
+    "pinned_empty": "ピン留めはまだありません",
+    "other": "その他（最近のチャット順）",
+    "none": "プロジェクトなし",
+    "chat_count_other": "{{count}} 件のチャット",
+    "pin": "ピン留め",
+    "unpin": "ピン留めを外す",
+    "drag": "ドラッグして並べ替え",
+    "empty": "このプロジェクトにはまだチャットがありません",
+    "unread": "未読"
+  },
+  "project_nudge": {
+    "bind": "プロジェクトに紐づける",
+    "casual": "これは気軽なチャットなので、プロジェクトは不要です"
+  },
   "fab": {
     "running": "Multica が作業中です...",
     "unread_other": "未読のチャット {{count}}件",
@@ -242,14 +263,23 @@
     "archive": "アーカイブ",
     "unarchive": "アーカイブ解除",
     "archived_title": "アーカイブ済み",
-    "row_actions_aria": "チャットの操作"
+    "row_actions_aria": "チャットの操作",
+    "edit_access": "権限を編集",
+    "private_tag": "非公開",
+    "extra_tag": "追加メンバー"
   },
   "header": {
     "view_profile": "Agent のプロフィール",
     "rename": "名前を変更",
     "delete": "チャットを削除",
     "archive": "チャットをアーカイブ",
-    "unarchive": "アーカイブを解除"
+    "unarchive": "アーカイブを解除",
+    "copy_link": "セッションリンクをコピー",
+    "link_copied": "セッションリンクをコピーしました",
+    "copy_conversation": "会話全体を Markdown でコピー",
+    "conversation_copied": "会話をコピーしました",
+    "copy_role_user": "あなた",
+    "copy_role_assistant": "アシスタント"
   },
   "provider_quota": {
     "label": "残量",
@@ -258,5 +288,34 @@
     "used": "{{percent}}%",
     "resets": "{{when}} にリセット",
     "updated": "{{when}} 更新"
+  },
+  "sharing": {
+    "title": "権限を編集",
+    "follow": "プロジェクトに従う",
+    "follow_hint_bound": "{{projects}} のメンバーは閲覧も発言もできます",
+    "follow_hint_unbound": "選ぶ前にプロジェクトを紐付けてください",
+    "extra": "プロジェクトに従う + 追加",
+    "extra_hint": "プロジェクトのメンバーと、下で追加した人",
+    "private": "非公開",
+    "private_hint": "自分だけが見られます。ほかの人の一覧には出ません",
+    "view": "閲覧のみ",
+    "speak": "発言できる",
+    "add": "メンバーを追加…",
+    "remove": "外す",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "note_bound": "非公開にすると、ほかの人の一覧からすぐ消えます。あとから戻せます。",
+    "note_unbound": "プロジェクト未設定のチャットは非公開のままです。",
+    "view_only": "このチャットは読めますが、発言はできません。",
+    "header_private": "自分だけ",
+    "header_project": "プロジェクトのメンバーは閲覧も発言もできます",
+    "header_extra": "プロジェクトのメンバーと追加の人",
+    "search": "メンバーを検索…"
+  },
+  "notice": {
+    "title": "一部のチャットがプロジェクトメンバーに見えるようになりました",
+    "body": "プロジェクトメンバーが見られるチャットが {{count}} 件あります。",
+    "make_private": "選択したものを非公開にする",
+    "dismiss": "了解"
   }
 }

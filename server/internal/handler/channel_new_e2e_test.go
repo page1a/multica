@@ -312,7 +312,9 @@ func TestChannelChatCommandE2ERotatesRouteAndFreezesTaskDelivery(t *testing.T) {
 		t.Fatalf("bare /new state = title %q explicit %t messages %d tasks %d", emptyTitle, emptyExplicit, emptyMessages, emptyTasks)
 	}
 	listed, err := queries.ListChatSessionsByCreator(ctx, db.ListChatSessionsByCreatorParams{
-		WorkspaceID: util.MustParseUUID(testWorkspaceID), CreatorID: util.MustParseUUID(testUserID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		ViewerID:    util.MustParseUUID(testUserID),
+		ProjectIds:  []pgtype.UUID{},
 	})
 	if err != nil {
 		t.Fatalf("list Chats after bare /new: %v", err)

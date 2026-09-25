@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -116,6 +117,13 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 			}
 		}
 	}
+	if !row.ParentIssueID.Valid {
+		// Only a top-level issue can be a group's coordinator, and the judge
+		// is told either way: a parent is a different job from a leaf.
+		if children, err := s.h.Queries.ListChildIssues(ctx, row.ID); err == nil {
+			out.HasChildren = len(children) > 0
+		}
+	}
 	out.Reviewer = s.reviewerRef(ctx, row)
 	return out, nil
 }
@@ -166,6 +174,14 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 	if err != nil {
 		return nil, err
 	}
+	demotedIDs, err := s.h.Queries.ListDemotedQuotaAgentIDs(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	demoted := make(map[string]bool, len(demotedIDs))
+	for _, id := range demotedIDs {
+		demoted[util.UUIDToString(id)] = true
+	}
 	out := make(map[string]routing.Agent, len(agents))
 	for _, a := range agents {
 		// Disabled seats stay on the agents list but are not routing
@@ -173,16 +189,18 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 		if !a.WorkEnabled {
 			continue
 		}
+		id := util.UUIDToString(a.ID)
 		out[a.Name] = routing.Agent{
-			ID:   util.UUIDToString(a.ID),
-			Name: a.Name,
-			Tier: a.RoutingTier.String,
+			ID:      id,
+			Name:    a.Name,
+			Tier:    a.RoutingTier.String,
+			Demoted: demoted[id],
 		}
 	}
 	return out, nil
 }
 
-func (s routingStore) AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat routing.Seat) (bool, error) {
+func (s routingStore) AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat routing.Seat, start bool) (bool, error) {
 	wsID, err := util.ParseUUID(workspaceID)
 	if err != nil {
 		return false, err
@@ -214,8 +232,12 @@ func (s routingStore) AssignAgentIfUnassigned(ctx context.Context, workspaceID, 
 	prev.AssigneeID = pgtype.UUID{}
 	s.publishIssueUpdated(prev, issue)
 	// Assignment IS the wake-up: the seat's run starts from the assignment,
-	// so routing never needs to mention an agent it just dispatched.
-	s.h.IssueService.StartAssignedAgent(ctx, issue)
+	// so routing never needs to mention an agent it just dispatched. A
+	// coordinator seat is the one write that must not wake: its group was
+	// just created and the sub-issues are where the work starts.
+	if start {
+		s.h.IssueService.StartAssignedAgent(ctx, issue)
+	}
 	return true, nil
 }
 
@@ -257,6 +279,100 @@ func (s routingStore) SetReviewerIfUnset(ctx context.Context, workspaceID, issue
 	return true, nil
 }
 
+func (s routingStore) OffRosterSeat(ctx context.Context, workspaceID, agentID string) (routing.Agent, bool, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return routing.Agent{}, false, err
+	}
+	id, err := util.ParseUUID(agentID)
+	if err != nil {
+		return routing.Agent{}, false, err
+	}
+	agent, err := s.h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID: id, WorkspaceID: wsID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return routing.Agent{}, false, nil
+		}
+		return routing.Agent{}, false, err
+	}
+	if agent.ArchivedAt.Valid || agent.WorkEnabled {
+		return routing.Agent{}, false, nil
+	}
+	tier := ""
+	if agent.RoutingTier.Valid {
+		tier = agent.RoutingTier.String
+	}
+	return routing.Agent{ID: agentID, Name: agent.Name, Tier: tier}, true, nil
+}
+
+func (s routingStore) ReplaceReviewer(ctx context.Context, workspaceID, issueID, currentID string, ref routing.ReviewerRef) (bool, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return false, err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return false, err
+	}
+	current, err := util.ParseUUID(currentID)
+	if err != nil {
+		return false, err
+	}
+	next, err := util.ParseUUID(ref.ID)
+	if err != nil {
+		return false, err
+	}
+	prev, err := s.h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: id, WorkspaceID: wsID})
+	if err != nil {
+		return false, err
+	}
+	issue, err := s.h.Queries.ReplaceIssueReviewerIfCurrent(ctx, db.ReplaceIssueReviewerIfCurrentParams{
+		ReviewerID:        next,
+		ID:                id,
+		WorkspaceID:       wsID,
+		CurrentReviewerID: current,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	s.publishIssueUpdated(prev, issue)
+	return true, nil
+}
+
+func (s routingStore) RememberReviewerRelay(ctx context.Context, workspaceID, issueID string, note routing.ReviewerRelay) error {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(map[string]any{
+		"original_id":      note.OriginalID,
+		"original_name":    note.OriginalName,
+		"replacement_id":   note.ReplacementID,
+		"replacement_name": note.ReplacementName,
+		"designated":       note.Designated,
+		"covered_at":       note.CoveredAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		Key: "reviewer_relay", Value: raw, ID: id, WorkspaceID: wsID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
 func (s routingStore) Handoff(ctx context.Context, workspaceID, issueID, assigneeType, assigneeID string) error {
 	wsID, err := util.ParseUUID(workspaceID)
 	if err != nil {
@@ -277,17 +393,225 @@ func (s routingStore) Handoff(ctx context.Context, workspaceID, issueID, assigne
 	if err != nil {
 		return err
 	}
-	issue, err := s.h.Queries.ReassignIssue(ctx, db.ReassignIssueParams{
-		ID: id, WorkspaceID: wsID, AssigneeType: assigneeType, AssigneeID: target,
-	})
-	if err != nil {
-		return err
+	already := prev.AssigneeType.Valid && prev.AssigneeType.String == assigneeType &&
+		prev.AssigneeID.Valid && util.UUIDToString(prev.AssigneeID) == assigneeID
+	issue := prev
+	if !already {
+		issue, err = s.h.Queries.ReassignIssue(ctx, db.ReassignIssueParams{
+			ID: id, WorkspaceID: wsID, AssigneeType: assigneeType, AssigneeID: target,
+		})
+		if err != nil {
+			return err
+		}
+		s.publishIssueUpdated(prev, issue)
 	}
-	s.publishIssueUpdated(prev, issue)
 	if assigneeType == "agent" {
+		// Assignment is the wake. When this stay's reviewer already holds the
+		// ticket — the previous attempt reassigned and the enqueue failed, or
+		// the stale sweep is poking the same seat again — starting the run
+		// must not depend on a second reassignment.
 		s.h.IssueService.StartAssignedAgent(ctx, issue)
 	}
 	return nil
+}
+
+// Acceptance is the in-review row's read of "has this stay already been
+// handed on, and is a run still open". Both answers are per stay, not per
+// issue: a handoff comment or a run from an earlier visit to in_review does
+// not count, which is the break DENE-617 hit.
+func (s routingStore) Acceptance(ctx context.Context, workspaceID string, issue routing.Issue) (routing.AcceptanceState, error) {
+	var state routing.AcceptanceState
+	id, err := util.ParseUUID(issue.ID)
+	if err != nil {
+		return state, err
+	}
+	active, err := s.h.Queries.HasActiveTaskForIssue(ctx, id)
+	if err != nil {
+		return state, err
+	}
+	state.ActiveRun = active
+	since, err := s.reviewStayStart(ctx, s.h.Queries, workspaceID, id)
+	if err != nil {
+		return state, err
+	}
+	switch issue.Reviewer.Kind {
+	case routing.ReviewerAgent:
+		if issue.AssigneeType == "agent" && issue.AssigneeID == issue.Reviewer.ID {
+			agentID, err := util.ParseUUID(issue.Reviewer.ID)
+			if err != nil {
+				return state, err
+			}
+			state.AgentEngaged, err = s.h.Queries.HasReviewerRunSince(ctx, db.HasReviewerRunSinceParams{
+				IssueID: id,
+				AgentID: agentID,
+				Since:   pgtype.Timestamptz{Time: since, Valid: true},
+			})
+			if err != nil {
+				return state, err
+			}
+		}
+	case routing.ReviewerMember:
+		state.MemberNotified, err = s.memberNotifiedSince(ctx, s.h.Queries, workspaceID, id, issue.Reviewer.ID, since)
+		if err != nil {
+			return state, err
+		}
+	}
+	return state, nil
+}
+
+// NotifyMember sends this stay's acceptance notice. The routing comment is
+// once per issue, so a later stay cannot post another one; the inbox row is
+// what actually reaches the person.
+//
+// The read and the insert share one transaction and an advisory lock on this
+// issue and this person. A status-change hook and the completion callback can
+// both observe "not yet notified" and both used to insert a routing_needs_you.
+// A unique index on (issue, recipient, type) would also collapse that race,
+// and it would collapse the next stay too — a later visit to in_review is
+// supposed to notify again. The lock only serializes writers; the stay window
+// is still HasAcceptanceNoticeSince.
+func (s routingStore) NotifyMember(ctx context.Context, workspaceID, issueID string, member routing.Member) (bool, error) {
+	if member.UserID == "" {
+		return false, nil
+	}
+	tx, err := s.h.TxStarter.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, acceptanceNoticeLockKey(issueID, member.UserID)); err != nil {
+		return false, err
+	}
+	q := s.h.Queries.WithTx(tx)
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return false, err
+	}
+	since, err := s.reviewStayStart(ctx, q, workspaceID, id)
+	if err != nil {
+		return false, err
+	}
+	notified, err := s.memberNotifiedSince(ctx, q, workspaceID, id, member.UserID, since)
+	if err != nil {
+		return false, err
+	}
+	if notified {
+		return false, nil
+	}
+	if err := s.writeAcceptanceNotice(ctx, q, workspaceID, issueID, member.UserID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func acceptanceNoticeLockKey(issueID, userID string) string {
+	return "acceptance-notice:" + issueID + ":" + userID
+}
+
+// reviewStayStart is the beginning of the window that counts as this stay.
+//
+// The activity row is written by a bus listener and can lag the status write
+// by a moment. With no boundary, "since now" still sees a run or a notice
+// created in the last 30 seconds (the query's skew), which is enough to
+// collapse a duplicate trigger, and it does not treat an older stay as this one.
+func (s routingStore) reviewStayStart(ctx context.Context, q *db.Queries, workspaceID string, issueID pgtype.UUID) (time.Time, error) {
+	since, known, err := s.reviewRoundSince(ctx, q, workspaceID, issueID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !known {
+		return time.Now(), nil
+	}
+	return since, nil
+}
+
+func (s routingStore) memberNotifiedSince(ctx context.Context, q *db.Queries, workspaceID string, issueID pgtype.UUID, userID string, since time.Time) (bool, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return false, err
+	}
+	uid, err := util.ParseUUID(userID)
+	if err != nil {
+		return false, err
+	}
+	return q.HasAcceptanceNoticeSince(ctx, db.HasAcceptanceNoticeSinceParams{
+		IssueID:     issueID,
+		WorkspaceID: wsID,
+		RecipientID: uid,
+		Since:       pgtype.Timestamptz{Time: since, Valid: true},
+	})
+}
+
+func (s routingStore) writeAcceptanceNotice(ctx context.Context, q *db.Queries, workspaceID, issueID, userID string) error {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return err
+	}
+	uid, err := util.ParseUUID(userID)
+	if err != nil {
+		return err
+	}
+	if _, err := q.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
+		IssueID: id, UserType: "member", UserID: uid, Reason: "mentioned",
+	}); err != nil {
+		return err
+	}
+	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: id, WorkspaceID: wsID})
+	if err != nil {
+		return err
+	}
+	_, err = q.CreateInboxItem(ctx, db.CreateInboxItemParams{
+		ID:            dbid.NewV7(),
+		WorkspaceID:   wsID,
+		RecipientType: "member",
+		RecipientID:   uid,
+		Type:          "routing_needs_you",
+		Severity:      "action_required",
+		IssueID:       id,
+		Title:         issue.Title,
+		Body:          pgtype.Text{String: "这张票需要你看一眼——路由没有人会继续推进它。", Valid: true},
+		ActorType:     pgtype.Text{String: "system", Valid: true},
+		Details:       []byte("{}"),
+	})
+	return err
+}
+
+// reviewRoundSince is when this ticket last entered in_review. ok is false
+// when the activity row has not been written yet.
+func (s routingStore) reviewRoundSince(ctx context.Context, q *db.Queries, workspaceID string, issueID pgtype.UUID) (time.Time, bool, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	keys, err := s.inReviewKeys(ctx, wsID)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if len(keys) == 0 {
+		return time.Time{}, false, nil
+	}
+	since, err := q.LastEnteredReviewAt(ctx, db.LastEnteredReviewAtParams{
+		IssueID:     issueID,
+		WorkspaceID: wsID,
+		Statuses:    keys,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, err
+	}
+	if !since.Valid {
+		return time.Time{}, false, nil
+	}
+	return since.Time, true, nil
 }
 
 func (s routingStore) HasComment(ctx context.Context, workspaceID, issueID string, kind routing.CommentKind) (bool, error) {

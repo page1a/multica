@@ -255,6 +255,10 @@ const desktopAPI = {
   /** Create a local Git repository in a plain folder. Nothing is uploaded. */
   initLocalGit: (path: string) =>
     ipcRenderer.invoke("local-directory:init-git", path),
+  provisionProjectDirectory: (input: { root: string; dirName: string; gitInit: boolean }) =>
+    ipcRenderer.invoke("local-directory:provision-project", input),
+  removeProvisionedDirectory: (input: { root: string; path: string }) =>
+    ipcRenderer.invoke("local-directory:remove-provisioned", input),
   validateWritablePath: (path: string) =>
     ipcRenderer.invoke("local-directory:writable", path),
   /** This machine's parallel-copy cleanup: report, policy, one-off removal.

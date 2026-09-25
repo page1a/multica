@@ -17,6 +17,11 @@ import (
 // drains stdin to EOF, and emits a minimal successful Pi JSON stream.
 func piStdinProbe(t *testing.T, prompt string) ([]string, string, Result) {
 	t.Helper()
+	return piStdinProbeWithSystemPrompt(t, prompt, "")
+}
+
+func piStdinProbeWithSystemPrompt(t *testing.T, prompt, systemPrompt string) ([]string, string, Result) {
+	t.Helper()
 
 	dir := t.TempDir()
 	argvPath := filepath.Join(dir, "argv.txt")
@@ -44,6 +49,7 @@ printf '%%s\n' '{"type":"turn_end","message":{"role":"assistant","model":"test",
 		Timeout:         30 * time.Second,
 		ResumeSessionID: sessionPath,
 		Model:           "cpa/grok-4.5-high",
+		SystemPrompt:    systemPrompt,
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -99,6 +105,27 @@ func TestPiExecuteSendsBuilderPromptOnStdinNotArgv(t *testing.T) {
 	}
 	if result.Status != "completed" || result.Output != "ok" {
 		t.Fatalf("result = %+v, want completed with output ok", result)
+	}
+}
+
+// TestPiExecutePrependsSystemPromptOnStdin guards the shared local_directory
+// route: the brief kept out of the cwd must reach Pi ahead of the task on
+// stdin, never on argv.
+func TestPiExecutePrependsSystemPromptOnStdin(t *testing.T) {
+	t.Parallel()
+
+	argv, stdinGot, result := piStdinProbeWithSystemPrompt(t, "do the task", "# Runtime brief")
+
+	if want := "# Runtime brief\n\n---\n\ndo the task"; stdinGot != want {
+		t.Errorf("stdin = %q, want %q", stdinGot, want)
+	}
+	for _, arg := range argv {
+		if strings.Contains(arg, "Runtime brief") || arg == "--append-system-prompt" {
+			t.Errorf("brief leaked into argv: %v", argv)
+		}
+	}
+	if result.Status != "completed" {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

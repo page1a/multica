@@ -39,6 +39,20 @@ type PlanQuotaProbe struct {
 	Home   string
 	Client *http.Client
 	Now    func() time.Time
+	// ClaudeConfigDir is the Claude Code account directory this probe reads
+	// `.credentials.json` from when the caller knows which one the CLI actually
+	// runs against. An agent bound to a numbered account is served by the same
+	// `CLAUDE_CONFIG_DIR` its task environment is assembled from, so probing the
+	// daemon process's own account instead would report the wrong seat's quota
+	// (DENE-715).
+	//
+	// Empty keeps the previous resolution, which is also what an agent with no
+	// binding configured keeps using: the CLI's default account — the daemon
+	// process's own CLAUDE_CONFIG_DIR, else <Home>/.claude, and on macOS the
+	// login Keychain for the token. A non-empty value names a numbered account,
+	// whose credentials live in that directory's `.credentials.json`; the
+	// machine-wide Keychain never speaks for it.
+	ClaudeConfigDir string
 	// Optional URL overrides so tests can serve fixtures without the network.
 	ClaudeUsageURL     string
 	CodexUsageURL      string
@@ -84,7 +98,7 @@ func (p PlanQuotaProbe) lookupKeychain(service string) (string, bool) {
 // ProbeClaude returns the live 5h/7d Claude Code subscription windows, or
 // (nil, nil) when no OAuth credentials are present.
 func (p PlanQuotaProbe) ProbeClaude(ctx context.Context) (*protocol.PlanLimitsSnapshot, error) {
-	token := readClaudeAccessToken(p.Home, p.lookupKeychain)
+	token := readClaudeAccessToken(p.Home, p.ClaudeConfigDir, p.lookupKeychain)
 	if token == "" {
 		return nil, nil
 	}
@@ -400,15 +414,27 @@ func readAPIKeyFile(path string) string {
 	return ""
 }
 
-func readClaudeAccessToken(home string, lookupKeychain func(string) (string, bool)) string {
-	if lookupKeychain != nil {
+// readClaudeAccessToken reads the Claude Code OAuth token. configDir is the
+// account directory the caller knows this run uses (an agent's bound
+// `CLAUDE_CONFIG_DIR`); empty falls back to the daemon process's own account,
+// which is the pre-DENE-715 behavior.
+func readClaudeAccessToken(home, configDir string, lookupKeychain func(string) (string, bool)) string {
+	// The login Keychain holds the CLI's *default* account; it is machine-wide
+	// and cannot name a numbered one. Claude Code itself only consults it when
+	// CLAUDE_CONFIG_DIR is unset, and reads `<dir>/.credentials.json` when it
+	// is set (its credential resolution guards the Keychain read with
+	// `if (!CLAUDE_CONFIG_DIR)`). Mirroring that split is what keeps a bound
+	// agent from being handed the default seat's token, which is the exact
+	// wrong-seat reading DENE-715 exists to remove.
+	bound := strings.TrimSpace(configDir) != "" || strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")) != ""
+	if !bound && lookupKeychain != nil {
 		if raw, ok := lookupKeychain(claudeKeychainService); ok {
 			if token := parseClaudeCredentialsJSON(raw); token != "" {
 				return token
 			}
 		}
 	}
-	path := filepath.Join(claudeConfigDir(home), ".credentials.json")
+	path := filepath.Join(claudeConfigDir(home, configDir), ".credentials.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -474,7 +500,16 @@ func parseCodexCredentialsJSON(content string) (token, accountID string) {
 	return strings.TrimSpace(parsed.Tokens.AccessToken), strings.TrimSpace(parsed.Tokens.AccountID)
 }
 
-func claudeConfigDir(home string) string {
+// claudeConfigDir resolves the directory Claude Code keeps this account's
+// credentials in. configDir is the account the caller knows the CLI will run
+// against — the value its task environment carries — and it wins over the
+// daemon process's own environment, which says nothing about which seat a
+// given agent was switched to (DENE-715). Both are empty for a machine with
+// no binding at all, where the CLI's own directory is the answer.
+func claudeConfigDir(home, configDir string) string {
+	if dir := strings.TrimSpace(configDir); dir != "" {
+		return dir
+	}
 	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
 		return dir
 	}

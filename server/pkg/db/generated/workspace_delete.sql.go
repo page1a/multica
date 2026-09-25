@@ -342,6 +342,19 @@ deleted_draft_restores AS (
     DELETE FROM chat_draft_restore
     WHERE chat_session_id IN (SELECT id FROM ws_sessions)
 ),
+deleted_chat_session_reads AS (
+    DELETE FROM chat_session_read
+    WHERE chat_session_id IN (SELECT id FROM ws_sessions)
+),
+deleted_work_threads AS (
+    DELETE FROM work_thread WHERE agent_id IN (SELECT id FROM ws_agents)
+),
+deleted_chat_visibility_notices AS (
+    DELETE FROM chat_visibility_notice WHERE workspace_id = $1
+),
+deleted_resource_shares AS (
+    DELETE FROM resource_share WHERE workspace_id = $1
+),
 deleted_agent_builder_drafts AS (
     DELETE FROM agent_builder_draft WHERE workspace_id = $1
 ),
@@ -393,6 +406,11 @@ deleted_issue_vcs_links AS (
     DELETE FROM issue_vcs_pull_request
     WHERE issue_id IN (SELECT id FROM ws_issues)
        OR pull_request_id IN (SELECT id FROM ws_vcs_prs)
+),
+deleted_issue_delivery_branches AS (
+    DELETE FROM issue_delivery_branch
+    WHERE workspace_id = $1
+       OR issue_id IN (SELECT id FROM ws_issues)
 ),
 deleted_agent_invocation_targets AS (
     DELETE FROM agent_invocation_target
@@ -531,6 +549,14 @@ WHERE channel_media_pending_object.workspace_id = $1
 // Same no-FK chore for the resumable attachment staging (DENE-443). Both
 // tables are keyed by workspace_id, so the teardown never has to assemble the
 // (sha256, offset) pairs it is dropping first.
+// Read cursors cascade from chat_session, but teardown deletes them here with
+// the other session children so a future FK change cannot leave them behind.
+// work_thread (migration 531) has no foreign keys and no workspace_id; the
+// agent set is its teardown key. Chat and issue threads both belong to a
+// workspace agent, so this covers every row the workspace owned.
+// One dismissed-notice row per person. workspace_id is the teardown key.
+// Direct shares have no foreign key (migration 520), so nothing else removes
+// them when the workspace goes away.
 // Same no-FK chore as chat_draft_restore above. Matched on workspace_id rather
 // than the session set because that column exists precisely so this statement
 // does not have to join through chat_session, which it deletes in this same CTE.

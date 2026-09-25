@@ -1,6 +1,7 @@
 export {
   paths,
   isGlobalPath,
+  chatSessionIdFromLocation,
   AGENT_FOCUS_CONVERSATION_STARTERS,
 } from "./paths";
 export type { WorkspacePaths } from "./paths";

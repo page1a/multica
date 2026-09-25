@@ -2,13 +2,11 @@ package lark
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -20,18 +18,8 @@ import (
 // on a quote-format migration to keep context out of a user's Chat title.
 func TestFeishuChannelTitleUsesCurrentInstructionDB(t *testing.T) {
 	ctx := context.Background()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL is required for the channel title integration test")
-	}
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		t.Fatal(err)
-	}
+	pool := dbfx.OpenTestDatabase(ctx, t)
+	var err error
 	for _, tc := range []struct {
 		name                 string
 		start, recent, fresh bool

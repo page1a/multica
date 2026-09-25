@@ -3,29 +3,20 @@ package ghsnapshot
 import (
 	"context"
 	"crypto/rand"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func testDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
-	pool, err := pgxpool.New(context.Background(), dbURL)
-	if err != nil {
-		t.Skipf("skipping DB test: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		t.Skipf("skipping DB test: database not reachable: %v", err)
-	}
+	ctx := context.Background()
+	pool := testutil.OpenTestDatabase(ctx, t)
 	// Close via t.Cleanup, registered FIRST, so it runs LAST — after every
 	// row-deleting cleanup the test registers later, and after the context
 	// cancel that stops the manager's workers. The previous shape, a `defer

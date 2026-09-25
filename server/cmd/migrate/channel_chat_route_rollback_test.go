@@ -2,31 +2,19 @@ package main
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestChannelChatRouteRollbackGuardRunsBeforeConcurrentIndexDrop(t *testing.T) {
 	t.Parallel()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	// A cleanup rather than a defer, so the pool outlives the schema drop
-	// registered below: a deferred Close ran first and the drop failed
-	// silently, leaving one schema behind per run.
-	t.Cleanup(pool.Close)
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	schema := "channel_route_rollback_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()

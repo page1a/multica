@@ -194,7 +194,8 @@
     "no_project": "无项目",
     "empty": "还没有项目",
     "search_placeholder": "搜索项目...",
-    "clear_aria": "清除项目"
+    "clear_aria": "清除项目",
+    "create": "＋ 新建项目「{{name}}」"
   },
   "chip": {
     "fallback_label": "项目"
@@ -213,5 +214,32 @@
     "direction_desc": "降序",
     "section_columns": "列",
     "view": "视图"
+  },
+  "new_project": {
+    "name": "名称",
+    "icon": "图标",
+    "icon_placeholder": "一个表情",
+    "positioning": "业务定位",
+    "positioning_placeholder": "这段项目是做什么的",
+    "directory_enable": "在本机建一个目录",
+    "directory_unavailable": "建目录需要桌面端。",
+    "directory_offline": "本机 daemon 没在运行。",
+    "directory_root": "业务项目根目录",
+    "directory_container": "直接使用根目录（里面会放多个仓库）",
+    "directory_name": "子目录名",
+    "directory_git": "初始化 Git 仓库",
+    "directory_mode": "任务怎么共用这个目录",
+    "directory_mode_auto": "按目录选了「{{mode}}」，可以改。",
+    "directory_bad_name": "子目录名只能是一层名字。",
+    "directory_exists": "这个目录已经有了，换个名字。",
+    "directory_failed": "目录没建好，项目也没建。",
+    "mode": {
+      "worktree": "每个任务独立工作树",
+      "shared": "共享目录",
+      "in_place": "一次只跑一个任务"
+    },
+    "back": "返回",
+    "submit": "创建并选中",
+    "failed": "没能建好这个项目。"
   }
 }

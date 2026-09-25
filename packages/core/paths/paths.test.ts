@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { paths, isGlobalPath } from "./paths";
+import { paths, isGlobalPath, chatSessionIdFromLocation } from "./paths";
 
 describe("paths.workspace(slug)", () => {
   const ws = paths.workspace("acme");
@@ -22,9 +22,7 @@ describe("paths.workspace(slug)", () => {
     expect(ws.chatWithAgent("agent one")).toBe(
       "/acme/chat?agent=agent%20one",
     );
-    expect(ws.chatSession("session one")).toBe(
-      "/acme/chat?session=session%20one",
-    );
+    expect(ws.chatSession("session one")).toBe("/acme/chat/session%20one");
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
     expect(ws.runtimeSettings("machine/runtime", "runtime one")).toBe(
@@ -49,6 +47,17 @@ describe("paths (global)", () => {
     expect(paths.newWorkspace()).toBe("/workspaces/new");
     expect(paths.invite("inv-1")).toBe("/invite/inv-1");
     expect(paths.authCallback()).toBe("/auth/callback");
+  });
+});
+
+describe("chatSessionIdFromLocation", () => {
+  it("reads the path id and still accepts the older query", () => {
+    expect(chatSessionIdFromLocation("/acme/chat/sess-1", "")).toBe("sess-1");
+    expect(chatSessionIdFromLocation("/acme/chat", "session=sess-1")).toBe("sess-1");
+    expect(chatSessionIdFromLocation("/acme/chat/path-id", "session=query-id")).toBe(
+      "path-id",
+    );
+    expect(chatSessionIdFromLocation("/acme/chat", "")).toBeNull();
   });
 });
 

@@ -324,6 +324,7 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 				RuntimeID:           rid,
 				SupportsBatchImport: true,
 				PlanLimits:          d.planLimitsForRuntime(rid),
+				AgentPlanLimits:     d.agentPlanLimitsForRuntime(rid),
 				Jev:                 jev,
 			}),
 		})

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -550,6 +551,13 @@ func ImportTransferConversations(ctx context.Context, env TransferImportEnv, req
 			report.SessionsSkipped++
 		} else {
 			report.SessionsCreated++
+			// Chat pins are per person now (DENE-866): a pinned export lands
+			// as the importer's own sidebar pin, not as a flag on the row.
+			if pinned.Valid {
+				if err := transferPinChat(ctx, env, targetID); err != nil {
+					return nil, fmt.Errorf("pin chat session: %w", err)
+				}
+			}
 		}
 	}
 
@@ -2250,4 +2258,31 @@ func pathExt(name string) string {
 		return ""
 	}
 	return name[i:]
+}
+
+// transferPinChat appends the imported chat to the importer's sidebar pins.
+// Idempotent: a pin already present from a prior shard is left alone.
+func transferPinChat(ctx context.Context, env TransferImportEnv, sessionID uuid.UUID) error {
+	maxPos, err := env.Queries.GetMaxPinnedItemPosition(ctx, db.GetMaxPinnedItemPositionParams{
+		WorkspaceID: env.TargetID,
+		UserID:      env.ImporterID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = env.Queries.CreatePinnedItem(ctx, db.CreatePinnedItemParams{
+		WorkspaceID: env.TargetID,
+		UserID:      env.ImporterID,
+		ItemType:    "chat",
+		ItemID:      pgUUID(sessionID),
+		Position:    maxPos + 1,
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil
+		}
+		return err
+	}
+	return nil
 }

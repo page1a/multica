@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardUsageByAgent, PlanLimitsSnapshot } from "@multica/core/types";
 import {
+  agentQuotaSnapshot,
   classifyAgentQuota,
   compactRemaining,
   nearestResetAt,
@@ -53,6 +54,22 @@ describe("classifyAgentQuota", () => {
   it("falls back to metered usage when no snapshot exists", () => {
     expect(classifyAgentQuota(undefined, NOW)).toBe("metered");
     expect(classifyAgentQuota(null, NOW)).toBe("metered");
+  });
+});
+
+describe("agentQuotaSnapshot", () => {
+  const ACCOUNT2: PlanLimitsSnapshot = { ...CODEX, observed_at: NOW / 1000 + 5 };
+
+  it("prefers the agent's own account snapshot over the runtime's", () => {
+    expect(agentQuotaSnapshot(ACCOUNT2, CODEX)).toBe(ACCOUNT2);
+  });
+
+  it("falls back to the runtime snapshot when the agent has none", () => {
+    // No binding, or the daemon has not run this agent yet: both read as
+    // "nothing agent-specific to say".
+    expect(agentQuotaSnapshot(undefined, CODEX)).toBe(CODEX);
+    expect(agentQuotaSnapshot(null, CODEX)).toBe(CODEX);
+    expect(agentQuotaSnapshot(undefined, undefined)).toBeUndefined();
   });
 });
 

@@ -1684,6 +1684,23 @@ describe("ApiClient", () => {
       expect(originalContentType).toBe("text/markdown");
     });
 
+    it("rejects an HTML document that is not the preview proxy", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response("<html><body><div id=\"root\"></div></body></html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          }),
+        ),
+      );
+
+      const client = new ApiClient("https://api.example.test");
+      await expect(client.getAttachmentTextContent("att-1")).rejects.toThrow(
+        /document instead of the file/,
+      );
+    });
+
     it("throws PreviewTooLargeError on 413", async () => {
       const { PreviewTooLargeError } = await import("./client");
       vi.stubGlobal(
@@ -2357,6 +2374,19 @@ describe("ApiClient model discovery response schema", () => {
       "https://api.example.test/api/runtimes/rt-1/models?force=true",
     );
     expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+  });
+
+  it("sends the agent id when the picker is for one agent", async () => {
+    stubJSON(completed);
+
+    await new ApiClient("https://api.example.test").initiateListModels("rt-1", {
+      force: true,
+      agentId: "agent-1",
+    });
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/runtimes/rt-1/models?force=true&agent_id=agent-1",
+    );
   });
 
   // The picker drives a state machine off `status`, so a malformed body must

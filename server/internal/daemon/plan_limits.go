@@ -156,13 +156,19 @@ func (d *Daemon) refreshPlanQuota() {
 		}
 	}
 	d.mu.Unlock()
-	if !wantClaude && !wantCodex && !wantGemini && !wantGrok && !wantKimi && !wantGLM && !wantMiniMax && !wantDeepSeek {
-		return
-	}
 
 	probe := d.planQuotaProbe()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+
+	// Per-seat windows are probed on every cycle, including the one with no
+	// built-in runtime to report (DENE-715): a bound agent may run on a
+	// custom-profile runtime the index above deliberately skips.
+	wantBuiltin := wantClaude || wantCodex || wantGemini || wantGrok || wantKimi || wantGLM || wantMiniMax || wantDeepSeek
+	if !wantBuiltin {
+		d.refreshAgentPlanQuota(ctx, probe)
+		return
+	}
 
 	type probeJob struct {
 		name    string
@@ -226,6 +232,12 @@ func (d *Daemon) refreshPlanQuota() {
 			d.recordPlanLimitsForProvider(provider, snapshot)
 		}
 	}
+
+	// Per-seat windows ride the same throttled cycle (DENE-715). They are
+	// probed from the account directory each bound agent's task environment
+	// names, not from the daemon's own account, so they stay separate from the
+	// runtime snapshots above.
+	d.refreshAgentPlanQuota(ctx, probe)
 }
 
 func (d *Daemon) planQuotaProbe() agent.PlanQuotaProbe {

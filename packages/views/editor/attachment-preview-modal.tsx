@@ -9,9 +9,14 @@
  *             drag / pinch / double-click / keyboard zoom, same controls as
  *             the Mermaid viewer. Replaces the previous standalone
  *             ImageLightbox.
- *   - pdf   : <iframe src={download_url}> — relies on Chromium's PDFium
- *             plugin. On desktop, requires webPreferences.plugins=true
- *             (see apps/desktop/src/main/index.ts).
+ *   - pdf   : <iframe> of a URL the renderer can load without credentials.
+ *             A signed storage URL is used as-is. The auth-gated
+ *             `/api/attachments/{id}/download` path (self-hosted proxy mode)
+ *             is fetched with the session and shown from a local object URL —
+ *             an iframe cannot attach the bearer token, and framing that
+ *             response is refused (frame-ancestors) or paints blank. Desktop
+ *             still needs webPreferences.plugins=true for PDFium
+ *             (see apps/desktop/src/main/renderer-web-preferences.ts).
  *   - video : <video controls src={download_url}>
  *   - audio : <audio controls src={download_url}>
  *
@@ -41,8 +46,10 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+  api,
   PreviewTooLargeError,
   PreviewUnsupportedError,
 } from "@multica/core/api";
@@ -56,6 +63,7 @@ import {
   X,
 } from "lucide-react";
 import type { Attachment } from "@multica/core/types";
+import { attachmentIdFromDownloadURL } from "@multica/core/types/attachment-url";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { cn } from "@multica/ui/lib/utils";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
@@ -668,7 +676,9 @@ function PreviewPanel({
       <div
         className={cn(
           "relative min-h-0 flex-1 bg-background",
-          kind === "image" ? "flex flex-col overflow-hidden" : "overflow-auto",
+          kind === "image"
+            ? "flex flex-col overflow-hidden"
+            : "overflow-auto text-foreground",
         )}
       >
         {kind === "image" ? (
@@ -794,6 +804,110 @@ function ImagePreview({
 }
 
 // ---------------------------------------------------------------------------
+// PDF — signed URL, or authenticated bytes painted from an object URL
+// ---------------------------------------------------------------------------
+
+// How long a freshly signed storage URL stays usable. Matches the image
+// re-sign hook so a PDF opened from the same attachment does not refetch
+// metadata the gallery already loaded.
+const PDF_RESIGN_STALE_MS = 20 * 60 * 1000;
+
+// A URL Chromium can frame without the session cookie or bearer token.
+// Signed CloudFront / presigned storage URLs qualify. The stable
+// `/api/attachments/{id}/download` path does not: the iframe request cannot
+// carry the token, and the response's frame-ancestors policy refuses the
+// desktop origin anyway. Either failure paints a blank page.
+function nativelyFrameablePdfUrl(rawUrl: string): string {
+  if (!/^https?:\/\//i.test(rawUrl)) return "";
+  if (attachmentIdFromDownloadURL(rawUrl) !== undefined) return "";
+  return rawUrl;
+}
+
+function usePdfObjectUrl(blob: Blob | undefined): string {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    if (!blob || typeof URL.createObjectURL !== "function") {
+      setUrl("");
+      return;
+    }
+    const next = URL.createObjectURL(blob);
+    setUrl(next);
+    return () => {
+      URL.revokeObjectURL(next);
+    };
+  }, [blob]);
+  return url;
+}
+
+function PdfPreview({
+  mediaUrl,
+  attachmentId,
+  filename,
+  onDownload,
+}: {
+  mediaUrl: string;
+  attachmentId: string | null;
+  filename: string;
+  onDownload: () => void;
+}) {
+  const { t } = useT("editor");
+  const directUrl = nativelyFrameablePdfUrl(mediaUrl);
+  const id = attachmentId ?? attachmentIdFromDownloadURL(mediaUrl);
+  const needsBytes = !directUrl && !!id;
+
+  const resign = useQuery({
+    queryKey: ["attachment-inline-resign", id],
+    queryFn: () => api.getAttachment(id as string),
+    enabled: needsBytes,
+    staleTime: PDF_RESIGN_STALE_MS,
+    gcTime: PDF_RESIGN_STALE_MS,
+    retry: false,
+  });
+  const signedUrl = nativelyFrameablePdfUrl(resign.data?.download_url ?? "");
+  const blobQuery = useQuery({
+    queryKey: ["attachment-pdf-blob", id],
+    queryFn: async () => {
+      const blob = await api.getAttachmentBlob(id as string);
+      // PDFium only activates for application/pdf. A proxy response that
+      // falls back to octet-stream would otherwise frame as a blank page.
+      if (blob.type === "application/pdf") return blob;
+      return new Blob([await blob.arrayBuffer()], { type: "application/pdf" });
+    },
+    enabled: needsBytes && resign.isSuccess && signedUrl === "",
+    staleTime: Infinity,
+    retry: false,
+  });
+  const objectUrl = usePdfObjectUrl(blobQuery.data);
+  const frameUrl = directUrl || signedUrl || objectUrl;
+
+  if (!frameUrl) {
+    const failed = !needsBytes || resign.isError || blobQuery.isError;
+    if (failed) {
+      return (
+        <UnsupportedFallback
+          message={t(($) => $.attachment.preview_failed)}
+          onDownload={onDownload}
+        />
+      );
+    }
+    return (
+      <div className="flex h-full items-center justify-center gap-2 text-body text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        {t(($) => $.attachment.preview_loading)}
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      src={frameUrl}
+      className="absolute inset-0 h-full w-full border-0 bg-background"
+      title={filename}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -843,10 +957,11 @@ function PreviewContent({
   switch (kind) {
     case "pdf":
       return (
-        <iframe
-          src={state.mediaUrl}
-          className="h-full w-full bg-background"
-          title={state.filename}
+        <PdfPreview
+          mediaUrl={state.mediaUrl}
+          attachmentId={state.attachmentId}
+          filename={state.filename}
+          onDownload={onDownload}
         />
       );
     case "video":
@@ -873,7 +988,7 @@ function PreviewContent({
           render={(text) => (
             <ReadonlyContent
               content={text}
-              className="px-6 py-4"
+              className="min-h-full px-6 py-4 text-foreground"
               attachments={source.kind === "full" ? [source.attachment] : []}
             />
           )}
@@ -931,7 +1046,11 @@ function TextBackedPreview({
   const { t } = useT("editor");
   const query = useAttachmentHtmlText(attachmentId);
 
-  if (query.isLoading) {
+  // `isPending` covers the whole "no body yet" window, including a paused
+  // fetch. `isLoading` is only the in-flight slice of that, so a query that
+  // has not started painting yet used to fall through to `return null` and
+  // leave the preview pane blank.
+  if (query.isPending) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-body text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
@@ -939,7 +1058,7 @@ function TextBackedPreview({
       </div>
     );
   }
-  if (query.error) {
+  if (query.error || !query.data) {
     if (query.error instanceof PreviewTooLargeError) {
       return (
         <UnsupportedFallback
@@ -963,7 +1082,6 @@ function TextBackedPreview({
       />
     );
   }
-  if (!query.data) return null;
   return <>{render(query.data.text)}</>;
 }
 

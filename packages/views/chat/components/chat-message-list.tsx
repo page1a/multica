@@ -58,6 +58,9 @@ import {
 } from "../lib/copy-text";
 import { stripChatQuickActionsProtocol } from "../lib/quick-actions";
 import { useT } from "../../i18n";
+import { useAuthStore } from "@multica/core/auth";
+import { useCurrentWorkspace } from "@multica/core/paths";
+import { memberListOptions } from "@multica/core/workspace/queries";
 
 // ─── Public component ────────────────────────────────────────────────────
 
@@ -92,6 +95,8 @@ interface ChatMessageListProps {
    * that reply until chat:quick_actions resolves it.
    */
   quickActionsPendingMessageId?: string | null;
+  /** Session creator. Older user messages with no sender belong to them. */
+  creatorId?: string;
 }
 
 // ─── Virtuoso chrome ─────────────────────────────────────────────────────
@@ -188,6 +193,7 @@ export function ChatMessageList({
   quickActionsDisabled = false,
   onRegenerateQuickActions,
   quickActionsPendingMessageId = null,
+  creatorId,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
@@ -387,6 +393,7 @@ export function ChatMessageList({
               latestAssistantMessageId={latestAssistantMessageId}
               quickActionsPendingMessageId={quickActionsPendingMessageId}
               starterCardsMessageId={starterCardsMessageId}
+              creatorId={creatorId}
             />
           </div>
         )}
@@ -435,6 +442,28 @@ function ChatSkeletonBody() {
   );
 }
 
+function MessageAuthor({
+  senderId,
+  creatorId,
+}: {
+  senderId?: string | null;
+  creatorId?: string;
+}) {
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  // A missing workspace route returns null. useWorkspaceId would throw and take
+  // the whole message list down, including render tests that have no route.
+  const wsId = useCurrentWorkspace()?.id;
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId ?? ""),
+    enabled: !!wsId,
+  });
+  const who = senderId || creatorId;
+  if (!who || who === userId) return null;
+  const name = members.find((member) => member.user_id === who)?.name;
+  if (!name) return null;
+  return <div className="mb-0.5 text-caption text-muted-foreground">{name}</div>;
+}
+
 // ─── Message bubbles ─────────────────────────────────────────────────────
 
 // memo: every streamed task:message re-renders ChatMessageList, and with it
@@ -452,6 +481,7 @@ const MessageBubble = memo(function MessageBubble({
   latestAssistantMessageId,
   quickActionsPendingMessageId,
   starterCardsMessageId,
+  creatorId,
 }: {
   item: ChatRenderItem;
   isPending: boolean;
@@ -462,6 +492,7 @@ const MessageBubble = memo(function MessageBubble({
   latestAssistantMessageId: string | null;
   quickActionsPendingMessageId: string | null;
   starterCardsMessageId: string | null;
+  creatorId?: string;
 }) {
   // The live row and the persisted assistant row both land here under one key,
   // and both render <AssistantMessage> — same component type, same position —
@@ -481,25 +512,30 @@ const MessageBubble = memo(function MessageBubble({
   const { message } = item;
 
   if (message.role === "user") {
+    const copyContent = canonicalAnswerText(message).trim();
     return (
       <div className="flex justify-end">
-        <div className="rounded-2xl bg-muted px-3.5 py-2 text-body max-w-[80%] break-words">
-          {/* User messages are authored as markdown in ContentEditor, so they
-           * render through the SAME RichContent as assistant replies and as
-           * Issue/Comment — a Mermaid fence a user pastes is a diagram here
-           * too. `compact` trims the leading/trailing block margins so a
-           * single-line bubble stays as tight as the plain-text version. */}
-          <RichContent
-            content={message.content}
-            attachments={message.attachments}
-            density="compact"
-            phase="settled"
-          />
-          <AttachmentList
-            attachments={message.attachments}
-            content={message.content}
-            className="mt-1.5"
-          />
+        <div className="flex max-w-[80%] flex-col items-end gap-1">
+          <div className="rounded-2xl bg-muted px-3.5 py-2 text-body break-words">
+            <MessageAuthor senderId={message.sender_user_id} creatorId={creatorId} />
+            {/* User messages are authored as markdown in ContentEditor, so they
+             * render through the SAME RichContent as assistant replies and as
+             * Issue/Comment — a Mermaid fence a user pastes is a diagram here
+             * too. `compact` trims the leading/trailing block margins so a
+             * single-line bubble stays as tight as the plain-text version. */}
+            <RichContent
+              content={message.content}
+              attachments={message.attachments}
+              density="compact"
+              phase="settled"
+            />
+            <AttachmentList
+              attachments={message.attachments}
+              content={message.content}
+              className="mt-1.5"
+            />
+          </div>
+          {copyContent.length > 0 && <MessageCopyButton content={copyContent} />}
         </div>
       </div>
     );

@@ -13,49 +13,29 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func telemetryTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set; skipping live-Postgres telemetry test")
-	}
 	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := testutil.OpenTestDatabase(ctx, t)
 	schema := fmt.Sprintf("selfhost_telemetry_%d_%d", time.Now().UnixNano(), rand.Uint32())
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		admin.Close()
 		t.Fatal(err)
 	}
-
-	config, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	if config.ConnConfig.RuntimeParams == nil {
-		config.ConnConfig.RuntimeParams = make(map[string]string)
-	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
+	// Registered before the scoped pool opens, so it runs after that pool has
+	// closed and the drop does not wait on its connections.
 	t.Cleanup(func() {
-		pool.Close()
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if _, err := admin.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
 			t.Logf("drop telemetry test schema: %v", err)
 		}
-		admin.Close()
 	})
-	return pool
+	return testutil.OpenTestDatabaseConfig(ctx, t, func(config *pgxpool.Config) {
+		config.ConnConfig.RuntimeParams["search_path"] = schema
+	})
 }
 
 func TestPostgresStoreIdentityAndLeaderLock(t *testing.T) {

@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ExternalLink, FileText, Loader2, Trash2 } from "lucide-react";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { clientErrorMessage } from "@multica/core/api";
 import {
   applyIssueDraftAssigneeSuggestions,
+  createChoice,
   ISSUE_DRAFT_ROOT_ROW,
+  provisionedDirectoryShouldBeRemoved,
+  resolveAlignmentProjectPlan,
+  sanitizeProjectDirectoryName,
   type DraftAssigneeSuggestion,
 } from "@multica/core/issue-drafts";
 import {
@@ -43,7 +48,18 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink } from "../../navigation";
 import { RuntimePicker } from "../../agents/components/runtime-picker";
+import { NewProjectFields } from "../../projects/components/new-project-fields";
 import { ProjectPicker } from "../../projects/components/project-picker";
+import {
+  discardProvisionedDirectory,
+  initialDirectoryDraft,
+  prepareNewProjectDirectory,
+  readBusinessProjectRoot,
+  writeBusinessProjectRoot,
+  type NewProjectDirectoryDraft,
+} from "../../projects/new-project-directory";
+import { isDesktopShell } from "../../platform/local-directory";
+import { useLocalDaemonStatus } from "../../platform/use-local-daemon-status";
 import { AssigneePicker } from "../components/pickers/assignee-picker";
 import { PriorityPicker } from "../components/pickers/priority-picker";
 import { StagePicker } from "../components/pickers/stage-picker";
@@ -81,6 +97,7 @@ export function IssueDraftPreviewPanel({
   runtimes,
   runtimesLoading,
   members,
+  projects = [],
   assigneeSuggestions,
   assigneeSuggestionsLoading = false,
   assigneeSuggestionsError = false,
@@ -114,6 +131,8 @@ export function IssueDraftPreviewPanel({
   runtimes: RuntimeDevice[];
   runtimesLoading: boolean;
   members: MemberWithUser[];
+  /** Titles the carrier's proposal is matched against. Absent in tests. */
+  projects?: readonly { id: string; title: string }[];
   assigneeSuggestions?: readonly (DraftAssigneeSuggestion | null)[];
   assigneeSuggestionsLoading?: boolean;
   assigneeSuggestionsError?: boolean;
@@ -189,7 +208,14 @@ export function IssueDraftPreviewPanel({
    *  Resolves with the draft the server now holds, or null when nothing was
    *  written; the editor adopts it. */
   onGenerate: (draft: IssueDraftPayload) => Promise<IssueDraftPayload | null>;
-  onConfirm: () => Promise<boolean>;
+  onConfirm: (extra?: {
+    newProject?: {
+      title: string;
+      icon?: string;
+      description?: string;
+      directory?: Record<string, unknown>;
+    };
+  }) => Promise<boolean>;
   onAbandon: () => Promise<boolean>;
   onSwitchRuntime: (runtimeId: string) => Promise<string | null>;
 }) {
@@ -246,6 +272,67 @@ export function IssueDraftPreviewPanel({
   // stored draft: the user is editing this group, and the counts have to follow
   // what is on screen or they are answering a different question.
   const groupPlan = planIssueDraftGroup(value, adopted);
+  const projectPlan = resolveAlignmentProjectPlan({ draft: value, projects });
+  const creatingProject = !isContinuation && projectPlan.kind === "create";
+  const daemon = useLocalDaemonStatus();
+  const [directory, setDirectory] = useState<NewProjectDirectoryDraft | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const directorySeed = useRef<string | null>(null);
+  const appliedSuggestion = useRef<string | null>(null);
+  useEffect(() => {
+    if (!creatingProject) return;
+    const seed = `${projectPlan.name ?? ""}|${daemon.daemonId ?? ""}`;
+    if (directorySeed.current === seed && directory) return;
+    directorySeed.current = seed;
+    setDirectory(
+      initialDirectoryDraft({
+        root: readBusinessProjectRoot(currentUserId ?? "", daemon.daemonId ?? ""),
+        dirName: sanitizeProjectDirectoryName(projectPlan.name ?? "") || (projectPlan.name ?? ""),
+        available: isDesktopShell() && daemon.running && !!daemon.daemonId,
+      }),
+    );
+  }, [creatingProject, currentUserId, daemon.daemonId, daemon.running, directory, projectPlan.name]);
+
+  const confirmWithProject = async () => {
+    if (!creatingProject || !directory) {
+      try {
+        await onConfirm();
+      } catch {
+        // The session already recorded the failure for the page to show.
+      }
+      return;
+    }
+    const title = (projectPlan.name ?? "").trim();
+    if (!title) return;
+    if (daemon.daemonId && currentUserId) {
+      writeBusinessProjectRoot(currentUserId, daemon.daemonId, directory.root);
+    }
+    const prepared = await prepareNewProjectDirectory({
+      draft: directory,
+      daemonId: daemon.daemonId,
+      title,
+    });
+    if (!prepared.ok) {
+      setProjectError(t(($) => $.alignment.project_directory_failed));
+      return;
+    }
+    setProjectError(null);
+    try {
+      await onConfirm({
+        newProject: {
+          title,
+          ...(projectPlan.icon ? { icon: projectPlan.icon } : {}),
+          ...(projectPlan.description ? { description: projectPlan.description } : {}),
+          ...(prepared.resource ? { directory: prepared.resource } : {}),
+        },
+      });
+    } catch (err) {
+      if (prepared.createdPath && provisionedDirectoryShouldBeRemoved(err)) {
+        await discardProvisionedDirectory(prepared.createdPath, prepared.root);
+      }
+      setProjectError(clientErrorMessage(err) ?? t(($) => $.alignment.project_directory_failed));
+    }
+  };
   const locked = record || pending || confirming || stage === "created";
   // The parent fields lock one state earlier than the rest: on a continuation
   // round the root issue already exists, and the server adopts it without
@@ -272,6 +359,33 @@ export function IssueDraftPreviewPanel({
   // path has held this line since DENE-279 (`planIssueDraftFold` never
   // downgrades `ready`).
   const saveStatus = stage === "ready" ? "ready" : "draft";
+
+  // A suggested existing project has to be on the draft the server holds:
+  // confirm sends a revision, not the screen. Writing it here, only while the
+  // editor is clean, is the same moment a suggested assignee is written.
+  useEffect(() => {
+    if (locked || saving || dirty) return;
+    if (projectPlan.kind !== "existing" || !projectPlan.suggested || !projectPlan.projectId) {
+      return;
+    }
+    if (value.project_id === projectPlan.projectId) {
+      appliedSuggestion.current = projectPlan.projectId;
+      return;
+    }
+    if (appliedSuggestion.current === projectPlan.projectId) return;
+    appliedSuggestion.current = projectPlan.projectId;
+    const projectId = projectPlan.projectId;
+    void onSave(
+      {
+        ...value,
+        project_id: projectId,
+        project_choice: { kind: "existing", project_id: projectId },
+      },
+      saveStatus,
+    ).then((saved) => {
+      if (!saved) appliedSuggestion.current = null;
+    });
+  }, [dirty, locked, onSave, projectPlan, saveStatus, saving, value]);
 
   // Routing's suggested seats land in the unassigned rows, where the ordinary
   // assignee pickers show them and can change or clear them. They are applied
@@ -460,17 +574,140 @@ export function IssueDraftPreviewPanel({
                   sub-issue's project is backfilled from the parent inside the
                   create transaction, so a control here would be a promise the
                   confirm overwrites. */}
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-caption text-muted-foreground">
-                  {t(($) => $.alignment.field_project)}
-                </span>
-                <ProjectPicker
-                  projectId={value.project_id ?? null}
-                  disabled={parentLocked}
-                  onUpdate={(updates) =>
-                    setEditing({ ...value, project_id: updates.project_id ?? null })
-                  }
-                />
+              <div className="flex min-w-0 flex-col gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-caption text-muted-foreground">
+                    {t(($) => $.alignment.field_project)}
+                  </span>
+                  {creatingProject ? (
+                    <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-50 px-2 py-0.5 text-caption text-emerald-800">
+                      <span className="truncate">
+                        {t(($) => $.alignment.project_will_create, {
+                          name: projectPlan.name ?? "",
+                        })}
+                      </span>
+                    </span>
+                  ) : (
+                    <ProjectPicker
+                      projectId={
+                        projectPlan.kind === "existing"
+                          ? (projectPlan.projectId ?? null)
+                          : (value.project_id ?? null)
+                      }
+                      disabled={parentLocked}
+                      onUpdate={(updates) =>
+                        setEditing({
+                          ...value,
+                          project_id: updates.project_id ?? null,
+                          project_choice: updates.project_id
+                            ? { kind: "existing", project_id: updates.project_id }
+                            : { kind: "none" },
+                        })
+                      }
+                    />
+                  )}
+                </div>
+                {creatingProject && directory ? (
+                  <div className="rounded-md border border-dashed border-emerald-600/40 bg-emerald-50/60 p-2">
+                    <p className="mb-1 text-caption font-medium">
+                      {t(($) => $.alignment.project_create_hint)}
+                    </p>
+                    <NewProjectFields
+                      name={projectPlan.name ?? ""}
+                      onNameChange={(name) =>
+                        setEditing({
+                          ...value,
+                          project_id: null,
+                          project_choice: createChoice({
+                            name,
+                            icon: projectPlan.icon,
+                            description: projectPlan.description,
+                          }),
+                        })
+                      }
+                      icon={projectPlan.icon ?? ""}
+                      onIconChange={(icon) =>
+                        setEditing({
+                          ...value,
+                          project_id: null,
+                          project_choice: createChoice({
+                            name: projectPlan.name ?? "",
+                            icon,
+                            description: projectPlan.description,
+                          }),
+                        })
+                      }
+                      description={projectPlan.description ?? ""}
+                      onDescriptionChange={(description) =>
+                        setEditing({
+                          ...value,
+                          project_id: null,
+                          project_choice: createChoice({
+                            name: projectPlan.name ?? "",
+                            icon: projectPlan.icon,
+                            description,
+                          }),
+                        })
+                      }
+                      showDescription
+                      directory={directory}
+                      onDirectoryChange={(next) => {
+                        setDirectory(next);
+                        if (daemon.daemonId && currentUserId) {
+                          writeBusinessProjectRoot(currentUserId, daemon.daemonId, next.root);
+                        }
+                      }}
+                      directoryAvailable={isDesktopShell()}
+                      disabled={parentLocked}
+                    />
+                    <div className="mt-1 flex flex-wrap items-center gap-3 px-1 text-caption">
+                      <span className="text-muted-foreground">
+                        {t(($) => $.alignment.project_use_existing)}
+                      </span>
+                      <ProjectPicker
+                        projectId={null}
+                        disabled={parentLocked}
+                        onUpdate={(updates) =>
+                          setEditing({
+                            ...value,
+                            project_id: updates.project_id ?? null,
+                            project_choice: updates.project_id
+                              ? { kind: "existing", project_id: updates.project_id }
+                              : { kind: "none" },
+                          })
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="text-primary"
+                        disabled={parentLocked}
+                        onClick={() =>
+                          setEditing({
+                            ...value,
+                            project_id: null,
+                            project_choice: { kind: "none" },
+                          })
+                        }
+                      >
+                        {t(($) => $.alignment.project_skip)}
+                      </button>
+                    </div>
+                    {projectError ? (
+                      <p role="alert" className="px-1 pt-1 text-caption text-destructive">
+                        {projectError}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {projectPlan.kind === "existing" && projectPlan.suggested ? (
+                  <p className="text-caption text-muted-foreground">
+                    {t(($) => $.alignment.project_suggestion, {
+                      name:
+                        projects.find((project) => project.id === projectPlan.projectId)
+                          ?.title ?? "",
+                    })}
+                  </p>
+                ) : null}
               </div>
               {/* The root's own assignee. The carrier is never told about it
                   either — it has no workspace roster to resolve a name
@@ -847,8 +1084,15 @@ export function IssueDraftPreviewPanel({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button
-                onClick={() => void onConfirm()}
-                disabled={!canConfirm || confirmNeedsSave}
+                onClick={() => void confirmWithProject()}
+                disabled={
+                  !canConfirm ||
+                  confirmNeedsSave ||
+                  saving ||
+                  (projectPlan.kind === "existing" &&
+                    projectPlan.suggested === true &&
+                    value.project_id !== projectPlan.projectId)
+                }
                 className="min-w-32"
               >
                 {confirming ? (
@@ -856,7 +1100,11 @@ export function IssueDraftPreviewPanel({
                 ) : null}
                 {confirming
                   ? t(($) => $.alignment.confirming)
-                  : t(($) => $.alignment.confirm)}
+                  : creatingProject
+                    ? t(($) => $.alignment.confirm_with_project, {
+                        count: 1 + children.length,
+                      })
+                    : t(($) => $.alignment.confirm)}
               </Button>
               <Button
                 variant="outline"
@@ -1148,6 +1396,35 @@ const EMPTY_BUILT_KEYS: ReadonlySet<string> = new Set<string>();
 /** Every assignment landed. The footer says nothing about seats then. */
 const EMPTY_ASSIGNMENT_WARNINGS: readonly IssueDraftAssignmentWarning[] = [];
 
+function sameProposal(
+  a: IssueDraftPayload["project_proposal"],
+  b: IssueDraftPayload["project_proposal"],
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    a.action === b.action &&
+    a.name === b.name &&
+    (a.icon ?? null) === (b.icon ?? null) &&
+    (a.description ?? null) === (b.description ?? null)
+  );
+}
+
+function sameChoice(
+  a: IssueDraftPayload["project_choice"],
+  b: IssueDraftPayload["project_choice"],
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    a.kind === b.kind &&
+    (a.project_id ?? null) === (b.project_id ?? null) &&
+    (a.name ?? null) === (b.name ?? null) &&
+    (a.icon ?? null) === (b.icon ?? null) &&
+    (a.description ?? null) === (b.description ?? null)
+  );
+}
+
 function sameDraft(a: IssueDraftPayload, b: IssueDraftPayload): boolean {
   return (
     a.title === b.title &&
@@ -1159,6 +1436,8 @@ function sameDraft(a: IssueDraftPayload, b: IssueDraftPayload): boolean {
     // reply would be adopted straight over the edit — silently reverting a
     // choice the user just made.
     (a.project_id ?? null) === (b.project_id ?? null) &&
+    sameChoice(a.project_choice, b.project_choice) &&
+    sameProposal(a.project_proposal, b.project_proposal) &&
     // Same reason for the root's assignee: it is panel-owned, so a change here
     // must count as dirty or the carrier's next reply reverts it.
     (a.assignee_type ?? null) === (b.assignee_type ?? null) &&

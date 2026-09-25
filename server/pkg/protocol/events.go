@@ -103,6 +103,10 @@ const (
 	EventChatSessionRead     = "chat:session_read"
 	EventChatSessionDeleted  = "chat:session_deleted"
 	EventChatSessionUpdated  = "chat:session_updated"
+	// EventChatSessionInvalidated is id-only. A sharing change publishes it
+	// to the whole workspace so someone who just lost the chat drops it,
+	// while content frames stay filtered to people who can still see it.
+	EventChatSessionInvalidated = "chat:session_invalidated"
 
 	// Project events
 	EventProjectCreated         = "project:created"

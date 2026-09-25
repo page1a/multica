@@ -238,6 +238,7 @@ export const appRoutes: RouteObject[] = [
           },
           { path: "inbox", element: <InboxPage />, handle: { title: "Inbox" } },
           { path: "chat", element: <ChatPage />, handle: { title: "Chat" } },
+          { path: "chat/:sessionId", element: <ChatPage />, handle: { title: "Chat" } },
           {
             path: "attachments/:id/preview",
             element: <AttachmentPreviewRoute />,

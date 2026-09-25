@@ -639,6 +639,7 @@ func TestStageLeaderPrepareTimeoutRetryCanAdvanceNextStage(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
 		"title":           "stage 2 after prepare timeout",
+		"description":     "需要人拍板，先确认后再推进",
 		"status":          "backlog",
 		"parent_issue_id": fx.parent.ID,
 		"stage":           2,

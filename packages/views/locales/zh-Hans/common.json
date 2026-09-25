@@ -158,5 +158,17 @@
   },
   "navigation": {
     "open_in_new_tab": "在新标签页打开"
+  },
+  "work_thread": {
+    "thread": "线程 · {{state}}",
+    "queued_count": "{{count}} 条排队",
+    "continue": "继续",
+    "continue_aria": "继续工作线程",
+    "interrupt": "打断",
+    "interrupt_aria": "打断工作线程",
+    "queue": "排队",
+    "queue_aria": "把输入加入工作线程队列",
+    "insert": "插队",
+    "prioritize_aria": "优先处理 {{id}}"
   }
 }

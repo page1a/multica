@@ -163,8 +163,8 @@ func TestChatDraftRestores_NonCreatorForbidden(t *testing.T) {
 	listReq.Header.Set("X-User-ID", otherUserID)
 	listW := httptest.NewRecorder()
 	testHandler.ListChatDraftRestores(listW, listReq)
-	if listW.Code != http.StatusForbidden {
-		t.Fatalf("list as non-creator: expected 403, got %d: %s", listW.Code, listW.Body.String())
+	if listW.Code != http.StatusNotFound {
+		t.Fatalf("list as non-creator: expected 404, got %d: %s", listW.Code, listW.Body.String())
 	}
 
 	delReq := withDraftRestoreParams(newRequest(http.MethodDelete, "/api/chat/sessions/"+sessionID+"/draft-restores/"+restoreID, nil), sessionID, restoreID)
@@ -172,8 +172,8 @@ func TestChatDraftRestores_NonCreatorForbidden(t *testing.T) {
 	delReq.Header.Set("X-User-ID", otherUserID)
 	delW := httptest.NewRecorder()
 	testHandler.ConsumeChatDraftRestore(delW, delReq)
-	if delW.Code != http.StatusForbidden {
-		t.Fatalf("consume as non-creator: expected 403, got %d: %s", delW.Code, delW.Body.String())
+	if delW.Code != http.StatusNotFound {
+		t.Fatalf("consume as non-creator: expected 404, got %d: %s", delW.Code, delW.Body.String())
 	}
 
 	var count int

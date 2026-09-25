@@ -1,0 +1,12 @@
+-- Per-agent subscription-window snapshots (DENE-715).
+--
+-- agent_runtime.plan_limits is one row per (workspace, daemon, provider), and a
+-- single Claude runtime serves every Claude seat on that machine. An agent that
+-- binds a numbered account (`custom_env.CLAUDE_CONFIG_DIR`) therefore had no way
+-- to show its own account's windows: the runtime row could only carry the
+-- daemon-default account's snapshot, so the quota panel named the wrong seat.
+--
+-- This column is the per-seat carrier. NULL means "this daemon has not reported
+-- one for this agent", and every reader falls back to the runtime row — which is
+-- exactly the pre-DENE-715 behavior for an agent with no account binding.
+ALTER TABLE agent ADD COLUMN IF NOT EXISTS plan_limits JSONB;

@@ -8,6 +8,7 @@ import {
   migrateV2ToV3,
   migrateV3ToV4,
   migrateV4ToV5,
+  migrateV5ToV6,
   mergePersistedTabs,
   useTabStore,
   getActiveTab,
@@ -1629,5 +1630,217 @@ describe("mergePersistedTabs (rehydration, MUL-4370)", () => {
     expect(result.byWorkspace.acme.browsingHistoryTitles).toEqual({
       "/acme/issues/issue-1": "MUL-1: Fix history",
     });
+  });
+
+  it("restores strip groups and drops ones that no longer have a tab", () => {
+    const result = mergePersistedTabs(
+      {
+        activeWorkspaceSlug: "acme",
+        byWorkspace: {
+          acme: {
+            activeTabId: "t1",
+            groups: [
+              { id: "g1", name: "Plan", collapsed: true, color: "blue" },
+              { id: "gone", name: "Empty", collapsed: false, color: "red" },
+              { id: "bad", name: "Bad", collapsed: false, color: "nope" },
+            ],
+            tabs: [
+              persistedTab("/acme/issues", { id: "t1", groupId: "g1" }),
+              persistedTab("/acme/projects", { id: "t2", groupId: "missing" }),
+              persistedTab("/acme/agents", { id: "t3", groupId: "bad", pinned: true }),
+            ],
+          },
+        },
+      },
+      emptyState(),
+    );
+
+    const group = result.byWorkspace.acme;
+    expect(group.groups).toEqual([
+      { id: "g1", name: "Plan", collapsed: true, color: "blue" },
+    ]);
+    expect(group.tabs.map((tab) => [tab.url, tab.groupId, tab.pinned])).toEqual([
+      ["/acme/agents", null, true],
+      ["/acme/issues", "g1", false],
+      ["/acme/projects", null, false],
+    ]);
+  });
+});
+
+describe("chat session dedupe", () => {
+  it("focuses the one chat tab when switching among five sessions", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+
+    store.openTab("/acme/chat?session=s1", "Chat", { activate: true });
+    for (const id of ["s2", "s3", "s4", "s5"]) {
+      store.openTab(`/acme/chat?session=${id}`, "Chat", { activate: true });
+      store.navigateActiveSession(`/acme/chat?session=${id}`, { replace: true });
+    }
+
+    const chatTabs = () =>
+      useTabStore
+        .getState()
+        .byWorkspace.acme.tabs.filter((tab) => tab.resourceKey === "/acme/chat");
+
+    expect(chatTabs()).toHaveLength(1);
+    expect(chatTabs()[0].url).toBe("/acme/chat?session=s5");
+    expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(2);
+
+    store.setActiveTab(issuesId);
+    store.navigateActiveSession("/acme/chat?session=s3");
+
+    const state = useTabStore.getState();
+    expect(chatTabs()).toHaveLength(1);
+    expect(getActiveTab(state)?.url).toBe("/acme/chat?session=s3");
+    expect(state.byWorkspace.acme.tabs.find((tab) => tab.id === issuesId)?.url).toBe(
+      "/acme/issues",
+    );
+  });
+
+  it("keeps a list filter when focusing the existing tab", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    store.navigateActiveSession("/acme/issues?filter=mine", { replace: true });
+    store.addTab("/acme/projects", "Projects");
+    const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
+    store.setActiveTab(projectsId);
+
+    store.openTab("/acme/issues?filter=urgent", "Issues", { activate: true });
+
+    const issues = useTabStore
+      .getState()
+      .byWorkspace.acme.tabs.find((tab) => tab.resourceKey === "/acme/issues");
+    expect(issues?.url).toBe("/acme/issues?filter=mine");
+    expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(2);
+  });
+});
+
+describe("strip groups", () => {
+  function urls() {
+    return useTabStore.getState().byWorkspace.acme.tabs.map((tab) => tab.url);
+  }
+
+  it("creates, names, collapses, and restores a group across a restart", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    store.addTab("/acme/projects", "Projects");
+    store.addTab("/acme/agents", "Agents");
+    const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
+    const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
+
+    const groupId = store.createTabGroup(projectsId);
+    expect(groupId).not.toBe("");
+    store.addTabToGroup(agentsId, groupId);
+    store.renameTabGroup(groupId, "Plan");
+    store.toggleTabGroupCollapsed(groupId);
+
+    const grouped = useTabStore.getState().byWorkspace.acme;
+    expect(grouped.groups).toEqual([
+      expect.objectContaining({
+        id: groupId,
+        name: "Plan",
+        collapsed: true,
+      }),
+    ]);
+    expect(
+      grouped.tabs.filter((tab) => tab.groupId === groupId).map((tab) => tab.id),
+    ).toEqual([projectsId, agentsId]);
+
+    const partial = useTabStore.persist.getOptions().partialize!(
+      useTabStore.getState(),
+    );
+    const restored = mergePersistedTabs(partial, {
+      activeWorkspaceSlug: null,
+      byWorkspace: {} as Record<string, WorkspaceTabGroup>,
+    });
+    expect(restored.byWorkspace.acme.groups).toEqual(grouped.groups);
+    expect(
+      restored.byWorkspace.acme.tabs.map((tab) => [tab.id, tab.groupId]),
+    ).toEqual(grouped.tabs.map((tab) => [tab.id, tab.groupId]));
+  });
+
+  it("moves a tab into a group when it is dropped on a member, and back out", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    store.addTab("/acme/projects", "Projects");
+    store.addTab("/acme/agents", "Agents");
+    const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
+    const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
+    const groupId = store.createTabGroup(projectsId);
+
+    // [issues, projects(group), agents] — drop agents onto projects.
+    store.moveTab(2, 1);
+    expect(
+      useTabStore.getState().byWorkspace.acme.tabs.find((tab) => tab.id === agentsId)
+        ?.groupId,
+    ).toBe(groupId);
+    expect(urls()).toEqual(["/acme/issues", "/acme/agents", "/acme/projects"]);
+
+    store.removeTabFromGroup(agentsId);
+    expect(
+      useTabStore.getState().byWorkspace.acme.tabs.find((tab) => tab.id === agentsId)
+        ?.groupId,
+    ).toBeNull();
+  });
+
+  it("refuses to group a pinned tab and drops the group when its last tab leaves", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
+    store.togglePin(issuesId);
+    expect(store.createTabGroup(issuesId)).toBe("");
+
+    store.addTab("/acme/projects", "Projects");
+    const projectsId = useTabStore
+      .getState()
+      .byWorkspace.acme.tabs.find((tab) => tab.url === "/acme/projects")!.id;
+    const groupId = store.createTabGroup(projectsId);
+    store.togglePin(projectsId);
+    expect(useTabStore.getState().byWorkspace.acme.groups).toEqual([]);
+    expect(groupId).not.toBe("");
+  });
+
+  it("dissolves a group without closing its tabs", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    store.addTab("/acme/projects", "Projects");
+    const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
+    const groupId = store.createTabGroup(projectsId);
+    store.ungroupTabs(groupId);
+    const group = useTabStore.getState().byWorkspace.acme;
+    expect(group.groups).toEqual([]);
+    expect(group.tabs.map((tab) => tab.url)).toEqual([
+      "/acme/issues",
+      "/acme/projects",
+    ]);
+  });
+});
+
+describe("migrateV5ToV6", () => {
+  it("adds an empty strip-group list and leaves tabs alone", () => {
+    const v6 = migrateV5ToV6({
+      activeWorkspaceSlug: "acme",
+      byWorkspace: {
+        acme: {
+          activeTabId: "t1",
+          tabs: [
+            {
+              id: "t1",
+              url: "/acme/issues",
+              title: "Issues",
+              pinned: false,
+              history: { stack: ["/acme/issues"], index: 0 },
+              memento: { scroll: {} },
+            },
+          ],
+          recentTabIds: [],
+          browsingHistory: ["/acme/issues"],
+        },
+      },
+    });
+    expect(v6.byWorkspace.acme.groups).toEqual([]);
+    expect(v6.byWorkspace.acme.tabs).toHaveLength(1);
   });
 });

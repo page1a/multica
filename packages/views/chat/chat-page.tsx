@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
@@ -13,11 +13,23 @@ import {
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useChatStore } from "@multica/core/chat";
-import { chatQuickActionsPendingOptions } from "@multica/core/chat/queries";
-import { useRegenerateChatQuickActions } from "@multica/core/chat/mutations";
+import { chatSessionProjectIds } from "@multica/core/chat/project-context";
+import {
+  sessionMatchesChatProjectFilter,
+  type ChatProjectFilter,
+} from "@multica/core/chat/project-bar";
+import {
+  useDismissChatProjectNudge,
+  useRegenerateChatQuickActions,
+} from "@multica/core/chat/mutations";
+import {
+  chatMessagesOptions,
+  chatQuickActionsPendingOptions,
+} from "@multica/core/chat/queries";
 import { useQuickActionsPendingTimeout } from "@multica/core/chat/use-quick-actions-pending-timeout";
 import { useQuickActionsFailureToast } from "./components/use-quick-actions-failure-toast";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { chatSessionIdFromLocation } from "@multica/core/paths";
 import type { Agent, ChatSession } from "@multica/core/types";
 import { PageHeader } from "../layout/page-header";
 import { useNavigation } from "../navigation";
@@ -27,6 +39,8 @@ import { ChatInput } from "./components/chat-input";
 import { ProviderQuotaStrip } from "./components/provider-quota-strip";
 import { ChatQueue } from "./components/chat-queue";
 import { ChatThreadList } from "./components/chat-thread-list";
+import { ChatProjectBar } from "./components/chat-project-bar";
+import { ChatProjectNudge } from "./components/chat-project-nudge";
 import { ChatSessionHeader } from "./components/chat-session-header";
 import { EmptyState } from "./components/chat-empty-state";
 import { NewChatButton } from "./components/new-chat-button";
@@ -37,6 +51,7 @@ import { NoAgentBanner } from "./components/no-agent-banner";
 import { ArchivedAgentBanner } from "./components/archived-agent-banner";
 import { AgentAccessRevokedBanner } from "./components/agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
+import { WorkThreadPanel } from "../common/work-thread-panel";
 
 /**
  * Chat tab — the first-class two-pane surface (thread list on the left,
@@ -44,10 +59,11 @@ import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
  * conversation logic with the floating FAB via `useChatController`; the
  * left rail reuses `ChatThreadList`.
  *
- * Selection is URL-addressable via `?session=<id>` so a thread can be
- * deep-linked, opened from a notification, and survive refresh. The chat
- * store's `activeSessionId` stays the source of truth (both surfaces read
- * it); the URL is kept in sync in both directions. `?agent=<id>` is the
+ * Selection is URL-addressable via `/chat/<session-id>` so a thread can be
+ * deep-linked, opened from a notification, and survive refresh. Older
+ * `?session=` links still open. The chat store's `activeSessionId` stays the
+ * source of truth (both surfaces read it); the URL is kept in sync in both
+ * directions. `?agent=<id>` is the
  * complementary one-shot deep link for a NEW chat: it starts a fresh compose
  * bound to that agent and is then stripped from the URL.
  *
@@ -59,7 +75,8 @@ import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
  */
 export function ChatPage() {
   const { t } = useT("chat");
-  const { searchParams, replace } = useNavigation();
+  const { pathname, searchParams, replace } = useNavigation();
+  const queryClient = useQueryClient();
   const wsPaths = useWorkspacePaths();
   const isCompact = useIsCompact();
 
@@ -73,7 +90,7 @@ export function ChatPage() {
   // Toast when an accepted refresh later fails in the daemon (async half).
   useQuickActionsFailureToast(c.activeSessionId ?? null);
   const regenerateQuickActions = useRegenerateChatQuickActions();
-  const urlSession = searchParams.get("session") || null;
+  const urlSession = chatSessionIdFromLocation(pathname, searchParams);
   const urlAgent = searchParams.get("agent") || null;
 
   // "Composing a brand-new chat" — the user hit ⊕ but hasn't sent yet, so no
@@ -81,6 +98,15 @@ export function ChatPage() {
   // conversation pane is always mounted so it only needs to reset itself once a
   // real session takes over.
   const [composingNew, setComposingNew] = useState(false);
+  const [projectFilter, setProjectFilter] = useState<ChatProjectFilter>({ type: "all" });
+  const dismissProjectNudge = useDismissChatProjectNudge();
+  const visibleSessions = useMemo(
+    () =>
+      c.sessions.filter((session) =>
+        sessionMatchesChatProjectFilter(chatSessionProjectIds(session), projectFilter),
+      ),
+    [c.sessions, projectFilter],
+  );
   useEffect(() => {
     // Read the LIVE store value for the same reason as the session sync
     // effects below: under StrictMode's double-invoke this effect replays
@@ -90,8 +116,8 @@ export function ChatPage() {
     if (useChatStore.getState().activeSessionId) setComposingNew(false);
   }, [c.activeSessionId]);
 
-  // Two-way sync between the URL (`?session=`) and the chat store's
-  // activeSessionId. Both effects read the LIVE store value via
+  // Two-way sync between the URL (`/chat/<id>`, or the older `?session=`) and
+  // the chat store's activeSessionId. Both effects read the LIVE store value via
   // `useChatStore.getState()` rather than the render-captured `c.activeSessionId`.
   // That is what keeps them from fighting on mount: a naive mirror effect fires
   // with the stale (null) snapshot and "corrects" the URL by stripping the
@@ -111,10 +137,16 @@ export function ChatPage() {
   // store → URL: thread selection, "new chat", and sessions created by sending.
   useEffect(() => {
     const live = useChatStore.getState().activeSessionId;
-    const current = searchParams.get("session") || null;
+    const current = chatSessionIdFromLocation(pathname, searchParams);
     if (live !== current) {
-      const base = wsPaths.chat();
-      replace(live ? `${base}?session=${live}` : base);
+      replace(live ? wsPaths.chatSession(live) : wsPaths.chat());
+      return;
+    }
+    // An older `?session=` link opened the right chat. Move the address bar
+    // onto the stable path the copy button shares.
+    if (live) {
+      const canonical = wsPaths.chatSession(live);
+      if (pathname !== canonical) replace(canonical);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react to store only
   }, [c.activeSessionId]);
@@ -224,14 +256,27 @@ export function ChatPage() {
     </PageHeader>
   );
 
+  const projectBar = (
+    <ChatProjectBar
+      projects={c.projects ?? []}
+      sessions={c.sessions}
+      userId={c.user?.id ?? null}
+      filter={projectFilter}
+      onFilterChange={setProjectFilter}
+    />
+  );
+
   const listBody = (
     <div className="px-2 py-1">
       <ChatThreadList
-        sessions={c.sessions}
+        sessions={visibleSessions}
         agents={c.agents}
         activeSessionId={c.activeSessionId}
         onSelectSession={handleSelect}
         onArchive={handleArchive}
+        emptyLabel={
+          projectFilter.type === "all" ? undefined : t(($) => $.project_bar.empty)
+        }
       />
       {/* Below the conversations and outside them: an alignment is a different
           kind of thing, kept out of the chat list by the access boundary its
@@ -255,8 +300,22 @@ export function ChatPage() {
           session={c.currentSession}
           agent={c.activeAgent}
           onArchive={handleArchive}
+          loadAllMessages={() =>
+            c.hasOlderMessages
+              ? queryClient.fetchQuery(chatMessagesOptions(c.currentSession!.id))
+              : Promise.resolve(c.messages)
+          }
         />
       )}
+      {c.currentSession && (
+        <ChatProjectNudge
+          session={c.currentSession}
+          onBind={changeProjectContext}
+          onDismiss={() => dismissProjectNudge.mutate(c.currentSession!.id)}
+          dismissing={dismissProjectNudge.isPending}
+        />
+      )}
+      {c.currentSession && <div className="flex shrink-0 px-3 py-1"><WorkThreadPanel kind="chat" id={c.currentSession.id} /></div>}
       {c.showSkeleton ? (
         <ChatMessageSkeleton />
       ) : c.hasMessages ? (
@@ -270,11 +329,13 @@ export function ChatPage() {
           isFetchingOlderMessages={c.isFetchingOlderMessages}
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
           onQuickAction={(action) => c.handleSend(action.prompt)}
+          creatorId={c.currentSession?.creator_id}
           quickActionsDisabled={
             !!c.pendingTaskId ||
             c.isSessionArchived ||
             c.isAgentArchived ||
             c.isAgentAccessRevoked ||
+            c.isChatViewOnly ||
             !c.isAgentRuntimeBound ||
             c.noAgent
           }
@@ -297,7 +358,11 @@ export function ChatPage() {
         />
       )}
 
-      {c.isAgentAccessRevoked ? (
+      {c.isChatViewOnly ? (
+        <p className="px-4 py-2 text-caption text-muted-foreground">
+          {t(($) => $.sharing.view_only)}
+        </p>
+      ) : c.isAgentAccessRevoked ? (
         <AgentAccessRevokedBanner agentName={c.activeAgent?.name} />
       ) : c.noAgent ? (
         <NoAgentBanner />
@@ -336,6 +401,7 @@ export function ChatPage() {
           c.isSessionArchived ||
           c.isAgentArchived ||
           c.isAgentAccessRevoked ||
+          c.isChatViewOnly ||
           !c.isAgentRuntimeBound
         }
         noAgent={c.noAgent}
@@ -380,6 +446,7 @@ export function ChatPage() {
     return (
       <div className="flex flex-1 flex-col min-h-0">
         {listHeader}
+        {projectBar}
         <div className="flex-1 min-h-0 overflow-y-auto">{listBody}</div>
       </div>
     );
@@ -406,6 +473,7 @@ export function ChatPage() {
       >
         <div className="flex flex-col border-r h-full">
           {listHeader}
+          {projectBar}
           <div className="flex-1 min-h-0 overflow-y-auto">{listBody}</div>
         </div>
       </ResizablePanel>

@@ -241,6 +241,22 @@ func (v visibilityViewer) canSeeProject(p db.Project) bool {
 	})
 }
 
+// canChangeProjectVisibility applies canSeeProject's two widenings to the
+// write side: a viewer let in by them must also be able to reshare. Without
+// this the owner could see a private project nobody created (or one an owned
+// agent leads) yet every PUT /visibility answered 403.
+func (v visibilityViewer) canChangeProjectVisibility(p db.Project) bool {
+	if v.bypasses() || v.role == permission.RoleOwner {
+		return true
+	}
+	isCreator := (p.CreatedBy.Valid && v.userID.Valid && p.CreatedBy.Bytes == v.userID.Bytes) ||
+		v.isOwnedAgent(p.LeadType.String, p.LeadID)
+	return permission.Allowed(v.role, permission.ActionChangeVisibility, permission.Visibility(p.Visibility), permission.Relation{
+		IsCreator: isCreator,
+		InProject: v.inProject(p.ID),
+	})
+}
+
 // canSeeRepo takes the repo's projects as a set because a workspace repo can
 // sit in several (migration 511): being in any one of them is enough.
 func (v visibilityViewer) canSeeRepo(entry workspaceRepoRef, repoProjectIDs []pgtype.UUID) bool {

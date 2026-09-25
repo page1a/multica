@@ -100,6 +100,52 @@ func TestCodeArtsExecuteUsesNativeRunFlagsAndStdin(t *testing.T) {
 	}
 }
 
+// TestCodeArtsExecutePrependsSystemPromptOnStdin guards the shared
+// local_directory route: the brief kept out of the cwd rides stdin ahead of
+// the task prompt.
+func TestCodeArtsExecutePrependsSystemPromptOnStdin(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	stdinPath := filepath.Join(dir, "stdin.txt")
+	backend, err := ResolveBackend("codearts", Config{
+		ExecutablePath: self,
+		Logger:         slog.Default(),
+		Env: map[string]string{
+			opencodeStdinHelperEnv:      "1",
+			opencodeStdinHelperArgvFile: filepath.Join(dir, "argv.txt"),
+			opencodeStdinHelperInFile:   stdinPath,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(t.Context(), "do the task", ExecOptions{
+		Cwd:          dir,
+		Timeout:      30 * time.Second,
+		SystemPrompt: "# Runtime brief",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+	if result := <-session.Result; result.Status != "completed" {
+		t.Fatalf("result = %+v", result)
+	}
+	stdinRaw, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# Runtime brief\n\n---\n\ndo the task"; string(stdinRaw) != want {
+		t.Fatalf("stdin = %q, want %q", stdinRaw, want)
+	}
+}
+
 func TestCodeArtsRejectsNonJSONSuccessOutput(t *testing.T) {
 	backend := &codeartsBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 8)

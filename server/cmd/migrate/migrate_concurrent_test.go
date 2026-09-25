@@ -15,6 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -44,12 +46,9 @@ import (
 //     get attached to a random pooled connection (the bug fixed in
 //     MUL-2923 / #3658) and effectively become a no-op.
 //
-// The test connects to whatever DATABASE_URL points at (default
-// postgres://multica:multica@localhost:5432/multica?sslmode=disable),
-// matching the harness pattern already used in
-// server/internal/handler/handler_test.go. If Postgres is unreachable the
-// suite skips cleanly, the same way every other live-Postgres test in the
-// repo skips, so CI without a database sees SKIP rather than failure.
+// The test connects to the run's test database through internal/testutil,
+// like every other live-Postgres suite: a laptop without a database skips,
+// a run that promised one (scripts/test-go.sh) fails instead of skipping.
 //
 // Each test isolates itself by creating a unique throwaway schema
 // (migrate_test_<timestamp>_<rand>) and using a unique advisory-lock
@@ -72,7 +71,6 @@ import (
 // server's connection limit.
 
 const (
-	defaultTestDatabaseURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	// concurrentRunners is the goroutine count for the race tests. Set
 	// large enough that a missing lock would reliably trip on a multi-
 	// core box with -race, but small enough to keep the suite fast on a
@@ -84,28 +82,19 @@ const (
 	raceTestTimeout = 60 * time.Second
 )
 
-func testDatabaseURL() string {
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL
-	}
-	return defaultTestDatabaseURL
+// testDatabaseURL is the run's test database, resolved the way every other
+// DB-backed suite resolves it; the calling test skips or fails through
+// testutil when none is configured.
+func testDatabaseURL(t *testing.T) string {
+	t.Helper()
+	return testutil.MustTestDatabaseURL(t)
 }
 
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := testDatabaseURL()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Skipf("could not connect to %s: %v", dbURL, err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("database not reachable at %s: %v", dbURL, err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return testutil.OpenTestDatabase(ctx, t)
 }
 
 // fixture is the per-test sandbox: a private schema, a unique advisory
@@ -365,7 +354,7 @@ func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
 	// connection re-enters". (pg_advisory_lock is reentrant on the same
 	// session, so re-acquiring on the same conn would not actually
 	// prove serialization.)
-	dbURL := testDatabaseURL()
+	dbURL := testDatabaseURL(t)
 	holder, err := pgx.Connect(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("side connect: %v", err)
@@ -449,10 +438,10 @@ func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
 // this test will deadlock or produce SQL races. Pool size strictly
 // less than runners is the interesting configuration.
 func TestRunMigrationsConcurrentMixedPoolStress(t *testing.T) {
-	dbURL := testDatabaseURL()
+	dbURL := testDatabaseURL(t)
 	cfg, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
-		t.Skipf("parse DATABASE_URL: %v", err)
+		t.Fatalf("parse test database URL: %v", err)
 	}
 	// Small pool: half the runner count, minimum 2. This forces
 	// runners to wait on pgxpool.Acquire AND on pg_advisory_lock,

@@ -212,6 +212,33 @@ describe("useRealtimeSync — ws instance change", () => {
     });
   });
 
+  it("invalidates agent queries when a heartbeat reports a per-agent snapshot", () => {
+    // A numbered-account agent's windows live on the agent row, so refreshing
+    // runtimes would leave the panel showing the default seat (DENE-715).
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+    const heartbeat = vi
+      .mocked(ws.on)
+      .mock.calls.find((call) => call[0] === "daemon:heartbeat")?.[1];
+    expect(heartbeat).toBeDefined();
+
+    invalidateSpy.mockClear();
+    heartbeat?.(
+      { agent_id: "agent-1", plan_limits_updated: true },
+      undefined,
+      undefined,
+    );
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: workspaceKeys.agents("ws-1"),
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: runtimeKeys.all("ws-1"),
+    });
+  });
+
   it("invalidates runtime queries when a heartbeat reports a new JEV status", () => {
     const ws = createMockWs();
     renderHook(() => useRealtimeSync(ws, stores), {

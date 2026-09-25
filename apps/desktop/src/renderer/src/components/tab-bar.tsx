@@ -7,10 +7,11 @@ import {
   type RefObject,
 } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { X, Plus, Pin, PinOff, ListX, AppWindow } from "lucide-react";
+import { X, Plus, Pin, PinOff, ListX, AppWindow, ChevronDown, ChevronRight } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
   closestCenter,
@@ -31,12 +32,21 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@multica/ui/components/ui/context-menu";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { SIDEBAR_WRAPPER_FILL_CLASS } from "@multica/ui/components/ui/sidebar";
 import { cn } from "@multica/ui/lib/utils";
-import { useTabStore, useActiveGroup, type Tab } from "@/stores/tab-store";
+import {
+  useTabStore,
+  useActiveGroup,
+  type Tab,
+  type TabStripGroup,
+  type TabStripGroupColor,
+} from "@/stores/tab-store";
 import { paths } from "@multica/core/paths";
 import {
   useTabPresentation,
@@ -46,6 +56,32 @@ import { parseIssueWindowPath } from "../../../shared/issue-window";
 
 const TAB_SCROLL_FADE_SIZE = 24;
 const TAB_ENTRY_EASE = [0.22, 1, 0.36, 1] as const;
+
+const GROUP_CHIP_CLASS: Record<TabStripGroupColor, string> = {
+  blue: "bg-blue-500/15 text-blue-800 dark:text-blue-200",
+  red: "bg-red-500/15 text-red-800 dark:text-red-200",
+  yellow: "bg-amber-500/20 text-amber-900 dark:text-amber-100",
+  green: "bg-green-500/15 text-green-800 dark:text-green-200",
+  pink: "bg-pink-500/15 text-pink-800 dark:text-pink-200",
+  purple: "bg-purple-500/15 text-purple-800 dark:text-purple-200",
+  cyan: "bg-cyan-500/15 text-cyan-900 dark:text-cyan-100",
+  orange: "bg-orange-500/15 text-orange-900 dark:text-orange-100",
+};
+
+const GROUP_WASH_CLASS: Record<TabStripGroupColor, string> = {
+  blue: "bg-blue-500/10",
+  red: "bg-red-500/10",
+  yellow: "bg-amber-500/10",
+  green: "bg-green-500/10",
+  pink: "bg-pink-500/10",
+  purple: "bg-purple-500/10",
+  cyan: "bg-cyan-500/10",
+  orange: "bg-orange-500/10",
+};
+
+function stripGroupLabel(group: TabStripGroup): string {
+  return group.name.trim() || "Group";
+}
 
 // Chrome-style merged tab: the active tab shares the content surface's fill and
 // flares into it through concave bottom corners. Each flare is a small square
@@ -208,6 +244,12 @@ function SortableTabItem({
   const closeOtherTabs = useTabStore((s) => s.closeOtherTabs);
   const togglePin = useTabStore((s) => s.togglePin);
   const updateTab = useTabStore((s) => s.updateTab);
+  const createTabGroup = useTabStore((s) => s.createTabGroup);
+  const addTabToGroup = useTabStore((s) => s.addTabToGroup);
+  const removeTabFromGroup = useTabStore((s) => s.removeTabFromGroup);
+  const toggleTabGroupCollapsed = useTabStore((s) => s.toggleTabGroupCollapsed);
+  const stripGroups = useActiveGroup()?.groups ?? [];
+  const ownGroup = stripGroups.find((candidate) => candidate.id === tab.groupId);
   const issueWindowPath = parseIssueWindowPath(tab.url);
 
   // The tab's leading visual and title are derived live from its URL and the
@@ -416,6 +458,43 @@ function SortableTabItem({
                 <ContextMenuSeparator />
               </>
             )}
+            {!tab.pinned && (
+              <>
+                <ContextMenuItem onClick={() => createTabGroup(tab.id)}>
+                  New group
+                </ContextMenuItem>
+                {stripGroups.some((candidate) => candidate.id !== tab.groupId) && (
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>Add to group</ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {stripGroups
+                        .filter((candidate) => candidate.id !== tab.groupId)
+                        .map((candidate) => (
+                          <ContextMenuItem
+                            key={candidate.id}
+                            onClick={() => addTabToGroup(tab.id, candidate.id)}
+                          >
+                            {stripGroupLabel(candidate)}
+                          </ContextMenuItem>
+                        ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                )}
+                {ownGroup && (
+                  <>
+                    <ContextMenuItem onClick={() => removeTabFromGroup(tab.id)}>
+                      Remove from group
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => toggleTabGroupCollapsed(ownGroup.id)}
+                    >
+                      {ownGroup.collapsed ? "Expand group" : "Collapse group"}
+                    </ContextMenuItem>
+                  </>
+                )}
+                <ContextMenuSeparator />
+              </>
+            )}
             <ContextMenuItem onClick={() => togglePin(tab.id)}>
               {tab.pinned ? (
                 <>
@@ -526,6 +605,115 @@ function NewTabEdgeFeedback({
   );
 }
 
+function TabGroupChip({
+  group,
+  count,
+  containsActive,
+}: {
+  group: TabStripGroup;
+  count: number;
+  containsActive: boolean;
+}) {
+  const toggleTabGroupCollapsed = useTabStore((s) => s.toggleTabGroupCollapsed);
+  const renameTabGroup = useTabStore((s) => s.renameTabGroup);
+  const ungroupTabs = useTabStore((s) => s.ungroupTabs);
+  const { setNodeRef, isOver } = useDroppable({ id: `group:${group.id}` });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(group.name);
+  const skipCommitRef = useRef(false);
+  const label = stripGroupLabel(group);
+
+  const startRename = () => {
+    setDraft(group.name);
+    setEditing(true);
+  };
+
+  const commitRename = () => {
+    renameTabGroup(group.id, draft);
+    setEditing(false);
+  };
+
+  const chip = editing ? (
+    <input
+      autoFocus
+      aria-label="Group name"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (skipCommitRef.current) {
+          skipCommitRef.current = false;
+          return;
+        }
+        commitRename();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commitRename();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          skipCommitRef.current = true;
+          setDraft(group.name);
+          setEditing(false);
+        }
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      className={cn(
+        "h-6 w-24 rounded-md px-2 text-caption outline-none ring-1 ring-inset ring-foreground/30",
+        GROUP_CHIP_CLASS[group.color],
+      )}
+    />
+  ) : (
+    <button
+      type="button"
+      aria-expanded={!group.collapsed}
+      aria-label={`${label}, ${group.collapsed ? "collapsed" : "expanded"}`}
+      data-tab-active={containsActive && group.collapsed ? "true" : undefined}
+      onClick={() => toggleTabGroupCollapsed(group.id)}
+      onDoubleClick={startRename}
+      style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      className={cn(
+        "flex h-6 max-w-40 items-center gap-1 rounded-md px-2 text-caption",
+        GROUP_CHIP_CLASS[group.color],
+        isOver && "ring-1 ring-inset ring-foreground/40",
+      )}
+    >
+      {group.collapsed ? (
+        <ChevronRight className="size-3 shrink-0" />
+      ) : (
+        <ChevronDown className="size-3 shrink-0" />
+      )}
+      <span className="truncate">{label}</span>
+      {group.collapsed && (
+        <span className="text-micro opacity-70">{count}</span>
+      )}
+    </button>
+  );
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-tab-group={group.id}
+      data-tab-group-collapsed={group.collapsed ? "true" : "false"}
+      className="mb-1 flex items-center self-end"
+    >
+      <ContextMenu>
+        <ContextMenuTrigger render={chip} />
+        <ContextMenuContent>
+          <ContextMenuItem onClick={startRename}>Rename group</ContextMenuItem>
+          <ContextMenuItem onClick={() => toggleTabGroupCollapsed(group.id)}>
+            {group.collapsed ? "Expand group" : "Collapse group"}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => ungroupTabs(group.id)}>
+            Ungroup
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    </div>
+  );
+}
+
 function NewTabButton() {
   const addTab = useTabStore((s) => s.addTab);
   const setActiveTab = useTabStore((s) => s.setActiveTab);
@@ -557,6 +745,7 @@ function NewTabButton() {
 export function TabBar() {
   const group = useActiveGroup();
   const moveTab = useTabStore((s) => s.moveTab);
+  const addTabToGroup = useTabStore((s) => s.addTabToGroup);
   const activeWorkspaceSlug = useTabStore((s) => s.activeWorkspaceSlug);
   const shouldReduceMotion = useReducedMotion() ?? false;
   const tabScrollRef = useRef<HTMLDivElement>(null);
@@ -640,13 +829,54 @@ export function TabBar() {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+    const overId = String(over.id);
+    if (overId.startsWith("group:")) {
+      addTabToGroup(String(active.id), overId.slice("group:".length));
+      return;
+    }
     const from = tabs.findIndex((t) => t.id === active.id);
     const to = tabs.findIndex((t) => t.id === over.id);
     // The store clamps the destination to within the source tab's zone
     // (pinned vs unpinned), so this call is safe even when the user tries
     // to drag across the boundary — the tab will land at the boundary.
+    // Dropping onto a grouped tab also joins that group.
     if (from !== -1 && to !== -1) moveTab(from, to);
   };
+
+  const stripGroups = group?.groups ?? [];
+  const groupById = new Map(stripGroups.map((candidate) => [candidate.id, candidate]));
+  const collapsedGroupIds = new Set(
+    stripGroups.filter((candidate) => candidate.collapsed).map((candidate) => candidate.id),
+  );
+  const visibleTabIds = tabs
+    .filter((tab) => !tab.groupId || !collapsedGroupIds.has(tab.groupId))
+    .map((tab) => tab.id);
+
+  type StripRun =
+    | { kind: "tab"; tab: Tab; index: number }
+    | { kind: "group"; group: TabStripGroup; tabs: Array<{ tab: Tab; index: number }> };
+
+  const runs: StripRun[] = [];
+  for (let index = 0; index < tabs.length; ) {
+    const tab = tabs[index];
+    const stripGroup =
+      tab.groupId && !tab.pinned ? groupById.get(tab.groupId) : undefined;
+    if (stripGroup) {
+      const members: Array<{ tab: Tab; index: number }> = [];
+      while (
+        index < tabs.length &&
+        tabs[index].groupId === stripGroup.id &&
+        !tabs[index].pinned
+      ) {
+        members.push({ tab: tabs[index], index });
+        index += 1;
+      }
+      runs.push({ kind: "group", group: stripGroup, tabs: members });
+    } else {
+      runs.push({ kind: "tab", tab, index });
+      index += 1;
+    }
+  }
 
   return (
     <div className="flex h-full w-full min-w-0 max-w-full items-center justify-start gap-0.5 px-2">
@@ -666,8 +896,47 @@ export function TabBar() {
             className="no-scrollbar flex h-full min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden overscroll-x-contain px-4"
             style={tabFadeStyle}
           >
-            <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
-              {tabs.map((tab, index) => {
+            <SortableContext items={visibleTabIds} strategy={horizontalListSortingStrategy}>
+              {runs.map((run) => {
+                if (run.kind === "group") {
+                  const collapsed = run.group.collapsed;
+                  const containsActive = run.tabs.some(
+                    (member) => member.tab.id === activeTabId,
+                  );
+                  return (
+                    <div
+                      key={run.group.id}
+                      className={cn(
+                        "flex h-full items-end rounded-t-md",
+                        !collapsed && GROUP_WASH_CLASS[run.group.color],
+                      )}
+                    >
+                      <TabGroupChip
+                        group={run.group}
+                        count={run.tabs.length}
+                        containsActive={containsActive}
+                      />
+                      {!collapsed &&
+                        run.tabs.map(({ tab }) => (
+                          <SortableTabItem
+                            key={tab.id}
+                            tab={tab}
+                            isActive={tab.id === activeTabId}
+                            isOnly={tabs.length === 1}
+                            canCloseOthers={tabs.some(
+                              (candidate) =>
+                                candidate.id !== tab.id && !candidate.pinned,
+                            )}
+                            isNew={addedTabIdSet.has(tab.id)}
+                            shouldReduceMotion={shouldReduceMotion}
+                            showSeparator={false}
+                          />
+                        ))}
+                    </div>
+                  );
+                }
+
+                const { tab, index } = run;
                 const previousTab = index > 0 ? tabs[index - 1] : null;
                 return (
                   <Fragment key={tab.id}>
@@ -685,7 +954,9 @@ export function TabBar() {
                         tab.id !== activeTabId &&
                         previousTab.id !== activeTabId &&
                         // the pinned-zone divider already separates this pair
-                        !(previousTab.pinned && !tab.pinned)
+                        !(previousTab.pinned && !tab.pinned) &&
+                        // a strip group already frames its own tabs
+                        !previousTab.groupId
                       }
                     />
                     {tab.pinned &&

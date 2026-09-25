@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // The provider table is what keeps shared mode honest: a provider is listed
@@ -39,6 +41,21 @@ func TestSharedModeBriefDelivery(t *testing.T) {
 	if got := sharedModeBriefDelivery("grok"); got != sharedBriefInline {
 		t.Errorf("grok = %v, want sharedBriefInline", got)
 	}
+	// These stdin-prompt backends prepend SystemPrompt (withSystemPrompt);
+	// omp shares the pi backend.
+	for _, p := range []string{"pi", "omp", "codearts"} {
+		if got := sharedModeBriefDelivery(p); got != sharedBriefInline {
+			t.Errorf("%s = %v, want sharedBriefInline (stdin prompt prepend)", p, got)
+		}
+	}
+	// Qwen Code reads QWEN.md only from the cwd; its backend prepends
+	// SystemPrompt onto the stdin prompt, so shared mode rides that route.
+	if got := sharedModeBriefDelivery("qwen"); got != sharedBriefInline {
+		t.Errorf("qwen = %v, want sharedBriefInline (stdin prompt prepend)", got)
+	}
+	if err := sharedModeProviderSupported("qwen"); err != nil {
+		t.Errorf("sharedModeProviderSupported(qwen) = %v, want nil", err)
+	}
 	if got := sharedModeBriefDelivery("cursor"); got != sharedBriefViaCursorAddDir {
 		t.Errorf("cursor = %v, want sharedBriefViaCursorAddDir (--add-dir skills + stdin brief)", got)
 	}
@@ -67,7 +84,7 @@ func TestSharedModeBriefDelivery(t *testing.T) {
 	// Disk-only readers stay refused until their own route is verified.
 	// mcode ignores ExecOptions.SystemPrompt and only reads cwd AGENTS.md,
 	// so it must not pass the shared-mode gate (DENE-125).
-	for _, p := range []string{"hermes", "copilot", "pi", "mcode", "", "made-up"} {
+	for _, p := range []string{"hermes", "copilot", "mcode", "reasonix", "deveco", "", "made-up"} {
 		if got := sharedModeBriefDelivery(p); got != sharedBriefUnsupported {
 			t.Errorf("%q = %v, want sharedBriefUnsupported", p, got)
 		}
@@ -251,4 +268,27 @@ func containsPair(args []string, flag, value string) bool {
 		}
 	}
 	return false
+}
+
+// Every supported runtime needs an explicit shared-mode decision: a brief
+// route, or a recorded reason for refusing. Without this a new backend falls
+// silently into the refusal and users only find out when a task fails.
+func TestSharedModeEverySupportedTypeHasADecision(t *testing.T) {
+	t.Parallel()
+
+	for _, p := range agent.SupportedTypes {
+		routed := sharedModeBriefDelivery(p) != sharedBriefUnsupported
+		reason, refused := sharedModeRefusedProviders[p]
+		switch {
+		case routed && refused:
+			t.Errorf("%s has a shared-mode route but is also listed as refused (%q)", p, reason)
+		case !routed && !refused:
+			t.Errorf("%s has no shared-mode route and no refusal reason; add it to sharedModeBriefDelivery or sharedModeRefusedProviders", p)
+		}
+	}
+	for p := range sharedModeRefusedProviders {
+		if !agent.IsSupportedType(p) {
+			t.Errorf("sharedModeRefusedProviders lists %q, which is not a supported type", p)
+		}
+	}
 }

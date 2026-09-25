@@ -488,9 +488,13 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	// Write concurrently with stdout consumption. A large prompt can fill the
 	// stdin pipe while the child fills stdout; serialising those operations can
 	// deadlock both processes. Closing stdin signals the end of Pi's prompt.
+	// SystemPrompt is set only when the daemon kept the brief out of the cwd
+	// (shared local_directory mode), so there is no cwd AGENTS.md to
+	// duplicate; see buildPiArgs for why it never goes on argv.
+	userText := withSystemPrompt(opts.SystemPrompt, prompt)
 	writeErrCh := make(chan error, 1)
 	go func() {
-		_, err := io.WriteString(stdin, prompt)
+		_, err := io.WriteString(stdin, userText)
 		closeStdin()
 		writeErrCh <- err
 	}()
@@ -1023,7 +1027,9 @@ func buildPiArgs(sessionPath string, opts ExecOptions, logger *slog.Logger) []st
 	// SystemPrompt is intentionally not forwarded as --append-system-prompt:
 	// Pi loads the per-task AGENTS.md the daemon writes into the workdir, so
 	// inlining the same runtime brief would duplicate it on every turn.
-	// Verified against Pi 0.67.2 (MUL-5392).
+	// Verified against Pi 0.67.2 (MUL-5392). The daemon sets SystemPrompt
+	// only in shared mode (no cwd AGENTS.md); Execute then prepends it on
+	// stdin, keeping the brief off argv like the prompt itself (#6457).
 	args = append(args, filterPiCustomArgs(opts.CustomArgs, logger)...)
 	return args
 }

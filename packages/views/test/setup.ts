@@ -1,4 +1,6 @@
 import "@testing-library/jest-dom/vitest";
+import { createAuthStore, registerAuthStore } from "@multica/core/auth";
+import type { ApiClient } from "@multica/core/api/client";
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -70,4 +72,18 @@ if (typeof window !== "undefined") {
   if (typeof Element.prototype.scrollIntoView !== "function") {
     Element.prototype.scrollIntoView = () => {};
   }
+
+  // Chat message rows read the signed-in user to label someone else's line.
+  // Suites that render those rows without booting the app still need a store;
+  // a file that registers its own replaces this one.
+  registerAuthStore(
+    createAuthStore({
+      api: {} as ApiClient,
+      storage: {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      },
+    }),
+  );
 }

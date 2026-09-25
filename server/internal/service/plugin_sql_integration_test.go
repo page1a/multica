@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -32,23 +31,15 @@ func mustParseUUID(t *testing.T, value string) pgtype.UUID {
 // table itself. workspace_delete_manifest_test.go asserts the three tables are
 // registered; this asserts the query actually empties them.
 func TestDeleteWorkspacePluginDataClearsEveryPluginTable(t *testing.T) {
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("DATABASE_URL not set; skipping live-Postgres plugin teardown test")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("connect database: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	var schemaReady bool
 	if err := pool.QueryRow(ctx, `SELECT to_regclass('plugin_installation') IS NOT NULL`).Scan(&schemaReady); err != nil {
 		t.Fatalf("check plugin schema: %v", err)
 	}
 	if !schemaReady {
-		t.Skip("plugin migrations are not applied")
+		testutil.SkipUnmigrated(t, "plugin migrations are not applied")
 	}
 
 	tx, err := pool.Begin(ctx)

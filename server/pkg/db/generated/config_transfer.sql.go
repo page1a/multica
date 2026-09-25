@@ -1435,7 +1435,7 @@ func (q *Queries) GetLabelByIdentity(ctx context.Context, arg GetLabelByIdentity
 }
 
 const getUserAgentByName = `-- name: GetUserAgentByName :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled FROM agent
 WHERE workspace_id = $1 AND kind = 'user' AND name = $2
 ORDER BY created_at ASC
 LIMIT 1
@@ -1485,6 +1485,8 @@ func (q *Queries) GetUserAgentByName(ctx context.Context, arg GetUserAgentByName
 		&i.RuntimeInherited,
 		&i.RoutingTier,
 		&i.WorkEnabled,
+		&i.PlanLimits,
+		&i.DoorbellEnabled,
 	)
 	return i, err
 }

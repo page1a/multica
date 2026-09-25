@@ -441,12 +441,7 @@ func (h *Handler) SetProjectVisibility(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rel := permission.Relation{
-		IsCreator: project.CreatedBy.Valid && viewer.userID.Valid && project.CreatedBy.Bytes == viewer.userID.Bytes,
-		InProject: viewer.inProject(project.ID),
-	}
-	if !viewer.bypasses() &&
-		!permission.Allowed(viewer.role, permission.ActionChangeVisibility, permission.Visibility(project.Visibility), rel) {
+	if !viewer.canChangeProjectVisibility(project) {
 		writeError(w, http.StatusForbidden, "you cannot change this project's sharing scope")
 		return
 	}

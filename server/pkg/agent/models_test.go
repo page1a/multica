@@ -42,17 +42,22 @@ func TestStaticModelCatalogsAreValid(t *testing.T) {
 	}
 }
 
-func TestListModelsQwenUsesRuntimeDefaultAndManualEntry(t *testing.T) {
-	// Qwen returns its manual-entry catalog without resolving or executing a CLI.
+func TestListModelsQwenUnconfiguredIsUnavailable(t *testing.T) {
+	// No endpoint configured is "we could not look", not "this runtime has
+	// no models". An empty success is what the picker renders as 暂无可用模型.
+	withQwenHome(t, t.TempDir())
 	got, err := ListModels(context.Background(), "qwen", Command{Path: ""})
-	if err != nil {
-		t.Fatalf("ListModels(qwen) error: %v", err)
+	if err == nil {
+		t.Fatal("ListModels(qwen) with no endpoint succeeded")
+	}
+	if !strings.Contains(err.Error(), "暂时无法获取") {
+		t.Fatalf("ListModels(qwen) error = %q, want the temporary-unavailable notice", err)
 	}
 	if len(got.Models) != 0 {
-		t.Fatalf("ListModels(qwen) = %+v, want no account-specific static catalog", got)
+		t.Fatalf("ListModels(qwen) = %+v, want no models alongside the error", got)
 	}
 	if got.Fallback {
-		t.Error("qwen's empty catalog is deliberate, not a discovery fallback")
+		t.Error("a qwen miss is an error, not a static fallback catalog")
 	}
 }
 

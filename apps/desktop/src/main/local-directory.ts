@@ -8,6 +8,11 @@ import { normalizeRepoUrl } from "@multica/core/projects/source-rule";
 import { activeDaemonProfileDir } from "./daemon-manager";
 import { initLocalGit, type InitLocalGitResult } from "./local-git";
 import {
+  provisionProjectDirectory,
+  removeProvisionedDirectory,
+  type ProvisionProjectDirectoryResult,
+} from "./provision-project-dir";
+import {
   localDirectoryOverridesPath,
   readLocalDirectoryOverrides,
   writeLocalDirectorySharedOverride,
@@ -248,6 +253,22 @@ export function setupLocalDirectory(
   ipcMain.handle(
     "local-directory:init-git",
     (_event, path: string): Promise<InitLocalGitResult> => initLocalGit(path),
+  );
+
+  ipcMain.handle(
+    "local-directory:provision-project",
+    (_event, input: { root?: string; dirName?: string; gitInit?: boolean }): Promise<ProvisionProjectDirectoryResult> =>
+      provisionProjectDirectory({
+        root: input?.root ?? "",
+        dirName: input?.dirName ?? "",
+        gitInit: input?.gitInit !== false,
+      }),
+  );
+
+  ipcMain.handle(
+    "local-directory:remove-provisioned",
+    (_event, input: { root?: string; path?: string }) =>
+      removeProvisionedDirectory({ root: input?.root ?? "", path: input?.path ?? "" }),
   );
 
   ipcMain.handle(

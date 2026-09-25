@@ -29,7 +29,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +36,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -54,24 +55,12 @@ func (c *recordingConn) frameCount() int {
 
 func twoReplicaDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Skipf("no database: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("database not reachable: %v", err)
-	}
+	pool := testutil.OpenTestDatabase(ctx, t)
 	var present bool
 	if err := pool.QueryRow(ctx,
 		"SELECT to_regclass('public.channel_chat_session_binding') IS NOT NULL").Scan(&present); err != nil || !present {
-		pool.Close()
-		t.Skip("channel tables not present (database not migrated)")
+		testutil.SkipUnmigrated(t, "channel tables not present")
 	}
 	t.Cleanup(pool.Close)
 	return pool

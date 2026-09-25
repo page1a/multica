@@ -39,12 +39,15 @@ import {
 export function ModelDropdown({
   runtimeId,
   runtimeOnline,
+  agentId,
   value,
   onChange,
   disabled,
 }: {
   runtimeId: string | null;
   runtimeOnline: boolean;
+  /** Saved agent whose custom_env should win over the machine config. */
+  agentId?: string | null;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -55,7 +58,7 @@ export function ModelDropdown({
   const [search, setSearch] = useState("");
 
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline ? runtimeId : null, agentId),
   );
 
   const supported = modelsQuery.data?.supported ?? true;
@@ -121,7 +124,11 @@ export function ModelDropdown({
 
   const refresh = () => {
     if (!runtimeId || !runtimeOnline) return;
-    void refreshRuntimeModels(queryClient, runtimeId).catch(() => {
+    void refreshRuntimeModels(
+      queryClient,
+      runtimeId,
+      ...(agentId ? [agentId] : []),
+    ).catch(() => {
       // React Query owns the error state rendered below. Swallow the returned
       // promise rejection so a failed manual refresh is not also unhandled.
     });

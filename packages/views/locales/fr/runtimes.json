@@ -284,6 +284,21 @@
       "timeout": "Délai dépassé"
     }
   },
+  "agent_cli": {
+    "versions": "{{current}} / {{latest}}",
+    "update_available": "Mise à jour disponible",
+    "up_to_date": "À jour",
+    "follow": "Suivre la dernière version",
+    "update_now": "Mettre à jour",
+    "updating": "Mise à jour…",
+    "waiting": "En attente que cette machine soit libre",
+    "unsupported": "Ce CLI ne peut pas être mis à jour automatiquement",
+    "binary": "Cette copie : {{path}}",
+    "check_failed": "Impossible de vérifier la dernière version",
+    "follow_failed": "Impossible d'enregistrer le suivi automatique",
+    "update_request_failed": "Impossible de lancer la mise à jour",
+    "read_only": "Seul le propriétaire du runtime ou un admin peut mettre à jour ce CLI"
+  },
   "charts": {
     "heatmap_less": "Moins",
     "heatmap_more": "Plus",

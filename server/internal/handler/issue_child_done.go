@@ -48,9 +48,12 @@ import (
 //     unfinished stage is terminal (stageBarrierClosed). An unstaged sibling
 //     set is one implicit stage, so this fires once when the last sub-issue
 //     finishes instead of on every child — the default fix for the
-//     fire-on-every-child cascade reported in #4320. The woken assignee
-//     decides whether to promote the next stage (agent-driven advancement);
-//     the server only detects the barrier and wakes.
+//     fire-on-every-child cascade reported in #4320. When the next stage's
+//     backlog descriptions state no extra dependency, the server promotes
+//     those sub-issues to todo itself. A description that conflicts or names
+//     a dependency that cannot be checked stays in backlog, and the parent
+//     seat is woken to decide — or, if that seat is switched off, a same-tier
+//     seat from another provider.
 //
 // The comment is inserted directly via db.Queries (not through the
 // CreateComment HTTP handler) so it bypasses the generic on_comment trigger
@@ -341,6 +344,8 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	mentionPrefix := h.buildParentAssigneeMention(ctx, parent)
 
 	var content string
+	var nextStage int32
+	var blockedAdvance bool
 	if staged {
 		stageCancelledCount := countStageCancelled(children, closedStage, statuses.status)
 		stageCancelled := stageCancelledCount > 0
@@ -352,7 +357,9 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 			// warnings.
 			advanceHasCancelled = stageCancelled || batchClosedScopeHasCancelled(children, batchCompleted, closedStage, statuses.status)
 		}
-		summary, nextStage := stageProgressSummary(children, closedStage, statuses.status)
+		var summary string
+		summary, nextStage = stageProgressSummary(children, closedStage, statuses.status)
+		blockedAdvance = advanceHasCancelled
 		advance := stageAdvanceInstruction(nextStage, parentID, stageCancelledCount, advanceHasCancelled, parent.ParentIssueID.Valid)
 		if !stageCancelled {
 			// Keep the historical no-cancellation wording byte-identical for the
@@ -427,6 +434,15 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 		}
 	}
 
+	plan := h.planStageAdvance(ctx, parent, children, nextStage, statuses, blockedAdvance)
+	if plan.parentOff {
+		content = strings.TrimPrefix(content, mentionPrefix)
+		if plan.relay != nil {
+			content = fmt.Sprintf("[@%s](mention://agent/%s) ", sanitizeMentionLabel(plan.relay.Name), uuidToString(plan.relay.ID)) + content
+		}
+	}
+	content += plan.note
+
 	// author_type='system', author_id=zero UUID. The zero UUID is a valid 16
 	// byte value and the column is NOT NULL; frontend code should branch on
 	// author_type === 'system' rather than on the UUID value.
@@ -463,7 +479,16 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	// notification + subscriber listeners both short-circuit on
 	// author_type='system'); this keeps smuggled mentions from the child
 	// title inert and gives the platform a single place to apply the loop
-	// and idempotency guards.
+	// and idempotency guards. A stage whose backlog had no extra dependency
+	// is already promoted, so that wake is not also asked to promote it. A
+	// parent seat that cannot take work is covered by another family.
+	if plan.skipWake {
+		return
+	}
+	if plan.relay != nil {
+		h.wakeStageRelay(ctx, parent, comment.ID, plan.relay)
+		return
+	}
 	h.dispatchParentAssigneeTrigger(ctx, parent, comment)
 }
 

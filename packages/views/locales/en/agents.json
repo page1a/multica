@@ -228,11 +228,6 @@
     "assign_work": "Assign work",
     "more_actions_aria": "Agent actions",
     "updated": "Updated {{when}}",
-    "switchable_models_label": "Model lineup",
-    "switchable_role_default": "Default",
-    "switchable_role_fallback": "Fallback",
-    "switchable_role_batch": "Batch",
-    "switchable_models_edit": "Edit",
     "accounts_entry": "Accounts & sign-in"
   },
   "inspector": {
@@ -257,11 +252,10 @@
     "prop_concurrency": "Concurrency",
     "prop_work_enabled": "Accept work",
     "prop_work_enabled_hint": "When off, this seat stays in the list but is not selected for automatic dispatch, is not woken by assignment, and does not claim new runs. Running work is not stopped.",
+    "prop_work_pause_balance": "Paused by the platform: the account ran out of balance (402) and will not recover by itself. Top up or switch the account, then turn this back on. Tickets already handed to other seats stay with them.",
+    "prop_work_pause_quota": "Paused by the platform: the model quota ran out. It turns back on by itself when the quota resets.",
     "prop_auto_retry": "Auto retry",
     "prop_auto_retry_hint": "When off, failures such as capacity limits or network cuts surface immediately instead of retrying. You can still retry a run yourself.",
-    "prop_switchable_models": "Model lineup",
-    "prop_switchable_models_hint_on": "This agent documents a lineup: a default model, an ordered fallback chain and models it may borrow for batch work. Display only — dispatch always runs the model above.",
-    "prop_switchable_models_hint_off": "Off means a single model: this agent shows only the model above. Turn it on to document a fallback chain or batch models.",
     "prop_runtime_inherit": "Follow the base role's runtime",
     "prop_runtime_inherit_hint_on": "Runtime, model, thinking level, and speed are the base role's and update with it. Turn off to configure them here instead.",
     "prop_runtime_inherit_hint_off": "This specialization uses its own runtime, model, thinking level, and speed. Turn on to follow the base role again.",
@@ -553,16 +547,6 @@
     "remove": "Remove suggestion {{number}}",
     "preview_label": "Preview of a new chat",
     "preview_defaults": "These are the built-in defaults. Add a suggestion above to replace all three."
-  },
-  "switchable_models": {
-    "add": "Add model",
-    "model_label": "Model {{number}} id",
-    "model_placeholder": "claude-opus-5",
-    "role_label": "Model {{number}} role",
-    "note_label": "Model {{number}} note",
-    "note_placeholder": "When this one is used",
-    "remove": "Remove model {{number}}",
-    "blank_ignored": "Rows without a model id are not saved."
   },
   "tab_body": {
     "common": {
@@ -1091,7 +1075,29 @@
     "public_group": "Public access",
     "owner_only_readonly": "Only the agent owner can change who can run this agent.",
     "members_empty": "No workspace members to choose from",
-    "composio_switch_hint": "Heads up — this agent has Composio apps enabled. Sharing it lets everyone with access use those apps through this agent."
+    "composio_switch_hint": "Heads up — this agent has Composio apps enabled. Sharing it lets everyone with access use those apps through this agent.",
+    "borrow_section_title": "Borrowing",
+    "doorbell_title": "Doorbell",
+    "doorbell_desc": "When someone outside the list above @mentions or assigns this agent, ask you first instead of refusing. Approved tasks run on your machine.",
+    "doorbell_save_failed": "Could not save the doorbell setting",
+    "pass_issue_title": "Issue a pass",
+    "pass_issue_desc": "Let one member use this agent until a deadline. The pass lapses on its own.",
+    "pass_member_label": "Member",
+    "pass_member_placeholder": "Pick a member",
+    "pass_member_required": "Pick a member first",
+    "pass_2h": "2 hours",
+    "pass_today": "Rest of today",
+    "pass_custom": "Until…",
+    "pass_issue_action": "Issue pass",
+    "pass_issued": "Pass issued to {{name}} until {{until}}",
+    "pass_issue_failed": "Could not issue the pass",
+    "pass_expiry_invalid": "Pick an expiry in the future",
+    "pass_active_title": "Active passes",
+    "pass_active_empty": "No active passes",
+    "pass_until": "Until {{until}}",
+    "pass_revoke": "Revoke",
+    "pass_revoked": "Pass revoked",
+    "pass_revoke_failed": "Could not revoke the pass"
   },
   "profile_card": {
     "unavailable": "Agent unavailable",

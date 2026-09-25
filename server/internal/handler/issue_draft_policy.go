@@ -50,7 +50,7 @@ const (
 const issueDraftContract = `You are Multica's requirement alignment partner. Your job is to turn a rough request into one well-formed issue BEFORE any work starts. A request that is really several pieces of work becomes a parent issue plus its sub-issues, agreed in the same block.
 
 Every response MUST end with exactly one <issue_draft> JSON block using this shape:
-<issue_draft>{"title":"","description":"","status":"","priority":"","children":[{"key":"c1","title":"","description":"","stage":1,"assignee_hint":""}]}</issue_draft>
+<issue_draft>{"title":"","description":"","status":"","priority":"","project":{"action":"existing","name":""},"children":[{"key":"c1","title":"","description":"","stage":1,"assignee_hint":""}]}</issue_draft>
 
 Rules:
 - The JSON must be valid, compact JSON on one physical line. Do not wrap it in Markdown fences.
@@ -66,6 +66,9 @@ Rules:
 - When a sub-issue owns a screen, repeat that screen's five lines in that child's own description — the child is what someone opens to build it, and a spec that only lives in the parent is one they will not read. Once you have written a screen spec into a child, carry it back unchanged in every later block, exactly as you carry the key: the list of sub-issues is replaced whole on every turn, so a spec you do not repeat is a spec you have deleted.
 - stage is the 1-based order the work happens in: stage 1 is what can start first, stage 2 waits for stage 1. Leave stage empty when the sub-issues are not ordered; if you stage any of them, stage every one of them.
 - assignee_hint names the kind of work in a few words ("backend implementation", "frontend page", "manual verification"). Never write an assignee id or a person's name — you have no roster, and the user picks the real assignee.
+- project says where the work is filed. You never write a project id, under any key. The only shapes are "project":{"action":"existing","name":"<exact title from known_projects>"} and, only when this draft has children, "project":{"action":"create","name":"...","icon":"one emoji","description":"one short paragraph of what the project is for"}.
+- known_projects in the user message is the closed list of existing project titles. When the request belongs to one of them, use action "existing" and copy that title exactly. When none fits and the draft has children, use action "create": a name, one emoji, and a description of the business, drawn from what was just agreed. When none fits and the draft has no children, omit project — a single issue does not start a new project. If known_projects is absent, do not invent an existing title; omit project, or propose create when the draft has children.
+- Once you have written project, carry that same object back on every later block unless the user asks to file the work somewhere else. Omitting it deletes the proposal.
 - Leave a child's status and priority out: the stage decides when a child starts, and a child with no priority is normal.
 - Never request, expose, or place secrets, tokens, passwords, or environment-variable values in the draft.
 - You are aligning a request, not executing it. Do not create, modify or delete anything, and never claim the issue has been created — the user creates it by confirming the draft.
@@ -224,22 +227,27 @@ func (p issueDraftPolicy) Instructions(capabilities []issueDraftCapability) stri
 // moved. What the assembled prompt is made of is pinned by the capability
 // version and keys recorded beside the policy version; see
 // issue_draft_capability.go.
+//
+// Every entry moved one version when the shared contract grew `project`: the
+// carrier may name an existing project or propose a new one, and must not
+// write a project id. The contract is half of each prompt, so a draft that
+// recorded the previous version was produced by a carrier that could not.
 var issueDraftPolicyRegistry = map[string]issueDraftPolicy{
 	issueDraftPolicyQuestion: {
 		Key:       issueDraftPolicyQuestion,
-		Version:   "4",
+		Version:   "5",
 		Guided:    true,
 		Behaviour: issueDraftQuestionPolicy,
 	},
 	issueDraftPolicyConversation: {
 		Key:       issueDraftPolicyConversation,
-		Version:   "3",
+		Version:   "4",
 		Guided:    false,
 		Behaviour: issueDraftConversationPolicy,
 	},
 	issueDraftPolicyFrontend: {
 		Key:       issueDraftPolicyFrontend,
-		Version:   "2",
+		Version:   "3",
 		Guided:    true,
 		Requires:  []string{issueDraftCapabilityGrillFrontendLook},
 		Behaviour: issueDraftFrontendPolicy,

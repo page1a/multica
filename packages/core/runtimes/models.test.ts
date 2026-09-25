@@ -305,6 +305,29 @@ describe("runtimeModelsOptions", () => {
     client.clear();
   });
 
+  it("names the agent so its env overlay reaches discovery", async () => {
+    initiateListModels.mockResolvedValue(
+      request({ status: "completed", models: catalog }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await refreshRuntimeModels(client, "rt-1", "agent-1");
+
+    expect(runtimeModelsKeys.forRuntime("rt-1", "agent-1")).toEqual([
+      "runtimes",
+      "models",
+      "rt-1",
+      "agent-1",
+    ]);
+    expect(initiateListModels).toHaveBeenCalledWith("rt-1", {
+      force: true,
+      agentId: "agent-1",
+    });
+    client.clear();
+  });
+
   it("resolves freshness from the served answer, not a fixed window", () => {
     const options = runtimeModelsOptions("rt-1");
     expect(typeof options.staleTime).toBe("function");

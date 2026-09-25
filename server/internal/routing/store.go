@@ -121,6 +121,22 @@ const (
 	LabelHuman    = "交给人"
 )
 
+// AcceptanceState is the slice of "what is already happening on this stay in
+// review" that the in-review row needs. It is a read, never a write.
+type AcceptanceState struct {
+	// ActiveRun is a queued, dispatched, running, or waiting task on the
+	// issue. The executor's own run counts: the reviewer is not started
+	// until that run has finished, and the completion callback asks again.
+	ActiveRun bool
+	// AgentEngaged is true when the reviewer seat already holds the ticket
+	// and already has a run for this stay. A run from an earlier stay, or a
+	// handoff comment left over from one, does not count.
+	AgentEngaged bool
+	// MemberNotified is true when the person named as reviewer was already
+	// sent the acceptance notice for this stay.
+	MemberNotified bool
+}
+
 // CommentKind identifies a routing comment. It is also the de-duplication key:
 // one comment of each kind per issue, which is what keeps repeated status
 // flips from re-notifying and re-explaining.
@@ -152,6 +168,19 @@ const (
 	KindCompleted CommentKind = "completed"
 )
 
+// ReviewerRelay is the acceptance cover written while the designated reviewer
+// cannot take work. Designated is true when the slot already named them —
+// recovery gives the ticket back only in that case, and only before the cover
+// has started.
+type ReviewerRelay struct {
+	OriginalID      string
+	OriginalName    string
+	ReplacementID   string
+	ReplacementName string
+	Designated      bool
+	CoveredAt       time.Time
+}
+
 // Store is everything Route needs from the rest of the server. Every write on
 // it is either conditional (the ...IfUnset pair) or explicitly a handoff, so
 // the fill-only-empty-slots rule is enforced in SQL rather than by reading
@@ -169,19 +198,38 @@ type Store interface {
 	RoutingFacts(ctx context.Context, workspaceID string, agentIDs, providers []string) (RoutingFacts, error)
 	// AssignAgentIfUnassigned fills the executor slot only while it is still
 	// empty. Reports whether THIS call wrote it. Starting the seat's run is
-	// the store's job, because assignment is what wakes an agent.
-	AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat Seat) (written bool, err error)
+	// the store's job, because assignment is what wakes an agent — unless
+	// start is false: a group's coordinator is seated without being woken.
+	AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat Seat, start bool) (written bool, err error)
 	// SetReviewerIfUnset fills the reviewer slot only while it is still empty.
 	// The slot is a field on the issue, not a workspace property, so there is
 	// nothing to provision and nothing that can be missing: every workspace
 	// with routing on has it.
 	SetReviewerIfUnset(ctx context.Context, workspaceID, issueID string, ref ReviewerRef) (written bool, err error)
+	// OffRosterSeat loads a seat Roster hides because work is switched off.
+	// Missing and archived seats return ok=false: those are not a temporary
+	// disable this row may cover.
+	OffRosterSeat(ctx context.Context, workspaceID, agentID string) (Agent, bool, error)
+	// ReplaceReviewer overwrites the reviewer slot while it still names currentID.
+	ReplaceReviewer(ctx context.Context, workspaceID, issueID, currentID string, ref ReviewerRef) (written bool, err error)
+	// RememberReviewerRelay records the designated reviewer and who is covering,
+	// so recovery can give the ticket back only while the cover has not started.
+	RememberReviewerRelay(ctx context.Context, workspaceID, issueID string, note ReviewerRelay) error
 	// Handoff reassigns an issue that already has an assignee. Unlike the two
 	// above this is not a fill: the in-review row hands the ticket from the
 	// seat that did the work to the seat that accepts it. It is only ever
 	// called with assigneeType "agent" — routing does not hand tickets to
 	// people, it notifies them.
 	Handoff(ctx context.Context, workspaceID, issueID, assigneeType, assigneeID string) error
+
+	// Acceptance reports whether this stay in review already has a run or a
+	// notice, and whether any run is still active on the ticket. The in-review
+	// row and the completion callback both read it so they make the same
+	// decision: wake once per stay, and never while a run is still in flight.
+	Acceptance(ctx context.Context, workspaceID string, issue Issue) (AcceptanceState, error)
+	// NotifyMember sends the one acceptance notice for this stay to the person
+	// named in the reviewer slot. False means this stay already has one.
+	NotifyMember(ctx context.Context, workspaceID, issueID string, member Member) (bool, error)
 
 	HasComment(ctx context.Context, workspaceID, issueID string, kind CommentKind) (bool, error)
 	// PostComment writes one routing comment and reports whether THIS call

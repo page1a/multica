@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/titling"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -49,28 +50,6 @@ func (h *Handler) ChannelChatTitleInitialized(workspaceID, creatorID, sessionID 
 func (h *Handler) GenerateChannelChatTitle(workspaceID, creatorID, sessionID pgtype.UUID, currentTitle, sourceText string) {
 	h.maybeGenerateChatTitleAsync(uuidToString(workspaceID), uuidToString(creatorID), sessionID, currentTitle, sourceText)
 }
-
-// chatTitleSystemPrompt instructs the model to condense the opening of a
-// conversation into a short, language-matched title. The rules mirror the
-// acceptance criteria in MUL-4295: no quotes, no trailing punctuation, no
-// label prefix, follow the conversation's language. sanitizeChatTitle re-applies
-// these rules defensively in case the model ignores them.
-//
-// This text names no language and contains no CJK, deliberately. A prompt that
-// spells out a specific language — even only as a formatting example — reads as
-// permission to answer in it, which is how quick actions ended up emitting
-// Chinese pills for English conversations (MUL-5689). The label prefixes this
-// used to enumerate are still stripped for real by chatTitleLabelPrefixes,
-// which is where that guarantee belongs.
-const chatTitleSystemPrompt = `You write a very short title that summarizes the topic of a chat conversation, given the user's opening message.
-
-Rules:
-- Output ONLY the title text — nothing else, no explanation.
-- Keep it short: a few words, ideally under 8, never a full sentence.
-- Write the title in the SAME language as the user's message, and in no other.
-- Do NOT wrap the title in quotes or brackets.
-- Do NOT prefix it with a label such as "Title:", in any language.
-- Do NOT end with a period or any trailing punctuation.`
 
 // maybeGenerateChatTitleAsync kicks off best-effort LLM title generation for a
 // chat session and returns immediately. It is the entry point wired into the
@@ -119,7 +98,7 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 		ctx, cancel := context.WithTimeout(context.Background(), chatTitleGenTimeout)
 		defer cancel()
 
-		updated, applied, err := h.generateChatSessionTitle(ctx, sessionID, currentTitle, sourceText)
+		updated, applied, err := h.generateChatSessionTitle(ctx, workspaceID, sessionID, currentTitle, sourceText)
 		if err != nil {
 			// Timeout, upstream 4xx/5xx, empty choices, etc. Log-and-forget:
 			// the send already succeeded and the original title stands.
@@ -158,11 +137,14 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 //   - (zero, false, err):    the LLM layer is disabled or the call failed, OR
 //     the CAS write hit a real DB error. Callers treat this as best-effort and
 //     keep the original title.
-func (h *Handler) generateChatSessionTitle(ctx context.Context, sessionID pgtype.UUID, currentTitle, sourceText string) (db.ChatSession, bool, error) {
+func (h *Handler) generateChatSessionTitle(ctx context.Context, workspaceID string, sessionID pgtype.UUID, currentTitle, sourceText string) (db.ChatSession, bool, error) {
 	// DefaultModel() is used implicitly by GenerateText when model == "": a
 	// deployment configures MULTICA_LLM_DEFAULT_MODEL (or the built-in
 	// gpt-5.6-luna fallback) — no model is threaded through from the frontend.
-	raw, err := h.LLM.GenerateText(ctx, "", chatTitleSystemPrompt, sourceText)
+	// The shape and the Chinese glossary live in titling. Project names are
+	// context for that prompt, not a prefix this function stamps on.
+	userPrompt := titling.ChatTitleUserPrompt(h.chatTitleProjectNames(ctx, workspaceID, sessionID), sourceText)
+	raw, err := h.LLM.GenerateText(ctx, "", titling.ChatTitleSystemPrompt, userPrompt)
 	if err != nil {
 		return db.ChatSession{}, false, err
 	}
@@ -190,6 +172,35 @@ func (h *Handler) generateChatSessionTitle(ctx context.Context, sessionID pgtype
 	return updated, true, nil
 }
 
+// chatTitleProjectNames loads the session's project display names for the
+// title prompt. A lookup failure leaves the title unscoped rather than
+// failing generation — the original title still stands if the model call
+// itself fails, and a missing project just omits that segment.
+func (h *Handler) chatTitleProjectNames(ctx context.Context, workspaceID string, sessionID pgtype.UUID) []string {
+	if h.Queries == nil || strings.TrimSpace(workspaceID) == "" {
+		return nil
+	}
+	projects, err := h.Queries.ListChatSessionProjectsInWorkspace(ctx, db.ListChatSessionProjectsInWorkspaceParams{
+		ChatSessionID: sessionID,
+		WorkspaceID:   parseUUID(workspaceID),
+	})
+	if err != nil {
+		slog.Warn("chat title project lookup failed; titling without a project",
+			"session_id", uuidToString(sessionID),
+			"error", err,
+		)
+		return nil
+	}
+	names := make([]string, 0, len(projects))
+	for _, project := range projects {
+		name := strings.TrimSpace(project.Title)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // chatTitleLabelPrefixes are leading labels a model sometimes prepends despite
 // the prompt. Matched case-insensitively and only at the very start.
 var chatTitleLabelPrefixes = []string{
@@ -205,6 +216,10 @@ var chatTitleLabelPrefixes = []string{
 // pairs, drop trailing sentence punctuation, and hard-cap the length at
 // chatSessionTitleMaxLen runes (the same ceiling the manual rename endpoint
 // enforces). Returns "" when nothing meaningful remains.
+//
+// The "{project} · {topic}" shape survives this: the middle dot is not a
+// wrapper and not trailing punctuation. Label prefixes and trailing periods
+// are still removed.
 //
 // Prefix-stripping, wrapper-stripping, AND trailing-punctuation trimming all
 // run in a single loop until the string stops changing. They interact: a model

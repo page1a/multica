@@ -183,7 +183,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		if viewerErr != nil {
 			break
 		}
-		if item.IssueID.Valid && !viewer.canSeeIssueFields(
+		if item.IssueID.Valid && !inboxItemIsPersonalNotice(item.Type) && !viewer.canSeeIssueFields(
 			item.IssueID, item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
 			item.IssueAssigneeType, item.IssueAssigneeID) {
 			continue
@@ -230,7 +230,7 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 		if viewerErr != nil {
 			break
 		}
-		if item.IssueID.Valid && !viewer.canSeeIssueFields(
+		if item.IssueID.Valid && !inboxItemIsPersonalNotice(item.Type) && !viewer.canSeeIssueFields(
 			item.IssueID, item.IssueVisibility, item.IssueCreatorType, item.IssueCreatorID, item.IssueProjectID,
 			item.IssueAssigneeType, item.IssueAssigneeID) {
 			continue

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -46,12 +47,8 @@ const (
 // database, in which case a suite that asserted nothing must not look like a
 // suite that passed. TestMain has no *testing.T, so it cannot use
 // testutil.SkipDatabase; the decision must be the same one.
-func exitWithoutDatabase(reason string) {
-	if testutil.RequireTestDatabase() {
-		fmt.Printf("database required (MULTICA_REQUIRE_TEST_DB=1) but %s\n", reason)
-		os.Exit(1)
-	}
-	fmt.Printf("Skipping tests: %s\n", reason)
+func exitWithoutDatabase(err error) {
+	testutil.ExitIfDatabaseRequired(err)
 	os.Exit(0)
 }
 
@@ -61,16 +58,16 @@ func TestMain(m *testing.M) {
 	// this run; see scripts/test-db.sh and internal/testutil.
 	dbURL := testutil.TestDatabaseURL()
 	if dbURL == "" {
-		exitWithoutDatabase("no test database is configured")
+		exitWithoutDatabase(errors.New("no test database is configured"))
 	}
 
 	pool, err := handlerTestPool(ctx, dbURL)
 	if err != nil {
-		exitWithoutDatabase(err.Error())
+		exitWithoutDatabase(err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		exitWithoutDatabase(err.Error())
+		exitWithoutDatabase(err)
 	}
 
 	queries := db.New(pool)

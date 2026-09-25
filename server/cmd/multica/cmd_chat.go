@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -14,7 +16,7 @@ import (
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
-	Short: "Work with the current chat conversation",
+	Short: "Read a chat conversation",
 }
 
 var chatHistoryCmd = &cobra.Command{
@@ -27,9 +29,18 @@ latest_reply. It does NOT expand thread contents — it is the table of contents
 To read a specific thread's messages, take a thread_id from here and run
 "multica chat thread <thread_id>".
 
-It is the SAME command regardless of which channel the conversation came from,
-and it reads only the conversation you are currently running for — it cannot
-read any other session or channel.`,
+It is the SAME command regardless of which channel the conversation came from.
+
+Pass --session <url|id> to read a different chat in this workspace instead of
+the one you are running in. The link looks like …/chat/<session-id> (an older
+?session=<id> link works too). The default is a short summary plus the latest
+messages, not the full transcript. Page older messages with --before
+<next_cursor>.
+
+When the user says "接管这个：<link>", run:
+  multica chat history --session <link> --output json
+You can only read a session in this workspace that this person is allowed to
+open. Anyone outside the workspace gets nothing.`,
 	Args: cobra.NoArgs,
 	RunE: runChatHistory,
 }
@@ -41,8 +52,12 @@ var chatThreadCmd = &cobra.Command{
 
 With no id, read the thread you are currently in (the one you were @mentioned in).
 With an id — a thread_id from "multica chat history" — read that specific thread.
-Either way the thread is within the channel you are in; you cannot read another
-channel.`,
+Either way the thread is within the channel you are in.
+
+Pass --session <url|id> (and no thread id) to read another chat session's
+transcript — the same summary-plus-latest-page read as "chat history
+--session". A web chat is a single thread, so there is no separate thread id
+to pass.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runChatThread,
 }
@@ -51,6 +66,7 @@ func init() {
 	for _, c := range []*cobra.Command{chatHistoryCmd, chatThreadCmd} {
 		c.Flags().Int("limit", 0, "Maximum number of messages to return (the server clamps the range)")
 		c.Flags().String("before", "", "Opaque cursor (a next_cursor from a prior page) to read older messages")
+		c.Flags().String("session", "", "Read this chat instead of the current one: a session id or an internal URL (…/chat/<session-id> or ?session=<id>)")
 		c.Flags().String("output", "json", "Output format: table or json")
 	}
 	chatCmd.AddCommand(chatHistoryCmd)
@@ -58,6 +74,9 @@ func init() {
 }
 
 func runChatHistory(cmd *cobra.Command, _ []string) error {
+	if session, _ := cmd.Flags().GetString("session"); strings.TrimSpace(session) != "" {
+		return runChatSessionHandoff(cmd, session)
+	}
 	resp, err := fetchChatRead(cmd, "/api/chat/history", "")
 	if err != nil {
 		return err
@@ -66,6 +85,12 @@ func runChatHistory(cmd *cobra.Command, _ []string) error {
 }
 
 func runChatThread(cmd *cobra.Command, args []string) error {
+	if session, _ := cmd.Flags().GetString("session"); strings.TrimSpace(session) != "" {
+		if len(args) == 1 {
+			return fmt.Errorf("--session reads that chat's transcript; a thread id only applies to the current channel. Use `multica chat history --session %s`", session)
+		}
+		return runChatSessionHandoff(cmd, session)
+	}
 	threadID := ""
 	if len(args) == 1 {
 		threadID = args[0]
@@ -75,6 +100,54 @@ func runChatThread(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return renderChatRead(cmd, resp, false)
+}
+
+func runChatSessionHandoff(cmd *cobra.Command, sessionRef string) error {
+	sessionID, err := parseChatSessionRef(sessionRef)
+	if err != nil {
+		return err
+	}
+	resp, err := fetchChatRead(cmd, "/api/chat/sessions/"+url.PathEscape(sessionID)+"/handoff", "")
+	if err != nil {
+		return err
+	}
+	return renderChatRead(cmd, resp, false)
+}
+
+// parseChatSessionRef accepts a bare session UUID or an internal chat URL
+// (`…/chat/<session-id>` or `?session=<id>`).
+func parseChatSessionRef(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("missing session id or url")
+	}
+	if id, ok := canonicalSessionID(raw); ok {
+		return id, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("could not read a chat session id from %q", raw)
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for i, part := range parts {
+		if part == "chat" && i+1 < len(parts) {
+			if id, ok := canonicalSessionID(parts[i+1]); ok {
+				return id, nil
+			}
+		}
+	}
+	if id, ok := canonicalSessionID(parsed.Query().Get("session")); ok {
+		return id, nil
+	}
+	return "", fmt.Errorf("could not read a chat session id from %q", raw)
+}
+
+func canonicalSessionID(raw string) (string, bool) {
+	id, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", false
+	}
+	return id.String(), true
 }
 
 // fetchChatRead builds the request (shared --limit/--before paging, plus the
@@ -119,6 +192,10 @@ func renderChatRead(cmd *cobra.Command, resp map[string]any, overview bool) erro
 	if output != "table" {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
+	if summary := strVal(resp, "summary"); summary != "" {
+		fmt.Fprintln(os.Stdout, summary)
+		fmt.Fprintln(os.Stdout)
+	}
 	if note := strVal(resp, "note"); note != "" {
 		fmt.Fprintln(os.Stdout, note)
 		return nil
@@ -143,6 +220,9 @@ func renderChatRead(cmd *cobra.Command, resp map[string]any, overview bool) erro
 		}
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
+	if cursor := strVal(resp, "next_cursor"); cursor != "" && strVal(resp, "summary") != "" {
+		fmt.Fprintf(os.Stdout, "next_cursor: %s\n", cursor)
+	}
 	return nil
 }
 

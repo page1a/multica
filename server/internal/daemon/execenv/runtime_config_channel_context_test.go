@@ -23,6 +23,9 @@ func TestBriefChatWorkflowDoesNotAssertAudience(t *testing.T) {
 	if !strings.Contains(out, "**You are in chat mode.**") {
 		t.Fatal("chat brief must still identify chat mode")
 	}
+	if !strings.Contains(out, "multica chat history --session") || !strings.Contains(out, "接管这个") {
+		t.Fatal("chat brief must teach taking over another session from its link")
+	}
 	for _, retired := range []string{
 		"## Conversation Channel",
 		"Audience:",

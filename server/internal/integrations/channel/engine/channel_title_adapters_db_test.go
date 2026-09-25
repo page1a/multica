@@ -2,12 +2,10 @@ package engine_test
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -24,18 +22,7 @@ import (
 // the real binders also covers Slack, whose session dependency is concrete.
 func TestChannelStartTitleCommandMappingDB(t *testing.T) {
 	ctx := context.Background()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL is required for the channel title integration test")
-	}
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		t.Fatal(err)
-	}
+	pool := dbfx.OpenTestDatabase(ctx, t)
 	for _, platform := range []string{"feishu", "telegram", "dingtalk", "slack", "wecom"} {
 		t.Run(platform, func(t *testing.T) {
 			fx := dbfx.New(pool, "", "")

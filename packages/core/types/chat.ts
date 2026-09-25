@@ -75,6 +75,8 @@ export interface ChatLastMessage {
   failure_reason?: string | null;
   /** "message" (default) or "no_response". Optional for older servers. */
   message_kind?: ChatMessageKind;
+  /** Who typed a user preview. Absent on assistant rows and older messages. */
+  sender_user_id?: string | null;
 }
 
 export interface ChatChannelSource {
@@ -110,6 +112,19 @@ export interface ChatSession {
   /** True when the user has pinned this chat to the top of the list.
    *  Optional so older clients / non-list payloads stay valid. */
   pinned?: boolean;
+  /** private: only the creator. project: members of the bound projects. */
+  visibility?: "private" | "project";
+  /** What the current person may do. owner is the creator. */
+  access?: "owner" | "speak" | "view";
+  /** People added on top of the project. */
+  extra_count?: number;
+  /** Filled even when this person cannot see the agent in their own list. */
+  agent_name?: string;
+  agent_runtime_bound?: boolean;
+  agent_archived?: boolean;
+  /** True once the creator said this chat does not need a project. Absent
+   *  on a server that predates the field — treat that as "not dismissed". */
+  project_nudge_dismissed?: boolean;
   /** Present for Chats created by an external Channel. Historical Chats keep
    *  their source even after a newer route generation becomes current. */
   channel_source?: ChatChannelSource;
@@ -178,6 +193,29 @@ export interface ChatMessage {
   message_kind?: ChatMessageKind;
   /** Up to three server-validated follow-ups generated with this reply. */
   quick_actions?: ChatQuickAction[];
+  /** Person who typed a user message. Absent on assistant rows and older messages. */
+  sender_user_id?: string | null;
+}
+
+export interface ChatShareGrant {
+  user_id: string;
+  name: string;
+  email: string;
+  access: "view" | "speak";
+}
+
+export interface ChatAccessSettings {
+  mode: "project" | "extra" | "private";
+  visibility: "private" | "project";
+  can_edit: boolean;
+  has_project: boolean;
+  shares: ChatShareGrant[];
+}
+
+export interface ChatVisibilityNotice {
+  pending: boolean;
+  count: number;
+  sessions: { id: string; title: string }[];
 }
 
 export interface ChatMessagesCursor {

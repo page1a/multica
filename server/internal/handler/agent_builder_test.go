@@ -1305,10 +1305,11 @@ func TestSwitchAgentBuilderRuntimeEnforcesRuntimeAndSessionOwnership(t *testing.
 	}
 
 	// And a session the caller does not own is not theirs to rebind, whatever
-	// their workspace role — this one is issued by the workspace owner.
+	// their workspace role — this one is issued by the workspace owner. Not
+	// being allowed to see it answers 404, the same as a missing session.
 	target := newTestRuntime(t, "Builder Switch Ownership Target", "online")
-	if w := switchBuilderRuntime(t, created.SessionID, target); w.Code != http.StatusForbidden {
-		t.Fatalf("someone else's session: expected 403, got %d: %s", w.Code, w.Body.String())
+	if w := switchBuilderRuntime(t, created.SessionID, target); w.Code != http.StatusNotFound {
+		t.Fatalf("someone else's session: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var boundRuntimeID string

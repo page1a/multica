@@ -14,19 +14,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/multica-ai/multica/server/internal/testutil"
+
 	"github.com/multica-ai/multica/server/internal/migrations"
 )
 
 func TestExecuteBackfillUpdatesOnlyEligibleCodexRowsAndRebuildsRollup(t *testing.T) {
-	adminURL := os.Getenv("DATABASE_URL")
-	if adminURL == "" {
-		adminURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
-
 	ctx := context.Background()
-	if !testDatabaseReachable(ctx, adminURL) {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
+	// Open-and-drop: the pool only proves the server the run promised is
+	// reachable (or fails the run when it is not). The temp database below is
+	// created through adminURL on that same server.
+	testutil.OpenTestDatabase(ctx, t).Close()
+	adminURL := testutil.TestDatabaseURL()
 
 	tmpDB := fmt.Sprintf("multica_codex_usage_backfill_%d", time.Now().UnixNano())
 	if err := testCreateDatabase(ctx, adminURL, tmpDB); err != nil {
@@ -242,15 +241,6 @@ func testResolveMigrationsDir() (string, error) {
 		return "", fmt.Errorf("migrations dir not at %s", dir)
 	}
 	return dir, nil
-}
-
-func testDatabaseReachable(ctx context.Context, url string) bool {
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		return false
-	}
-	defer pool.Close()
-	return pool.Ping(ctx) == nil
 }
 
 func testCreateDatabase(ctx context.Context, adminURL, name string) error {

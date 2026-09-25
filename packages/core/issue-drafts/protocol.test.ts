@@ -911,16 +911,42 @@ describe("mergeIssueDraftPayload", () => {
   });
 
   it("drops a project the reply tried to name anyway", () => {
-    // Belt and braces: the block cannot set a field the carrier was never told
-    // about, so a model that invents `project_id` cannot route the group into
-    // a project nobody chose.
+    // The carrier still cannot write a project id. A model that invents
+    // `project_id` cannot route the group into a project nobody chose.
     const parsed = parseIssueDraftBlock(
       '<issue_draft>{"title":"T","project_id":"invented"}</issue_draft>',
     );
     expect(parsed).not.toHaveProperty("project_id");
+    expect(parsed).not.toHaveProperty("project_proposal");
     expect(
       mergeIssueDraftPayload({ ...EMPTY, project_id: "p1" }, parsed).project_id,
     ).toBe("p1");
+  });
+
+  it("keeps a project proposal by name and leaves the chosen id alone", () => {
+    const parsed = parseIssueDraftBlock(
+      '<issue_draft>{"title":"T","project":{"action":"create","name":"通力电梯","icon":"🛗","description":"图像追溯"}}</issue_draft>',
+    );
+    expect(parsed?.project_proposal).toEqual({
+      action: "create",
+      name: "通力电梯",
+      icon: "🛗",
+      description: "图像追溯",
+    });
+    const merged = mergeIssueDraftPayload(
+      { ...EMPTY, project_id: "p1", project_choice: { kind: "none" } },
+      parsed,
+    );
+    expect(merged.project_id).toBe("p1");
+    expect(merged.project_choice).toEqual({ kind: "none" });
+    expect(merged.project_proposal?.name).toBe("通力电梯");
+  });
+
+  it("drops a proposal that tries to smuggle an id instead of a name", () => {
+    const parsed = parseIssueDraftBlock(
+      '<issue_draft>{"title":"T","project":{"action":"existing","id":"p1"}}</issue_draft>',
+    );
+    expect(parsed).not.toHaveProperty("project_proposal");
   });
 });
 

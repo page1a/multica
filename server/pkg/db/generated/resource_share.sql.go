@@ -15,7 +15,7 @@ const addResourceShare = `-- name: AddResourceShare :one
 INSERT INTO resource_share (workspace_id, resource_type, resource_id, member_id, added_by)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (workspace_id, resource_type, resource_id, member_id) DO NOTHING
-RETURNING id, workspace_id, resource_type, resource_id, member_id, added_by, created_at
+RETURNING id, workspace_id, resource_type, resource_id, member_id, added_by, created_at, access
 `
 
 type AddResourceShareParams struct {
@@ -45,6 +45,7 @@ func (q *Queries) AddResourceShare(ctx context.Context, arg AddResourceSharePara
 		&i.MemberID,
 		&i.AddedBy,
 		&i.CreatedAt,
+		&i.Access,
 	)
 	return i, err
 }
@@ -99,7 +100,7 @@ func (q *Queries) DeleteResourceSharesByResource(ctx context.Context, arg Delete
 }
 
 const getResourceShare = `-- name: GetResourceShare :one
-SELECT id, workspace_id, resource_type, resource_id, member_id, added_by, created_at FROM resource_share
+SELECT id, workspace_id, resource_type, resource_id, member_id, added_by, created_at, access FROM resource_share
 WHERE workspace_id = $1 AND resource_type = $2 AND resource_id = $3 AND member_id = $4
 `
 
@@ -126,6 +127,7 @@ func (q *Queries) GetResourceShare(ctx context.Context, arg GetResourceSharePara
 		&i.MemberID,
 		&i.AddedBy,
 		&i.CreatedAt,
+		&i.Access,
 	)
 	return i, err
 }

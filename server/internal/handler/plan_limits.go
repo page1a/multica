@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -65,6 +68,50 @@ func validatePlanLimitsSnapshot(snapshot *protocol.PlanLimitsSnapshot, runtimePr
 		return nil, fmt.Errorf("marshal plan limits: %w", err)
 	}
 	return data, nil
+}
+
+// maxAgentPlanLimitsPerHeartbeat caps how many per-agent snapshots one
+// heartbeat may carry, so a runaway daemon cannot turn its liveness signal into
+// an unbounded write burst. A machine's account-bound set is a handful of seats.
+const maxAgentPlanLimitsPerHeartbeat = 64
+
+// validateAgentPlanLimits normalizes the per-agent snapshots of one heartbeat
+// and keys them by the parsed agent id (DENE-715).
+//
+// Unlike the runtime snapshot, a bad entry here never fails the heartbeat: the
+// heartbeat is also the daemon's liveness signal, and one unusable seat is not
+// worth taking every runtime on that machine offline. Invalid entries are
+// dropped and named in the returned error for the caller to log.
+func validateAgentPlanLimits(snapshots map[string]protocol.PlanLimitsSnapshot, runtimeProvider string) (map[pgtype.UUID][]byte, error) {
+	if len(snapshots) == 0 {
+		return nil, nil
+	}
+	if len(snapshots) > maxAgentPlanLimitsPerHeartbeat {
+		return nil, fmt.Errorf("too many agent plan limits")
+	}
+
+	out := make(map[pgtype.UUID][]byte, len(snapshots))
+	var dropped []string
+	for rawID, snapshot := range snapshots {
+		agentID := strings.TrimSpace(rawID)
+		uuid, err := util.ParseUUID(agentID)
+		if err != nil {
+			dropped = append(dropped, "invalid agent id")
+			continue
+		}
+		entry := snapshot
+		data, err := validatePlanLimitsSnapshot(&entry, runtimeProvider)
+		if err != nil || len(data) == 0 {
+			dropped = append(dropped, agentID)
+			continue
+		}
+		out[uuid] = data
+	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		return out, fmt.Errorf("dropped %d agent plan limits: %s", len(dropped), strings.Join(dropped, ", "))
+	}
+	return out, nil
 }
 
 func validPlanLimitWindowName(name string) bool {

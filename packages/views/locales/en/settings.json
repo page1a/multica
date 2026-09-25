@@ -1801,6 +1801,7 @@
     "confirm": "Apply",
     "saving": "Applying…",
     "preview_loading": "Loading the preview… You cannot apply changes until it is ready.",
+    "save_failed": "Could not change the sharing scope. Try again.",
     "preview_failed": "The preview could not be loaded. Try again before applying changes."
   }
 }

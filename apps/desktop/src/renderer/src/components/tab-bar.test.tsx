@@ -14,6 +14,14 @@ type MockTab = {
   url: string;
   title: string;
   pinned: boolean;
+  groupId?: string | null;
+};
+
+type MockStripGroup = {
+  id: string;
+  name: string;
+  collapsed: boolean;
+  color: "blue";
 };
 
 const state = vi.hoisted(() => ({
@@ -26,8 +34,14 @@ const state = vi.hoisted(() => ({
         { id: "tB", url: "/acme/projects", title: "Projects", pinned: false },
       ] as MockTab[],
     },
-  } as Record<string, { activeTabId: string; tabs: MockTab[] }>,
+  } as Record<
+    string,
+    { activeTabId: string; tabs: MockTab[]; groups?: MockStripGroup[] }
+  >,
   togglePin: vi.fn<(tabId: string) => void>(),
+  createTabGroup: vi.fn<(tabId: string) => string>(),
+  toggleTabGroupCollapsed: vi.fn<(groupId: string) => void>(),
+  addTabToGroup: vi.fn<(tabId: string, groupId: string) => void>(),
   closeTab: vi.fn<(tabId: string) => void>(),
   closeOtherTabs: vi.fn<(tabId: string) => void>(),
   setActiveTab: vi.fn<(tabId: string) => void>(),
@@ -46,6 +60,9 @@ vi.mock("@/stores/tab-store", () => {
       return state.byWorkspace;
     },
     togglePin: state.togglePin,
+    createTabGroup: state.createTabGroup,
+    toggleTabGroupCollapsed: state.toggleTabGroupCollapsed,
+    addTabToGroup: state.addTabToGroup,
     closeTab: state.closeTab,
     closeOtherTabs: state.closeOtherTabs,
     setActiveTab: state.setActiveTab,
@@ -106,6 +123,9 @@ function reset() {
     },
   };
   state.togglePin.mockReset();
+  state.createTabGroup.mockReset();
+  state.toggleTabGroupCollapsed.mockReset();
+  state.addTabToGroup.mockReset();
   state.closeTab.mockReset();
   state.closeOtherTabs.mockReset();
   state.setActiveTab.mockReset();
@@ -580,4 +600,41 @@ describe("TabBar context menu", () => {
     expect(state.closeOtherTabs).toHaveBeenCalledWith("tB");
   });
 
+  it("starts a group from the tab menu and collapses it from the chip", async () => {
+    state.byWorkspace.acme = {
+      activeTabId: "tA",
+      groups: [{ id: "g1", name: "Plan", collapsed: false, color: "blue" }],
+      tabs: [
+        {
+          id: "tA",
+          url: "/acme/issues",
+          title: "Issues",
+          pinned: false,
+          groupId: "g1",
+        },
+        { id: "tB", url: "/acme/projects", title: "Projects", pinned: false },
+      ],
+    };
+
+    const { findByText, getByLabelText, queryByLabelText, rerender } = render(
+      <TabBar />,
+    );
+    expect(getByLabelText("Plan, expanded")).toBeInTheDocument();
+    expect(getByLabelText("Issues")).toBeInTheDocument();
+
+    fireEvent.contextMenu(getByLabelText("Projects"));
+    fireEvent.click(await findByText("New group"));
+    expect(state.createTabGroup).toHaveBeenCalledWith("tB");
+
+    fireEvent.click(getByLabelText("Plan, expanded"));
+    expect(state.toggleTabGroupCollapsed).toHaveBeenCalledWith("g1");
+
+    state.byWorkspace.acme.groups = [
+      { id: "g1", name: "Plan", collapsed: true, color: "blue" },
+    ];
+    rerender(<TabBar />);
+    expect(getByLabelText("Plan, collapsed")).toBeInTheDocument();
+    expect(queryByLabelText("Issues")).toBeNull();
+    expect(getByLabelText("Projects")).toBeInTheDocument();
+  });
 });

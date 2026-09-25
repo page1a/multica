@@ -85,9 +85,18 @@ vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => layout.width < 768,
   useIsCompact: () => layout.width < 1024,
 }));
-vi.mock("@multica/core/paths", () => ({
-  useWorkspacePaths: () => ({ chat: () => "/acme/chat" }),
-}));
+vi.mock("@multica/core/paths", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
+    "@multica/core/paths",
+  );
+  return {
+    ...actual,
+    useWorkspacePaths: () => ({
+      chat: () => "/acme/chat",
+      chatSession: (id: string) => `/acme/chat/${id}`,
+    }),
+  };
+});
 
 // The store mock is REACTIVE like real Zustand: setActiveSession replaces the
 // snapshot and notifies subscribers, and the controller mock subscribes via
@@ -116,6 +125,11 @@ const subscribeToStore = vi.hoisted(() => (cb: () => void) => {
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: mockToastError },
+}));
+
+vi.mock("@multica/core/chat/mutations", () => ({
+  useDismissChatProjectNudge: () => ({ mutate: vi.fn(), isPending: false }),
+  useRegenerateChatQuickActions: () => ({ mutateAsync: vi.fn() }),
 }));
 
 vi.mock("@multica/core/chat", () => ({

@@ -620,7 +620,9 @@
       "resolve_failed": "Failed to resolve thread",
       "unresolve_failed": "Failed to unresolve thread"
     },
-    "align_action": "Align on this first"
+    "align_action": "Align on this first",
+    "trigger_blocked_access_requested": "The agent's owner has been asked to approve this — it starts once they do",
+    "trigger_blocked_short_access_requested": "Waiting for owner approval"
   },
   "reply": {
     "placeholder": "Leave a reply...",
@@ -1192,7 +1194,14 @@
     "record_abandoned_hint": "No issue was created.",
     "assignee_suggestions_loading": "Finding suggested assignees…",
     "assignee_suggestions_failed": "Suggestions are unavailable. You can still confirm, but unassigned rows need a manual choice.",
-    "assignee_unassigned": "Unassigned — you can still confirm and assign it later."
+    "assignee_unassigned": "Unassigned — you can still confirm and assign it later.",
+    "project_will_create": "Will create: {{name}}",
+    "project_create_hint": "This project will be created together with the issues.",
+    "project_use_existing": "Use an existing project",
+    "project_skip": "Don't attach a project",
+    "project_suggestion": "Suggested: {{name}}",
+    "confirm_with_project": "Create the project and {{count}} issues",
+    "project_directory_failed": "The folder was not created, so nothing else was created either."
   },
   "sub_issue_accordion": {
     "count_one": "{{count}} sub-issue",

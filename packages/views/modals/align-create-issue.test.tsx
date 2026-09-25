@@ -1068,6 +1068,9 @@ describe("AlignCreatePanel", () => {
     // The pool the manual face fills is the pool this face renders.
     expect(editor().getAttribute("data-attachments-count")).toBe("1");
 
+    // The start button stays disabled until the runtime list settles. A click
+    // in that window is a no-op, so wait for it to go live first.
+    await waitFor(() => expect(submitButton()).toBeEnabled());
     await userEvent.click(submitButton());
 
     await waitFor(() => expect(mocks.sendChatMessage).toHaveBeenCalledTimes(1));
@@ -1081,6 +1084,9 @@ describe("AlignCreatePanel", () => {
     draftStore.draft.align.request = "no files in here";
     renderPanel();
 
+    // Same window as the referenced-pool case: the button is disabled until
+    // the runtime list arrives, and clicking it then never sends.
+    await waitFor(() => expect(submitButton()).toBeEnabled());
     await userEvent.click(submitButton());
 
     await waitFor(() => expect(mocks.sendChatMessage).toHaveBeenCalledTimes(1));

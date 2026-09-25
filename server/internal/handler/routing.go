@@ -38,10 +38,29 @@ const routingModelListTimeout = 20 * time.Second
 // same moment, which is exactly the race the conditional writes and the
 // one-comment-per-kind index exist to absorb.
 func (h *Handler) RouteIssueAsync(r *http.Request, workspaceID, issueID string) {
-	if h.Routing == nil || workspaceID == "" || issueID == "" {
+	h.routeIssueDetached(logger.RequestAttrs(r), workspaceID, issueID)
+}
+
+// routeIssueDetached runs one routing pass off the request that caused it.
+//
+// Status changes call it directly. A run that ends also calls it: the
+// executor usually moves the ticket to in_review while its own run is still
+// open, and the in-review row refuses to start the reviewer until that run
+// is gone. Both callers share this function so a duplicate — the status hook
+// and the completion callback racing — is one decision, made twice, not two
+// implementations.
+func (h *Handler) routeIssueDetached(attrs []any, workspaceID, issueID string) {
+	if workspaceID == "" || issueID == "" {
 		return
 	}
-	attrs := logger.RequestAttrs(r)
+	if h.Routing == nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), routeTimeout)
+			defer cancel()
+			h.ensureAcceptanceRunning(ctx, workspaceID, issueID)
+		}()
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), routeTimeout)
 		defer cancel()
@@ -49,16 +68,44 @@ func (h *Handler) RouteIssueAsync(r *http.Request, workspaceID, issueID string) 
 		if err != nil {
 			slog.Warn("routing pass failed",
 				append(attrs, "workspace_id", workspaceID, "issue_id", issueID, "error", err)...)
+		} else if outcome.Action != routing.ActionSkipped && outcome.Action != routing.ActionNoop {
+			slog.Info("routing pass",
+				append(attrs,
+					"workspace_id", workspaceID,
+					"issue_id", issueID,
+					"state", string(outcome.State),
+					"action", string(outcome.Action),
+					"mentioned", outcome.Mentioned)...)
+		}
+		h.ensureAcceptanceRunning(ctx, workspaceID, issueID)
+	}()
+}
+
+// RouteGroupNodeAsync is RouteIssueAsync for an issue an alignment confirm
+// just created as part of a group — see routing.RouteGroupNode for what it
+// does differently. Detached for the same reason: a group is many model calls,
+// and none of them belongs on the confirm's latency path.
+func (h *Handler) RouteGroupNodeAsync(r *http.Request, workspaceID, issueID string) {
+	if h.Routing == nil || workspaceID == "" || issueID == "" {
+		return
+	}
+	attrs := logger.RequestAttrs(r)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), routeTimeout)
+		defer cancel()
+		outcome, err := h.Routing.RouteGroupNode(ctx, workspaceID, issueID)
+		if err != nil {
+			slog.Warn("group routing pass failed",
+				append(attrs, "workspace_id", workspaceID, "issue_id", issueID, "error", err)...)
 			return
 		}
 		if outcome.Action == routing.ActionSkipped || outcome.Action == routing.ActionNoop {
 			return
 		}
-		slog.Info("routing pass",
+		slog.Info("group routing pass",
 			append(attrs,
 				"workspace_id", workspaceID,
 				"issue_id", issueID,
-				"state", string(outcome.State),
 				"action", string(outcome.Action),
 				"mentioned", outcome.Mentioned)...)
 	}()

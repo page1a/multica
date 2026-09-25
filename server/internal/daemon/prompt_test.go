@@ -39,6 +39,10 @@ func TestBuildQuickCreatePromptRules(t *testing.T) {
 		// hard rules
 		"never invent requirements",
 		"never reduce multi-sentence input",
+		// title shape is the brief's Title Style section; this line only
+		// routes the run at it and must not revive the old free-form summary.
+		"Follow `## Title Style`",
+		"omit the project segment of the title",
 		// attachment boundary (MUL-5696): the ban is scoped to URLs, and file
 		// delivery defers to the quick-create ## Output section — a blanket
 		// "do NOT pass --attachment" contradicted it (it names --attachment
@@ -222,6 +226,7 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 		"--project \"" + projectID + "\"",
 		"Web App",
 		"modal selection is authoritative",
+		`This issue's project name is "Web App"`,
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(out, s) {
@@ -1507,6 +1512,26 @@ func TestBuildPromptInterruptedRetryContinuesSession(t *testing.T) {
 	}
 }
 
+func TestBuildPromptTimeLimitRetryClosesOutAndSplits(t *testing.T) {
+	task := Task{
+		IssueID:                    "issue-limit-1",
+		TriggerCommentID:           "trigger-limit-1",
+		TriggerCommentContent:      "the original request",
+		PriorSessionID:             "sess-limit",
+		ContinueInterruptedSession: true,
+		ContinueAfterTimeLimit:     true,
+	}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{"workspace task time limit", "same session", "same working directory", "close out the progress", "split whatever is still unfinished"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("time-limit continue prompt missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "the original request") {
+		t.Fatalf("time-limit continue must not re-send the original request:\n%s", out)
+	}
+}
+
 func TestBuildPromptInterruptedRetryFallsBackWhenSessionMissing(t *testing.T) {
 	task := Task{
 		IssueID:                    "issue-retry-2",
@@ -2174,6 +2199,18 @@ func TestWorktreeReplayConflictBlock(t *testing.T) {
 	})
 }
 
+func TestReplaySkippedBlockNamesTheSnapshot(t *testing.T) {
+	t.Parallel()
+	task := Task{IssueID: "issue-1", IssueIdentifier: "DENE-814"}
+	out := BuildPrompt(task, "claude", WithReplaySkipped("Replay of local-directory snapshot abcdef12 (user HEAD 1234abcd when it was taken) onto branch agent/j/dene-814 was skipped."))
+	if !strings.Contains(out, "## Local edits were not replayed") || !strings.Contains(out, "abcdef12") {
+		t.Fatalf("skip notice missing from the prompt:\n%s", out)
+	}
+	if strings.Contains(BuildPrompt(task, "claude"), "Local edits were not replayed") {
+		t.Fatal("skip notice leaked into a normal prompt")
+	}
+}
+
 // TestSharedWorkspaceBlock covers the notice a shared-mode task gets. It is a
 // different message from the lock-exempt one: here nobody holds the lock, by
 // the owner's decision, and the guidance is about the workspace's own
@@ -2345,5 +2382,28 @@ func TestBuildPromptIssueContextSnapshotAndBudget(t *testing.T) {
 	unicodePrompt := BuildPrompt(Task{IssueID: "issue-1", IssueTitle: "中文", IssueDescription: strings.Repeat("中文评论", maxIssueContextBytes), IssueContextGeneratedAt: "now"}, "claude")
 	if !utf8.ValidString(unicodePrompt) {
 		t.Fatal("bounded issue context must remain valid UTF-8")
+	}
+}
+
+// DENE-812: a parent's run is told it coordinates, and sees who holds each
+// sub-issue — an unassigned one included — even under a long description.
+func TestBuildPromptParentIssueCarriesCoordinatorRole(t *testing.T) {
+	subs := []SubIssueRef{
+		{ID: "c1", Identifier: "DENE-2", Title: "后端", Status: "todo", Stage: 1, AssigneeType: "agent", AssigneeName: "孙悟天"},
+		{ID: "c2", Identifier: "DENE-3", Title: "前端", Status: "backlog", Stage: 2},
+	}
+	out := BuildPrompt(Task{IssueID: "issue-1", IssueTitle: "Plan", IssueDescription: strings.Repeat("x", maxIssueContextBytes*2), IssueContextGeneratedAt: "now", IssueSubIssues: subs}, "claude")
+	for _, want := range []string{
+		"Coordinator role: this issue is the parent of 2 sub-issue(s)",
+		"Do not implement a sub-issue's deliverable here",
+		`- DENE-2 "后端" (todo, stage 1, agent 孙悟天)`,
+		`- DENE-3 "前端" (backlog, stage 2, UNASSIGNED)`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prompt missing %q", want)
+		}
+	}
+	if strings.Contains(BuildPrompt(Task{IssueID: "issue-1", IssueTitle: "Leaf", IssueContextGeneratedAt: "now"}, "claude"), "Coordinator role") {
+		t.Fatal("a leaf issue must not be told it coordinates")
 	}
 }

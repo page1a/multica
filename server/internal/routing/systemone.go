@@ -168,7 +168,7 @@ const (
 const (
 	executorInstruction = "Which seat tier should DO the work on this ticket? Follow policy_prompt and routing_policy in the state. Default to medium or strong. Use weak only when the work is simple, explicit, and low-risk. Use strong or strongest only when it is complex, vague, cross-module, or costly to get wrong. Answer with a tier only: do not change status and do not take an action. A seat whose availability is not available or unknown is not a candidate. unknown latency, quota, or availability is missing data: do not treat it as zero and do not treat it as a reason to select or reject the seat. Provider quota never decides whether a seat is alive."
 	reviewerInstruction = "Does this ticket need a separate acceptance pass after the work is done, and if so by whom?"
-	reviewerTierInstr   = "Assuming another AI seat checks this work, which tier should check it? Reviewing is a judgement task: it is normally at least as demanding as doing the work."
+	reviewerTierInstr   = "Assuming another AI seat checks this work, which tier should check it? Follow policy_prompt and routing_policy in the state. Prefer the same tier as the work, on a different model family. Do not pick a higher tier only because the work is being checked. Use strongest only when policy_prompt allows it and the work itself needs that tier. Answer with a tier only: do not change status and do not take an action."
 	causeInstruction    = "This ticket is blocked. What is the most likely reason it cannot move?"
 	suggestedInstr      = "If the assigned seat is not strong enough, which tier should take this ticket instead?"
 	staleInstruction    = "This ticket has been sitting in review with nothing happening on it. Looking ONLY at review_remarks — what the reviewer themselves said on the ticket — has the reviewer already accepted this work?"
@@ -178,7 +178,7 @@ const (
 // only a key and a Chinese label, which is an identifier rather than a rubric;
 // a Choice answer is only as good as the descriptions of its options.
 var tierCriteria = map[string]string{
-	"strongest": "The strongest seat. Use only for work that is complex, vague, cross-module, architectural, security- or money-sensitive, or costly to get wrong.",
+	"strongest": "The strongest seat. Follow policy_prompt: use this tier only when that text allows it. Do not pick it merely because the work is cross-module or is being reviewed.",
 	"strong":    "A strong seat. A default for ordinary work that needs judgement: feature work, non-trivial bug fixes, anything spanning more than one module.",
 	"medium":    "A mid seat. A default for ordinary, well-specified work with a clear shape and a small blast radius.",
 	"weak":      "The weakest seat. Use only for simple, explicit, low-risk work: renames, copy edits, single-line fixes.",

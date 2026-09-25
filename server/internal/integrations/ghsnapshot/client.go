@@ -269,6 +269,50 @@ func (c *Client) graphQL(ctx context.Context, installationID int64, query string
 	return envelope.Data, nil
 }
 
+// ErrNotMergeable is GitHub refusing the merge because of a conflict, a
+// failing check, or a branch rule. Callers turn that into a structured block.
+var ErrNotMergeable = errors.New("github pull request is not mergeable")
+
+// MergePullRequest squash-merges one open pull request with the installation
+// token. 405 and 409 are not mergeable; other statuses are transport failures.
+func (c *Client) MergePullRequest(ctx context.Context, installationID int64, owner, repo string, number int) error {
+	if !c.Enabled() {
+		return errors.New("github app is not configured")
+	}
+	token, err := c.installationToken(ctx, installationID)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]string{"merge_method": "squash"})
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", strings.TrimRight(c.apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
+		return ErrNotMergeable
+	case http.StatusForbidden, http.StatusTooManyRequests:
+		return rateLimitFromResponse(resp, c.now())
+	default:
+		return fmt.Errorf("github merge pull request: unexpected status %d", resp.StatusCode)
+	}
+}
+
 // rateLimitFromResponse builds a RateLimitError from GitHub's throttling
 // headers. Retry-After (seconds) wins; then X-RateLimit-Reset (unix seconds);
 // otherwise a conservative 60s. The wait is clamped to [1s, 5m].

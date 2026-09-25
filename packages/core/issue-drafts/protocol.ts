@@ -99,7 +99,37 @@ export function parseIssueDraftBlock(content: string): IssueDraftPatch | null {
   }
   const children = parseIssueDraftChildren(parsed.children);
   if (children !== undefined) patch.children = children;
+  // `project_id` is deliberately not read. The carrier names a project or
+  // proposes a new one; the preview is what turns that into a real id.
+  const proposal = parseIssueDraftProject(parsed.project);
+  if (proposal) patch.project_proposal = proposal;
   return patch;
+}
+
+/**
+ * The carrier's project judgement. Anything that is not a name with one of
+ * the two actions is dropped, including an id a model invented under some
+ * other key — this function only reads `action` and `name`.
+ */
+function parseIssueDraftProject(raw: unknown): IssueDraftPayload["project_proposal"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const action = record.action;
+  const name = record.name;
+  if (action !== "existing" && action !== "create") return undefined;
+  if (typeof name !== "string" || name.trim().length === 0) return undefined;
+  const icon = record.icon;
+  const description = record.description;
+  return {
+    action,
+    name: name.trim(),
+    ...(typeof icon === "string" && icon.trim().length > 0
+      ? { icon: icon.trim() }
+      : {}),
+    ...(typeof description === "string" && description.trim().length > 0
+      ? { description: description.trim() }
+      : {}),
+  };
 }
 
 /**
@@ -299,6 +329,7 @@ export function issueDraftPendingQuestion(
 export function encodeIssueDraftInput(
   request: string,
   draft: IssueDraftPayload,
+  knownProjects?: readonly string[],
 ): string {
   // The group travels with the draft for the same reason the flat fields do:
   // the carrier is told to preserve what it is given, and its instructions say
@@ -312,16 +343,35 @@ export function encodeIssueDraftInput(
     stage: child.stage ?? null,
     assignee_hint: child.assignee_hint ?? "",
   }));
+  const proposal = draft.project_proposal;
   return (
     DRAFT_INPUT_PREFIX +
     JSON.stringify({
       user_request: request,
+      ...(knownProjects && knownProjects.length > 0
+        ? { known_projects: [...knownProjects] }
+        : {}),
       current_draft: {
         title: draft.title,
         description: draft.description,
         status: draft.status,
         priority: draft.priority,
         ...(children.length > 0 ? { children } : {}),
+        // The proposal travels as `project`, the same key the carrier writes
+        // back. The id the person picked does not: the carrier must not see
+        // one, and must not be able to invent one.
+        ...(proposal && proposal.name.trim().length > 0
+          ? {
+              project: {
+                action: proposal.action,
+                name: proposal.name,
+                ...(proposal.icon ? { icon: proposal.icon } : {}),
+                ...(proposal.description
+                  ? { description: proposal.description }
+                  : {}),
+              },
+            }
+          : {}),
       },
     })
   );
@@ -366,6 +416,12 @@ export function mergeIssueDraftPayload(
     ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
     ...(patch.children !== undefined
       ? { children: mergeIssueDraftChildren(current.children, patch.children) }
+      : {}),
+    // The proposal is the carrier's judgement this turn, replaced whole, the
+    // way children are. The person's project id and their explicit choice are
+    // not in the patch, so they survive underneath it.
+    ...(patch.project_proposal !== undefined
+      ? { project_proposal: patch.project_proposal }
       : {}),
   };
 }

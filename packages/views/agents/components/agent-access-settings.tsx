@@ -7,6 +7,7 @@ import {
 } from "../../settings/components/settings-layout";
 import { useT } from "../../i18n";
 import { AccessPicker } from "./inspector/access-picker";
+import { AgentAccessPasses } from "./agent-access-passes";
 
 export function AgentAccessSettings({
   agent,
@@ -22,8 +23,10 @@ export function AgentAccessSettings({
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
 }) {
   const { t } = useT("agents");
+  const canEdit = currentUserId !== null && agent.owner_id === currentUserId;
 
   return (
+    <>
     <SettingsSection
       title={t(($) => $.access.section_title)}
     >
@@ -34,9 +37,7 @@ export function AgentAccessSettings({
           visibility={agent.visibility}
           members={members}
           ownerId={agent.owner_id}
-          canEdit={
-            currentUserId !== null && agent.owner_id === currentUserId
-          }
+          canEdit={canEdit}
           hasComposioAllowlist={
             (agent.composio_toolkit_allowlist ?? []).length > 0
           }
@@ -45,5 +46,12 @@ export function AgentAccessSettings({
         />
       </SettingsCard>
     </SettingsSection>
+    <AgentAccessPasses
+      agent={agent}
+      members={members}
+      canEdit={canEdit}
+      onUpdate={onUpdate}
+    />
+    </>
   );
 }

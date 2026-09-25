@@ -44,10 +44,33 @@ type IssueGroupNode struct {
 // follow-up round in the alignment is not a reason to overwrite that. Which
 // nodes those are is the caller's decision (the draft handler derives it from
 // node identity); by the time CreateGroup runs, Nodes holds inserts only.
+// IssueGroupProjectResource is one resource attached to the project this
+// group creates. ProjectID is filled in once the project row exists.
+type IssueGroupProjectResource struct {
+	ResourceType string
+	ResourceRef  []byte
+	Label        pgtype.Text
+	Position     int32
+	CreatedBy    pgtype.UUID
+}
+
+// IssueGroupProject is a project created in the same transaction as the
+// group. Either the project, its resources and every issue commit, or none
+// of them do. A directory on disk is not part of this transaction — the
+// caller creates it first and deletes it if this call fails.
+type IssueGroupProject struct {
+	Create    db.CreateProjectParams
+	Resources []IssueGroupProjectResource
+}
+
 type IssueGroupParams struct {
 	Nodes []IssueGroupNode
 	// RootIssueID, when valid, is the already-committed root of this group.
 	RootIssueID pgtype.UUID
+	// Project, when set on a first confirm, is inserted before the issues and
+	// becomes every node's project. Ignored on a continuation round: the root
+	// already exists and a second project would not be the one it belongs to.
+	Project *IssueGroupProject
 }
 
 // IssueGroupResult is the committed group. Issues[0] is the root — unless the
@@ -100,11 +123,40 @@ func (s *IssueService) CreateGroup(ctx context.Context, group IssueGroupParams) 
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 
+	var createdProjectID pgtype.UUID
+	if group.Project != nil && !group.RootIssueID.Valid {
+		project, err := qtx.CreateProject(ctx, group.Project.Create)
+		if err != nil {
+			return IssueGroupResult{}, fmt.Errorf("create project: %w", err)
+		}
+		createdProjectID = project.ID
+		for i, res := range group.Project.Resources {
+			if _, err := qtx.CreateProjectResource(ctx, db.CreateProjectResourceParams{
+				ProjectID:    project.ID,
+				WorkspaceID:  project.WorkspaceID,
+				ResourceType: res.ResourceType,
+				ResourceRef:  res.ResourceRef,
+				Label:        res.Label,
+				Position:     res.Position,
+				CreatedBy:    res.CreatedBy,
+			}); err != nil {
+				return IssueGroupResult{}, fmt.Errorf("attach project resource %d: %w", i, err)
+			}
+		}
+	}
+
 	issues := make([]db.Issue, 0, len(group.Nodes))
 	labels := make([][]db.IssueLabel, 0, len(group.Nodes))
 	tasks := make([]db.AgentTaskQueue, 0, len(group.Nodes))
 	for i, node := range group.Nodes {
 		p := node.Params
+		// The project row was inserted in this transaction. The root takes it
+		// explicitly; children with no project of their own inherit it from
+		// the parent lookup below.
+		if createdProjectID.Valid && i == 0 {
+			p.ProjectID = createdProjectID
+			p.ProjectPinned = true
+		}
 		switch {
 		case group.RootIssueID.Valid:
 			// A continuation round: the root is already committed, so nothing

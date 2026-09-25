@@ -2,27 +2,18 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestChannelOutboundMessageDownRefusesExplicitChannelChat(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	schema := "channel_route_down_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()

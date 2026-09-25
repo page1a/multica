@@ -48,6 +48,28 @@ const CODEX: PlanLimitsSnapshot = {
   ],
 };
 
+// The daemon's snapshot for an agent bound to a numbered Claude account
+// (DENE-715). Deliberately unlike CODEX so a test can tell the two apart.
+const ACCOUNT2: PlanLimitsSnapshot = {
+  provider: "claude",
+  status: "available",
+  observed_at: NOW / 1000 + 5,
+  windows: [
+    {
+      name: "five_hour",
+      used_percent: 80,
+      window_minutes: 300,
+      resets_at: NOW / 1000 + 30 * 60,
+    },
+    {
+      name: "seven_day",
+      used_percent: 40,
+      window_minutes: 10_080,
+      resets_at: NOW / 1000 + 3 * 24 * 60 * 60,
+    },
+  ],
+};
+
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     id: "rt-1",
@@ -103,6 +125,35 @@ describe("AgentQuotaCapsule", () => {
     expect(
       screen.getByText(enAgents.quota.resets_in.replace("{{when}}", "2h")),
     ).toBeInTheDocument();
+  });
+
+  it("shows the agent's own account, not its runtime's default seat", () => {
+    // The runtime row carries the daemon-default account. An agent switched to
+    // a numbered account must read its own snapshot instead (DENE-715).
+    renderQuota(
+      <AgentQuotaCapsule
+        agentId="agent-1"
+        runtime={makeRuntime({ plan_limits: CODEX })}
+        planLimits={ACCOUNT2}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByText("5h 80% · 7d 40%")).toBeInTheDocument();
+    expect(screen.queryByText("5h 25% · 7d 3%")).toBeNull();
+  });
+
+  it("keeps the runtime's account for an agent with no binding", () => {
+    renderQuota(
+      <AgentQuotaCapsule
+        agentId="agent-1"
+        runtime={makeRuntime({ plan_limits: CODEX })}
+        planLimits={null}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByText("5h 25% · 7d 3%")).toBeInTheDocument();
   });
 
   it("renders a DeepSeek remaining balance instead of 30d tokens", () => {
@@ -225,6 +276,26 @@ describe("AgentQuotaMeter", () => {
     expect(
       screen.getByText(enAgents.quota.used_percent.replace("{{percent}}", "25")),
     ).toBeInTheDocument();
+  });
+
+  it("draws the agent's own account bars, not the runtime's default seat", () => {
+    renderQuota(
+      <AgentQuotaMeter
+        agentId="agent-1"
+        runtime={makeRuntime({ plan_limits: CODEX })}
+        planLimits={ACCOUNT2}
+        now={NOW}
+      />,
+    );
+
+    expect(
+      screen.getByText(enAgents.quota.used_percent.replace("{{percent}}", "80")),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        enAgents.quota.used_percent.replace("{{percent}}", "25"),
+      ),
+    ).toBeNull();
   });
 
   it("renders 30d token and cost metrics for metered runtimes", () => {

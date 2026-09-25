@@ -2,11 +2,10 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // TestIssuePropertyActorRollbackFailsClosed pins the one behaviour a production
@@ -15,17 +14,8 @@ import (
 // issues key their values by definition id — so a silent delete orphans every
 // value and the up migration cannot restore it.
 func TestIssuePropertyActorRollbackFailsClosed(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

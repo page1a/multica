@@ -124,3 +124,52 @@ describe("AgentListToolbar grouping", () => {
     expect(onGroupingChange).toHaveBeenCalledWith("squad");
   });
 });
+
+describe("AgentListToolbar model facet", () => {
+  // Regression (DENE-708): the facet label is display text, the facet VALUE is
+  // the stored `agent.model`. Decoding the value too would merge two distinct
+  // seat strings into one facet and filter on a string no agent has.
+  // Canonical decoding matrix: `provider-seat-model.test.ts`.
+  it("labels a provider-preset seat decoded but still filters on the raw string", () => {
+    const onToggleFilter = vi.fn();
+    const row = makeRow("a-1", "Alpha");
+    row.agent.model = "deepseek-official/deepseek-v4%2Fflash";
+
+    renderWithI18n(
+      <AgentListToolbar
+        scope="all"
+        onScopeChange={vi.fn()}
+        scopeCounts={{ mine: 0, all: 1, archived: 0 }}
+        search=""
+        onSearchChange={vi.fn()}
+        filters={EMPTY_AGENT_FILTERS}
+        onToggleFilter={onToggleFilter}
+        onClearFilters={vi.fn()}
+        grouping="none"
+        onGroupingChange={vi.fn()}
+        sortField="name"
+        sortDirection="asc"
+        onSortFieldChange={vi.fn()}
+        onSortDirectionChange={vi.fn()}
+        hiddenColumns={[]}
+        onToggleColumn={vi.fn()}
+        allRows={[row]}
+        members={[]}
+        squads={[]}
+        visibleCount={1}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Filter/ }));
+    fireEvent.click(screen.getByText("Model"));
+
+    const option = screen.getByText("deepseek-official \u00b7 deepseek-v4/flash");
+    expect(option).toBeInTheDocument();
+
+    fireEvent.click(option);
+    expect(onToggleFilter).toHaveBeenCalledWith(
+      "models",
+      "deepseek-official/deepseek-v4%2Fflash",
+    );
+  });
+});

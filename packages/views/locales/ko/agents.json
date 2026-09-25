@@ -212,11 +212,6 @@
     "assign_work": "작업 할당",
     "more_actions_aria": "에이전트 작업",
     "updated": "{{when}} 업데이트됨",
-    "switchable_models_label": "전환 가능한 모델",
-    "switchable_role_default": "기본",
-    "switchable_role_fallback": "대체",
-    "switchable_role_batch": "배치용",
-    "switchable_models_edit": "편집",
     "accounts_entry": "계정 및 로그인"
   },
   "inspector": {
@@ -241,11 +236,10 @@
     "prop_concurrency": "동시 실행",
     "prop_work_enabled": "작업 수락",
     "prop_work_enabled_hint": "끄면 이 좌석은 목록에 남지만 자동 배정 대상이 되지 않고, 할당해도 깨어나지 않으며, 새 실행도 받지 않습니다. 이미 실행 중인 작업은 멈추지 않습니다.",
+    "prop_work_pause_balance": "플랫폼이 일시 중지함: 계정 잔액이 소진되었습니다(402). 저절로 복구되지 않습니다. 충전하거나 계정을 바꾼 뒤 여기를 다시 켜세요. 이미 다른 좌석으로 넘어간 티켓은 돌아오지 않습니다.",
+    "prop_work_pause_quota": "플랫폼이 일시 중지함: 모델 할당량이 소진되었습니다. 할당량이 초기화되면 자동으로 다시 켜집니다.",
     "prop_auto_retry": "자동 재시도",
     "prop_auto_retry_hint": "끄면 용량 부족·네트워크 오류 같은 실패가 자동 재시도되지 않고 바로 표시됩니다. 수동으로 다시 실행할 수는 있습니다.",
-    "prop_switchable_models": "전환 가능한 모델",
-    "prop_switchable_models_hint_on": "이 에이전트는 모델 구성을 기록합니다. 기본 모델, 순서가 있는 대체 체인, 배치 작업에 빌려 쓸 모델입니다. 표시 전용이며 실행은 항상 위의 모델로 합니다.",
-    "prop_switchable_models_hint_off": "끄면 단일 모델입니다. 위의 모델만 표시합니다. 대체 체인이나 배치용 모델을 기록하려면 켜세요.",
     "prop_runtime_inherit": "베이스 역할 런타임 따르기",
     "prop_runtime_inherit_hint_on": "런타임, 모델, 추론 수준, 속도는 베이스 역할의 것이며 함께 바뀝니다. 끄면 여기서 따로 설정할 수 있습니다.",
     "prop_runtime_inherit_hint_off": "이 특화는 자체 런타임, 모델, 추론 수준, 속도를 사용합니다. 켜면 다시 베이스 역할을 따릅니다.",
@@ -436,16 +430,6 @@
     "remove": "추천 {{number}} 삭제",
     "preview_label": "새 채팅 미리보기",
     "preview_defaults": "지금은 기본 예시입니다. 위에서 하나를 추가하면 세 개 모두 교체됩니다."
-  },
-  "switchable_models": {
-    "add": "모델 추가",
-    "model_label": "{{number}}번째 모델 ID",
-    "model_placeholder": "claude-opus-5",
-    "role_label": "{{number}}번째 모델의 역할",
-    "note_label": "{{number}}번째 모델의 메모",
-    "note_placeholder": "언제 쓰는 모델인지",
-    "remove": "{{number}}번째 모델 제거",
-    "blank_ignored": "모델 ID가 비어 있는 행은 저장되지 않습니다."
   },
   "tab_body": {
     "common": {
@@ -966,7 +950,29 @@
     "public_group": "공개 액세스",
     "owner_only_readonly": "이 에이전트를 실행할 수 있는 대상은 소유자만 변경할 수 있습니다.",
     "members_empty": "선택할 워크스페이스 구성원이 없습니다",
-    "composio_switch_hint": "참고 — 이 에이전트에는 Composio 앱이 활성화되어 있습니다. 공유하면 접근 권한이 있는 모든 사람이 이 에이전트를 통해 해당 앱을 사용할 수 있습니다."
+    "composio_switch_hint": "참고 — 이 에이전트에는 Composio 앱이 활성화되어 있습니다. 공유하면 접근 권한이 있는 모든 사람이 이 에이전트를 통해 해당 앱을 사용할 수 있습니다.",
+    "borrow_section_title": "대여",
+    "doorbell_title": "초인종",
+    "doorbell_desc": "위 목록에 없는 사람이 이 에이전트를 멘션하거나 할당하면 거절하는 대신 먼저 나에게 묻습니다. 승인된 작업은 내 컴퓨터에서 실행됩니다.",
+    "doorbell_save_failed": "초인종 설정을 저장하지 못했습니다",
+    "pass_issue_title": "패스 발급",
+    "pass_issue_desc": "한 멤버가 기한까지 이 에이전트를 사용하도록 허용합니다. 기한이 지나면 자동으로 만료됩니다.",
+    "pass_member_label": "멤버",
+    "pass_member_placeholder": "멤버 선택",
+    "pass_member_required": "먼저 멤버를 선택하세요",
+    "pass_2h": "2시간",
+    "pass_today": "오늘까지",
+    "pass_custom": "직접 지정…",
+    "pass_issue_action": "패스 발급",
+    "pass_issued": "{{name}}님에게 {{until}}까지 유효한 패스를 발급했습니다",
+    "pass_issue_failed": "패스를 발급하지 못했습니다",
+    "pass_expiry_invalid": "미래의 만료 시각을 선택하세요",
+    "pass_active_title": "유효한 패스",
+    "pass_active_empty": "유효한 패스가 없습니다",
+    "pass_until": "{{until}}까지",
+    "pass_revoke": "취소",
+    "pass_revoked": "패스를 취소했습니다",
+    "pass_revoke_failed": "패스를 취소하지 못했습니다"
   },
   "profile_card": {
     "unavailable": "에이전트를 사용할 수 없습니다",

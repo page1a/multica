@@ -2,8 +2,17 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAuthStore } from "../auth";
 import { pinKeys } from "./queries";
+import { chatKeys } from "../chat/queries";
 import { useWorkspaceId } from "../hooks";
 import type { PinnedItem, PinnedItemType } from "../types";
+
+/**
+ * Drag payload type a Chat list row carries so the sidebar's pinned group can
+ * accept it as a native HTML drop. Native DnD (not dnd-kit) because the list
+ * and the sidebar live in separate trees; a MIME of our own keeps a stray
+ * text drop from being mistaken for a chat.
+ */
+export const CHAT_PIN_DRAG_TYPE = "application/x-multica-chat-session";
 
 export function useCreatePin() {
   const qc = useQueryClient();
@@ -17,8 +26,10 @@ export function useCreatePin() {
         old ? [...old, newPin] : [newPin],
       );
     },
-    onSettled: () => {
+    onSettled: (_data, _err, vars) => {
       qc.invalidateQueries({ queryKey: pinKeys.list(wsId, userId) });
+      // The Chat list sorts on the same pin (DENE-866).
+      if (vars.item_type === "chat") qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
     },
   });
 }
@@ -41,8 +52,9 @@ export function useDeletePin() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(pinKeys.list(wsId, userId), ctx.prev);
     },
-    onSettled: () => {
+    onSettled: (_data, _err, vars) => {
       qc.invalidateQueries({ queryKey: pinKeys.list(wsId, userId) });
+      if (vars.itemType === "chat") qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
     },
   });
 }

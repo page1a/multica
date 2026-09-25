@@ -7,6 +7,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/internal/titling"
 )
 
 // This file holds the runtime brief assembler — the post-MUL-3560 path
@@ -390,6 +391,15 @@ func writeIssueBodyFormatting(b *strings.Builder) {
 	b.WriteString("An issue title already serves as its H1. By default, do not add a Markdown H1 (`# ...`) to an issue body or description; start with prose or `##` subheadings. Only add an H1 when the user specifically requests one.\n\n")
 }
 
+// writeTitleStyle emits the shared title convention. Every kind can author
+// an issue title (chat on request, quick-create always, autopilot when its
+// instructions say so, issue runs when they open a sub-issue), so the
+// section is not gated. The words live in titling; this writer only routes
+// them into the brief.
+func writeTitleStyle(b *strings.Builder) {
+	b.WriteString(titling.IssueTitleBriefSection)
+}
+
 // commentReceiptRule picks the receipt mode for a posting command. It trails
 // the file-first guardrail in both OS variants of `## Comment Formatting`:
 // the guardrail is the section's correctness red line (a body mangled by the
@@ -687,7 +697,8 @@ func writeWorkflowChat(b *strings.Builder) {
 	b.WriteString("- If asked about the workspace, use `multica workspace get --output json`\n")
 	b.WriteString("- If asked to perform actions (create issues, update status, etc.), use the appropriate CLI commands\n")
 	b.WriteString("- If the task requires code changes, use `multica repo checkout <url>` to get the code first. Use `--ref <branch-or-sha>` when you need an exact revision\n")
-	b.WriteString("- Keep responses concise and direct\n\n")
+	b.WriteString("- Keep responses concise and direct\n")
+	b.WriteString("- When the user hands you another chat to take over — a session link or id, often phrased \"接管这个：<url>\" — read it before acting with `multica chat history --session <url-or-id> --output json`. You receive a short summary plus the latest messages, not the full transcript. Page older messages with `--before <next_cursor>` from the previous response. The read works only for a session in this workspace that this person is allowed to open; anyone outside the workspace gets nothing. Do the read silently, then continue the work from what you found. `multica chat thread --session <url-or-id>` reads the same transcript.\n\n")
 }
 
 // writeWorkflowQuickCreate emits the quick-create workflow's hard
@@ -852,9 +863,9 @@ func writeWorkflowIssue(b *strings.Builder, ctx TaskContextForEnv) {
 
 	b.WriteString("**Issue status — write the state the issue is in, whenever it changes** (skip any status call your Agent Identity forbids)\n\n")
 	b.WriteString("Status reflects the state the ISSUE is in, not your run's lifecycle — keep it true at every point in the turn, not only at checkpoints: write the new value the moment your work changes it, mid-turn included. Write only when the new value differs from the current one, whoever the assignee is:\n\n")
-	b.WriteString("- You delivered what the issue itself asks for and it awaits acceptance → `in_review`. This acceptance state belongs only to a top-level issue: its reviewer checks the parent together with the complete child-issue tree. A sub-issue is execution-only — do not fill or trigger a reviewer for it, and do not move it to `in_review`; finish the child through the close protocol so the parent barrier can account for it. `done` stays human.\n")
+	b.WriteString("- You delivered what the issue itself asks for and it awaits acceptance → `in_review`. This acceptance state belongs only to a top-level issue: its reviewer checks the parent together with the complete child-issue tree. A sub-issue is execution-only — do not fill or trigger a reviewer for it, and do not move it to `in_review`; finish the child through the close protocol so the parent barrier can account for it. When acceptance passes, the acceptance seat posts `multica issue comment add <id> --verdict pass` and the platform merges the open linked PR and sets `done` (a merge it cannot make turns into a structured `blocked`); pass when the checks this change owns are green and the ticket does not explicitly name a person and a decision still waiting on them (`close.conclusion=awaiting_human`). A check already red on the base branch is not that wait, and neither is a routing note that says 需要人拍板. A sentence that says 通过 is not a verdict. Do not leave a passed ticket in `in_review` for a person to click merge.\n")
 	b.WriteString("- The issue's work continues beyond this turn — you dispatched sub-issues, or delivered one part with more underway → `in_progress`.\n")
-	b.WriteString("- You cannot proceed without something you are missing → `blocked`, and post a comment explaining the blocker unless your Agent Identity forbids issue comments.\n")
+	b.WriteString("- You cannot proceed without something you are missing → `blocked`, with what it waits on in that same `multica issue status` call (`--blocked-by <DENE-N>`, `--wake-at <RFC3339>`, `--wait-condition` with `--wait-timeout`, or `--needs-human <member uuid>` — the server rejects an agent's `blocked` without one), and post a comment explaining the blocker unless your Agent Identity forbids issue comments.\n")
 	if ctx.IsSquadLeader {
 		b.WriteString("- Squad leader: dispatching members is not delivery — a dispatch turn leaves the parent `in_progress`, and it moves to `in_review` only on the later turn (a member update or stage-barrier re-trigger) where you confirm the overall goal is met.\n")
 	}
@@ -1104,6 +1115,7 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 //	----------------------+---------+--------+-----------+--------------+------
 //	Available Commands    |   full  |  full  |   full    |   minimal    | full
 //	Issue Body Formatting |    ✓    |   ✓    |     ✓     |      ✓       |  ✓
+//	Title Style           |    ✓    |   ✓    |     ✓     |      ✓       |  ✓
 //	Comment Formatting    |    ✓    |   ✓    |     —     |      —       |  —
 //	Repositories          |    △    |   △    |     △     |      —       |  △
 //	Project Context       |    △    |   △    |     △     |      △       |  △
@@ -1138,6 +1150,7 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeAvailableCommands(&b, ctx)
 	}
 	writeIssueBodyFormatting(&b)
+	writeTitleStyle(&b)
 
 	if kind == kindIssue {
 		writeCommentFormatting(&b)

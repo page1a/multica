@@ -101,6 +101,21 @@ export function sameIssueDraftValues(
     // The group is one of those fields since DENE-411: a reply that only
     // rewrote the sub-issues changed the draft, and a fold that ignored it
     // would leave the preview showing a group the server does not have.
-    sameIssueDraftChildren(a.children ?? [], b.children ?? [])
+    sameIssueDraftChildren(a.children ?? [], b.children ?? []) &&
+    sameProjectProposal(a.project_proposal, b.project_proposal)
+  );
+}
+
+function sameProjectProposal(
+  a: IssueDraftPayload["project_proposal"],
+  b: IssueDraftPayload["project_proposal"],
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    a.action === b.action &&
+    a.name === b.name &&
+    (a.icon ?? null) === (b.icon ?? null) &&
+    (a.description ?? null) === (b.description ?? null)
   );
 }

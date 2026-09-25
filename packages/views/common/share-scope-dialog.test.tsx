@@ -62,12 +62,13 @@ const resources = { en: { common: enCommon, layout: enLayout } };
 function renderDialog(
   target: Parameters<typeof ShareScopeDialog>[0]["target"],
   onOpenChange = vi.fn(),
+  initialScope?: Parameters<typeof ShareScopeDialog>[0]["initialScope"],
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <I18nProvider locale="en" resources={resources}>
-        <ShareScopeDialog open onOpenChange={onOpenChange} target={target} />
+        <ShareScopeDialog open onOpenChange={onOpenChange} target={target} initialScope={initialScope} />
       </I18nProvider>
     </QueryClientProvider>,
   );
@@ -124,6 +125,12 @@ describe("ShareScopeDialog", () => {
     renderDialog({ kind: "issue", resourceId: "issue-1", currentScope: "project" });
     fireEvent.click(await screen.findByRole("checkbox", { name: /JEFF/ }));
     expect(await screen.findByText("Nope")).toBeInTheDocument();
+  });
+
+  it("opens on the people picker when asked to start from specific people", async () => {
+    renderDialog({ kind: "project", resourceId: "project-1", currentScope: "workspace" }, vi.fn(), "project");
+    expect(screen.getByRole("radio", { name: /Specific people/ })).toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: /JEFF/ })).toBeInTheDocument();
   });
 
   it("uses the project member list as the picked people for a project", async () => {

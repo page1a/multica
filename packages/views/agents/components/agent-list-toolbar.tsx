@@ -54,6 +54,7 @@ import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { availabilityConfig } from "../presence";
 import { useT } from "../../i18n";
 import type { AgentListRow } from "./agents-page";
+import { providerSeatModelDisplay } from "./provider-seat-model";
 import {
   isActiveSquad,
   NO_SQUAD_ID,
@@ -572,7 +573,10 @@ export function AgentListToolbar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Model — runtime-native model id (categorical column → filter) */}
+            {/* Model — one facet per distinct `agent.model`. The raw stored
+                string stays the option key and the filter value; only the
+                rendered text goes through `providerSeatModelDisplay`, so two
+                different seat strings can never collapse into one facet. */}
             {modelCounts.size > 0 && (
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
@@ -594,7 +598,9 @@ export function AgentListToolbar({
                       className={FILTER_ITEM_CLASS}
                     >
                       <HoverCheck checked={filters.models.includes(model)} />
-                      <span className="min-w-0 truncate">{model}</span>
+                      <span className="min-w-0 truncate">
+                        {providerSeatModelDisplay(model)}
+                      </span>
                       {countBadge(count)}
                     </DropdownMenuCheckboxItem>
                   ))}

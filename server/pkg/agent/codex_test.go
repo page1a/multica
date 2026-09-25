@@ -3440,6 +3440,65 @@ func TestCodexExecuteFailsWhenProcessExitsDuringActiveTurn(t *testing.T) {
 		t.Fatalf("process exit should fail fast instead of timeout, got %q", result.Error)
 	}
 }
+func TestCodexTurnStartCapacityKeepsTheThread(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+	fakePath := writeFakeCodexAppServer(t, ""+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
+		`read line`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-full"}}}'`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"Selected model is at capacity. Please try a different model."}}'`+"\n"+
+		`exit 0`+"\n")
+	result := executeFakeCodex(t, fakePath, ExecOptions{
+		Cwd:                       t.TempDir(),
+		Timeout:                   5 * time.Second,
+		SemanticInactivityTimeout: 5 * time.Second,
+	})
+	if result.Status != "failed" {
+		t.Fatalf("status = %q error = %q", result.Status, result.Error)
+	}
+	if result.SessionID != "thr-full" {
+		t.Fatalf("SessionID = %q, want thr-full so the platform retry resumes this thread", result.SessionID)
+	}
+	if result.SessionRestartReason != "" {
+		t.Fatalf("capacity on an existing thread must not be reported as a new conversation: %q", result.SessionRestartReason)
+	}
+}
+
+func TestCodexResumeCapacityDoesNotOpenANewThread(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+	fakePath := writeFakeCodexAppServer(t, ""+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
+		`read line`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Selected model is at capacity. Please try a different model."}}'`+"\n"+
+		`exit 0`+"\n")
+	result := executeFakeCodex(t, fakePath, ExecOptions{
+		Cwd:                       t.TempDir(),
+		ResumeSessionID:           "thr-prior",
+		Timeout:                   5 * time.Second,
+		SemanticInactivityTimeout: 5 * time.Second,
+	})
+	if result.Status != "failed" {
+		t.Fatalf("status = %q error = %q", result.Status, result.Error)
+	}
+	if result.SessionID != "thr-prior" {
+		t.Fatalf("SessionID = %q, want thr-prior (capacity must not start a new thread)", result.SessionID)
+	}
+	if result.SessionRestartReason != "" {
+		t.Fatalf("restart reason = %q, want empty", result.SessionRestartReason)
+	}
+}
+
 func TestCodexExecuteCleansUpWhenScannerOverflowsOnResume(t *testing.T) {
 	// Not t.Parallel(): this test mutates codexGracefulShutdownTimeoutNanos
 	// globally, so running concurrently with other codex Execute tests

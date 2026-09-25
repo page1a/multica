@@ -4,11 +4,16 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dashboardUsageByAgentOptions } from "@multica/core/dashboard";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { AgentRuntime, PlanLimitWindow } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  PlanLimitWindow,
+  PlanLimitsSnapshot,
+} from "@multica/core/types";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
 import { formatTokens, formatUsd } from "../../runtimes/utils";
 import {
+  agentQuotaSnapshot,
   classifyAgentQuota,
   compactRemaining,
   displayPlanLimits,
@@ -127,21 +132,28 @@ function WindowsCapsule({
  * Compact quota/usage capsule for the agent hover card and the overview
  * Runtime row. Subscription CLIs show rolling-window percentages; metered
  * CLIs show 30d tokens/cost plus a 429 health badge.
+ *
+ * `planLimits` is the agent's own snapshot when the daemon reported one (an
+ * agent bound to a numbered CLI account, DENE-715); the runtime's snapshot is
+ * the fallback for every agent that binds nothing.
  */
 export function AgentQuotaCapsule({
   agentId,
   runtime,
+  planLimits,
   now = Date.now(),
   labeled = true,
 }: {
   agentId: string;
   runtime: AgentRuntime | null;
+  planLimits?: PlanLimitsSnapshot | null;
   now?: number;
   labeled?: boolean;
 }) {
   const { t } = useT("agents");
-  const kind = classifyAgentQuota(runtime?.plan_limits, now);
-  const display = displayPlanLimits(runtime?.plan_limits, now);
+  const snapshot = agentQuotaSnapshot(planLimits, runtime?.plan_limits);
+  const kind = classifyAgentQuota(snapshot, now);
+  const display = displayPlanLimits(snapshot, now);
   const exhausted = kind === "exhausted";
   const showUsage = kind === "metered" || exhausted;
   const showWindows = kind === "windows" && display != null && display.windows.length > 0;
@@ -244,19 +256,26 @@ function WindowBars({
 /**
  * Overview sidebar block: progress bars + reset countdown for subscription
  * runtimes, or 30d token/cost + health for metered CLIs.
+ *
+ * `planLimits` is the agent's own snapshot when the daemon reported one (an
+ * agent bound to a numbered CLI account, DENE-715); the runtime's snapshot is
+ * the fallback for every agent that binds nothing.
  */
 export function AgentQuotaMeter({
   agentId,
   runtime,
+  planLimits,
   now = Date.now(),
 }: {
   agentId: string;
   runtime: AgentRuntime | null;
+  planLimits?: PlanLimitsSnapshot | null;
   now?: number;
 }) {
   const { t } = useT("agents");
-  const kind = classifyAgentQuota(runtime?.plan_limits, now);
-  const display = displayPlanLimits(runtime?.plan_limits, now);
+  const snapshot = agentQuotaSnapshot(planLimits, runtime?.plan_limits);
+  const kind = classifyAgentQuota(snapshot, now);
+  const display = displayPlanLimits(snapshot, now);
   const exhausted = kind === "exhausted";
   const showWindows = kind === "windows" && display != null && display.windows.length > 0;
   const showUsage = kind === "metered" || exhausted;

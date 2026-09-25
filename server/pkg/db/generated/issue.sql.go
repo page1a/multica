@@ -1100,6 +1100,102 @@ func (q *Queries) GetIssueTriageState(ctx context.Context, id pgtype.UUID) (pgty
 	return triage_state, err
 }
 
+const listBlockPatrolCandidates = `-- name: ListBlockPatrolCandidates :many
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
+WHERE status IN ('blocked', 'in_review')
+  AND COALESCE(metadata->>'block.watched', '') = '1'
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = issue.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+  AND (
+    (
+      COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+      AND metadata->>'block.wake_at' <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    )
+    OR (
+      COALESCE(metadata->>'block.wait_timeout', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+      AND metadata->>'block.wait_timeout' <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    )
+    OR (
+      COALESCE(last_activity_at, updated_at) < $1::timestamptz
+    )
+  )
+ORDER BY
+  CASE
+    WHEN COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+      AND metadata->>'block.wake_at' <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') THEN 0
+    WHEN COALESCE(metadata->>'block.blocked_by', '') = ''
+      AND COALESCE(metadata->>'close.waiting_on', '') = '' THEN 1
+    ELSE 2
+  END,
+  COALESCE(last_activity_at, updated_at)
+LIMIT $2::int
+`
+
+type ListBlockPatrolCandidatesParams struct {
+	QuietBefore pgtype.Timestamptz `json:"quiet_before"`
+	RowLimit    int32              `json:"row_limit"`
+}
+
+// DENE-850 patrol. Only rows stamped block.watched after this feature began
+// watching them, so a deploy does not walk tickets already sitting in review.
+// Clocks are compared as UTC text. The writer uses RFC3339 with a Z suffix.
+// Casting to timestamptz would abort every workspace's sweep on one bad value.
+func (q *Queries) ListBlockPatrolCandidates(ctx context.Context, arg ListBlockPatrolCandidatesParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, listBlockPatrolCandidates, arg.QuietBefore, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.Revision,
+			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChildIssues = `-- name: ListChildIssues :many
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
 WHERE parent_issue_id = $1
@@ -1433,6 +1529,75 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 			&i.Stage,
 			&i.Properties,
 			&i.Revision,
+			&i.Visibility,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssuesBlockedByToken = `-- name: ListIssuesBlockedByToken :many
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
+WHERE workspace_id = $1
+  AND (
+    ',' || replace(COALESCE(metadata->>'block.blocked_by', ''), ' ', '') || ','
+  ) LIKE ('%,' || $2::text || ',%')
+`
+
+type ListIssuesBlockedByTokenParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Token       string      `json:"token"`
+}
+
+// DENE-850: waiters whose block.blocked_by list names this identifier or UUID.
+// Commas are the token boundaries, so DENE-80 does not match DENE-806.
+// close.waiting_on stays on ListIssuesWaitingOn; callers dedupe the two.
+func (q *Queries) ListIssuesBlockedByToken(ctx context.Context, arg ListIssuesBlockedByTokenParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, listIssuesBlockedByToken, arg.WorkspaceID, arg.Token)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.Revision,
+			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
 			&i.Visibility,
 		); err != nil {
 			return nil, err
@@ -2006,6 +2171,70 @@ func (q *Queries) MaterializeIssueChannelMediaMarkdown(ctx context.Context, arg 
 		arg.ID,
 		arg.WorkspaceID,
 	)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
+const promoteBacklogIssueToTodo = `-- name: PromoteBacklogIssueToTodo :one
+UPDATE issue AS i SET
+    status = 'todo',
+    position = (
+        SELECT COALESCE(MIN(target.position), 0) - 1
+        FROM issue AS target
+        WHERE target.workspace_id = i.workspace_id
+          AND target.status = 'todo'
+    ),
+    revision = i.revision + 1,
+    last_activity_at = GREATEST(COALESCE(i.last_activity_at, i.updated_at), now()),
+    updated_at = now()
+WHERE i.id = $1 AND i.workspace_id = $2 AND i.status = 'backlog'
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+`
+
+type PromoteBacklogIssueToTodoParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Stage advance only. A child still in backlog moves to todo; a second close
+// that arrives after the first already promoted the row matches nothing, so
+// the caller does not start another run. Repositioning matches UpdateIssueStatus.
+func (q *Queries) PromoteBacklogIssueToTodo(ctx context.Context, arg PromoteBacklogIssueToTodoParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, promoteBacklogIssueToTodo, arg.ID, arg.WorkspaceID)
 	var i Issue
 	err := row.Scan(
 		&i.ID,

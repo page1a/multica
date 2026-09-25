@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // TestMigrationReportForwardsOnlyMarkedNotices runs the notices a migration
@@ -19,7 +20,8 @@ func TestMigrationReportForwardsOnlyMarkedNotices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cfg, err := pgx.ParseConfig(testDatabaseURL())
+	dbURL := testDatabaseURL(t)
+	cfg, err := pgx.ParseConfig(dbURL)
 	if err != nil {
 		t.Fatalf("parse database url: %v", err)
 	}
@@ -33,7 +35,7 @@ func TestMigrationReportForwardsOnlyMarkedNotices(t *testing.T) {
 	}
 	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
-		t.Skipf("could not connect to %s: %v", testDatabaseURL(), err)
+		testutil.SkipDatabase(t, err)
 	}
 	defer conn.Close(context.Background())
 

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/chattitle"
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -1230,7 +1231,7 @@ func taskErrorType(reason string) string {
 	switch reason {
 	case "runtime_offline", "runtime_recovery":
 		return "runtime"
-	case "timeout", "codex_semantic_inactivity":
+	case "timeout", "codex_semantic_inactivity", "task_time_limit":
 		return "timeout"
 	case "iteration_limit", "agent_fallback_message":
 		return "agent_output"
@@ -4526,6 +4527,9 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
 	var chatAssistantMsg *db.ChatMessage
+	// deliveryNotice is set when this run landed on a branch that is not the
+	// issue's canonical delivery line; it is said on the issue after commit.
+	var deliveryNotice string
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
@@ -4550,6 +4554,11 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
 			return err
 		}
+		notice, err := s.recordDeliveryBranch(ctx, qtx, t)
+		if err != nil {
+			return err
+		}
+		deliveryNotice = notice
 
 		if t.ChatSessionID.Valid {
 			// Pin the chat_session's runtime_id alongside the session_id so the
@@ -4633,6 +4642,7 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	s.postDeliveryNotice(ctx, task, deliveryNotice)
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -4970,6 +4980,14 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 	// is normalised too, and before the retry pre-compute below so the upgraded
 	// reason is what decides retry eligibility.
 	failureReason = taskfailure.NormalizeDaemonReason(failureReason, errMsg).String()
+	parentForFailure, parentErr := s.Queries.GetAgentTask(ctx, taskID)
+	failureInputVersion := ""
+	if parentErr == nil {
+		failureInputVersion = taskFailureInputVersion(parentForFailure)
+	}
+	failureFingerprint := taskfailure.Fingerprint(failureReason, errMsg)
+	// deliveryNotice: this run's branch is not the issue's canonical line.
+	var deliveryNotice string
 
 	// Pre-compute the auto-retry so the retry child can be created inside the
 	// SAME transaction as the fail (MUL-4351). Doing it atomically closes the
@@ -5018,17 +5036,20 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
+	deterministicEscalated := false
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
-			ID:             taskID,
-			Error:          pgtype.Text{String: errMsg, Valid: true},
-			FailureReason:  pgtype.Text{String: failureReason, Valid: failureReason != ""},
-			SessionID:      pgtype.Text{String: sessionID, Valid: sessionID != ""},
-			WorkDir:        pgtype.Text{String: workDir, Valid: workDir != ""},
-			DurableWorkDir: pgtype.Text{String: durableWorkDir, Valid: durableWorkDir != ""},
+			ID:                  taskID,
+			Error:               pgtype.Text{String: errMsg, Valid: true},
+			FailureReason:       pgtype.Text{String: failureReason, Valid: failureReason != ""},
+			FailureInputVersion: pgtype.Text{String: failureInputVersion, Valid: failureInputVersion != ""},
+			FailureFingerprint:  pgtype.Text{String: failureFingerprint, Valid: true},
+			SessionID:           pgtype.Text{String: sessionID, Valid: sessionID != ""},
+			WorkDir:             pgtype.Text{String: workDir, Valid: workDir != ""},
+			DurableWorkDir:      pgtype.Text{String: durableWorkDir, Valid: durableWorkDir != ""},
 			// A failed run can still have produced a branch: worktree mode
 			// commits whatever the agent left before tearing the worktree down,
 			// precisely so partial work survives. Dropping the name here would
@@ -5041,6 +5062,27 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 			return err
 		}
 		task = t
+		notice, derr := s.recordDeliveryBranch(ctx, qtx, t)
+		if derr != nil {
+			return derr
+		}
+		deliveryNotice = notice
+		if wantRetry && taskfailure.IsDeterministic(errMsg) && t.FailureInputVersion.Valid && t.FailureFingerprint.Valid {
+			matches, countErr := qtx.CountConsecutiveFailureFingerprint(ctx, db.CountConsecutiveFailureFingerprintParams{
+				FailureInputVersion: pgtype.Text{String: t.FailureInputVersion.String, Valid: true},
+				FailureFingerprint:  pgtype.Text{String: t.FailureFingerprint.String, Valid: true},
+			})
+			if countErr != nil {
+				return fmt.Errorf("count repeated failure fingerprint: %w", countErr)
+			}
+			if matches >= 2 {
+				deterministicEscalated = true
+				wantRetry = false
+				slog.Warn("task auto-retry stopped after repeated deterministic failure",
+					"task_id", util.UUIDToString(task.ID), "failure_input_version", t.FailureInputVersion.String,
+					"failure_fingerprint", t.FailureFingerprint.String)
+			}
+		}
 
 		// Atomic with the status flip, same as the completion path. A failed
 		// coordinator that already received the recovery comment has consumed
@@ -5266,6 +5308,7 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	s.postDeliveryNotice(ctx, task, deliveryNotice)
 
 	// The auto-retry child (if any) was created inside the transaction above so
 	// no newer chat task could jump ahead of it. Surface it now: broadcast
@@ -5285,6 +5328,9 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 		if retried.Status == "queued" {
 			s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, *retried)
 			s.NotifyTaskEnqueued(ctx, *retried)
+		}
+		if !retried.SessionID.Valid && freshSessionNoticeReason(failureReason) {
+			s.noteUnresumedRetry(ctx, task, sessionRolloutMissing)
 		}
 	}
 
@@ -5314,15 +5360,22 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 		capacityHeld = s.relayCapacityIfRetriesSpent(ctx, task, failureReason, errMsg)
 	}
 
-	// Skip the per-failure system comment when we'll immediately retry —
-	// the new task will surface its own status to the user, and we don't
-	// want to spam the issue with "task timed out" messages on every
-	// daemon hiccup. Delegated failures keep this existing failed-issue comment
-	// in addition to the coordinator recovery signal, preserving visibility on
-	// both sides of a cross-issue handoff. A capacity relay posts its own
-	// audit instead of the raw provider sentence.
-	if errMsg != "" && task.IssueID.Valid && retried == nil && !capacityHeld {
+	// A platform interrupt (daemon shutdown while the server still considered
+	// the run alive) always leaves a notice, including when a retry was just
+	// queued. Other failures stay quiet on the retry path so a flaky timeout
+	// does not post a comment on every attempt. Delegated failures keep this
+	// existing failed-issue comment in addition to the coordinator recovery
+	// signal. A capacity relay posts its own audit instead of the raw
+	// provider sentence.
+	if isServerInterruptFailure(failureReason) && task.IssueID.Valid {
+		s.noteServerInterrupt(ctx, task, retried)
+	} else if deterministicEscalated && task.IssueID.Valid {
+		s.noteDeterministicFailure(ctx, task, failureReason)
+	} else if errMsg != "" && task.IssueID.Valid && retried == nil && !capacityHeld {
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(failureCommentBody(failureReason, errMsg)), "system", task.TriggerCommentID, task.ID)
+	}
+	if retried == nil && task.IssueID.Valid {
+		s.noteParentOfChildRunFailure(ctx, task)
 	}
 
 	// Quick-create tasks: push a failure inbox notification to the
@@ -5357,6 +5410,79 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 	s.broadcastTaskFailedEvent(ctx, task, errMsg, failureReason, retried != nil)
 
 	return &task, true, nil
+}
+
+// taskFailureInputVersion identifies the user input shared by an attempt and
+// all of its automatic retries. A comment or chat batch is preferred; the
+// issue fallback covers legacy task rows that predate those ownership fields.
+func taskFailureInputVersion(task db.AgentTaskQueue) string {
+	if task.ChatInputTaskID.Valid {
+		return "chat:" + util.UUIDToString(task.ChatInputTaskID)
+	}
+	if task.TriggerCommentID.Valid {
+		return "comment:" + util.UUIDToString(task.TriggerCommentID)
+	}
+	if task.IssueID.Valid {
+		return "issue:" + util.UUIDToString(task.IssueID)
+	}
+	return ""
+}
+
+func (s *TaskService) noteDeterministicFailure(ctx context.Context, task db.AgentTaskQueue, reason string) {
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return
+	}
+	condition := fmt.Sprintf("同一输入连续撞上同样的确定性失败（%s），等人修好环境后重跑", reason)
+	switch issue.Status {
+	case issuestatus.Done, issuestatus.Cancelled, issuestatus.InReview:
+	default:
+		if issue.Status != issuestatus.Blocked {
+			updated, updateErr := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+				ID: task.IssueID, Status: issuestatus.Blocked, WorkspaceID: issue.WorkspaceID,
+			})
+			if updateErr != nil {
+				slog.Warn("deterministic failure: block issue failed",
+					"issue_id", util.UUIDToString(issue.ID), "error", updateErr)
+				break
+			}
+			s.broadcastIssueUpdated(ctx, updated, issue.Status)
+			issue = updated
+		}
+		// A blocked issue must say what it waits on (DENE-850). Without
+		// needs_human the patrol would wake the same executor into the same
+		// wall after QuietAfter, which is the loop this exit exists to end.
+		pairs := map[string]string{
+			blockwait.KeyWaitCondition: condition,
+			blockwait.KeyWatched:       blockwait.WatchedYes,
+		}
+		if human := s.deterministicFailureHuman(ctx, task, issue); human != "" {
+			pairs[blockwait.KeyNeedsHuman] = human
+		}
+		s.writeBlockMeta(ctx, issue, pairs)
+	}
+	s.createAgentComment(ctx, task.IssueID, task.AgentID,
+		fmt.Sprintf("自动重试已停止：同一输入连续出现相同的确定性失败（%s，fingerprint %s）。这张票已转为 blocked 等人处理：请检查权限、磁盘或 replay 冲突并修复环境，再重新运行这张票；平台不会再自动重排同一个执行人。", reason, task.FailureFingerprint.String),
+		"system", task.TriggerCommentID, task.ID)
+}
+
+// deterministicFailureHuman picks the person a deterministic failure waits
+// on: whoever the run was accountable to, else the issue's human creator,
+// else the owner of the seat that failed.
+func (s *TaskService) deterministicFailureHuman(ctx context.Context, task db.AgentTaskQueue, issue db.Issue) string {
+	if task.AccountableUserID.Valid {
+		return util.UUIDToString(task.AccountableUserID)
+	}
+	if task.OriginatorUserID.Valid {
+		return util.UUIDToString(task.OriginatorUserID)
+	}
+	if issue.CreatorType == "member" && issue.CreatorID.Valid {
+		return util.UUIDToString(issue.CreatorID)
+	}
+	if agent, err := s.Queries.GetAgent(ctx, task.AgentID); err == nil && agent.OwnerID.Valid {
+		return util.UUIDToString(agent.OwnerID)
+	}
+	return ""
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is
@@ -5394,15 +5520,303 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 // provider answered wrong", so an unattended issue run must not die on them.
 // Resume stays safe for the same reason as provider_network: nothing about the
 // conversation is what the provider rejected.
+//
+// "cancelled" here is the daemon's report that its own run context died while
+// this row was still running (DENE-813). A person invoking cancel-task or halt
+// never writes this reason: those paths set status=cancelled and leave
+// failure_reason empty, so they stay off this map.
+//
+// task_time_limit is the workspace wall clock stopping a healthy run (DENE-857).
+// The session is still good, so the retry continues it and tells the agent to
+// close out finished work and split what remains. The budget is the task's
+// ordinary max_attempts; spending it blocks the issue.
 var retryableReasons = map[string]bool{
 	string(taskfailure.ReasonRuntimeOffline):                   true,
 	string(taskfailure.ReasonRuntimeRecovery):                  true,
 	string(taskfailure.ReasonTimeout):                          true,
+	string(taskfailure.ReasonTaskTimeLimit):                    true,
 	"codex_semantic_inactivity":                                true,
 	string(taskfailure.ReasonAgentProviderNetwork):             true,
 	string(taskfailure.ReasonAgentProviderCapacityOrRateLimit): true,
 	string(taskfailure.ReasonAgentProviderServerError):         true,
 	string(taskfailure.ReasonSkillBundleUnavailable):           true,
+	serverInterruptFailureReason:                               true,
+}
+
+// serverInterruptFailureReason is the failure_reason a daemon writes when it
+// reports a run whose process context was cancelled and the server had not
+// already finalized the row. The observed error text is "task cancelled by
+// server". The usual cause is the daemon process itself exiting (restart,
+// self-reload, shutdown) and cancelling every in-flight run on the way down.
+const serverInterruptFailureReason = "cancelled"
+
+func isServerInterruptFailure(reason string) bool {
+	return reason == serverInterruptFailureReason
+}
+
+// noteServerInterrupt tells the issue what happened to a run the platform
+// stopped, whether or not a retry was queued. When nothing will continue the
+// issue, it leaves blocked instead of in_progress so the board does not show
+// a run that nobody is doing.
+func (s *TaskService) noteServerInterrupt(ctx context.Context, task db.AgentTaskQueue, retried *db.AgentTaskQueue) {
+	if !task.IssueID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("server interrupt notice: load issue failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return
+	}
+	alreadyRunning := retried != nil
+	if !alreadyRunning {
+		hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
+		if checkErr != nil {
+			slog.Warn("server interrupt notice: active check failed",
+				"task_id", util.UUIDToString(task.ID),
+				"issue_id", util.UUIDToString(task.IssueID),
+				"error", checkErr,
+			)
+		} else {
+			alreadyRunning = hasActive
+		}
+	}
+	blocked := false
+	if !alreadyRunning {
+		blocked = s.blockIssueAfterServerInterrupt(ctx, issue)
+	}
+	mention := ""
+	if !alreadyRunning {
+		mention = s.serverInterruptHandoffMention(ctx, issue, task)
+	}
+	agentName := ""
+	if agent, aerr := s.Queries.GetAgent(ctx, task.AgentID); aerr == nil {
+		agentName = agent.Name
+	}
+	s.createAgentComment(ctx, task.IssueID, task.AgentID,
+		serverInterruptNotice(agentName, task, retried, alreadyRunning, blocked, mention),
+		"system", task.TriggerCommentID, task.ID)
+}
+
+// blockIssueAfterServerInterrupt moves an issue that still looks open onto
+// blocked. in_review and done stay where a person already put them.
+func (s *TaskService) blockIssueAfterServerInterrupt(ctx context.Context, issue db.Issue) bool {
+	effective := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
+	if effective != issuestatus.InProgress && effective != issuestatus.Todo {
+		return false
+	}
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:          issue.ID,
+		Status:      issuestatus.Blocked,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("server interrupt notice: block issue failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return false
+	}
+	s.broadcastIssueUpdated(ctx, updated, issue.Status)
+	s.stampBlockWake(ctx, updated, "平台中断后的自动续跑已经用完，到点重新叫醒执行人")
+	return true
+}
+
+// blockFailedChild turns a failed child into a structured block with a clock
+// that is already due. The patrol only looks at blocked and in_review, so a
+// wake_at left on an in_progress issue is never seen. in_review and terminal
+// statuses stay where a person put them.
+func (s *TaskService) blockFailedChild(ctx context.Context, issueID pgtype.UUID, condition string) {
+	if !issueID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, issueID)
+	if err != nil {
+		slog.Warn("block failed child: load issue failed", "issue_id", util.UUIDToString(issueID), "error", err)
+		return
+	}
+	switch issue.Status {
+	case issuestatus.Done, issuestatus.Cancelled, issuestatus.InReview:
+		return
+	case issuestatus.Blocked:
+	default:
+		updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:          issue.ID,
+			Status:      issuestatus.Blocked,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			slog.Warn("block failed child: status update failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+			return
+		}
+		s.broadcastIssueUpdated(ctx, updated, issue.Status)
+		issue = updated
+	}
+	failures, err := s.Queries.CountIssueFailuresSinceSuccess(ctx, issue.ID)
+	if err != nil {
+		slog.Warn("block failed child: count failures failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+		failures = 1
+	}
+	rec := blockwait.FailureWake(time.Now(), condition, int(failures))
+	pairs := rec.Pairs()
+	pairs[blockwait.KeyWatched] = blockwait.WatchedYes
+	s.writeBlockMeta(ctx, issue, pairs)
+}
+
+// stampBlockWake records a clock QuietAfter from now and marks the issue
+// watched, so the patrol can see a block this process just created.
+func (s *TaskService) stampBlockWake(ctx context.Context, issue db.Issue, condition string) {
+	if !issue.ID.Valid {
+		return
+	}
+	if !issue.WorkspaceID.Valid {
+		loaded, err := s.Queries.GetIssue(ctx, issue.ID)
+		if err != nil {
+			slog.Warn("block wake: load issue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+			return
+		}
+		issue = loaded
+	}
+	when := time.Now().Add(blockwait.QuietAfter).UTC().Format(time.RFC3339)
+	s.writeBlockMeta(ctx, issue, map[string]string{
+		blockwait.KeyWakeAt:        when,
+		blockwait.KeyWaitCondition: condition,
+		blockwait.KeyWatched:       blockwait.WatchedYes,
+	})
+}
+
+func (s *TaskService) writeBlockMeta(ctx context.Context, issue db.Issue, pairs map[string]string) {
+	for key, value := range pairs {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			continue
+		}
+		if _, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: key, Value: raw,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("block wake: metadata write failed", "issue_id", util.UUIDToString(issue.ID), "key", key, "error", err)
+		}
+	}
+}
+
+// noteParentOfChildRunFailure tells the parent what happened without asking
+// its assignee to re-dispatch. Delegated cross-issue failures already leave
+// that sentence on the recovery comment.
+func (s *TaskService) noteParentOfChildRunFailure(ctx context.Context, task db.AgentTaskQueue) {
+	if !task.IssueID.Valid || task.DelegatedFromTaskID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil || !issue.ParentIssueID.Valid {
+		return
+	}
+	parent, err := s.Queries.GetIssue(ctx, issue.ParentIssueID)
+	if err != nil || parent.WorkspaceID != issue.WorkspaceID {
+		return
+	}
+	childID := util.UUIDToString(issue.ID)
+	if s.failureAlreadyNoted(parent, childID) {
+		return
+	}
+	s.createSystemNotice(ctx, parent, blockwait.DownstreamFailureNotice(
+		IssueIdentifier(s.getIssuePrefix(issue.WorkspaceID), issue.Number),
+		childID,
+		"运行失败",
+	))
+	s.rememberFailureNotice(ctx, parent, childID)
+}
+
+func issueMetaMap(raw []byte) map[string]any {
+	meta := map[string]any{}
+	if len(raw) == 0 {
+		return meta
+	}
+	_ = json.Unmarshal(raw, &meta)
+	if meta == nil {
+		return map[string]any{}
+	}
+	return meta
+}
+
+func (s *TaskService) failureAlreadyNoted(issue db.Issue, childID string) bool {
+	return blockwait.AlreadyWoken(blockwait.MetaString(issueMetaMap(issue.Metadata), blockwait.KeyFailNoted), childID)
+}
+
+func (s *TaskService) rememberFailureNotice(ctx context.Context, issue db.Issue, childID string) {
+	fresh, err := s.Queries.GetIssue(ctx, issue.ID)
+	if err != nil {
+		fresh = issue
+	}
+	existing := blockwait.MetaString(issueMetaMap(fresh.Metadata), blockwait.KeyFailNoted)
+	if blockwait.AlreadyWoken(existing, childID) {
+		return
+	}
+	s.writeBlockMeta(ctx, fresh, map[string]string{
+		blockwait.KeyFailNoted: blockwait.MarkWoken(existing, childID),
+	})
+}
+
+// serverInterruptHandoffMention names the person who should pick the issue up
+// once automatic retries are spent: the human who started the run, then the
+// issue creator, then the same owner fallback the time-limit notice uses.
+// The executing agent is named in prose and not mentioned — mentioning an
+// agent would start another run.
+func (s *TaskService) serverInterruptHandoffMention(ctx context.Context, issue db.Issue, task db.AgentTaskQueue) string {
+	candidates := []pgtype.UUID{task.OriginatorUserID, task.AccountableUserID, task.InitiatorUserID}
+	if issue.CreatorType == "member" && issue.CreatorID.Valid {
+		candidates = append(candidates, issue.CreatorID)
+	}
+	for _, id := range candidates {
+		if mention := s.memberMention(ctx, id); mention != "" {
+			return mention
+		}
+	}
+	_, mention := s.taskTimeLimitMention(ctx, issue)
+	return mention
+}
+
+func (s *TaskService) memberMention(ctx context.Context, userID pgtype.UUID) string {
+	if !userID.Valid {
+		return ""
+	}
+	user, err := s.Queries.GetUser(ctx, userID)
+	if err != nil || strings.TrimSpace(user.Name) == "" {
+		return ""
+	}
+	name := strings.NewReplacer("[", "", "]", "").Replace(user.Name)
+	return fmt.Sprintf("[@%s](mention://member/%s) ", name, util.UUIDToString(userID))
+}
+
+func serverInterruptNotice(agentName string, task db.AgentTaskQueue, retried *db.AgentTaskQueue, alreadyRunning, blocked bool, mention string) string {
+	when := time.Now().UTC().Format("2006-01-02 15:04 UTC")
+	if task.CompletedAt.Valid {
+		when = task.CompletedAt.Time.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	who := "这次运行"
+	if agentName != "" {
+		who = agentName + " 的这次运行"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s在 %s 被平台中断。原因是本机运行环境中途退出（daemon 重启或断线）。", who, when)
+	switch {
+	case retried != nil:
+		fmt.Fprintf(&b, "已自动安排续跑：第 %d 次，共 %d 次，沿用原来的会话和工作目录。", retried.Attempt, retried.MaxAttempts)
+	case alreadyRunning:
+		b.WriteString("没有另排一次，因为这张票上已经有运行在排队或进行。")
+	default:
+		fmt.Fprintf(&b, "自动续跑没有再排（第 %d 次，共 %d 次）。", task.Attempt, task.MaxAttempts)
+		if blocked {
+			b.WriteString("这张票已改为 blocked。到点后平台会重新叫醒这张票的执行人，不用别人来重派。")
+		}
+		if mention != "" {
+			b.WriteString(mention)
+			b.WriteString("这是知会，不用你去重派。")
+		}
+	}
+	return b.String()
 }
 
 // runtime_offline retries start deferred, not queued: their positive fire_at
@@ -6192,51 +6606,106 @@ func (s *TaskService) FailTasksOverWorkspaceTimeLimit(ctx context.Context) ([]db
 	})
 }
 
-// NotifyTaskTimeLimit tells the people who can decide what happens next that
-// a run was stopped by the workspace time limit: how long it ran, which agent,
-// and how to continue. The notice lands on the task's issue and, for a
-// sub-issue, on its parent too, because the parent is where a supervising
-// human or agent is watching the children.
-func (s *TaskService) NotifyTaskTimeLimit(ctx context.Context, tasks []db.AgentTaskQueue) {
-	for _, t := range tasks {
-		if !t.IssueID.Valid {
-			continue
-		}
-		issue, err := s.Queries.GetIssue(ctx, t.IssueID)
-		if err != nil {
-			slog.Warn("task time limit notice: load issue failed", "task_id", util.UUIDToString(t.ID), "error", err)
-			continue
-		}
-		ran := "an unknown duration"
-		if t.StartedAt.Valid {
-			end := time.Now()
-			if t.CompletedAt.Valid {
-				end = t.CompletedAt.Time
-			}
-			if d := end.Sub(t.StartedAt.Time); d > 0 {
-				ran = d.Round(time.Minute).String()
-			}
-		}
-		agentName := "An agent"
-		if agent, err := s.Queries.GetAgent(ctx, t.AgentID); err == nil && agent.Name != "" {
-			agentName = agent.Name
-		}
-		ownerID, mention := s.taskTimeLimitMention(ctx, issue)
-		summary := fmt.Sprintf("%s was stopped after running for %s: it reached this workspace's task time limit. The run was not retried. Issue status at stop: %s.", agentName, ran, issue.Status)
-		s.createSystemNotice(ctx, issue, mention+summary+" Comment here to start a new run, or raise the limit in workspace settings.")
-		s.notifyTaskTimeLimitOwner(ctx, issue, t, ownerID, summary)
-
-		if !issue.ParentIssueID.Valid {
-			continue
-		}
-		parent, err := s.Queries.GetIssue(ctx, issue.ParentIssueID)
-		if err != nil || parent.WorkspaceID != issue.WorkspaceID {
-			continue
-		}
-		s.createSystemNotice(ctx, parent, fmt.Sprintf(
-			"%sSub-issue [%s](mention://issue/%s) was stopped: %s ran for %s and reached this workspace's task time limit. The run was not retried.",
-			mention, issue.Title, util.UUIDToString(issue.ID), agentName, ran))
+// noteTaskTimeLimit records a workspace time-limit stop. A retry child means
+// the same session continues; a nil child means the attempt budget is spent
+// and the issue must leave todo / in_progress.
+func (s *TaskService) noteTaskTimeLimit(ctx context.Context, task db.AgentTaskQueue, retried *db.AgentTaskQueue) {
+	if !task.IssueID.Valid {
+		return
 	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("task time limit notice: load issue failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		return
+	}
+	ran := "一段时间"
+	if task.StartedAt.Valid {
+		end := time.Now()
+		if task.CompletedAt.Valid {
+			end = task.CompletedAt.Time
+		}
+		if d := end.Sub(task.StartedAt.Time); d > 0 {
+			ran = d.Round(time.Minute).String()
+		}
+	}
+	blocked := false
+	if retried != nil {
+		if issue.Status == issuestatus.Todo {
+			if updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+				ID: issue.ID, Status: issuestatus.InProgress, WorkspaceID: issue.WorkspaceID,
+			}); err != nil {
+				slog.Warn("task time limit notice: keep issue in progress failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+			} else {
+				s.broadcastIssueUpdated(ctx, updated, issue.Status)
+				issue = updated
+			}
+		}
+	} else {
+		blocked = s.blockIssueAfterTimeLimit(ctx, issue)
+	}
+	mention := ""
+	ownerID := pgtype.UUID{}
+	if retried == nil {
+		ownerID, mention = s.taskTimeLimitMention(ctx, issue)
+	}
+	summary := taskTimeLimitNotice(ran, task, retried, blocked, mention)
+	s.createSystemNotice(ctx, issue, summary)
+	if retried == nil {
+		s.notifyTaskTimeLimitOwner(ctx, issue, task, ownerID, summary)
+	}
+	if !issue.ParentIssueID.Valid {
+		return
+	}
+	parent, err := s.Queries.GetIssue(ctx, issue.ParentIssueID)
+	if err != nil || parent.WorkspaceID != issue.WorkspaceID {
+		return
+	}
+	child := IssueIdentifier(s.getIssuePrefix(issue.WorkspaceID), issue.Number)
+	parentNote := fmt.Sprintf("子票 %s 跑满了工作区时限（%s）。", child, ran)
+	if retried != nil {
+		parentNote += fmt.Sprintf("已安排续跑：第 %d 次，共 %d 次，沿用原来的会话。", retried.Attempt, retried.MaxAttempts)
+	} else if blocked {
+		parentNote += "自动续跑用完了，子票已改为 blocked。"
+	} else {
+		parentNote += "没有再安排续跑。"
+	}
+	s.createSystemNotice(ctx, parent, parentNote)
+}
+
+func (s *TaskService) blockIssueAfterTimeLimit(ctx context.Context, issue db.Issue) bool {
+	effective := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
+	if effective != issuestatus.InProgress && effective != issuestatus.Todo {
+		return false
+	}
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID: issue.ID, Status: issuestatus.Blocked, WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("task time limit notice: block issue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+		return false
+	}
+	s.broadcastIssueUpdated(ctx, updated, issue.Status)
+	s.stampBlockWake(ctx, updated, "工作区时限内的自动续跑已经用完，到点重新叫醒执行人")
+	return true
+}
+
+func taskTimeLimitNotice(ran string, task db.AgentTaskQueue, retried *db.AgentTaskQueue, blocked bool, mention string) string {
+	if retried != nil {
+		return fmt.Sprintf(
+			"这轮跑了 %s，到了工作区的时限，不是这张票做错了。已自动安排续跑：第 %d 次，共 %d 次，沿用原来的会话和工作目录。续跑会先把已经做完的进度收口，再把剩下的工作拆小。",
+			ran, retried.Attempt, retried.MaxAttempts,
+		)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "这轮跑了 %s，到了工作区的时限。自动续跑没有再排（第 %d 次，共 %d 次）。", ran, task.Attempt, task.MaxAttempts)
+	if blocked {
+		b.WriteString("这张票已改为 blocked，不再停在待办或进行中没人管。到点后平台会重新叫醒执行人。")
+	}
+	if mention != "" {
+		b.WriteString(mention)
+		b.WriteString("这是知会，请决定是加长时限，还是把剩下的工作拆开。")
+	}
+	return b.String()
 }
 
 // taskTimeLimitMention picks who to wake for a time-limit stop: the project
@@ -6408,17 +6877,39 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	processedIssues := make(map[string]bool)
 	retriedIssues := make(map[string]bool)
 	quotaHeldIssues := make(map[string]bool)
+	timeLimitHeld := make(map[string]bool)
 	retried := 0
 
 	for _, t := range tasks {
 		// Auto-retry first so the issue stays in_progress rather than
 		// flapping todo → in_progress within a tick.
 		retryPending := false
+		var continued *db.AgentTaskQueue
 		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
+			continued = child
 			retryPending = true
 			retried++
 			if t.IssueID.Valid {
 				retriedIssues[util.UUIDToString(t.IssueID)] = true
+			}
+		}
+		failureReason := "agent_error"
+		if t.FailureReason.Valid && t.FailureReason.String != "" {
+			failureReason = t.FailureReason.String
+		}
+		if failureReason == string(taskfailure.ReasonTaskTimeLimit) && t.IssueID.Valid {
+			issueKey := util.UUIDToString(t.IssueID)
+			if continued == nil {
+				if has, err := s.Queries.HasRetryTaskForParent(ctx, t.ID); err == nil && has {
+					// An earlier pass already continued this run. Do not
+					// read the missing child as an exhausted budget.
+					retriedIssues[issueKey] = true
+				} else {
+					s.noteTaskTimeLimit(ctx, t, nil)
+					timeLimitHeld[issueKey] = true
+				}
+			} else {
+				s.noteTaskTimeLimit(ctx, t, continued)
 			}
 		}
 		if !retryPending {
@@ -6446,10 +6937,6 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			}
 		}
 
-		failureReason := "agent_error"
-		if t.FailureReason.Valid && t.FailureReason.String != "" {
-			failureReason = t.FailureReason.String
-		}
 		s.captureTaskFailed(ctx, t)
 
 		workspaceID := ""
@@ -6468,7 +6955,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				// projects a nonterminal custom key onto a built-in, so this is
 				// a key comparison on purpose. (MUL-6243, MUL-7240)
 				effectiveStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
-				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] && !quotaHeldIssues[issueKey] {
+				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] && !quotaHeldIssues[issueKey] && !timeLimitHeld[issueKey] {
 					processedIssues[issueKey] = true
 					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
 					if checkErr != nil {
@@ -6712,13 +7199,23 @@ func (s *TaskService) ensureDelegatedFailureRecoveryComment(ctx context.Context,
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("find recovery comment: %w", err)
 		}
+		content := delegatedFailureRecoveryContent(target.failed, target.source)
+		if failed.IssueID.Valid && failed.IssueID != target.issue.ID {
+			if child, loadErr := qtx.GetIssue(ctx, failed.IssueID); loadErr == nil {
+				content = blockwait.DownstreamFailureNotice(
+					IssueIdentifier(s.getIssuePrefix(child.WorkspaceID), child.Number),
+					util.UUIDToString(child.ID),
+					"运行失败",
+				)
+			}
+		}
 		createdComment, err := qtx.CreateComment(ctx, db.CreateCommentParams{
 			ID:           dbid.NewV7(),
 			IssueID:      target.issue.ID,
 			WorkspaceID:  target.issue.WorkspaceID,
 			AuthorType:   "system",
 			AuthorID:     pgtype.UUID{Valid: true},
-			Content:      delegatedFailureRecoveryContent(target.failed, target.source),
+			Content:      content,
 			Type:         delegatedFailureRecoveryCommentType,
 			ParentID:     target.source.TriggerCommentID,
 			SourceTaskID: failed.ID,
@@ -6936,6 +7433,18 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 // reconciliation schedule the follow-up. The three-pass loop closes state
 // changes around those writes.
 func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, target *delegatedFailureRecoveryTarget, excludeTaskID pgtype.UUID) (delegatedFailureRecoveryDispatchOutcome, error) {
+	// A failed run on a different issue used to wake the upstream coordinator
+	// and ask them to re-dispatch. That person is not the repair seat. Leave
+	// the informational comment, record a wake on the failed issue, and do
+	// not start the upstream run (DENE-850). Same-issue delegation still
+	// returns to its coordinator.
+	if target.failed.IssueID.Valid && target.failed.IssueID != target.issue.ID {
+		if _, err := s.Queries.SettleDelegatedFailureRecoveryComment(ctx, target.comment.ID); err != nil {
+			return delegatedFailureRecoveryCovered, fmt.Errorf("settle downstream failure notice: %w", err)
+		}
+		s.blockFailedChild(ctx, target.failed.IssueID, "下游运行失败，到点重新叫醒执行人")
+		return delegatedFailureRecoveryCovered, nil
+	}
 	// Signal creation has committed before reaching this shared dispatch path.
 	// Refresh the issue because its status may have changed since creation or
 	// sweep selection; a paused/unreadable lifecycle never settles the signal.
@@ -8499,4 +9008,30 @@ func agentToMap(a db.Agent) map[string]any {
 		"archived_at":          util.TimestampToPtr(a.ArchivedAt),
 		"archived_by":          util.UUIDToPtr(a.ArchivedBy),
 	}
+}
+
+// recordDeliveryBranch files the branch a finished run reported under its
+// issue (DENE-820) inside the finishing transaction, and returns the notice
+// to post when that branch is a new non-canonical line. An empty notice
+// means the run continued the canonical line or produced no branch.
+func (s *TaskService) recordDeliveryBranch(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue) (string, error) {
+	row, newLine, err := RecordIssueDeliveryBranch(ctx, qtx, task)
+	if err != nil {
+		return "", fmt.Errorf("record delivery branch: %w", err)
+	}
+	if row == nil || !newLine {
+		return "", nil
+	}
+	canonical, err := qtx.GetIssueCanonicalDeliveryBranch(ctx, task.IssueID)
+	if err != nil {
+		return "", fmt.Errorf("read canonical delivery branch: %w", err)
+	}
+	return UnclassifiedDeliveryLineNotice(canonical.BranchName, row.BranchName), nil
+}
+
+func (s *TaskService) postDeliveryNotice(ctx context.Context, task db.AgentTaskQueue, notice string) {
+	if notice == "" || !task.IssueID.Valid {
+		return
+	}
+	s.createAgentComment(ctx, task.IssueID, task.AgentID, notice, "system", task.TriggerCommentID, task.ID)
 }

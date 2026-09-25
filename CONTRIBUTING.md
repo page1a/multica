@@ -413,6 +413,33 @@ Notes:
 - E2E tests create their own workspace and issue fixtures
 - the check flow starts backend/frontend only if they are not already running
 
+### Database-backed Go tests
+
+`make test`, `make check` and CI all run Go tests through `scripts/test-go.sh`.
+It wraps the suite in `scripts/test-db.sh`, which creates a database for the
+run, migrates it with `cmd/migrate`, exports it as `DATABASE_URL` /
+`TEST_DATABASE_URL`, and sets `MULTICA_REQUIRE_TEST_DB=1`. Under that
+requirement a DB-backed test that cannot reach the database, or finds its
+schema incomplete, **fails instead of skipping**, and a run in which no test
+ever connected fails as a whole. A migration that does not apply fails the run
+before the first test. `TEST_DATABASE_URL` pointing at a database someone else
+provisioned (CI's Postgres service) is treated as the same promise.
+
+Every DB-backed test resolves its database through `server/internal/testutil`
+(`OpenTestDatabase`, `OpenTestDatabaseConfig`, `MustTestDatabaseURL`, or
+`ConnectTestDatabase` + `ExitIfDatabaseRequired` in a `TestMain`; schema
+checks use `SkipUnmigrated`). A test that reads `DATABASE_URL` for itself or
+falls back to a hardcoded localhost URL is rejected by a guard test in that
+package, because such a test skips even when the run promised a database.
+
+A bare `go test ./internal/...` without a database still runs the pure unit
+tests and skips the DB-backed ones. Treat that as "not verified", not as
+green: to run one DB-backed package against a real isolated database, use
+
+```bash
+bash scripts/test-db.sh -- bash -c 'cd server && go test ./internal/handler/ -count=1'
+```
+
 ## Local Codex Daemon
 
 Run the local daemon:

@@ -366,16 +366,27 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const sessionAgent = currentSession
     ? agents.find((a) => a.id === currentSession.agent_id) ?? null
     : null;
-  const isAgentArchived = !!sessionAgent?.archived_at;
+  // Someone speaking in a chat they were let into does not need their own
+  // grant on the agent. The reply still runs as the creator's agent.
+  const sharedSpeaker =
+    !!currentSession &&
+    currentSession.access === "speak" &&
+    currentSession.creator_id !== user?.id;
+  const isChatViewOnly = currentSession?.access === "view";
+  const isAgentArchived = sharedSpeaker
+    ? !!currentSession?.agent_archived
+    : !!sessionAgent?.archived_at;
 
-  // Resolve selected agent: open session's agent → stored preference → first
-  // available. New chats have no session, so they fall through to the picker.
-  const activeAgent =
-    sessionAgent ??
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
-  const isAgentRuntimeBound = !!activeAgent && hasAgentRuntime(activeAgent);
+  // An open session stays on its own agent. A new chat (no session) falls
+  // through to the picker.
+  const activeAgent = currentSession
+    ? sessionAgent
+    : (availableAgents.find((a) => a.id === selectedAgentId) ??
+      availableAgents[0] ??
+      null);
+  const isAgentRuntimeBound = sharedSpeaker
+    ? currentSession?.agent_runtime_bound !== false
+    : !!activeAgent && hasAgentRuntime(activeAgent);
 
   // A session outlives the permission that created it. The agent can be flipped
   // to personal, change owner, or drop this member from its allow-list, and the
@@ -384,8 +395,12 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // invoke gate). Judge the SESSION's agent, not just the picker list, so the
   // composer goes read-only up front instead of after the user types
   // (MUL-6380). Same rule the server enforces, via the shared predicate.
+  // A shared speaker is exempt: the server authorizes the run as the creator.
   const isAgentAccessRevoked =
-    !!activeAgent && !canAssignAgent(activeAgent, user?.id, memberRole);
+    !sharedSpeaker &&
+    !isChatViewOnly &&
+    !!activeAgent &&
+    !canAssignAgent(activeAgent, user?.id, memberRole);
 
   // "Customize" under the starter buttons in the empty state — the only place
   // that admits those buttons are configuration. Resolved here so the full
@@ -500,7 +515,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
   // Upload transport moved into the coordinated-upload engine inside ChatInput
   // (MUL-5181 L2); surfaces only forward whether the affordance exists.
-  const uploadEnabled = !!activeAgent;
+  const uploadEnabled = !!activeAgent || sharedSpeaker;
 
   const handleSend = useCallback(
     async (
@@ -509,7 +524,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
     ): Promise<boolean> => {
-      if (!activeAgent) {
+      if (isChatViewOnly) return false;
+      if (!activeAgent && !sharedSpeaker) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
         return false;
       }
@@ -519,7 +535,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       if (isAgentArchived) {
         apiLogger.warn("sendChatMessage skipped: agent is archived", {
           sessionId: activeSessionId,
-          agentId: activeAgent.id,
+          agentId: activeAgent?.id,
         });
         return false;
       }
@@ -530,7 +546,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       if (isAgentAccessRevoked) {
         apiLogger.warn("sendChatMessage skipped: invoke permission revoked", {
           sessionId: activeSessionId,
-          agentId: activeAgent.id,
+          agentId: activeAgent?.id,
         });
         return false;
       }
@@ -551,7 +567,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       apiLogger.info("sendChatMessage.start", {
         sessionId: activeSessionId,
         isNewSession,
-        agentId: activeAgent.id,
+        agentId: activeAgent?.id ?? currentSession?.agent_id,
         contentLength: finalContent.length,
         attachmentCount: attachmentIds?.length ?? 0,
       });
@@ -680,6 +696,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
     [
       activeSessionId,
       activeAgent,
+      currentSession,
+      sharedSpeaker,
+      isChatViewOnly,
       isAgentArchived,
       isAgentAccessRevoked,
       pendingTask,
@@ -860,6 +879,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     isSessionArchived,
     isAgentArchived,
     isAgentAccessRevoked,
+    isChatViewOnly,
     isAgentRuntimeBound,
     activeAgent,
     customizeConversationStartersHref,

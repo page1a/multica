@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -65,20 +66,7 @@ func (h *Handler) notifyWaitersOfIssuesDone(ctx context.Context, completed []db.
 func (h *Handler) wakeWaitersOf(ctx context.Context, issue db.Issue, effective func(db.Issue) (string, error)) {
 	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
 	identifier := prefix + "-" + strconv.Itoa(int(issue.Number))
-	issueID := uuidToString(issue.ID)
-	waiters, err := h.Queries.ListIssuesWaitingOn(ctx, db.ListIssuesWaitingOnParams{
-		WorkspaceID:         issue.WorkspaceID,
-		WaitingOnIdentifier: waitingOnFilter(identifier),
-		WaitingOnID:         waitingOnFilter(issueID),
-	})
-	if err != nil {
-		slog.Warn("waiting_on: failed to list waiters",
-			"error", err,
-			"issue_id", issueID,
-			"identifier", identifier)
-		return
-	}
-	for _, waiter := range waiters {
+	for _, waiter := range h.listBlockWaiters(ctx, issue, identifier) {
 		h.wakeWaitingIssue(ctx, waiter, issue, identifier, effective)
 	}
 }
@@ -124,11 +112,15 @@ func (h *Handler) wakeWaitingIssue(ctx context.Context, waiter, completed db.Iss
 	if !fresh.AssigneeType.Valid || !fresh.AssigneeID.Valid {
 		return
 	}
+	woken := blockwait.MetaString(parseIssueMetadata(fresh.Metadata), blockwait.KeyWokenBy)
+	if blockwait.AlreadyWoken(woken, completedIdentifier) || blockwait.AlreadyWoken(woken, uuidToString(completed.ID)) {
+		return
+	}
 
 	mentionPrefix := h.buildParentAssigneeMention(ctx, fresh)
 	title := sanitizeChildTitleForSystemComment(completed.Title)
 	content := fmt.Sprintf(
-		"%sThe issue you were waiting on, [%s](mention://issue/%s) — \"%s\" — just finished. close.waiting_on is resolved; continue this issue.",
+		"%s你在等的 [%s](mention://issue/%s)「%s」已经结束，这张票可以继续了。",
 		mentionPrefix, completedIdentifier, uuidToString(completed.ID), title,
 	)
 
@@ -160,6 +152,9 @@ func (h *Handler) wakeWaitingIssue(ctx context.Context, waiter, completed db.Iss
 		"issue_revision":      created.IssueRevision,
 	})
 
+	h.setIssueMetaString(ctx, fresh, blockwait.KeyWokenBy, blockwait.MarkWoken(woken, completedIdentifier))
+	prefix := h.getIssuePrefix(ctx, fresh.WorkspaceID)
+	h.noteBlockClearedOnSource(ctx, completed, fresh, prefix+"-"+strconv.Itoa(int(fresh.Number)))
 	h.dispatchWaitingOnAssigneeTrigger(ctx, fresh, comment.ID)
 }
 

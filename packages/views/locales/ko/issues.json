@@ -605,7 +605,9 @@
       "resolve_failed": "스레드를 해결하지 못했습니다",
       "unresolve_failed": "스레드 해결을 취소하지 못했습니다"
     },
-    "align_action": "이 댓글로 정렬 시작"
+    "align_action": "이 댓글로 정렬 시작",
+    "trigger_blocked_access_requested": "에이전트 소유자에게 승인을 요청했습니다. 승인 후 시작됩니다",
+    "trigger_blocked_short_access_requested": "소유자 승인 대기 중"
   },
   "reply": {
     "placeholder": "답글 남기기...",
@@ -1160,7 +1162,14 @@
     "record_abandoned_hint": "생성된 이슈가 없습니다.",
     "assignee_suggestions_loading": "추천 담당자를 찾는 중…",
     "assignee_suggestions_failed": "추천을 불러오지 못했습니다. 미할당 항목은 직접 선택할 수 있습니다.",
-    "assignee_unassigned": "미할당 — 확인한 뒤 할당할 수 있습니다."
+    "assignee_unassigned": "미할당 — 확인한 뒤 할당할 수 있습니다.",
+    "project_will_create": "새로 만듦: {{name}}",
+    "project_create_hint": "이 프로젝트를 작업과 함께 만듭니다.",
+    "project_use_existing": "기존 프로젝트 사용",
+    "project_skip": "프로젝트에 넣지 않음",
+    "project_suggestion": "제안: 「{{name}}」",
+    "confirm_with_project": "프로젝트와 작업 {{count}}개 만들기",
+    "project_directory_failed": "폴더를 만들지 못해 나머지도 만들지 않았습니다."
   },
   "sub_issue_accordion": {
     "count_other": "하위 태스크 {{count}}개",

@@ -85,13 +85,17 @@ type IssueStatusData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
-	ID                   string                 `json:"id"`
-	AgentID              string                 `json:"agent_id"`
-	RuntimeID            string                 `json:"runtime_id"`
-	IssueID              string                 `json:"issue_id"`
-	WorkspaceID          string                 `json:"workspace_id"`
-	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
-	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
+	ID              string `json:"id"`
+	AgentID         string `json:"agent_id"`
+	RuntimeID       string `json:"runtime_id"`
+	IssueID         string `json:"issue_id"`
+	WorkspaceID     string `json:"workspace_id"`
+	WorkspaceSlug   string `json:"workspace_slug,omitempty"`
+	IssueIdentifier string `json:"issue_identifier,omitempty"`
+	// CanonicalBranch is the issue's canonical delivery branch (DENE-820);
+	// empty until the issue's first run delivered one. Worktree mode
+	// continues it ahead of the seat's own conversation branch.
+	CanonicalBranch      string                 `json:"canonical_branch,omitempty"`
 	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// RemoteMCPDaemonToken stays inside the daemon and authenticates the local
 	// broker's credential-resolution calls. It must never enter agent env/config.
@@ -134,30 +138,35 @@ type Task struct {
 	// field leaves Projects empty and the daemon renders the primary project
 	// exactly as before. Mirror field: internal/handler/agent.go
 	// AgentTaskResponse.Projects, same JSON name.
-	Projects                      []ProjectContextData   `json:"projects,omitempty"`
-	IsLeaderTask                  bool                   `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
-	LeaderRoleResolved            bool                   `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
-	PriorSessionID                string                 `json:"prior_session_id,omitempty"`                 // Claude session ID from a previous task on this issue
-	PriorWorkDir                  string                 `json:"prior_work_dir,omitempty"`                   // work_dir from a previous task on this issue
-	PriorSessionResumeUnavailable bool                   `json:"prior_session_resume_unavailable,omitempty"` // MUL-5305: server signals a more recent Codex session was withheld (rollout missing) and PriorSessionID (if any) is an older fallback; the run must disclose the continuity gap even if that older session resumes cleanly. Absent/false on old servers.
-	ContinueInterruptedSession    bool                   `json:"continue_interrupted_session,omitempty"`     // DENE-727: auto-retry inherited a resume-safe parent session; daemon sends a continue prompt instead of re-injecting the original task. omitempty so old daemons ignore it and keep today's full prompt while still resuming.
-	TriggerCommentID              string                 `json:"trigger_comment_id,omitempty"`               // comment that triggered this task
-	CoalescedCommentIDs           []string               `json:"coalesced_comment_ids,omitempty"`            // MUL-4195: earlier comments folded into this run while it was still queued; the agent must address these in addition to the (newest) triggering comment. Empty for old servers / non-merged runs
-	CoalescedComments             []CoalescedCommentData `json:"coalesced_comments,omitempty"`               // MUL-4195: full detail of the folded comments (thread_id/author/created_at/content) so the prompt can address each without assuming a shared thread. Empty for old servers / non-merged runs
-	TriggerThreadID               string                 `json:"trigger_thread_id,omitempty"`                // root comment ID for the triggering thread; falls back to trigger_comment_id on old servers
-	TriggerCommentContent         string                 `json:"trigger_comment_content,omitempty"`          // content of the triggering comment
-	TriggerAuthorType             string                 `json:"trigger_author_type,omitempty"`              // "agent" or "member" — author kind for the triggering comment
-	TriggerAuthorName             string                 `json:"trigger_author_name,omitempty"`              // display name of the triggering comment author
-	NewCommentCount               int                    `json:"new_comment_count,omitempty"`                // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
-	NewCommentsSince              string                 `json:"new_comments_since,omitempty"`               // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
-	NewCommentsDeltaKnown         bool                   `json:"new_comments_delta_known,omitempty"`         // the server actually computed the issue-wide delta this claim (both reads succeeded). A zero NewCommentCount means "nothing was said" only when this is true; otherwise the zero is a failed read, a cold start, or an old server, and the prompt must not present it as the comment scan's answer (MUL-6984)
-	IssueStateDeltaKnown          bool                   `json:"issue_state_delta_known,omitempty"`          // MUL-7344: the server compared the issue's title/description against the snapshot taken at this agent's previous run on this issue. Same contract as NewCommentsDeltaKnown — absent means NOT compared (cold start, no prior snapshot, read error, old server), and the prompt must then keep telling the agent to read the issue
-	IssueChangedFields            []string               `json:"issue_changed_fields,omitempty"`             // subset of title,description in that order; empty alongside IssueStateDeltaKnown means unchanged. Fields outside that set (status, assignee, priority, labels, parent, due, stage, project, metadata) are not compared and must never be reported as checked; status and assignee ship their current values instead
-	IssueStatus                   string                 `json:"issue_status,omitempty"`                     // the issue's status key at claim time; sent whether or not the delta is known
-	IssueAssigneeType             string                 `json:"issue_assignee_type,omitempty"`              // "agent", "member" or "squad" at claim time; empty when unassigned
-	IssueAssigneeID               string                 `json:"issue_assignee_id,omitempty"`                // assignee UUID at claim time; empty when unassigned
-	IssueTitle                    string                 `json:"issue_title,omitempty"`
-	IssueDescription              string                 `json:"issue_description,omitempty"`
+	Projects                      []ProjectContextData `json:"projects,omitempty"`
+	IsLeaderTask                  bool                 `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
+	LeaderRoleResolved            bool                 `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
+	PriorSessionID                string               `json:"prior_session_id,omitempty"`                 // Claude session ID from a previous task on this issue
+	PriorWorkDir                  string               `json:"prior_work_dir,omitempty"`                   // work_dir from a previous task on this issue
+	PriorSessionResumeUnavailable bool                 `json:"prior_session_resume_unavailable,omitempty"` // MUL-5305: server signals a more recent Codex session was withheld (rollout missing) and PriorSessionID (if any) is an older fallback; the run must disclose the continuity gap even if that older session resumes cleanly. Absent/false on old servers.
+	ContinueInterruptedSession    bool                 `json:"continue_interrupted_session,omitempty"`     // DENE-727: auto-retry inherited a resume-safe parent session; daemon sends a continue prompt instead of re-injecting the original task. omitempty so old daemons ignore it and keep today's full prompt while still resuming.
+	ContinueAfterTimeLimit        bool                 `json:"continue_after_time_limit,omitempty"`        // DENE-857: the interrupted turn hit the workspace time limit. The continue prompt closes out finished work and splits what remains. Old daemons ignore it and send the generic continue prompt.
+	// SessionRestartReason is filled by the daemon when a continue-retry
+	// cannot actually resume and has to open a new CLI session. It is not
+	// part of the claim payload.
+	SessionRestartReason  string                 `json:"-"`
+	TriggerCommentID      string                 `json:"trigger_comment_id,omitempty"`       // comment that triggered this task
+	CoalescedCommentIDs   []string               `json:"coalesced_comment_ids,omitempty"`    // MUL-4195: earlier comments folded into this run while it was still queued; the agent must address these in addition to the (newest) triggering comment. Empty for old servers / non-merged runs
+	CoalescedComments     []CoalescedCommentData `json:"coalesced_comments,omitempty"`       // MUL-4195: full detail of the folded comments (thread_id/author/created_at/content) so the prompt can address each without assuming a shared thread. Empty for old servers / non-merged runs
+	TriggerThreadID       string                 `json:"trigger_thread_id,omitempty"`        // root comment ID for the triggering thread; falls back to trigger_comment_id on old servers
+	TriggerCommentContent string                 `json:"trigger_comment_content,omitempty"`  // content of the triggering comment
+	TriggerAuthorType     string                 `json:"trigger_author_type,omitempty"`      // "agent" or "member" — author kind for the triggering comment
+	TriggerAuthorName     string                 `json:"trigger_author_name,omitempty"`      // display name of the triggering comment author
+	NewCommentCount       int                    `json:"new_comment_count,omitempty"`        // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
+	NewCommentsSince      string                 `json:"new_comments_since,omitempty"`       // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
+	NewCommentsDeltaKnown bool                   `json:"new_comments_delta_known,omitempty"` // the server actually computed the issue-wide delta this claim (both reads succeeded). A zero NewCommentCount means "nothing was said" only when this is true; otherwise the zero is a failed read, a cold start, or an old server, and the prompt must not present it as the comment scan's answer (MUL-6984)
+	IssueStateDeltaKnown  bool                   `json:"issue_state_delta_known,omitempty"`  // MUL-7344: the server compared the issue's title/description against the snapshot taken at this agent's previous run on this issue. Same contract as NewCommentsDeltaKnown — absent means NOT compared (cold start, no prior snapshot, read error, old server), and the prompt must then keep telling the agent to read the issue
+	IssueChangedFields    []string               `json:"issue_changed_fields,omitempty"`     // subset of title,description in that order; empty alongside IssueStateDeltaKnown means unchanged. Fields outside that set (status, assignee, priority, labels, parent, due, stage, project, metadata) are not compared and must never be reported as checked; status and assignee ship their current values instead
+	IssueStatus           string                 `json:"issue_status,omitempty"`             // the issue's status key at claim time; sent whether or not the delta is known
+	IssueAssigneeType     string                 `json:"issue_assignee_type,omitempty"`      // "agent", "member" or "squad" at claim time; empty when unassigned
+	IssueAssigneeID       string                 `json:"issue_assignee_id,omitempty"`        // assignee UUID at claim time; empty when unassigned
+	IssueTitle            string                 `json:"issue_title,omitempty"`
+	IssueDescription      string                 `json:"issue_description,omitempty"`
 	// CheckoutPaths is issue metadata checkout_paths: the directories this
 	// task asked to check out. Empty means the whole repository. Older
 	// servers omit it.
@@ -165,6 +174,7 @@ type Task struct {
 	IssueCommentSummaries     []IssueContextComment `json:"issue_comment_summaries,omitempty"`
 	IssueTriggerThread        []IssueContextComment `json:"issue_trigger_thread,omitempty"`
 	IssueNewComments          []IssueContextComment `json:"issue_new_comments,omitempty"`
+	IssueSubIssues            []SubIssueRef         `json:"issue_sub_issues,omitempty"` // the task issue's sub-issues; non-empty means this run holds a coordinator (DENE-812)
 	IssueContextGeneratedAt   string                `json:"issue_context_generated_at,omitempty"`
 	IssueContextTruncated     bool                  `json:"issue_context_truncated,omitempty"`
 	ChatSessionID             string                `json:"chat_session_id,omitempty"`              // non-empty for chat tasks
@@ -249,6 +259,17 @@ type CoalescedCommentData struct {
 	AuthorName string `json:"author_name,omitempty"`
 	Content    string `json:"content"`
 	CreatedAt  string `json:"created_at,omitempty"`
+}
+
+// SubIssueRef mirrors handler.SubIssueRef.
+type SubIssueRef struct {
+	ID           string `json:"id"`
+	Identifier   string `json:"identifier,omitempty"`
+	Title        string `json:"title"`
+	Status       string `json:"status"`
+	Stage        int32  `json:"stage,omitempty"`
+	AssigneeType string `json:"assignee_type,omitempty"`
+	AssigneeName string `json:"assignee_name,omitempty"`
 }
 
 type IssueContextComment struct {
@@ -375,10 +396,13 @@ type TaskResult struct {
 	// abandoned as unresumable (GH #6066). Forwarded on every terminal path,
 	// including the completed one: a fresh-session retry that SUCCEEDS is
 	// precisely when the abandoned id would otherwise stay selectable.
-	RetiredSessionID  string           `json:"-"`
-	Usage             []TaskUsageEntry `json:"usage,omitempty"` // per-model token usage
-	NumTurns          int              `json:"-"`
-	LastContextTokens *int64           `json:"-"`
+	// SessionRestartReason explains a new CLI session opened because the
+	// prior one could not be resumed. Forwarded so the issue can say so.
+	SessionRestartReason string           `json:"-"`
+	RetiredSessionID     string           `json:"-"`
+	Usage                []TaskUsageEntry `json:"usage,omitempty"` // per-model token usage
+	NumTurns             int              `json:"-"`
+	LastContextTokens    *int64           `json:"-"`
 }
 
 // PluginHookTool is one agent-trigger plugin hook, as the agent will see it.

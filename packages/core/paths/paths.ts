@@ -63,8 +63,9 @@ function workspaceScoped(slug: string) {
     chat: () => `${ws}/chat`,
     chatWithAgent: (agentId: string) =>
       `${ws}/chat?agent=${encode(agentId)}`,
-    chatSession: (sessionId: string) =>
-      `${ws}/chat?session=${encode(sessionId)}`,
+    // Stable internal address of one conversation. Older links used
+    // `?session=`; those still open (see chatSessionIdFromLocation).
+    chatSession: (sessionId: string) => `${ws}/chat/${encode(sessionId)}`,
     myIssues: () => `${ws}/my-issues`,
     runtimes: () => `${ws}/runtimes`,
     runtimeDetail: (id: string) => `${ws}/runtimes/${encode(id)}`,
@@ -101,4 +102,36 @@ const GLOBAL_PREFIXES = ["/login", "/workspaces/", "/invite/", "/invitations", "
 
 export function isGlobalPath(path: string): boolean {
   return GLOBAL_PREFIXES.some((p) => path === p || path.startsWith(p));
+}
+
+function decodePathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Session id carried by a chat URL.
+ *
+ * `/{slug}/chat/{sessionId}` is the address a copied link uses. The older
+ * `?session=` form still resolves so bookmarks and in-app history keep opening.
+ * A path id wins when both are present.
+ */
+export function chatSessionIdFromLocation(
+  pathname: string,
+  search: string | URLSearchParams,
+): string | null {
+  const hashIdx = pathname.indexOf("#");
+  const withoutHash = hashIdx === -1 ? pathname : pathname.slice(0, hashIdx);
+  const queryIdx = withoutHash.indexOf("?");
+  const cleanPath = queryIdx === -1 ? withoutHash : withoutHash.slice(0, queryIdx);
+  const segments = cleanPath.split("/").filter(Boolean);
+  if (segments.length >= 3 && segments[1] === "chat" && segments[2]) {
+    const id = decodePathSegment(segments[2]);
+    if (id) return id;
+  }
+  const params = typeof search === "string" ? new URLSearchParams(search) : search;
+  return params.get("session") || null;
 }

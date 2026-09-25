@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 var (
@@ -43,8 +44,8 @@ func TestMain(m *testing.M) {
 }
 
 // sharedTestPool returns the package's one database pool, opened on first use,
-// and skips the test when Postgres is unreachable so `go test ./...` stays
-// usable without a database. A failed open is not remembered: the next test
+// and stops the test when Postgres is unreachable — a skip on a laptop without
+// a database, a failure when the run promised one (testutil.SkipDatabase). A failed open is not remembered: the next test
 // tries again, so one transient failure skips one test, not the package.
 //
 // DB tests in this package run serially and own their rows, so they share the
@@ -55,7 +56,7 @@ func sharedTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	pool, err := openSharedTestPool()
 	if err != nil {
-		t.Skip(err)
+		testutil.SkipDatabase(t, err)
 	}
 	// A per-test pool hung in Close on a connection its test never released.
 	// With one shared pool a leak would starve later tests instead, so report
@@ -81,19 +82,11 @@ func openSharedTestPool() (*pgxpool.Pool, error) {
 	if sharedPool != nil {
 		return sharedPool, nil
 	}
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dbURL)
+	pool, err := testutil.ConnectTestDatabase(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("database unavailable: %w", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("database unreachable: %w", err)
+		return nil, err
 	}
 	sharedPool = pool
 	return pool, nil

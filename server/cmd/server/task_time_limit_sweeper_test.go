@@ -114,6 +114,11 @@ func TestTaskTimeLimitNoticeReachesIssueAndParent(t *testing.T) {
 		t.Fatalf("link parent: %v", err)
 	}
 	setWorkspaceTaskTimeLimit(t, "60")
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET session_id = 'sess-limit', work_dir = '/tmp/limit-work' WHERE id = $1
+	`, taskID); err != nil {
+		t.Fatalf("pin session: %v", err)
+	}
 
 	queries := db.New(testPool)
 	taskSvc := service.NewTaskService(queries, testPool, nil, events.New())
@@ -122,12 +127,14 @@ func TestTaskTimeLimitNoticeReachesIssueAndParent(t *testing.T) {
 	if status, reason := taskStatusAndReason(t, taskID); status != "failed" || reason != "task_time_limit" {
 		t.Fatalf("task = (%q, %q), want (failed, task_time_limit)", status, reason)
 	}
-	var retries int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND id <> $2`, issueID, taskID).Scan(&retries); err != nil {
-		t.Fatalf("count retries: %v", err)
+	var childSession, childDir string
+	if err := testPool.QueryRow(ctx, `
+		SELECT session_id, work_dir FROM agent_task_queue WHERE parent_task_id = $1
+	`, taskID).Scan(&childSession, &childDir); err != nil {
+		t.Fatalf("expected a continuation on the same session: %v", err)
 	}
-	if retries != 0 {
-		t.Fatalf("time-limit stop enqueued %d follow-up task(s); it must stay terminal", retries)
+	if childSession != "sess-limit" || childDir != "/tmp/limit-work" {
+		t.Fatalf("continuation session = %q %q, want sess-limit /tmp/limit-work", childSession, childDir)
 	}
 
 	for label, id := range map[string]string{"issue": issueID, "parent": parentID} {
@@ -137,11 +144,8 @@ func TestTaskTimeLimitNoticeReachesIssueAndParent(t *testing.T) {
 		).Scan(&content); err != nil {
 			t.Fatalf("%s: no system notice: %v", label, err)
 		}
-		if !strings.Contains(content, "task time limit") || !strings.Contains(content, "3h") {
-			t.Fatalf("%s notice lacks the limit or the measured runtime: %q", label, content)
-		}
-		if !strings.Contains(content, "mention://member/") {
-			t.Fatalf("%s notice does not mention a responsible member: %q", label, content)
+		if !strings.Contains(content, "续跑") || !strings.Contains(content, "3h") {
+			t.Fatalf("%s notice lacks the continuation or the measured runtime: %q", label, content)
 		}
 	}
 }

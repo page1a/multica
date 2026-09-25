@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/service"
@@ -46,15 +47,22 @@ func TestCompleteTask_SignalsRunCompletedWithoutTerminalStatus(t *testing.T) {
 		t.Fatalf("completion-stall signal comments = %d, want 1", signals)
 	}
 
-	// The signal is mention-only: it must not write the issue, and it must not
-	// start a run of its own.
+	// The signal must not write the issue. It does queue one bounded closeout
+	// run for the assignee — the same contract the service-level stall test
+	// pins. That run is the recovery, not a comment reconcile.
 	var status string
 	dbfx.QueryRow(t, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&status)
 	if status != "in_progress" {
 		t.Errorf("issue status = %q, want in_progress", status)
 	}
-	if n := pendingTaskCountForAgentIssue(t, issueID, agentID); n != 0 {
-		t.Errorf("follow-up tasks enqueued by the signal = %d, want 0", n)
+	if n := pendingTaskCountForAgentIssue(t, issueID, agentID); n != 1 {
+		t.Errorf("follow-up tasks enqueued by the signal = %d, want 1", n)
+	}
+	var handoff string
+	dbfx.QueryRow(t, `SELECT COALESCE(handoff_note, '') FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`, issueID, agentID).Scan(&handoff)
+	if !strings.Contains(handoff, "close protocol") {
+		t.Errorf("recovery handoff = %q, want the closeout instruction", handoff)
 	}
 }
 

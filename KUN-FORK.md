@@ -11,10 +11,21 @@
 
 ## 分支约定
 
-- `main` 只做官方镜像，永远不直接提交，只 fast-forward 到 `upstream/main`。
-- `kun` 是魔改主线，也是 GitHub 上的默认分支。所有功能分支从 `kun` 切出、PR 回 `kun`。
-- 永远不要 rebase `kun`，不要 force-push `kun` 或 `main`。
+三条分支，各自一个职责，不要互换：
+
+| 分支 | 职责 | 谁往里写 |
+| --- | --- | --- |
+| `main` | 官方镜像。永远不直接提交，只 fast-forward 到 `upstream/main`。 | 只有上游同步 |
+| `kun` | 魔改主线 = **测试线**。所有功能分支从这里切出、PR 打回这里。也是 GitHub 默认分支。 | 所有开发 |
+| `release` | **发布线**。只接受从 `kun` 合进来的快进合并，不直接开发、不 cherry-pick。 | 只有发版 |
+
+- 永远不要 rebase `kun`，不要 force-push `kun`、`main` 或 `release`。
 - 魔改增量随时可查：`git log --oneline upstream/main..kun`。
+- 发布线落后多少：`git log --oneline release..kun`。
+
+### 为什么发布线不叫 `main`
+
+`main` 在这个 fork 里已经被官方镜像占住了，它永远只 fast-forward 到 `upstream/main`，不能放我们的代码。把发布线塞进 `main` 会连带改默认分支、CI 判断、自建实例自动升级脚本（盯的是 `origin/kun`）以及所有「PR 打回 kun」的约定。所以发布线单独叫 `release`，语义和「main = 正式版」完全一样。
 
 ## 上游同步流程
 
@@ -50,9 +61,20 @@ node scripts/dsh-vision-probe.mjs --apply
 
 说明、已知坑、给上游的反馈建议见 [docs/kun/dsh-runtime.md](docs/kun/dsh-runtime.md)。
 
-## Desktop 发版
+## Desktop 发版：双通道
 
-打包发布给真机用的 Desktop 版本，走 [docs/kun/desktop-release.md](docs/kun/desktop-release.md)：版本号由 tag 推导、必须从当前 `kun` tip 构建、产物没推上 Release 就等于没发。
+打包发布给真机用的 Desktop 版本，走 [docs/kun/desktop-release.md](docs/kun/desktop-release.md)：版本号由 tag 推导、产物没推上 Release 就等于没发。
+
+两条发布通道，客户端装上哪条就只收哪条的包：
+
+| 通道 | 从哪个分支打 tag | tag 形状 | 谁装 |
+| --- | --- | --- | --- |
+| 测试版（test） | `kun` tip | `v0.5.5-test.1` | kun 本机；愿意先吃 bug 的用户 |
+| 正式版（stable） | `release` tip | `v0.5.5` | kk、zi 以及默认用户 |
+
+测试版在 `kun` 上跑稳之后，把 `kun` 快进合进 `release` 再打正式 tag——正式版的每一行代码都必须先在测试通道上出现过。用户在「设置 → 更新」里自己选通道，切换立即生效。
+
+开任务时要写清这活进哪条线：默认都是进 `kun`（测试线），只有发版动作才碰 `release`。
 
 ## Desktop 默认入口 = 自建实例
 
@@ -67,6 +89,10 @@ sudo scripts/install-selfhost-autoupdate.sh
 ```
 
 装、停、查状态、手工回滚见 [docs/kun/selfhost-autoupdate.md](docs/kun/selfhost-autoupdate.md)。
+
+## 迁移编号
+
+并行分支各自取号会撞号（DENE-730、DENE-763），撞了运行时不报错。`make migration-lint` 是 PR CI 与 release 必经门禁，468–501 的历史双号是冻结白名单、不再扩。取号、改号与门禁细节见 [docs/kun/migration-numbering.md](docs/kun/migration-numbering.md)。
 
 ## 边界
 

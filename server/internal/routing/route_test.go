@@ -247,8 +247,8 @@ func TestLowConfidenceStillDispatchesToTheFallbackRung(t *testing.T) {
 	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空游戏" {
 		t.Errorf("assigns = %v, want the fallback rung (孙悟空游戏), not the unconfident pick", store.assigns)
 	}
-	if len(store.reviewer) != 1 || store.reviewer[0] != "布尔玛游戏" {
-		t.Errorf("reviewer = %v, want the rung above the executor", store.reviewer)
+	if len(store.reviewer) != 1 || store.reviewer[0] != "贝吉塔游戏" {
+		t.Errorf("reviewer = %v, want the rung below the executor, not the strongest", store.reviewer)
 	}
 	if out.Action != ActionAssigned {
 		t.Errorf("action = %q, want %q", out.Action, ActionAssigned)
@@ -275,9 +275,10 @@ func TestReviewerIsNeverTheSeatThatDidTheWork(t *testing.T) {
 	if len(store.reviewer) != 1 {
 		t.Fatalf("reviewer writes = %v", store.reviewer)
 	}
-	// Promoted one rung up rather than accepting a self-review.
-	if store.reviewer[0] != "布尔玛游戏" {
-		t.Errorf("reviewer = %q, want the rung above the executor (布尔玛游戏)", store.reviewer[0])
+	// Same rung, and this roster has no second model family there, so the check
+	// steps down. It does not promote into the strongest rung.
+	if store.reviewer[0] != "贝吉塔游戏" {
+		t.Errorf("reviewer = %q, want 贝吉塔游戏 — one rung down, not the strongest", store.reviewer[0])
 	}
 }
 
@@ -317,8 +318,8 @@ func TestJudgeAskingForAPersonStillWritesASeat(t *testing.T) {
 		t.Fatalf("reviewer kind = %q, want %q — the slot may never name a person",
 			out.ReviewerWritten.Kind, ReviewerAgent)
 	}
-	if len(store.reviewer) != 1 || store.reviewer[0] != "布尔玛游戏" {
-		t.Errorf("reviewer = %v, want [布尔玛游戏] — the rung above the executor", store.reviewer)
+	if len(store.reviewer) != 1 || store.reviewer[0] != "贝吉塔游戏" {
+		t.Errorf("reviewer = %v, want [贝吉塔游戏] — same tier has no second model, so one rung down", store.reviewer)
 	}
 	body := store.comments[KindAssignment][0]
 	if !strings.Contains(body, "需要人拍板") {
@@ -326,6 +327,9 @@ func TestJudgeAskingForAPersonStillWritesASeat(t *testing.T) {
 	}
 	if !strings.Contains(body, "@ 对应的人") {
 		t.Errorf("comment does not tell the seat to ping the person:\n%s", body)
+	}
+	if !strings.Contains(body, "不是停票的理由") {
+		t.Errorf("comment lets 需要人拍板 be read as a hold:\n%s", body)
 	}
 }
 
@@ -379,6 +383,38 @@ func TestInReviewHandsOffToAgentWithoutMentioning(t *testing.T) {
 	}
 }
 
+func TestInReviewCoversADisabledReviewerWithAnotherFamily(t *testing.T) {
+	store := newFakeStore()
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-bulma"
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerAgent, ID: "a-gohan", Name: "孙悟饭"}
+	store.offRoster = map[string]Agent{
+		"a-gohan": {ID: "a-gohan", Name: "孙悟饭", Tier: "strongest"},
+	}
+
+	out, err := newRouter(store, &fakeJudge{}).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionHandedOff {
+		t.Fatalf("action = %q reason %q, want handed off", out.Action, out.Reason)
+	}
+	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-bulma-g" {
+		t.Fatalf("handoffs = %v, want the other strongest family and not the executor", store.handoffs)
+	}
+	if store.issue.Reviewer.ID != "a-bulma-g" {
+		t.Fatalf("reviewer = %s, want 布尔玛游戏", store.issue.Reviewer.ID)
+	}
+	if len(store.relays) != 1 || !store.relays[0].Designated || store.relays[0].OriginalID != "a-gohan" {
+		t.Fatalf("relay = %+v, want the designated original remembered", store.relays)
+	}
+	body := store.comments[KindHandoff][0]
+	if !strings.Contains(body, "已停用") || !strings.Contains(body, "布尔玛游戏") {
+		t.Fatalf("handoff comment does not explain the cover:\n%s", body)
+	}
+}
+
 // A person can still be put in the slot by hand, and old tickets already hold
 // one. That person gets pinged — and keeps their hands free: reassigning the
 // ticket to them is what made the status unmovable, because every later
@@ -429,6 +465,36 @@ func TestInReviewWithNoReviewNeededChangesNothing(t *testing.T) {
 	}
 }
 
+func TestPickAcceptanceSeatChangesFamily(t *testing.T) {
+	store := newFakeStore()
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku"
+	store.roster["特兰克斯"] = Agent{ID: "a-trunks", Name: "特兰克斯"}
+	store.roster["孙悟天"] = Agent{ID: "a-goten", Name: "孙悟天"}
+
+	ref, why, ok := newRouter(store, &fakeJudge{}).PickAcceptanceSeat(context.Background(), "ws", store.issue)
+	if !ok {
+		t.Fatalf("pick failed: %s", why)
+	}
+	if ref.ID == "a-goku" || ref.ID == "" {
+		t.Fatalf("reviewer = %+v, want a different seat", ref)
+	}
+	if ref.ID != "a-goten" && ref.ID != "a-trunks" {
+		t.Fatalf("reviewer = %+v, want 孙悟天 or 特兰克斯", ref)
+	}
+	if !strings.Contains(why, "同档换一家模型") && !strings.Contains(why, "下一档") {
+		t.Fatalf("why = %q, want the cross-family rule", why)
+	}
+
+	alone := newFakeStore()
+	alone.roster = map[string]Agent{"孙悟空": {ID: "a-goku", Name: "孙悟空"}}
+	alone.issue.AssigneeType = "agent"
+	alone.issue.AssigneeID = "a-goku"
+	if _, why, ok := newRouter(alone, &fakeJudge{}).PickAcceptanceSeat(context.Background(), "ws", alone.issue); ok {
+		t.Fatalf("a lone seat was accepted: %s", why)
+	}
+}
+
 func TestInReviewHandsOffAtMostOnce(t *testing.T) {
 	store := newFakeStore()
 	store.issue.Status = "in_review"
@@ -447,6 +513,177 @@ func TestInReviewHandsOffAtMostOnce(t *testing.T) {
 	}
 	if got := len(store.comments[KindHandoff]); got != 1 {
 		t.Errorf("posted %d handoff comments, want 1", got)
+	}
+}
+
+// DENE-617 / DENE-772. An earlier stay already posted the one handoff comment
+// (the old routing pass handed the ticket to a person, or a previous review
+// round finished). The executor has the ticket again, the reviewer slot names
+// a seat, and nothing is running. Entering in_review must hand off anyway.
+// The lifetime comment is an explanation, not a lock.
+func TestInReviewHandsOffAgainAfterAPreviousRound(t *testing.T) {
+	store := newFakeStore()
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerAgent, ID: "a-bulma-g", Name: "布尔玛游戏"}
+	store.comments[KindHandoff] = []string{"## 交接\n\n上一轮的旧评论"}
+
+	out, err := newRouter(store, &fakeJudge{}).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionHandedOff {
+		t.Fatalf("action = %q / %q, want handed off — an old comment must not swallow this stay", out.Action, out.Reason)
+	}
+	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-bulma-g" {
+		t.Fatalf("handoffs = %v, want one handoff to the current reviewer", store.handoffs)
+	}
+	if got := len(store.comments[KindHandoff]); got != 1 {
+		t.Errorf("posted %d handoff comments, want the original one left in place", got)
+	}
+}
+
+// Rework, then back to in_review. The first stay handed the ticket over and
+// posted the one explanation. The reviewer sent it back: the executor holds
+// it again, and that earlier run does not belong to this stay. Entering
+// in_review must hand off a second time. The explanation is not repeated.
+func TestInReviewHandsOffAgainAfterRework(t *testing.T) {
+	store := newFakeStore()
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerAgent, ID: "a-bulma-g", Name: "布尔玛游戏"}
+	r := newRouter(store, &fakeJudge{})
+
+	if _, err := r.Route(context.Background(), "ws", "issue-1"); err != nil {
+		t.Fatalf("first stay: %v", err)
+	}
+	if len(store.handoffs) != 1 {
+		t.Fatalf("first stay handoffs = %v, want 1", store.handoffs)
+	}
+
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	delete(store.reviewerRuns, "a-bulma-g")
+
+	out, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("next stay: %v", err)
+	}
+	if out.Action != ActionHandedOff {
+		t.Fatalf("next stay = %q / %q, want handed off", out.Action, out.Reason)
+	}
+	if len(store.handoffs) != 2 || store.handoffs[1] != "agent:a-bulma-g" {
+		t.Fatalf("handoffs = %v, want a second handoff to the reviewer", store.handoffs)
+	}
+	if got := len(store.comments[KindHandoff]); got != 1 {
+		t.Errorf("posted %d handoff comments, want the one explanation kept", got)
+	}
+}
+
+// The status write lands while the executor's run is still open. Starting the
+// reviewer there races the delivery, so this pass waits. The completion
+// callback is the same Route with the run gone, and that one hands off.
+// A third call — the duplicate of the completion callback — does not start
+// a second run.
+func TestInReviewWaitsForTheExecutorRunThenHandsOffOnce(t *testing.T) {
+	store := newFakeStore()
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerAgent, ID: "a-bulma-g", Name: "布尔玛游戏"}
+	store.activeRun = true
+	r := newRouter(store, &fakeJudge{})
+
+	waiting, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("status pass: %v", err)
+	}
+	if waiting.Action != ActionNoop || waiting.Reason != "active run in progress" {
+		t.Fatalf("status pass = %q / %q, want noop / active run in progress", waiting.Action, waiting.Reason)
+	}
+	if len(store.handoffs) != 0 {
+		t.Fatalf("handed off while the executor was still running: %v", store.handoffs)
+	}
+
+	store.activeRun = false
+	done, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("completion pass: %v", err)
+	}
+	if done.Action != ActionHandedOff {
+		t.Fatalf("completion pass = %q / %q, want handed off", done.Action, done.Reason)
+	}
+	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-bulma-g" {
+		t.Fatalf("handoffs = %v, want one", store.handoffs)
+	}
+
+	again, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("duplicate pass: %v", err)
+	}
+	if again.Action != ActionNoop || again.Reason != "already handed off this round" {
+		t.Fatalf("duplicate pass = %q / %q, want noop / already handed off this round", again.Action, again.Reason)
+	}
+	if len(store.handoffs) != 1 {
+		t.Fatalf("duplicate pass started another run: %v", store.handoffs)
+	}
+}
+
+// A person in the reviewer slot is notified once per stay and never handed
+// the ticket. A later stay notifies again even though the one handoff
+// comment already exists.
+func TestInReviewNotifiesAPersonOncePerRound(t *testing.T) {
+	store := newFakeStore()
+	store.issue.Status = "in_review"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-goku-g"
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerMember, ID: "user-1", Name: "Kun"}
+	r := newRouter(store, &fakeJudge{})
+
+	first, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if first.Action != ActionAdvised || !first.Mentioned {
+		t.Fatalf("first pass = %q mentioned=%v, want advised and mentioned", first.Action, first.Mentioned)
+	}
+	if len(store.handoffs) != 0 {
+		t.Fatalf("a person was reassigned the ticket: %v", store.handoffs)
+	}
+	if len(store.subs) != 1 {
+		t.Fatalf("subs = %v, want one notice", store.subs)
+	}
+
+	second, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("duplicate pass: %v", err)
+	}
+	if second.Action != ActionNoop || second.Reason != "already notified this round" {
+		t.Fatalf("duplicate pass = %q / %q, want noop / already notified this round", second.Action, second.Reason)
+	}
+	if len(store.subs) != 1 {
+		t.Fatalf("duplicate pass notified again: %v", store.subs)
+	}
+
+	// A new stay. The handoff comment is still the one from the first stay.
+	store.memberNotified = map[string]bool{}
+	third, err := r.Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("next round: %v", err)
+	}
+	if third.Action != ActionAdvised || !third.Mentioned {
+		t.Fatalf("next round = %q mentioned=%v, want another notice", third.Action, third.Mentioned)
+	}
+	if len(store.handoffs) != 0 {
+		t.Fatalf("the next round reassigned the ticket: %v", store.handoffs)
+	}
+	if len(store.subs) != 2 {
+		t.Fatalf("subs = %v, want a second notice", store.subs)
+	}
+	if got := len(store.comments[KindHandoff]); got != 1 {
+		t.Errorf("posted %d handoff comments, want the one unique comment", got)
 	}
 }
 
@@ -720,7 +957,7 @@ func TestLowConfidenceReportsTheFallbackWithAReadableReason(t *testing.T) {
 	if out.Action != ActionAssigned || out.ExecutorWritten == nil || out.ReviewerWritten.Empty() {
 		t.Fatalf("outcome = %+v, want both slots written", out)
 	}
-	for _, want := range []string{"executor fell back to 孙悟空游戏: confidence 47% < threshold 70%", "reviewer fell back to 布尔玛游戏: confidence 38% < threshold 70%"} {
+	for _, want := range []string{"executor fell back to 孙悟空游戏: confidence 47% < threshold 70%", "reviewer fell back to 贝吉塔游戏: confidence 38% < threshold 70%"} {
 		if !strings.Contains(out.Reason, want) {
 			t.Errorf("reason = %q, want it to contain %q", out.Reason, want)
 		}
@@ -865,6 +1102,9 @@ func TestInReviewFillsAnEmptyReviewerSlotAndHandsOff(t *testing.T) {
 	if !strings.Contains(body, "现场定了一个") {
 		t.Errorf("handoff comment hides that the reviewer was decided at this row:\n%s", body)
 	}
+	if !strings.Contains(body, "就在这一轮合并并关票") {
+		t.Errorf("handoff comment does not release a pass in the same turn:\n%s", body)
+	}
 }
 
 // A seat may not accept its own output, including when the reviewer is decided
@@ -908,11 +1148,10 @@ func TestInReviewDecisionNeverTouchesStatus(t *testing.T) {
 	}
 }
 
-// Plenty of work is done by agents that carry no tier label at all. "The
-// ladder has no rung above this seat" is then a fact about the ladder, not
-// about the ticket, and answering it with a person is how every mechanical
-// check ends up queued on somebody's desk. The top rung takes those.
-func TestOffLadderExecutorFallsBackToTheTopRungNotAPerson(t *testing.T) {
+// Plenty of work is done by agents that carry no tier label at all. The
+// fallback rung checks those. The strongest rung does not: an unlabelled
+// executor is not a confident "strongest" verdict.
+func TestOffLadderExecutorFallsBackToTheFallbackRungNotTheStrongest(t *testing.T) {
 	store := newFakeStore()
 	store.issue.Status = "in_review"
 	store.issue.AssigneeType = "agent"
@@ -928,12 +1167,15 @@ func TestOffLadderExecutorFallsBackToTheTopRungNotAPerson(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.ReviewerWritten.Label() != "布尔玛游戏" {
-		t.Errorf("reviewer = %q, want 布尔玛游戏 — an unlabelled executor must not force a human check",
+	if out.ReviewerWritten.Label() != "孙悟空游戏" {
+		t.Errorf("reviewer = %q, want 孙悟空游戏 — an unlabelled executor lands on the fallback rung",
 			out.ReviewerWritten.Label())
 	}
-	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-bulma-g" {
-		t.Errorf("handoffs = %v, want [agent:a-bulma-g]", store.handoffs)
+	if strings.Contains(out.ReviewerWritten.Label(), "布尔玛") {
+		t.Errorf("reviewer = %q, fallback must not be the strongest rung", out.ReviewerWritten.Label())
+	}
+	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-goku-g" {
+		t.Errorf("handoffs = %v, want [agent:a-goku-g]", store.handoffs)
 	}
 }
 
@@ -962,5 +1204,60 @@ func TestTopRungExecutorFallsBackToTheRungBelow(t *testing.T) {
 	}
 	if out.ReviewerWritten.Label() != "孙悟空游戏" {
 		t.Errorf("reviewer = %q, want 孙悟空游戏", out.ReviewerWritten.Label())
+	}
+}
+
+// The acceptance bar: an executor on the strong rung must not drag the
+// fallback reviewer onto the strongest rung. With no second model family on
+// strong, the check steps down.
+func TestStrongExecutorFallbackReviewerIsNotStrongest(t *testing.T) {
+	store := newFakeStore()
+	judge := &fakeJudge{verdict: Verdict{
+		ExecutorTier: "strong", ExecutorConfidence: 0.9,
+		Reviewer: ReviewerSeat, ReviewerTier: "strongest", ReviewerConfidence: 0.2,
+	}}
+
+	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ExecutorWritten == nil || out.ExecutorWritten.TierKey != "strong" {
+		t.Fatalf("executor = %+v, want the strong rung", out.ExecutorWritten)
+	}
+	if out.ReviewerWritten.Kind != ReviewerAgent {
+		t.Fatalf("reviewer = %+v, want a seat", out.ReviewerWritten)
+	}
+	if out.ReviewerWritten.Label() == "布尔玛游戏" || strings.Contains(out.ReviewerWritten.Label(), "孙悟饭") {
+		t.Fatalf("reviewer = %q, fallback must not be the strongest rung", out.ReviewerWritten.Label())
+	}
+	if out.ReviewerWritten.Label() != "贝吉塔游戏" {
+		t.Errorf("reviewer = %q, want 贝吉塔游戏", out.ReviewerWritten.Label())
+	}
+	body := store.comments[KindAssignment][0]
+	if !strings.Contains(body, "改到最强档要在评论里写明理由") || !strings.Contains(body, "不会取消原来的 run") {
+		t.Errorf("decision comment does not warn about a manual reassignment:\n%s", body)
+	}
+}
+
+// When the strong rung has a second model family, the fallback reviewer is
+// that seat. It is still not the strongest rung.
+func TestStrongExecutorFallbackReviewerUsesAnotherModelOnTheSameTier(t *testing.T) {
+	store := newFakeStore()
+	store.roster["特兰克斯游戏"] = Agent{ID: "a-trunks-g", Name: "特兰克斯游戏"}
+	judge := &fakeJudge{verdict: Verdict{
+		ExecutorTier: "strong", ExecutorConfidence: 0.9,
+		Reviewer: ReviewerSeat, ReviewerTier: "strongest", ReviewerConfidence: 0.2,
+	}}
+
+	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ReviewerWritten.Label() != "特兰克斯游戏" {
+		t.Fatalf("reviewer = %q, want 特兰克斯游戏 — the other model family on the strong rung", out.ReviewerWritten.Label())
+	}
+	body := store.comments[KindAssignment][0]
+	if !strings.Contains(body, "同档换一家模型") {
+		t.Errorf("comment does not say the reviewer stayed on the rung:\n%s", body)
 	}
 }

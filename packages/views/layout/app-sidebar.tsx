@@ -20,6 +20,7 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Layers,
+  MessageSquare,
   ChevronDown,
   ChevronRight,
   LogOut,
@@ -74,13 +75,14 @@ import { canAccessModule, navItemModule } from "@multica/core/workspace";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { inboxUnreadSummaryOptions, useInboxUnreadCount, hasOtherWorkspaceUnread, unreadWorkspaceIds } from "@multica/core/inbox/queries";
-import { chatSessionsOptions } from "@multica/core/chat/queries";
+import { chatSessionOptions, chatSessionsOptions } from "@multica/core/chat/queries";
+import type { ChatSession } from "@multica/core/types";
 import { countUnreadChatMessages } from "@multica/core/chat/unread";
 import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
-import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
+import { CHAT_PIN_DRAG_TYPE, useCreatePin, useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import type { PinnedItem } from "@multica/core/types";
@@ -293,6 +295,8 @@ function PinRow({
   const isIssue = pin.item_type === "issue";
   const statusCatalog = useIssueStatuses(wsId);
   const isView = pin.item_type === "view";
+  const isChat = pin.item_type === "chat";
+  const { t } = useT("layout");
   const p = useWorkspacePaths();
   const setActiveView = useActiveIssueViewStore((s) => s.setActive);
   const issueQuery = useQuery({
@@ -307,6 +311,21 @@ function PinRow({
     ...issueViewDetailOptions(wsId, pin.item_id),
     enabled: isView,
   });
+  // A chat pin reads its title from the sessions list the sidebar already
+  // holds for the Chat badge, so a rename patched onto that list by the
+  // socket shows here too. Only when the list has loaded without the chat
+  // (deleted, or access withdrawn) is the detail fetched, whose 404 unpins.
+  const chatListQuery = useQuery({
+    ...chatSessionsOptions(wsId),
+    enabled: isChat,
+  });
+  const chatFromList = isChat
+    ? chatListQuery.data?.find((s: ChatSession) => s.id === pin.item_id)
+    : undefined;
+  const chatDetailQuery = useQuery({
+    ...chatSessionOptions(wsId, pin.item_id),
+    enabled: isChat && chatListQuery.isSuccess && !chatFromList,
+  });
 
   const triggeredRef = useRef(false);
   useEffect(() => {
@@ -315,12 +334,12 @@ function PinRow({
     // every view pin — auto-unpinning would permanently delete them all.
     // A deleted view's row simply hides instead.
     if (isView) return;
-    const err = isIssue ? issueQuery.error : projectQuery.error;
+    const err = isIssue ? issueQuery.error : isChat ? chatDetailQuery.error : projectQuery.error;
     if (err instanceof ApiError && err.status === 404 && !triggeredRef.current) {
       triggeredRef.current = true;
       onUnpin();
     }
-  }, [isIssue, isView, issueQuery.error, onUnpin, projectQuery.error]);
+  }, [isChat, isIssue, isView, chatDetailQuery.error, issueQuery.error, onUnpin, projectQuery.error]);
 
   const activeViewByContainer = useActiveIssueViewStore((s) => s.active);
   if (isView) {
@@ -367,6 +386,24 @@ function PinRow({
     );
   }
 
+  if (isChat) {
+    const chat = chatFromList ?? chatDetailQuery.data;
+    if (!chat) {
+      if (chatListQuery.isPending || chatDetailQuery.isPending) return <PinSkeleton />;
+      return null;
+    }
+    return (
+      <SortablePinItem
+        pin={pin}
+        href={p.chatSession(pin.item_id)}
+        pathname={pathname}
+        onUnpin={onUnpin}
+        label={chat.title?.trim() || t(($) => $.sidebar.chat_untitled)}
+        iconNode={<MessageSquare className="!size-3.5 shrink-0" />}
+      />
+    );
+  }
+
   if (isIssue) {
     if (issueQuery.isPending) return <PinSkeleton />;
     if (issueQuery.isError || !issueQuery.data) return null;
@@ -408,6 +445,31 @@ function PinRow({
       iconNode={iconNode}
     />
   );
+}
+
+/**
+ * True while a Chat list row is being dragged anywhere in the window. Native
+ * drag events only reach the element under the pointer, so the document is
+ * watched: `dragenter` carrying our MIME switches it on, `drop` / `dragend`
+ * (which fires on the source even when released outside the window) off.
+ */
+function useChatDragInFlight(): boolean {
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const onEnter = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes(CHAT_PIN_DRAG_TYPE)) setActive(true);
+    };
+    const onEnd = () => setActive(false);
+    document.addEventListener("dragenter", onEnter);
+    document.addEventListener("drop", onEnd);
+    document.addEventListener("dragend", onEnd);
+    return () => {
+      document.removeEventListener("dragenter", onEnter);
+      document.removeEventListener("drop", onEnd);
+      document.removeEventListener("dragend", onEnd);
+    };
+  }, []);
+  return active;
 }
 
 function PinSkeleton() {
@@ -517,9 +579,27 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     const module = navItemModule(key);
     return module === null || canAccessModule(moduleAccess, module);
   };
+  const createPin = useCreatePin();
   const deletePin = useDeletePin();
   const reorderPins = useReorderPins();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  // A chat being dragged out of the Chat list (native DnD, see
+  // CHAT_PIN_DRAG_TYPE). While one is in flight the pinned group shows even
+  // when empty, so there is always somewhere to drop it.
+  const chatDragActive = useChatDragInFlight();
+  const [chatDropOver, setChatDropOver] = useState(false);
+  const pinnedGroupRef = useRef<HTMLDivElement>(null);
+  const handleChatDrop = useCallback(
+    (event: React.DragEvent) => {
+      const sessionId = event.dataTransfer.getData(CHAT_PIN_DRAG_TYPE);
+      setChatDropOver(false);
+      if (!sessionId) return;
+      event.preventDefault();
+      if (pinnedItems.some((pin) => pin.item_type === "chat" && pin.item_id === sessionId)) return;
+      createPin.mutate({ item_type: "chat", item_id: sessionId });
+    },
+    [createPin, pinnedItems],
+  );
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const sidebarFadeStyle = useScrollFade(sidebarScrollRef, 24);
   const getPinHref = useCallback(
@@ -528,9 +608,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         ? p.issueDetail(pin.item_id)
         : pin.item_type === "project"
           ? p.projectDetail(pin.item_id)
-          // Views know their target only after their detail loads — the row
-          // resolves its own href; this placeholder never renders as a link.
-          : "",
+          : pin.item_type === "chat"
+            ? p.chatSession(pin.item_id)
+            // Views know their target only after their detail loads — the row
+            // resolves its own href; this placeholder never renders as a link.
+            : "",
     [p],
   );
 
@@ -565,6 +647,17 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     (event: DragEndEvent) => {
       isDraggingRef.current = false;
       const { active, over } = event;
+      // Dragging a chat pin clear out of the sidebar unpins it — the reverse
+      // of dropping a chat in. closestCenter always names an `over`, so the
+      // gesture is read from where the row was released instead. Only chat
+      // pins: issue / project / view pins keep their pin-button-only removal.
+      const dragged = localPinned.find((p) => p.id === active.id);
+      const released = active.rect.current.translated;
+      const group = pinnedGroupRef.current?.getBoundingClientRect();
+      if (dragged?.item_type === "chat" && released && group && released.left > group.right) {
+        deletePin.mutate({ itemType: "chat", itemId: dragged.item_id });
+        return;
+      }
       if (!over || active.id === over.id) return;
       const oldIndex = localPinned.findIndex((p) => p.id === active.id);
       const newIndex = localPinned.findIndex((p) => p.id === over.id);
@@ -573,7 +666,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
       setLocalPinned(reordered);
       reorderPins.mutate(reordered);
     },
-    [localPinned, reorderPins],
+    [deletePin, localPinned, reorderPins],
   );
 
   const queryClient = useQueryClient();
@@ -833,9 +926,27 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             </SidebarGroupContent>
           </SidebarGroup>
 
-          {visiblePinned.length > 0 && (
+          {(visiblePinned.length > 0 || chatDragActive) && (
             <Collapsible defaultOpen>
-              <SidebarGroup className="group/pinned">
+              <SidebarGroup
+                ref={pinnedGroupRef}
+                className={cn(
+                  "group/pinned rounded-md transition-colors",
+                  chatDragActive && "ring-1 ring-inset ring-border",
+                  chatDropOver && "bg-sidebar-accent/70 ring-brand",
+                )}
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes(CHAT_PIN_DRAG_TYPE)) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                  if (!chatDropOver) setChatDropOver(true);
+                }}
+                onDragLeave={(event) => {
+                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                  setChatDropOver(false);
+                }}
+                onDrop={handleChatDrop}
+              >
                 <SidebarGroupLabel
                   render={<CollapsibleTrigger />}
                   className="group/trigger cursor-pointer hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground"
@@ -862,6 +973,14 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         </SidebarMenu>
                       </SortableContext>
                     </DndContext>
+                    {chatDragActive && (
+                      <div
+                        data-testid="chat-pin-drop-hint"
+                        className="pointer-events-none mt-0.5 rounded-md border border-dashed border-border px-2 py-1.5 text-caption text-muted-foreground"
+                      >
+                        {t(($) => $.sidebar.pin_drop_hint)}
+                      </div>
+                    )}
                     {visiblePinned.length > PINNED_PREVIEW_LIMIT && (
                       <SidebarMenuButton
                         size="sm"

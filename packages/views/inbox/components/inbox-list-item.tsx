@@ -79,7 +79,10 @@ export function InboxListItem({
   // Archiving deliberately leaves `read` untouched so unarchiving restores the
   // real unread state, so archived rows would otherwise keep an unread marker
   // the user cannot clear from this view. Suppress the affordance here only.
-  const showUnread = item.read !== true && !isArchivedView;
+  const unreadCount = isArchivedView
+    ? 0
+    : (item.unread_count ?? (item.read ? 0 : 1));
+  const showUnread = unreadCount > 0;
   const ActionIcon = isArchivedView ? ArchiveRestore : Archive;
   const actionLabel = isArchivedView
     ? t(($) => $.list.unarchive_tooltip)
@@ -140,9 +143,6 @@ export function InboxListItem({
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            {showUnread && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-            )}
             <span
               className={`truncate text-body ${showUnread ? "font-medium" : "text-muted-foreground"}`}
             >
@@ -188,7 +188,7 @@ export function InboxListItem({
           </div>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className={`min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-caption ${showUnread ? "text-muted-foreground" : "text-muted-foreground"}`}>
+          <p className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-caption text-muted-foreground">
             <InboxDetailLabel item={item} />
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -203,9 +203,17 @@ export function InboxListItem({
                 hoverCard={false}
               />
             )}
-            <span className={`text-caption ${showUnread ? "text-muted-foreground" : "text-muted-foreground"}`}>
+            <span className="text-caption text-muted-foreground">
               {timeAgo(item.created_at)}
             </span>
+            {showUnread && (
+              <span
+                aria-label={t(($) => $.list.unread_count, { count: unreadCount })}
+                className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[oklch(0.62_0.14_18)] px-1 text-micro font-semibold text-white"
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
           </div>
         </div>
       </div>

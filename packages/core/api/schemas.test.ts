@@ -145,6 +145,18 @@ describe("ChatSessionSchema", () => {
     expect(parsed.is_current_channel_route).toBe(false);
   });
 
+  it("carries a project-nudge dismissal and leaves it absent on an older server", () => {
+    expect(ChatSessionSchema.parse(baseSession).project_nudge_dismissed).toBeUndefined();
+    expect(
+      ChatSessionSchema.parse({ ...baseSession, project_nudge_dismissed: true })
+        .project_nudge_dismissed,
+    ).toBe(true);
+    expect(
+      ChatSessionSchema.parse({ ...baseSession, project_nudge_dismissed: "yes" })
+        .project_nudge_dismissed,
+    ).toBeUndefined();
+  });
+
   it("carries the project set and leaves it absent on a server without one", () => {
     expect(ChatSessionSchema.parse(baseSession).project_ids).toBeUndefined();
     expect(

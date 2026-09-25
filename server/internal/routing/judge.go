@@ -197,7 +197,7 @@ Large or vague tickets default to needing review. Report calibrated confidence i
 
 Respond with a JSON object with keys: executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. reason is one short sentence for a human reader.
 
-Follow policy_prompt in the user payload when choosing executor_tier. That text is the preference. You still only return the JSON object above: you do not change status, assignee, or any other ticket field, and you do not take an action. A fact marked unknown is missing: do not treat it as zero, available, or exhausted.`
+Follow policy_prompt in the user payload when choosing executor_tier and reviewer_tier. That text is the preference. Checking the work is not a reason to pick a higher tier than doing it. You still only return the JSON object above: you do not change status, assignee, or any other ticket field, and you do not take an action. A fact marked unknown is missing: do not treat it as zero, available, or exhausted.`
 
 const unblockSystemPrompt = `A work ticket is blocked. Say only what is likely wrong.
 

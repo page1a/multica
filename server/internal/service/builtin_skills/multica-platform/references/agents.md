@@ -45,7 +45,7 @@ from archive — archive is the delete path. Disabled is orthogonal to unbound
 and archived.
 
 `agent get` returns the persisted agent including `runtime_id`, `model`,
-`thinking_level`, `service_tier`, `switchable_models`, `custom_args`, `has_custom_env`,
+`thinking_level`, `service_tier`, `custom_args`, `has_custom_env`,
 `custom_env_key_count`, and `skills`. It never returns plaintext `custom_env`.
 
 ## Core model

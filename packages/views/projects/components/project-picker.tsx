@@ -7,6 +7,7 @@ import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type { UpdateIssueRequest } from "@multica/core/types";
 import { ProjectIcon } from "./project-icon";
+import { NewProjectCreateForm } from "./new-project-create-form";
 import {
   PropertyPicker,
   PickerItem,
@@ -47,6 +48,7 @@ export function ProjectPicker({
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const current = projects.find((p) => p.id === projectId);
   const [filter, setFilter] = useState("");
+  const [creating, setCreating] = useState(false);
   // Normalize to an always-boolean controlled `open`, matching the other
   // pickers (status/priority/assignee/labels). Base UI latches a controlled
   // `open={true}` — a later `undefined` does NOT close it — so callers wiring
@@ -56,6 +58,10 @@ export function ProjectPicker({
   // A disabled picker can never be open, and no interaction may reopen it.
   const open = disabled ? false : controlledOpen ?? internalOpen;
   const setOpen = disabled ? () => {} : onOpenChange ?? setInternalOpen;
+  const handleOpen = (next: boolean) => {
+    if (!next) setCreating(false);
+    setOpen(next);
+  };
 
   // Client-side filter: substring match plus pinyin so Chinese project names
   // are reachable by latin input (e.g. "sjtmh" → "数据透明化").
@@ -74,12 +80,23 @@ export function ProjectPicker({
     <div className="inline-flex min-w-0">
       <PropertyPicker
         open={open}
-        onOpenChange={setOpen}
-        width="w-52"
+        onOpenChange={handleOpen}
+        width={creating ? "w-80" : "w-52"}
         align={align}
-        searchable
+        searchable={!creating}
         searchPlaceholder={t(($) => $.picker.search_placeholder)}
         onSearchChange={setFilter}
+        footer={
+          !creating && query && filtered.length === 0 ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-left text-caption font-medium text-emerald-700 hover:bg-accent"
+              onClick={() => setCreating(true)}
+            >
+              {t(($) => $.picker.create, { name: filter.trim() })}
+            </button>
+          ) : null
+        }
         triggerRender={resolvedTriggerRender}
         trigger={
           current ? (
@@ -95,39 +112,53 @@ export function ProjectPicker({
           )
         }
       >
-        {/* "No project" — always the first row, search active or not, and the
-            only clear entry now that the pill carries no inline ×. Mirrors
-            the unassigned row in the assignee picker. */}
-        <PickerItem
-          emptyValue
-          selected={!projectId}
-          onClick={() => {
-            onUpdate({ project_id: null });
-            setOpen(false);
-          }}
-        >
-          <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-muted-foreground">{t(($) => $.picker.no_project)}</span>
-        </PickerItem>
-
-        {filtered.map((p) => (
-          <PickerItem
-            key={p.id}
-            selected={p.id === projectId}
-            onClick={() => {
-              onUpdate({ project_id: p.id });
+        {creating ? (
+          <NewProjectCreateForm
+            initialName={filter.trim()}
+            onCancel={() => setCreating(false)}
+            onCreated={(id) => {
+              onUpdate({ project_id: id });
+              setCreating(false);
               setOpen(false);
             }}
-          >
-            <ProjectIcon project={p} size="sm" />
-            <span className="truncate">{p.title}</span>
-          </PickerItem>
-        ))}
+          />
+        ) : (
+          <>
+            {/* "No project" — always the first row, search active or not, and the
+                only clear entry now that the pill carries no inline ×. Mirrors
+                the unassigned row in the assignee picker. */}
+            <PickerItem
+              emptyValue
+              selected={!projectId}
+              onClick={() => {
+                onUpdate({ project_id: null });
+                setOpen(false);
+              }}
+            >
+              <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">{t(($) => $.picker.no_project)}</span>
+            </PickerItem>
 
-        {projects.length === 0 && (
-          <div className="px-2 py-1.5 text-caption text-muted-foreground">{t(($) => $.picker.empty)}</div>
+            {filtered.map((p) => (
+              <PickerItem
+                key={p.id}
+                selected={p.id === projectId}
+                onClick={() => {
+                  onUpdate({ project_id: p.id });
+                  setOpen(false);
+                }}
+              >
+                <ProjectIcon project={p} size="sm" />
+                <span className="truncate">{p.title}</span>
+              </PickerItem>
+            ))}
+
+            {projects.length === 0 && (
+              <div className="px-2 py-1.5 text-caption text-muted-foreground">{t(($) => $.picker.empty)}</div>
+            )}
+            {projects.length > 0 && filtered.length === 0 && query && <PickerEmpty />}
+          </>
         )}
-        {projects.length > 0 && filtered.length === 0 && query && <PickerEmpty />}
       </PropertyPicker>
     </div>
   );

@@ -16,6 +16,8 @@ vi.mock("../platform", () => ({
 // declarations.
 const {
   getAttachmentTextContentMock,
+  getAttachmentMock,
+  getAttachmentBlobMock,
   downloadMock,
   getBaseUrlMock,
   FakePreviewTooLargeError,
@@ -35,6 +37,8 @@ const {
   }
   return {
     getAttachmentTextContentMock: vi.fn(),
+    getAttachmentMock: vi.fn(),
+    getAttachmentBlobMock: vi.fn(),
     downloadMock: vi.fn(),
     // Default to the web shape (empty base, same-origin). Tests covering
     // the desktop-renderer / standalone-shell case override per-test.
@@ -47,6 +51,8 @@ const {
 vi.mock("@multica/core/api", () => ({
   api: {
     getAttachmentTextContent: getAttachmentTextContentMock,
+    getAttachment: getAttachmentMock,
+    getAttachmentBlob: getAttachmentBlobMock,
     getBaseUrl: getBaseUrlMock,
   },
   PreviewTooLargeError: FakePreviewTooLargeError,
@@ -339,13 +345,32 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
     );
   });
 
-  it("prefixes the configured API base for PDF previews when download_url is server-relative", () => {
+  it("previews an auth-gated PDF from downloaded bytes, not the download URL", async () => {
+    // Proxy mode (self-hosted). The stable download URL needs the session.
+    // Framing it from Desktop leaves a blank page: the iframe cannot send
+    // the bearer token, and the response refuses foreign ancestors. The
+    // preview must fetch the bytes and frame a local object URL instead.
     getBaseUrlMock.mockReturnValue("https://api.example.test");
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:pdf-preview");
+    const previousCreate = URL.createObjectURL;
+    const previousRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    const id = "11111111-2222-3333-4444-555555555555";
     const att = makeAttachment({
+      id,
       filename: "manual.pdf",
       content_type: "application/pdf",
-      download_url: "/api/attachments/att-1/download",
+      download_url: `/api/attachments/${id}/download`,
     });
+    getAttachmentMock.mockResolvedValue({
+      ...att,
+      download_url: `/api/attachments/${id}/download`,
+    });
+    getAttachmentBlobMock.mockResolvedValue(
+      new Blob(["%PDF-1.4"], { type: "application/octet-stream" }),
+    );
+
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
@@ -353,10 +378,24 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
         onClose={() => {}}
       />,
     );
-    const iframe = document.querySelector("iframe");
-    expect(iframe?.getAttribute("src")).toBe(
-      "https://api.example.test/api/attachments/att-1/download",
-    );
+
+    try {
+      expect(document.querySelector("iframe")).toBeNull();
+      await waitFor(() => {
+        expect(document.querySelector("iframe")?.getAttribute("src")).toBe(
+          "blob:pdf-preview",
+        );
+      });
+      expect(getAttachmentBlobMock).toHaveBeenCalledWith(id);
+      const framed = createObjectURL.mock.calls[0]?.[0] as Blob | undefined;
+      expect(framed?.type).toBe("application/pdf");
+      expect(document.querySelector("iframe")?.getAttribute("src")).not.toContain(
+        "/download",
+      );
+    } finally {
+      URL.createObjectURL = previousCreate;
+      URL.revokeObjectURL = previousRevoke;
+    }
   });
 
   it("keeps a same-origin relative URL untouched when the configured base is empty (web)", () => {

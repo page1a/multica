@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestRedundantIndexMigrationsPreserveCoveringQueryPlansAndRollback(t *testing.T) {
@@ -143,23 +145,11 @@ func TestRedundantIndexMigrationsPreserveCoveringQueryPlansAndRollback(t *testin
 
 func openTestPoolWithSearchPath(t *testing.T, schema string) *pgxpool.Pool {
 	t.Helper()
-	config, err := pgxpool.ParseConfig(testDatabaseURL())
-	if err != nil {
-		t.Fatalf("parse test database URL: %v", err)
-	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatalf("open schema-scoped test pool: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Fatalf("ping schema-scoped test pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return testutil.OpenTestDatabaseConfig(ctx, t, func(config *pgxpool.Config) {
+		config.ConnConfig.RuntimeParams["search_path"] = schema
+	})
 }
 
 func createRedundantIndexFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

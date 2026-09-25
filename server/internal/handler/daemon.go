@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/permission"
@@ -1262,7 +1263,11 @@ type DaemonHeartbeatRequest struct {
 	RuntimeID           string                       `json:"runtime_id"`
 	SupportsBatchImport bool                         `json:"supports_batch_import,omitempty"`
 	PlanLimits          *protocol.PlanLimitsSnapshot `json:"plan_limits,omitempty"`
-	Jev                 *protocol.JevStatusSnapshot  `json:"jev,omitempty"`
+	// AgentPlanLimits is the per-agent counterpart of PlanLimits (DENE-715),
+	// keyed by agent id. Optional: a daemon that predates it, or one that has
+	// never run an account-bound agent, simply omits it.
+	AgentPlanLimits map[string]protocol.PlanLimitsSnapshot `json:"agent_plan_limits,omitempty"`
+	Jev             *protocol.JevStatusSnapshot            `json:"jev,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -1407,6 +1412,14 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid jev")
 		return
 	}
+	// Per-agent snapshots are best-effort: a malformed entry is dropped rather
+	// than failing the heartbeat, because the same request is also how this
+	// machine's runtimes stay online (DENE-715).
+	agentPlanLimitsJSON, agentPlanLimitsErr := validateAgentPlanLimits(req.AgentPlanLimits, rt.Provider)
+	if agentPlanLimitsErr != nil {
+		slog.Warn("dropping unusable agent plan limits",
+			"runtime_id", req.RuntimeID, "error", agentPlanLimitsErr)
+	}
 
 	updateStart := time.Now()
 	if err := h.recordHeartbeat(r.Context(), rt); err != nil {
@@ -1416,6 +1429,12 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.applyStoredPlanLimits(r.Context(), rt.ID, uuidToString(rt.WorkspaceID), planLimitsJSON); err != nil {
+		updateMs = time.Since(updateStart).Milliseconds()
+		outcome = "error_update"
+		writeError(w, http.StatusInternalServerError, "heartbeat failed")
+		return
+	}
+	if err := h.applyStoredAgentPlanLimits(r.Context(), uuidToString(rt.WorkspaceID), agentPlanLimitsJSON); err != nil {
 		updateMs = time.Since(updateStart).Milliseconds()
 		outcome = "error_update"
 		writeError(w, http.StatusInternalServerError, "heartbeat failed")
@@ -1453,6 +1472,9 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if ack.PendingUpdate != nil {
 		resp["pending_update"] = ack.PendingUpdate
 	}
+	if ack.PendingAgentCLI != nil {
+		resp["pending_agent_cli"] = ack.PendingAgentCLI
+	}
 	if ack.PendingModelList != nil {
 		resp["pending_model_list"] = ack.PendingModelList
 	}
@@ -1476,7 +1498,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 // captured each runtime's liveness state in a connection lease, so the hot
 // path never reads agent_runtime. HTTP heartbeat remains the stateless lookup
 // fallback for a daemon that stops receiving WebSocket acknowledgements.
-func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool, planLimits *protocol.PlanLimitsSnapshot, jev *protocol.JevStatusSnapshot) (*protocol.DaemonHeartbeatAckPayload, error) {
+func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool, planLimits *protocol.PlanLimitsSnapshot, agentPlanLimits map[string]protocol.PlanLimitsSnapshot, jev *protocol.JevStatusSnapshot) (*protocol.DaemonHeartbeatAckPayload, error) {
 	lease := identity.RuntimeLeases[runtimeID]
 	if lease == nil {
 		return nil, fmt.Errorf("runtime not in connection lease")
@@ -1495,6 +1517,13 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	if err != nil {
 		return nil, fmt.Errorf("invalid jev: %w", err)
 	}
+	// Same best-effort rule as the HTTP path: a per-agent entry that fails
+	// validation is dropped, never a reason to tear down the connection.
+	agentPlanLimitsJSON, agentPlanLimitsErr := validateAgentPlanLimits(agentPlanLimits, state.Provider)
+	if agentPlanLimitsErr != nil {
+		slog.Warn("dropping unusable agent plan limits",
+			"runtime_id", runtimeID, "error", agentPlanLimitsErr)
+	}
 	if err := h.recordHeartbeatLease(ctx, runtimeID, lease); err != nil {
 		if isNotFound(err) {
 			if h.DaemonRuntimeGone != nil {
@@ -1510,6 +1539,9 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 		return nil, fmt.Errorf("invalid runtime_id: %w", err)
 	}
 	if err := h.applyStoredPlanLimits(ctx, runtimeUUID, state.WorkspaceID, planLimitsJSON); err != nil {
+		return nil, err
+	}
+	if err := h.applyStoredAgentPlanLimits(ctx, state.WorkspaceID, agentPlanLimitsJSON); err != nil {
 		return nil, err
 	}
 	if err := h.applyStoredJevStatus(ctx, runtimeUUID, state.WorkspaceID, jevStatusJSON); err != nil {
@@ -1556,6 +1588,42 @@ func (h *Handler) applyStoredPlanLimits(ctx context.Context, runtimeUUID pgtype.
 			"runtime_id":          uuidToString(runtimeUUID),
 			"plan_limits_updated": true,
 		})
+	}
+	return nil
+}
+
+// applyStoredAgentPlanLimits persists the per-agent snapshots of one heartbeat
+// and asks clients to refetch only the agents whose row actually changed
+// (DENE-715).
+//
+// The workspace predicate is what keeps a daemon from writing a seat outside
+// the workspaces it is authorized for: the runtime already passed the workspace
+// check, and an agent running on it belongs to that same workspace. A row count
+// of zero therefore means "nothing to say" — either unchanged or not this
+// workspace's — and neither is worth a broadcast.
+func (h *Handler) applyStoredAgentPlanLimits(ctx context.Context, workspaceID string, snapshots map[pgtype.UUID][]byte) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return fmt.Errorf("invalid workspace id: %w", err)
+	}
+	for agentUUID, snapshot := range snapshots {
+		updated, err := h.Queries.UpdateAgentPlanLimits(ctx, db.UpdateAgentPlanLimitsParams{
+			ID:          agentUUID,
+			WorkspaceID: workspaceUUID,
+			PlanLimits:  snapshot,
+		})
+		if err != nil {
+			return fmt.Errorf("update agent plan limits: %w", err)
+		}
+		if updated > 0 && workspaceID != "" {
+			h.publish(protocol.EventDaemonHeartbeat, workspaceID, "system", "", map[string]any{
+				"agent_id":            uuidToString(agentUUID),
+				"plan_limits_updated": true,
+			})
+		}
 	}
 	return nil
 }
@@ -1712,6 +1780,13 @@ func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, suppor
 		Status:             "ok",
 		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1},
 	}
+	if h.AgentCLICommands != nil {
+		if cmd, err := h.AgentCLICommands.Peek(ctx, runtimeID); err != nil {
+			slog.Warn("agent CLI command peek failed", "error", err, "runtime_id", runtimeID)
+		} else if cmd != nil {
+			ack.PendingAgentCLI = cmd
+		}
+	}
 
 	probeUpdateCtx, cancelProbeUpdate := context.WithTimeout(ctx, heartbeatHasPendingTimeout)
 	hasUpdate, probeUpdateErr := h.UpdateStore.HasPending(probeUpdateCtx, runtimeID)
@@ -1752,7 +1827,7 @@ func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, suppor
 		if popErr != nil {
 			slog.Warn("model list PopPending failed", "error", popErr, "runtime_id", runtimeID)
 		} else if pendingModel != nil {
-			ack.PendingModelList = &protocol.DaemonHeartbeatPendingModelList{ID: pendingModel.ID}
+			ack.PendingModelList = pendingModelListPayload(pendingModel)
 		}
 	case probeModelErr != nil:
 		if errors.Is(probeModelErr, context.DeadlineExceeded) || errors.Is(probeModelErr, context.Canceled) {
@@ -2766,6 +2841,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
 	var issueNumber int32
+	// subIssues are the task issue's children, loaded with the issue and
+	// rendered once the workspace prefix is known (DENE-812).
+	var subIssues []db.Issue
 	// Claim-only capability: this server resolves the squad-leader role on the
 	// wire (is_leader_task / squad_id), so the daemon must not re-derive it
 	// from the briefing text. Set unconditionally — on every claim, leader or
@@ -3051,6 +3129,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ThreadName = issue.Title
 		issueNumber = issue.Number
+		if !issue.ParentIssueID.Valid {
+			if children, err := h.Queries.ListChildIssues(r.Context(), issue.ID); err == nil {
+				subIssues = children
+			}
+		}
 		// Inline a bounded issue snapshot so a fresh daemon run can orient without
 		// repeating the mandatory issue/comment reads. Older daemons ignore these
 		// additive fields.
@@ -4034,6 +4117,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.WorkspaceSlug = ws.Slug
 		if issueNumber > 0 {
 			resp.IssueIdentifier = service.IssueIdentifier(ws.IssuePrefix, issueNumber)
+			if canonical, err := h.Queries.GetIssueCanonicalDeliveryBranch(r.Context(), task.IssueID); err == nil {
+				resp.CanonicalBranch = canonical.BranchName
+			}
+		}
+		resp.IssueSubIssues = h.claimSubIssues(r.Context(), ws.IssuePrefix, subIssues)
+		if len(subIssues) > maxClaimSubIssues {
+			resp.IssueContextTruncated = true
 		}
 		if ws.Context.Valid {
 			resp.WorkspaceContext = ws.Context.String
@@ -4178,6 +4268,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// on the full-prompt path.
 	if task.RetryOfTaskID.Valid && !task.ForceFreshSession && task.SessionID.Valid {
 		resp.ContinueInterruptedSession = true
+		if parent, err := h.Queries.GetAgentTask(r.Context(), task.RetryOfTaskID); err == nil &&
+			parent.FailureReason.Valid && parent.FailureReason.String == "task_time_limit" {
+			resp.ContinueAfterTimeLimit = true
+		}
 	}
 
 	return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, nil
@@ -4755,6 +4849,10 @@ type TaskCompleteRequest struct {
 	// to report" — this says "never hand this id to a later run". Older
 	// daemons omit it, which is exactly the pre-fix behaviour.
 	RetiredSessionID string `json:"retired_session_id,omitempty"`
+	// SessionRestartReason is set when this run had to open a new CLI
+	// session because the prior one could not be resumed. Older daemons
+	// omit it.
+	SessionRestartReason string `json:"session_restart_reason,omitempty"`
 }
 
 // sanitizeTaskCompleteRequest / sanitizeTaskFailRequest scrub every
@@ -4772,6 +4870,7 @@ func sanitizeTaskCompleteRequest(req *TaskCompleteRequest) {
 	req.DurableWorkDir = util.SanitizeTextForPostgres(req.DurableWorkDir)
 	req.BranchName = util.SanitizeTextForPostgres(req.BranchName)
 	req.RetiredSessionID = util.SanitizeTextForPostgres(req.RetiredSessionID)
+	req.SessionRestartReason = util.SanitizeTextForPostgres(req.SessionRestartReason)
 }
 
 func sanitizeTaskFailRequest(req *TaskFailRequest) {
@@ -4782,6 +4881,7 @@ func sanitizeTaskFailRequest(req *TaskFailRequest) {
 	req.FailureReason = util.SanitizeTextForPostgres(req.FailureReason)
 	req.BranchName = util.SanitizeTextForPostgres(req.BranchName)
 	req.RetiredSessionID = util.SanitizeTextForPostgres(req.RetiredSessionID)
+	req.SessionRestartReason = util.SanitizeTextForPostgres(req.SessionRestartReason)
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -4836,6 +4936,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			BranchName:            req.BranchName,
 			SessionRolloutMissing: req.SessionRolloutMissing,
 			RetiredSessionID:      req.RetiredSessionID,
+			SessionRestartReason:  req.SessionRestartReason,
 		})
 		return
 	}
@@ -4862,6 +4963,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	h.TaskService.NoteSessionRestart(r.Context(), *task, req.SessionRestartReason)
 
 	// MUL-4195: guarantee at-least-once processing. If a member posted a
 	// deliberate comment while this run was executing (or one was merged into
@@ -4880,6 +4982,16 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// AFTER reconcileCommentsOnCompletion — that is what may enqueue the
 	// follow-up run which takes this issue off the stalled list.
 	h.TaskService.HandleCompletedTasks(r.Context(), []db.AgentTaskQueue{*task})
+
+	// The executor's status write to in_review usually lands while this run
+	// is still open, and the in-review row waits for the run to end before
+	// it wakes the reviewer. Ask again now that the run is gone. A follow-up
+	// queued by reconcile above still counts as an active run, so this does
+	// not start the reviewer on top of it. No-op unless the ticket is
+	// actually waiting on acceptance.
+	if task.IssueID.Valid {
+		h.routeIssueDetached(logger.RequestAttrs(r), workspaceID, uuidToString(task.IssueID))
+	}
 
 	// Best-effort revoke of any agent task token minted at claim time.
 	// The token would naturally expire at the 24h watermark and is also
@@ -5542,6 +5654,9 @@ type TaskFailRequest struct {
 	// to report" — this says "never hand this id to a later run". Older
 	// daemons omit it, which is exactly the pre-fix behaviour.
 	RetiredSessionID string `json:"retired_session_id,omitempty"`
+	// SessionRestartReason is set when this run had to open a new CLI
+	// session because the prior one could not be resumed.
+	SessionRestartReason string `json:"session_restart_reason,omitempty"`
 }
 
 func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
@@ -5596,6 +5711,14 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	}
 	h.TaskService.NotifyTaskFinished(*task)
 
+	// Same acceptance retry as CompleteTask. A run that fails after the
+	// executor has already moved the ticket to in_review must not swallow
+	// the handoff; if a retry was queued, the active-run guard defers until
+	// that retry ends.
+	if task.IssueID.Valid {
+		h.routeIssueDetached(logger.RequestAttrs(r), workspaceID, uuidToString(task.IssueID))
+	}
+
 	// Best-effort revoke of the mat_ task token minted at claim. Same
 	// rationale as CompleteTask — eager deletion shrinks the post-
 	// terminal window. The 24h expiry / cascade are the durable guards.
@@ -5604,6 +5727,7 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	}
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
+	h.TaskService.NoteSessionRestart(r.Context(), *task, req.SessionRestartReason)
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
@@ -5856,6 +5980,7 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delivered = true
+		h.recordCancelledTaskDeliveryBranch(r, task, branch)
 	}
 	if msg := strings.TrimSpace(req.ErrorMessage); msg != "" {
 		reason := strings.TrimSpace(req.FailureReason)
@@ -6794,4 +6919,33 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 		"status":       task.Status,
 		"completed_at": task.CompletedAt.Time,
 	})
+}
+
+// recordCancelledTaskDeliveryBranch files a cancelled run's branch under its
+// issue (DENE-820). The complete/fail paths do this inside their
+// transaction; cancel is the third way a worktree branch reaches the server.
+// A failure here is logged, not returned: the branch name is already
+// persisted on the task and the aggregate re-derives from task rows.
+func (h *Handler) recordCancelledTaskDeliveryBranch(r *http.Request, task db.AgentTaskQueue, branch string) {
+	if !task.IssueID.Valid {
+		return
+	}
+	task.BranchName = pgtype.Text{String: branch, Valid: true}
+	row, newLine, err := service.RecordIssueDeliveryBranch(r.Context(), h.Queries, task)
+	if err != nil {
+		slog.Warn("cancel ack: record delivery branch failed", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
+	if row == nil || !newLine {
+		return
+	}
+	canonical, err := h.Queries.GetIssueCanonicalDeliveryBranch(r.Context(), task.IssueID)
+	if err != nil {
+		return
+	}
+	issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+	if err != nil {
+		return
+	}
+	h.postBlockComment(r.Context(), issue, service.UnclassifiedDeliveryLineNotice(canonical.BranchName, row.BranchName))
 }

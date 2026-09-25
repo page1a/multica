@@ -1,5 +1,19 @@
 # Desktop 发版手册（kun 魔改线）
 
+发一版 Desktop 默认走测试通道，一条命令完成版本号计算、门禁检查、打 tag 和推送：
+
+```bash
+scripts/desktop-release.sh cut --channel test
+```
+
+先用 dry-run 检查将要执行的动作（不会 fetch、打 tag 或推送）：
+
+```bash
+scripts/desktop-release.sh cut --channel test --dry-run
+```
+
+命令只允许在 `kun`、干净且与 `origin/kun` 同步时执行。它会从最新正式版的下一个 patch 计算 `vX.Y.Z-test.N`，并递增同一基础版本的测试序号。正式版不属于默认流程；`--channel stable` 必须额外传 `--confirm-stable`。
+
 发一版 Desktop 给 kk zi 真机用，要走完的全流程与红线。写这份文档的直接原因是 DENE-276：那一轮打包实际只花 7 分钟，却在用户那边表现为「一个小时没动静」，最后产物躺在本地硬盘上没有发出去。下面每条纪律都对应一次真实踩坑。
 
 DENE-352 补上了第二类踩坑：**上传到一半断了，命令行却报成功**。本机到 `uploads.github.com` 的出站约 90–110 KB/s，230 MB 的 dmg 要 40 分钟不断线；`POST .../assets` 被 EOF 掐断时 `gh release upload` **退出码仍是 0**，失败的两个文件在 Release 上留成 `state=starter` 的僵尸资产（`gh release view` 看不见），而 `latest-mac.yml` 已经指向它们——0.4.55 用户的自动更新链路就是这样断的。结论：**发版搬到 GitHub Actions runner，并且上传后逐个资产核对**，见红线 1、2。
@@ -91,14 +105,58 @@ Squirrel 在安装更新前会用当前应用的 designated requirement 校验�
 
 本机磁盘上的 feed 大约 0.3 秒传完，没有逐条进度日志，当前环境也没有屏幕录制权限，所以没有截到进度条。下载完成和版本变化由日志和安装后的版本号证明。
 
+## 默认发测试版，正式版等 owner 通知（2026-09-24 起）
+
+- **每次更新默认只发测试版**：tag 用 `vX.Y.Z-test.N`，CI 会自动标成 prerelease，只推给在设置里选了测试通道的客户端。
+- **正式版 `vX.Y.Z` 不自动发**，只有 owner 明确说「发正式版」才打。「打包」「发一版」默认都指测试版。
+- **测试版号必须高于当前最新正式版**：最新正式版是 `v0.5.7` 时，测试版用 `v0.5.8-test.N`，后续递增 `test.N`；等 owner 通知转正时再打 `v0.5.8`。`applyTestFeed` 不允许降级，`0.5.7-test.1` 在 semver 上低于 `0.5.7`，已装 0.5.7 的客户端会一直显示「已是最新」。
+- **测试 tag 不能和正式 tag 打在同一个 commit 上。** 版本号来自 `git describe --tags`，同一个 commit 上有两个 tag 时它会挑正式那个。`v0.5.8-test.1` 就是这样打出了 `0.5.7` 的安装包和 `latest-*.yml`，发出去是个坏包：测试通道找不到 `test-mac.yml`，只能删掉重发 `test.2`。发之前先 `git tag --points-at <sha>`，有正式 tag 就等 `kun` 前进一个 commit 再打。发完核对：资产名带 `-test.N`，清单是 `test*.yml`。
+- 起因：v0.5.6、v0.5.7 直接发了正式版，中间没有测试版，事后补发了 `v0.5.8-test.2`。
+
+## 双通道：测试版 / 正式版
+
+这条 fork 发两条线，客户端装上哪条就只收哪条的包，互不串台。
+
+| 通道 | 从哪条分支打 tag | tag 形状 | 更新清单文件 | 谁装 |
+| --- | --- | --- | --- | --- |
+| 测试版（test） | `kun` tip | `v0.5.5-test.1`、`v0.5.5-test.2` | `test*.yml` | kun 本机；愿意先吃 bug 的人 |
+| 正式版（stable） | `release` tip | `v0.5.5` | `latest*.yml` | kk、zi 与默认用户 |
+
+纪律：
+
+1. **正式版的每一行代码都必须先在测试通道上出现过。** 发正式版的动作只有一个——把 `kun` 快进合进 `release`，然后在 `release` 上打 `vX.Y.Z`。不在 `release` 上开发、不 cherry-pick、不 force-push。
+2. **测试 tag 只从 `kun` tip 打。** 形状固定为 `vX.Y.Z-test.N`：`X.Y.Z` 是**下一个**正式版号，`N` 从 1 递增。semver 里 `0.5.5-test.3 < 0.5.5`，所以测试用户后来装到正式版 `0.5.5` 时是一次正常升级，不需要降级放行。
+3. **通道名不要手改。** `apps/desktop/scripts/package.mjs` 按 tag 的 prerelease 段推导通道前缀（`latest` / `test`），再按平台与架构补后缀；`apps/desktop/src/main/updater.ts` 在运行时按用户选择的通道 + 本机架构拼出同一个名字。两边必须同源，改一边就是断更新。测试前缀必须与 tag 的 prerelease 段（`test`）逐字相同：electron-updater 的 GitHub provider 只按这个段找清单，写成 `beta` 会 404。测试 tag 在 GitHub 上必须标成 prerelease（CI 已自动加 `--prerelease`），否则正式版客户端查 `/releases/latest` 会被指到测试 tag。
+4. **通道由用户在「设置 → 更新」里自己选，默认正式版。** 选择持久化在 `updater-preferences`，切换后立即重新查一次。从测试版切回正式版是一次**降级**（`0.5.5-test.3` → `0.5.4`），必须临时打开 `allowDowngrade`，否则用户会永远卡在测试通道上。
+5. **切通道不换安装包本身。** 同一份 `.app` / `.exe` 只是换了查询哪份 yml，不需要用户重装。
+
+发一版正式版：
+
+```bash
+git fetch origin --prune
+git checkout release && git merge --ff-only origin/kun && git push origin release
+git tag v0.5.5 && git push origin v0.5.5
+```
+
+发一版测试版：
+
+```bash
+scripts/desktop-release.sh cut --channel test
+```
+
+两种 tag 都会触发 `.github/workflows/desktop-release.yml`（它的 tag 正则已经接受 `-suffix`），构建、上传、逐个核对资产的流程完全一样，差别只在写出哪一组 yml。
+
+### macOS 自动更新的硬限制
+
+CI 出的 macOS 包是 **ad-hoc 签名、未公证**（`CSC_IDENTITY_AUTO_DISCOVERY: "false"`）。Squirrel.Mac 在安装更新前会校验新包的代码签名与正在运行的 app 是否同源，ad-hoc 签名必然对不上——所以**只要没有 Apple Developer ID 证书，macOS 的静默自动更新在任何通道上都不会成功**。这不是代码缺陷，改 updater 代码也修不好。
+
+在拿到证书之前，macOS 上的正确行为是：发现新版本 → 明确告诉用户 → 引导到 Release 页面手动下载。Windows 与 Linux 不受这条限制，全自动更新可以做通。
+
 ## 主路径：CI 发版（默认走这条）
 
 ```bash
-# 1. 确认要发的 commit 已经在 kun（CI 从 tag 指向的 commit 构建）
-git fetch origin --prune && git log --oneline origin/kun -1
-
-# 2. 打 tag 并推送：上一版 patch +1
-git tag v0.4.58 && git push origin v0.4.58
+# 检查、计算版本号、打 tag 和推送
+scripts/desktop-release.sh cut --channel test
 ```
 
 推送 tag 后 `.github/workflows/desktop-release.yml` 会自动：

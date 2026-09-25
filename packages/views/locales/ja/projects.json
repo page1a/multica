@@ -194,7 +194,8 @@
     "no_project": "プロジェクトなし",
     "empty": "プロジェクトはまだありません",
     "search_placeholder": "プロジェクトを検索...",
-    "clear_aria": "プロジェクトをクリア"
+    "clear_aria": "プロジェクトをクリア",
+    "create": "＋ 新規プロジェクト「{{name}}」"
   },
   "chip": {
     "fallback_label": "プロジェクト"
@@ -213,5 +214,32 @@
     "direction_desc": "降順",
     "section_columns": "列",
     "view": "ビュー"
+  },
+  "new_project": {
+    "name": "名前",
+    "icon": "アイコン",
+    "icon_placeholder": "絵文字ひとつ",
+    "positioning": "このプロジェクトの位置づけ",
+    "positioning_placeholder": "何のためのプロジェクトか",
+    "directory_enable": "このマシンにフォルダを作る",
+    "directory_unavailable": "フォルダを作るにはデスクトップアプリが必要です。",
+    "directory_offline": "ローカルの daemon が動いていません。",
+    "directory_root": "業務プロジェクトのルート",
+    "directory_container": "ルート自体を使う（複数のリポジトリを置く）",
+    "directory_name": "フォルダ名",
+    "directory_git": "Git リポジトリを初期化する",
+    "directory_mode": "タスクがこのフォルダをどう共有するか",
+    "directory_mode_auto": "フォルダから「{{mode}}」を選びました。変更できます。",
+    "directory_bad_name": "フォルダ名は一段の名前にしてください。",
+    "directory_exists": "そのフォルダは既にあります。別名にしてください。",
+    "directory_failed": "フォルダを作れなかったので、プロジェクトも作りませんでした。",
+    "mode": {
+      "worktree": "タスクごとに作業ツリー",
+      "shared": "共有フォルダ",
+      "in_place": "一度に一つのタスク"
+    },
+    "back": "戻る",
+    "submit": "作成して選択",
+    "failed": "プロジェクトを作成できませんでした。"
   }
 }

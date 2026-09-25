@@ -204,11 +204,6 @@
     "assign_work": "作業を割り当てる",
     "more_actions_aria": "エージェントの操作",
     "updated": "{{when}}に更新",
-    "switchable_models_label": "切り替え可能なモデル",
-    "switchable_role_default": "デフォルト",
-    "switchable_role_fallback": "フォールバック",
-    "switchable_role_batch": "バッチ用",
-    "switchable_models_edit": "編集",
     "accounts_entry": "アカウントとログイン"
   },
   "inspector": {
@@ -233,11 +228,10 @@
     "prop_concurrency": "同時実行数",
     "prop_work_enabled": "作業を受け付ける",
     "prop_work_enabled_hint": "オフにすると、この席は一覧に残りますが、自動選派の対象にならず、割り当てでも起動せず、新しい実行も受け取りません。実行中の作業は止まりません。",
+    "prop_work_pause_balance": "プラットフォームが停止中：アカウントの残高が尽きました（402）。自動では戻りません。チャージするかアカウントを切り替えてから、ここを再びオンにしてください。他の席に移ったチケットは戻りません。",
+    "prop_work_pause_quota": "プラットフォームが停止中：モデルの利用枠を使い切りました。枠がリセットされると自動で戻ります。",
     "prop_auto_retry": "自動リトライ",
     "prop_auto_retry_hint": "オフにすると、容量不足やネットワーク切断などの失敗は自動リトライせず、そのまま表示されます。手動での再実行はできます。",
-    "prop_switchable_models": "切り替え可能なモデル",
-    "prop_switchable_models_hint_on": "このエージェントはモデル構成を記録しています。デフォルト、順序付きのフォールバック、バッチ用に借りられるモデルです。表示専用で、実行は常に上のモデルです。",
-    "prop_switchable_models_hint_off": "オフは単一モデルです。上のモデルだけを表示します。フォールバックやバッチ用モデルを記録するにはオンにしてください。",
     "prop_runtime_inherit": "ベースロールのランタイムに従う",
     "prop_runtime_inherit_hint_on": "ランタイム、モデル、思考レベル、速度はベースロールのもので、ベースロールの変更に追従します。オフにするとここで個別に設定できます。",
     "prop_runtime_inherit_hint_off": "この特化は独自のランタイム、モデル、思考レベル、速度を使用します。オンにすると再びベースロールに従います。",
@@ -428,16 +422,6 @@
     "remove": "候補 {{number}} を削除",
     "preview_label": "新しいチャットのプレビュー",
     "preview_defaults": "これは組み込みの初期値です。上で候補を1件追加すると3件すべて置き換わります。"
-  },
-  "switchable_models": {
-    "add": "モデルを追加",
-    "model_label": "{{number}} 番目のモデル ID",
-    "model_placeholder": "claude-opus-5",
-    "role_label": "{{number}} 番目のモデルの役割",
-    "note_label": "{{number}} 番目のモデルのメモ",
-    "note_placeholder": "どんなときに使うか",
-    "remove": "{{number}} 番目のモデルを削除",
-    "blank_ignored": "モデル ID が未入力の行は保存されません。"
   },
   "tab_body": {
     "common": {
@@ -958,7 +942,29 @@
     "public_group": "公開アクセス",
     "owner_only_readonly": "このエージェントを実行できる相手は、オーナーのみが変更できます。",
     "members_empty": "選択できるワークスペースメンバーがいません",
-    "composio_switch_hint": "ご注意 — このエージェントは Composio アプリが有効です。共有すると、アクセス権を持つ全員がこのエージェントを通じてこれらのアプリを利用できます。"
+    "composio_switch_hint": "ご注意 — このエージェントは Composio アプリが有効です。共有すると、アクセス権を持つ全員がこのエージェントを通じてこれらのアプリを利用できます。",
+    "borrow_section_title": "貸し出し",
+    "doorbell_title": "ドアベル",
+    "doorbell_desc": "上のリストにない人がこのエージェントをメンションまたは割り当てたとき、拒否せずにまずあなたに確認します。承認されたタスクはあなたのマシンで実行されます。",
+    "doorbell_save_failed": "ドアベル設定を保存できませんでした",
+    "pass_issue_title": "パスを発行",
+    "pass_issue_desc": "期限までメンバー 1 人にこのエージェントの利用を許可します。期限が来ると自動で失効します。",
+    "pass_member_label": "メンバー",
+    "pass_member_placeholder": "メンバーを選択",
+    "pass_member_required": "先にメンバーを選んでください",
+    "pass_2h": "2 時間",
+    "pass_today": "今日中",
+    "pass_custom": "期限を指定…",
+    "pass_issue_action": "パスを発行",
+    "pass_issued": "{{name}} に {{until}} まで有効なパスを発行しました",
+    "pass_issue_failed": "パスを発行できませんでした",
+    "pass_expiry_invalid": "未来の期限を選んでください",
+    "pass_active_title": "有効なパス",
+    "pass_active_empty": "有効なパスはありません",
+    "pass_until": "{{until}} まで",
+    "pass_revoke": "取り消す",
+    "pass_revoked": "パスを取り消しました",
+    "pass_revoke_failed": "パスを取り消せませんでした"
   },
   "profile_card": {
     "unavailable": "エージェントを利用できません",

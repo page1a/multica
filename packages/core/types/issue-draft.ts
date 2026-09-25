@@ -63,6 +63,45 @@ export interface IssueDraftPayload {
   project_id?: string | null;
   parent_issue_id?: string | null;
   children?: IssueDraftChild[];
+  /**
+   * Where the alignment carrier thinks this work belongs.
+   *
+   * A name, never an id. The carrier has no authority to file work into a
+   * project: the preview resolves the name against the real list, and the
+   * person confirms. `create` is only honoured for a group (a parent plus
+   * sub-issues); a single issue that proposes one is ignored.
+   */
+  project_proposal?: IssueDraftProjectProposal | null;
+  /**
+   * The person's own decision about that proposal. Absent means "follow the
+   * proposal". Set the moment they pick, rename, or clear, so a later reply
+   * that restates the proposal does not undo them.
+   */
+  project_choice?: IssueDraftProjectChoice | null;
+}
+
+/** The carrier's project judgement. `name` is a title, never a project id. */
+export interface IssueDraftProjectProposal {
+  action: "existing" | "create";
+  name: string;
+  icon?: string | null;
+  description?: string | null;
+}
+
+/**
+ * What the person decided on the confirm panel.
+ *
+ * `existing` records the project they picked (the id lives here AND on
+ * `project_id`, so a reader that only knows the id still files the group).
+ * `create` is the project the confirm will make together with the issues.
+ * `none` is an explicit "do not attach a project".
+ */
+export interface IssueDraftProjectChoice {
+  kind: "none" | "existing" | "create";
+  project_id?: string | null;
+  name?: string | null;
+  icon?: string | null;
+  description?: string | null;
 }
 
 /**

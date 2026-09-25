@@ -82,7 +82,9 @@ func seedQuotaWorld(t *testing.T, failureReason, errorText string, ownModel bool
 	w.sameID = insertAgent(fmt.Sprintf("quota-same-%d", suffix), "other-model", "strong")
 	w.mediumID = insertAgent(fmt.Sprintf("quota-down-%d", suffix), "down-model", "medium")
 	w.siblingID = insertAgent(fmt.Sprintf("quota-sibling-%d", suffix), "gpt-special", "")
-	w.reviewerID = w.mediumID
+	// A seat of its own: the relay never hands work to the ticket's
+	// reviewer (DENE-870), so sharing a candidate seat would steer picks.
+	w.reviewerID = insertAgent(fmt.Sprintf("quota-reviewer-%d", suffix), "review-model", "")
 
 	inherited := !ownModel
 	if _, err := pool.Exec(ctx, `
@@ -630,6 +632,169 @@ func TestHandleFailedTasksQuotaRelayDoesNotRetry(t *testing.T) {
 	}
 	if retries != 0 || status != "in_progress" {
 		t.Fatalf("retries=%d status=%s, want no retry and the issue kept in progress by the relay", retries, status)
+	}
+}
+
+func TestCapacityMovesUnstartedIssuesOffTheGPTSeat(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.", true)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `UPDATE agent_task_queue SET attempt = 3, max_attempts = 3 WHERE id = $1`, w.taskID); err != nil {
+		t.Fatalf("exhaust attempts: %v", err)
+	}
+	rename := func(id, name, tier string) {
+		t.Helper()
+		if _, err := w.pool.Exec(ctx, `UPDATE agent SET name = $2, routing_tier = $3 WHERE id = $1`, id, name, tier); err != nil {
+			t.Fatalf("rename %s: %v", name, err)
+		}
+	}
+	rename(w.failedID, "特兰克斯", "strong")
+	rename(w.parentID, "特兰克斯游戏", "strong")
+	rename(w.sameID, "孙悟天", "strong")
+	rename(w.mediumID, "孙悟空", "strong")
+	rename(w.siblingID, "贝吉塔", "medium")
+
+	// A prior breaker in the window makes this opening the second one.
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO agent_quota_breaker (
+			workspace_id, agent_id, scope, model_key, reason, recover_at, recovered_at, suppressed_work
+		) VALUES ($1, $2, 'agent', '', 'provider_capacity', now() - interval '2 hours', now() - interval '1 hour', false)`,
+		w.workspaceID, w.failedID); err != nil {
+		t.Fatalf("prior breaker: %v", err)
+	}
+
+	var idleID, parkedID string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, status, number)
+		VALUES ($1, '还没开跑', 'member', $2, 'agent', $3, 'high', 'todo', 9001)
+		RETURNING id`, w.workspaceID, w.userID, w.failedID).Scan(&idleID); err != nil {
+		t.Fatalf("idle issue: %v", err)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, status, number)
+		VALUES ($1, '还在排队', 'member', $2, 'agent', $3, 'high', 'backlog', 9002)
+		RETURNING id`, w.workspaceID, w.userID, w.failedID).Scan(&parkedID); err != nil {
+		t.Fatalf("parked issue: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 0)`, w.failedID, w.runtimeID, idleID); err != nil {
+		t.Fatalf("queued task: %v", err)
+	}
+	// Already ran and is waiting on something else, nothing queued: stays.
+	var watchingID string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, status, number)
+		VALUES ($1, '盯子票中', 'member', $2, 'agent', $3, 'high', 'in_progress', 9003)
+		RETURNING id`, w.workspaceID, w.userID, w.failedID).Scan(&watchingID); err != nil {
+		t.Fatalf("watching issue: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, completed_at)
+		VALUES ($1, $2, $3, 'completed', 0, now() - interval '3 hours')`, w.failedID, w.runtimeID, watchingID); err != nil {
+		t.Fatalf("watching task: %v", err)
+	}
+
+	hold, err := w.service().RelayQuotaFailure(ctx, w.task(t))
+	if err != nil || !hold {
+		t.Fatalf("relay hold=%v err=%v", hold, err)
+	}
+
+	var assignee, comment string
+	var queuedFor int
+	if err := w.pool.QueryRow(ctx, `SELECT assignee_id::text FROM issue WHERE id = $1`, idleID).Scan(&assignee); err != nil {
+		t.Fatalf("idle assignee: %v", err)
+	}
+	if assignee != w.mediumID {
+		t.Fatalf("idle assignee = %s, want 孙悟空 %s (not another GPT)", assignee, w.mediumID)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT content FROM comment WHERE issue_id = $1 AND routing_kind LIKE 'quota_relay:%'`, idleID).Scan(&comment); err != nil {
+		t.Fatalf("idle comment: %v", err)
+	}
+	if !strings.Contains(comment, "特兰克斯") || !strings.Contains(comment, "孙悟空") || !strings.Contains(comment, "供应商") || !strings.Contains(comment, "降权") {
+		t.Fatalf("idle comment = %s", comment)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`, idleID, w.mediumID).Scan(&queuedFor); err != nil {
+		t.Fatalf("queued: %v", err)
+	}
+	if queuedFor != 1 {
+		t.Fatalf("queued for 孙悟空 = %d, want 1", queuedFor)
+	}
+	var oldQueued int
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`, idleID, w.failedID).Scan(&oldQueued); err != nil {
+		t.Fatalf("old queue: %v", err)
+	}
+	if oldQueued != 0 {
+		t.Fatalf("特兰克斯 still has %d queued tasks", oldQueued)
+	}
+
+	if err := w.pool.QueryRow(ctx, `SELECT assignee_id::text FROM issue WHERE id = $1`, parkedID).Scan(&assignee); err != nil {
+		t.Fatalf("parked assignee: %v", err)
+	}
+	if assignee != w.mediumID {
+		t.Fatalf("parked assignee = %s, want 孙悟空", assignee)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND status = 'queued'`, parkedID).Scan(&queuedFor); err != nil {
+		t.Fatalf("parked queue: %v", err)
+	}
+	if queuedFor != 0 {
+		t.Fatalf("backlog issue queued %d tasks, want 0", queuedFor)
+	}
+
+	if err := w.pool.QueryRow(ctx, `SELECT assignee_id::text FROM issue WHERE id = $1`, watchingID).Scan(&assignee); err != nil {
+		t.Fatalf("watching assignee: %v", err)
+	}
+	if assignee != w.failedID {
+		t.Fatalf("in_progress issue with finished run and nothing queued moved to %s", assignee)
+	}
+}
+
+func TestRepeatedBreakersDemoteUntilASuccess(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.", true)
+	ctx := context.Background()
+	insert := func() {
+		t.Helper()
+		if _, err := w.pool.Exec(ctx, `
+			INSERT INTO agent_quota_breaker (
+				workspace_id, agent_id, scope, model_key, reason, recover_at, recovered_at, suppressed_work
+			) VALUES ($1, $2, 'agent', '', 'provider_capacity', now(), now(), false)`,
+			w.workspaceID, w.failedID); err != nil {
+			t.Fatalf("breaker: %v", err)
+		}
+	}
+	insert()
+	queries := w.service().Queries
+	ids, err := queries.ListDemotedQuotaAgentIDs(ctx, util.MustParseUUID(w.workspaceID))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("one breaker demoted %d seats", len(ids))
+	}
+	insert()
+	ids, err = queries.ListDemotedQuotaAgentIDs(ctx, util.MustParseUUID(w.workspaceID))
+	if err != nil {
+		t.Fatalf("list after second: %v", err)
+	}
+	if len(ids) != 1 || util.UUIDToString(ids[0]) != w.failedID {
+		t.Fatalf("demoted = %v, want %s", ids, w.failedID)
+	}
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, completed_at)
+		VALUES ($1, $2, 'completed', 0, now() + interval '1 minute')`, w.failedID, w.runtimeID); err != nil {
+		t.Fatalf("success: %v", err)
+	}
+	ids, err = queries.ListDemotedQuotaAgentIDs(ctx, util.MustParseUUID(w.workspaceID))
+	if err != nil {
+		t.Fatalf("list after success: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("success left %d seats demoted", len(ids))
 	}
 }
 

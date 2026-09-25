@@ -15,6 +15,7 @@ import {
   AgentQuotaMeter,
   useNowTick,
 } from "./agent-quota-meter";
+import { providerSeatModelDisplay } from "./provider-seat-model";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentPerformanceSummary } from "./tabs/activity-tab";
 
@@ -79,6 +80,7 @@ export function AgentOverviewSummary({
               <AgentQuotaCapsule
                 agentId={agent.id}
                 runtime={runtime}
+                planLimits={agent.plan_limits}
                 now={now}
                 labeled={false}
               />
@@ -88,7 +90,9 @@ export function AgentOverviewSummary({
             <span className="flex min-w-0 items-center gap-1.5 text-foreground">
               <Bot className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="truncate">
-                {agent.model || t(($) => $.pickers.model_default)}
+                {agent.model
+                  ? providerSeatModelDisplay(agent.model)
+                  : t(($) => $.pickers.model_default)}
               </span>
             </span>
           </SummaryRow>
@@ -135,7 +139,12 @@ export function AgentOverviewSummary({
         )}
       </section>
 
-      <AgentQuotaMeter agentId={agent.id} runtime={runtime} now={now} />
+      <AgentQuotaMeter
+        agentId={agent.id}
+        runtime={runtime}
+        planLimits={agent.plan_limits}
+        now={now}
+      />
       <AgentPerformanceSummary agent={agent} />
     </aside>
   );

@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 var (
@@ -42,19 +43,11 @@ const (
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
-
-	pool, err := pgxpool.New(ctx, dbURL)
+	// The database is the one the run's driver provisioned; without one the
+	// package has nothing to run, and with one promised it must not skip.
+	pool, err := testutil.ConnectTestDatabase(ctx)
 	if err != nil {
-		fmt.Printf("Skipping integration tests: could not connect to database: %v\n", err)
-		os.Exit(0)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		fmt.Printf("Skipping integration tests: database not reachable: %v\n", err)
-		pool.Close()
+		testutil.ExitIfDatabaseRequired(err)
 		os.Exit(0)
 	}
 

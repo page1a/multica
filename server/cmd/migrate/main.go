@@ -326,6 +326,8 @@ var concurrentIndexCleanups = map[string]string{
 	"513_visibility_audit_workspace_index":                      "idx_visibility_audit_workspace_created",
 	"514_visibility_audit_resource_index":                       "idx_visibility_audit_resource",
 	"515_issue_visibility_index":                                "idx_issue_workspace_visibility",
+	"521_resource_share_unique":                                 "idx_resource_share_resource_member",
+	"522_resource_share_member_index":                           "idx_resource_share_member",
 	"472_agent_task_queue_chat_session_index":                   "idx_agent_task_queue_chat_session",
 	"474_dingtalk_bot_identity_workspace_index":                 "idx_dingtalk_bot_identity_workspace",
 	"480_instance_telemetry_state_singleton_index":              "instance_telemetry_state_singleton_uidx",

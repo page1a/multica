@@ -110,7 +110,7 @@ func assertWaiterWoken(t *testing.T, fx waitingOnFixture) {
 	if !strings.Contains(content, "mention://agent/"+fx.agentID) {
 		t.Errorf("waiter comment missing agent mention, got: %s", content)
 	}
-	if !strings.Contains(content, "close.waiting_on is resolved") {
+	if !strings.Contains(content, "可以继续了") {
 		t.Errorf("waiter comment missing resolved marker, got: %s", content)
 	}
 	if got := countPendingTasksForAgent(t, fx.waiter.ID, fx.agentID); got != 1 {

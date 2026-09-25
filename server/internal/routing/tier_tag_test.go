@@ -136,6 +136,44 @@ func TestTaggedSeatOverridesTheNameConvention(t *testing.T) {
 	}
 }
 
+func TestCandidatesSkipADemotedSeatWhenTheRungHasAnother(t *testing.T) {
+	l := DefaultLadder
+	roster := map[string]Agent{
+		"甲游戏": {ID: "ag", Name: "甲游戏", Tier: "strong", Demoted: true},
+		"乙":   {ID: "b", Name: "乙", Tier: "strong"},
+	}
+	seats := l.Candidates("游戏", roster)
+	if len(seats) != 1 || seats[0].ID != "b" {
+		t.Fatalf("demoted direction seat was still chosen: %+v", seats)
+	}
+
+	// Everyone on the rung is demoted: the ordinary direction pick stands.
+	roster["乙"] = Agent{ID: "b", Name: "乙", Tier: "strong", Demoted: true}
+	seats = l.Candidates("游戏", roster)
+	if len(seats) != 1 || seats[0].ID != "ag" {
+		t.Fatalf("a rung of only demoted seats must still produce one: %+v", seats)
+	}
+}
+
+func TestDemotionFootnoteNamesTheSeatThatWasPassedOver(t *testing.T) {
+	l := DefaultLadder
+	roster := map[string]Agent{
+		"孙悟饭": {ID: "gpt", Name: "孙悟饭", Tier: "strongest", Demoted: true},
+		"布尔玛": {ID: "claude", Name: "布尔玛", Tier: "strongest"},
+	}
+	chosen := &Seat{ID: "claude", Name: "布尔玛", TierKey: "strongest"}
+	note := DemotionFootnote(l, roster, chosen)
+	if !strings.Contains(note, "孙悟饭") || !strings.Contains(note, "做成一单") {
+		t.Fatalf("footnote = %q", note)
+	}
+	only := &Seat{ID: "gpt", Name: "孙悟饭", TierKey: "strongest"}
+	delete(roster, "布尔玛")
+	note = DemotionFootnote(l, roster, only)
+	if !strings.Contains(note, "没有别的席位") {
+		t.Fatalf("solo footnote = %q", note)
+	}
+}
+
 func TestLabelledTicketIsAssignedWithoutAskingTheJudge(t *testing.T) {
 	store := newFakeStore()
 	// The reviewer slot already holds an answer, so only the executor

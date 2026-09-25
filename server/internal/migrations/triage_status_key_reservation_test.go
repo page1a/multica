@@ -2,11 +2,11 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 const (
@@ -23,30 +23,17 @@ type triageMigrationSandbox struct {
 
 func newTriageMigrationSandbox(t *testing.T, schema string) *triageMigrationSandbox {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
 	ctx := context.Background()
-	cfg, err := pgxpool.ParseConfig(dbURL)
-	if err != nil {
-		t.Fatalf("parse DATABASE_URL: %v", err)
-	}
 	// Every pooled connection, not just the first, must resolve the
 	// migrations' unqualified table names inside the sandbox.
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
+	pool := testutil.OpenTestDatabaseConfig(ctx, t, func(cfg *pgxpool.Config) {
+		cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	})
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
 	}
 	cleanup()
-	t.Cleanup(func() {
-		cleanup()
-		pool.Close()
-	})
+	t.Cleanup(cleanup)
 	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatalf("create isolated migration schema: %v", err)
 	}

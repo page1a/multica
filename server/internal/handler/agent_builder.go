@@ -288,6 +288,9 @@ func (h *Handler) SaveAgentBuilderDraft(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !denyUnlessChatCreator(w, session, userID) {
+		return
+	}
 	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat agent")
@@ -474,6 +477,9 @@ func (h *Handler) SwitchAgentBuilderRuntime(w http.ResponseWriter, r *http.Reque
 	// Creator-only, like every other write on a chat session.
 	session, ok := h.loadChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
 	if !ok {
+		return
+	}
+	if !denyUnlessChatCreator(w, session, userID) {
 		return
 	}
 	if session.Status != "active" {

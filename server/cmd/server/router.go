@@ -502,6 +502,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
+		h.AgentCLICommands = handler.NewRedisAgentCLICommandStore(rdb)
 		h.ModelListStore = handler.NewRedisModelListStore(rdb)
 		h.ModelCatalogCache = handler.NewRedisModelCatalogCache(rdb)
 		h.ProviderPresetStore = handler.NewRedisProviderPresetStore(rdb)
@@ -1535,6 +1536,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/skill-bundles/resolve", h.ResolveTaskSkillBundles)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
+		r.Post("/runtimes/{runtimeId}/agent-cli/status", h.ReportAgentCLIStatus)
+		r.Post("/runtimes/{runtimeId}/model-catalog/refresh", h.RefreshRuntimeModelCatalog)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/provider-presets/{requestId}/result", h.ReportProviderPresetResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
@@ -1998,6 +2001,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/work-thread", h.GetIssueWorkThread)
+					r.Post("/work-thread/action", h.WorkThreadAction)
 					r.Put("/", h.UpdateIssue)
 					// Sharing scope is its own action, not a field on the
 					// ordinary edit: it has its own tier rule and its own
@@ -2044,6 +2049,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/properties/{propertyId}", h.SetIssueProperty)
 					r.Delete("/properties/{propertyId}", h.DeleteIssueProperty)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
+					r.Get("/delivery", h.GetIssueDelivery)
+					r.Put("/delivery/canonical", h.SetIssueDeliveryCanonical)
+					r.Post("/delivery/classify", h.ClassifyIssueDeliveryBranch)
+					r.Post("/delivery/cleanup", h.RecordIssueDeliveryCleanup)
 				})
 			})
 
@@ -2248,6 +2257,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// the system instruction layer. Idempotent per workspace.
 				r.Post("/mika", h.CreateMikaAgent)
 				r.Route("/{id}", func(r chi.Router) {
+					// Timed access passes (DENE-808), owner-only.
+					r.Get("/access-passes", h.ListAgentAccessPasses)
+					r.Post("/access-passes", h.CreateAgentAccessPass)
+					r.Delete("/access-passes/{passId}", h.RevokeAgentAccessPass)
 					r.Get("/", h.GetAgent)
 					r.Put("/", h.UpdateAgent)
 					r.Post("/archive", h.ArchiveAgent)
@@ -2378,6 +2391,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/usage/by-hour", h.GetRuntimeUsageByHour)
 					r.Get("/activity", h.GetRuntimeTaskActivity)
 					r.Post("/update", h.InitiateUpdate)
+					r.Post("/agent-cli/follow", h.SetAgentCLIFollow)
+					r.Post("/agent-cli/update", h.RequestAgentCLIUpdate)
 					r.Get("/update/{updateId}", h.GetUpdate)
 					r.Post("/models", h.InitiateListModels)
 					r.Get("/models/{requestId}", h.GetModelListRequest)
@@ -2439,13 +2454,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Workspace-wide 30-day run counts per agent for the Agents-list RUNS column.
 			r.Get("/api/agent-run-counts", h.GetWorkspaceAgentRunCounts)
 
+			r.Get("/api/chat/visibility-notice", h.GetChatVisibilityNotice)
+			r.Post("/api/chat/visibility-notice/dismiss", h.DismissChatVisibilityNotice)
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)
 				r.Get("/", h.ListChatSessions)
+				// Registered before /{sessionId} so "make-private" is not captured as an id.
+				r.Post("/make-private", h.MakeChatSessionsPrivate)
 				r.Route("/{sessionId}", func(r chi.Router) {
 					r.Get("/", h.GetChatSession)
+					r.Get("/access", h.GetChatSessionAccess)
+					r.Put("/access", h.PutChatSessionAccess)
+					r.Get("/work-thread", h.GetChatWorkThread)
+					r.Post("/work-thread/action", h.ChatWorkThreadAction)
 					r.Patch("/", h.UpdateChatSession)
 					r.Patch("/pin", h.SetChatSessionPinned)
+					r.Patch("/project-nudge", h.DismissChatSessionProjectNudge)
 					r.Patch("/archive", h.SetChatSessionArchived)
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
@@ -2455,6 +2479,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/quick-actions/regenerate", h.RegenerateChatQuickActions)
 					r.Get("/messages", h.ListChatMessages)
 					r.Get("/messages/page", h.ListChatMessagesPage)
+					// Takeover read: summary + latest page of one session. Same
+					// workspace and the session's owner (an agent task acts as
+					// that person). Not a public share.
+					r.Get("/handoff", h.GetChatSessionHandoff)
 					r.Get("/pending-task", h.GetPendingChatTask)
 					r.Delete("/queued-tasks", h.ClearQueuedChatTasks)
 					r.Post("/queued-tasks/{taskId}/prioritize", h.PrioritizeQueuedChatTask)
@@ -2482,6 +2510,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/chat/thread", h.GetChatThread)
 
 			// Inbox
+			// Agent doorbell rings (DENE-808): owner approves / declines.
+			r.Route("/api/agent-access-requests", func(r chi.Router) {
+				r.Get("/", h.ListAgentAccessRequests)
+				r.Post("/{id}/approve", h.ApproveAgentAccessRequest)
+				r.Post("/{id}/decline", h.DeclineAgentAccessRequest)
+			})
 			r.Route("/api/inbox", func(r chi.Router) {
 				r.Get("/", h.ListInbox)
 				// Archived notifications, for the inbox's "Archived" sub-view.

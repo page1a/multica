@@ -26,6 +26,11 @@ const (
 	// weekly quota. The seat cools down briefly so the same model is not
 	// handed the issue again on the next tick.
 	KindProviderCapacity Kind = "provider_capacity"
+	// KindBalanceExhausted is a paid account with no money left (402,
+	// insufficient balance, credits exhausted). Unlike a weekly window or a
+	// capacity miss it never comes back by itself: someone has to top up or
+	// switch the account, then turn the seat back on.
+	KindBalanceExhausted Kind = "balance_exhausted"
 )
 
 const (
@@ -36,7 +41,13 @@ const (
 	ConditionParsedReset      = "provider reset hint"
 	ConditionModelWindow      = "specialized model quota window"
 	ConditionCapacityCooldown = "provider capacity cooldown"
+	ConditionManual           = "top up or switch the account, then re-enable the seat"
 	modelQuotaWindow          = time.Hour
+
+	// manualRecoverAfter parks a balance breaker's recover_at far enough out
+	// that the timed recovery sweep never reopens the seat. Only a person
+	// turning the seat back on closes it.
+	manualRecoverAfter = 100 * 365 * 24 * time.Hour
 
 	// OpenAIHouse and AnthropicHouse are the provider values ladder.json
 	// already stores. A capacity handoff uses them to leave a GPT seat and
@@ -103,6 +114,13 @@ func PlanFor(failureReason, errorText string, binding Binding, now time.Time) (P
 	if !isQuotaFailure(failureReason, errorText) {
 		return Plan{}, false
 	}
+	if balanceWorded(errorText) {
+		plan := Plan{Kind: KindBalanceExhausted, Condition: ConditionManual}
+		if !now.IsZero() {
+			plan.RecoverAt = now.Add(manualRecoverAfter)
+		}
+		return plan, true
+	}
 	kind := kindOf(errorText, binding)
 	plan := Plan{Kind: kind, Condition: ConditionWeekly}
 	if kind == KindSpecializedModel {
@@ -144,6 +162,45 @@ func isCapacityFailure(reason, text string) bool {
 	default:
 		return false
 	}
+}
+
+// IsManualRecovery reports a breaker kind that the timed sweep must not
+// close. Only an explicit re-enable ends it.
+func IsManualRecovery(kind Kind) bool {
+	return kind == KindBalanceExhausted
+}
+
+var paymentCodeRe = regexp.MustCompile(`(^|[^0-9])402([^0-9]|$)`)
+
+// balanceWorded separates "the account is out of money" from a usage window.
+// Both classify as provider_quota_limit; only the first needs a person.
+// Window wording ("weekly", "resets in") wins so a Claude weekly limit that
+// happens to mention credits still recovers on its own.
+func balanceWorded(text string) bool {
+	lower := strings.ToLower(text)
+	if weeklyWorded(lower) || resetsInRe.MatchString(text) {
+		return false
+	}
+	if paymentCodeRe.MatchString(lower) {
+		return true
+	}
+	for _, phrase := range []string{
+		"payment required",
+		"insufficient_balance",
+		"insufficient balance",
+		"balance exhausted",
+		"balance is too low",
+		"usage balance",
+		"credit balance",
+		"credits exhausted",
+		"out of credits",
+		"billing",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func kindOf(errorText string, binding Binding) Kind {
@@ -238,6 +295,13 @@ type Seat struct {
 	Provider   string
 	Eligible   bool
 	AvoidHouse string
+	// StrictHouse keeps AvoidHouse on the one-tier-down pick too. A seat
+	// whose account ran out of money shares that account with its house;
+	// dropping a rung inside the same house lands on the same empty wallet.
+	StrictHouse bool
+	// Exclude lists seat ids that must not be picked for this handoff, such
+	// as the issue's own acceptance seat.
+	Exclude []string
 }
 
 // Choice is the replacement seat. SteppedDown is true when the same tier
@@ -276,7 +340,9 @@ func Pick(failed Seat, roster []Seat, ladder []string) (Choice, bool) {
 		return Choice{}, false
 	}
 	down := failed
-	down.AvoidHouse = ""
+	if !failed.StrictHouse {
+		down.AvoidHouse = ""
+	}
 	seat, ok := bestOnTier(roster, down, ladder[index+1])
 	if !ok {
 		return Choice{}, false
@@ -287,7 +353,7 @@ func Pick(failed Seat, roster []Seat, ladder []string) (Choice, bool) {
 func bestOnTier(roster []Seat, failed Seat, tier string) (Seat, bool) {
 	var sameDir, other []Seat
 	for _, seat := range roster {
-		if !seat.Eligible || seat.ID == failed.ID || seat.Tier != tier {
+		if !seat.Eligible || seat.ID == failed.ID || seat.Tier != tier || excluded(failed.Exclude, seat.ID) {
 			continue
 		}
 		if !admitsHouse(seat, failed.AvoidHouse) {
@@ -320,6 +386,15 @@ func bestOnTier(roster []Seat, failed Seat, tier string) (Seat, bool) {
 		}
 	}
 	return best, true
+}
+
+func excluded(ids []string, id string) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
 }
 
 func admitsHouse(seat Seat, avoid string) bool {

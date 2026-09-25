@@ -2,28 +2,19 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/multica-ai/multica/server/internal/chatoriginbackfill"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestChatOriginHookBackfillsOnlyFirstPartySessionsInShortPages(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	schema := "channel_route_generation_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
@@ -148,17 +139,8 @@ func TestChatOriginHookBackfillsOnlyFirstPartySessionsInShortPages(t *testing.T)
 }
 
 func TestChannelTaskDeliveryBackfillSnapshotsOnlyTasksWithLiveRoutingData(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	for _, tc := range []struct {
 		name        string
@@ -271,17 +253,8 @@ func TestChannelTaskDeliveryBackfillSnapshotsOnlyTasksWithLiveRoutingData(t *tes
 }
 
 func TestChannelTaskDeliveryPrimaryKeyReusesConcurrentIndex(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
-
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect to Postgres: %v", err)
-	}
-	defer pool.Close()
+	pool := testutil.OpenTestDatabase(ctx, t)
 
 	schema := "channel_delivery_pkey_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()

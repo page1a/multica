@@ -87,6 +87,97 @@ describe("deduplicateInboxItems", () => {
 
     expect(merged.map((i) => i.id)).toEqual(["active"]);
   });
+
+  it("counts unread notifications when merging multiple items for the same issue", () => {
+    const merged = deduplicateInboxItems([
+      item({
+        id: "notif-1",
+        issue_id: "issue-1",
+        read: false,
+        created_at: "2026-06-15T08:00:00Z",
+      }),
+      item({
+        id: "notif-2",
+        issue_id: "issue-1",
+        read: false,
+        created_at: "2026-06-15T08:01:00Z",
+      }),
+      item({
+        id: "notif-3",
+        issue_id: "issue-1",
+        read: false,
+        created_at: "2026-06-15T08:02:00Z",
+      }),
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("notif-3");
+    expect(merged[0]?.unread_count).toBe(3);
+    expect(merged[0]?.read).toBe(false);
+  });
+
+  it("computes unread_count accurately when some items in the issue group are read", () => {
+    const merged = deduplicateInboxItems([
+      item({
+        id: "notif-1",
+        issue_id: "issue-1",
+        read: true,
+        created_at: "2026-06-15T08:00:00Z",
+      }),
+      item({
+        id: "notif-2",
+        issue_id: "issue-1",
+        read: false,
+        created_at: "2026-06-15T08:01:00Z",
+      }),
+      item({
+        id: "notif-3",
+        issue_id: "issue-1",
+        read: false,
+        created_at: "2026-06-15T08:02:00Z",
+      }),
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.unread_count).toBe(2);
+    expect(merged[0]?.read).toBe(false);
+  });
+
+  it("sets unread_count to 0 and read to true when all items in the group are read", () => {
+    const merged = deduplicateInboxItems([
+      item({
+        id: "notif-1",
+        issue_id: "issue-1",
+        read: true,
+        created_at: "2026-06-15T08:00:00Z",
+      }),
+      item({
+        id: "notif-2",
+        issue_id: "issue-1",
+        read: true,
+        created_at: "2026-06-15T08:01:00Z",
+      }),
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.unread_count).toBe(0);
+    expect(merged[0]?.read).toBe(true);
+  });
+
+  it("handles issue-less notifications with unread count", () => {
+    const merged = deduplicateInboxItems([
+      item({ id: "sys-1", issue_id: null, read: false }),
+      item({ id: "sys-2", issue_id: null, read: true }),
+    ]);
+
+    expect(merged).toHaveLength(2);
+    const unread = merged.find((i) => i.id === "sys-1");
+    const read = merged.find((i) => i.id === "sys-2");
+    expect(unread?.unread_count).toBe(1);
+    expect(unread?.read).toBe(false);
+    expect(read?.unread_count).toBe(0);
+    expect(read?.read).toBe(true);
+  });
 });
 
 describe("deduplicateArchivedInboxItems", () => {

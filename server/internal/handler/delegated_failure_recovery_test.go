@@ -31,19 +31,6 @@ func TestUpdateComment_RequeuesDelegatedFailureRecoverySurvivor(t *testing.T) {
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, workerID) })
 
-	var workerIssueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES (
-			$1, 'delegated recovery worker issue', 'in_progress', 'none', $2, 'member',
-			(SELECT COALESCE(MAX(number), 82649) + 1 FROM issue WHERE workspace_id = $1),
-			0
-		)
-		RETURNING id`, testWorkspaceID, testUserID).Scan(&workerIssueID); err != nil {
-		t.Fatalf("create worker issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, workerIssueID) })
-
 	var sourceTaskID, failedTaskID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
@@ -54,6 +41,9 @@ func TestUpdateComment_RequeuesDelegatedFailureRecoverySurvivor(t *testing.T) {
 		RETURNING id`, coordinatorID, runtimeID, sourceIssueID, testUserID).Scan(&sourceTaskID); err != nil {
 		t.Fatalf("create source task: %v", err)
 	}
+	// Same-issue delegation. A failure on a different issue is settled onto that
+	// child and must not wake the upstream coordinator (DENE-850), so it is not
+	// a survivor this edit has to restore.
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority,
@@ -62,7 +52,7 @@ func TestUpdateComment_RequeuesDelegatedFailureRecoverySurvivor(t *testing.T) {
 		)
 		VALUES ($1, $2, $3, 'failed', 0, $4, $4, 'delegation', $5, 'comment',
 		        'agent_error.process_failure', 'worker exited', now())
-		RETURNING id`, workerID, runtimeID, workerIssueID, testUserID, sourceTaskID).Scan(&failedTaskID); err != nil {
+		RETURNING id`, workerID, runtimeID, sourceIssueID, testUserID, sourceTaskID).Scan(&failedTaskID); err != nil {
 		t.Fatalf("create failed delegated task: %v", err)
 	}
 

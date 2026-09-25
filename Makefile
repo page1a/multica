@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree remove-worktree db-up db-down db-drop db-reset selfhost selfhost-build selfhost-stop up down status list destroy gc env-exec api-dev web-dev desktop-dev
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down migration-lint migration-new sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree remove-worktree db-up db-down db-drop db-reset selfhost selfhost-build selfhost-stop up down status list destroy gc env-exec api-dev web-dev desktop-dev
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -359,6 +359,12 @@ migrate-down: ## Create the target DB if needed, then roll back database migrati
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate down
+
+migration-lint: ## Check migration numbering (no new duplicate prefixes) and up/down pairing; needs no database
+	cd server && go test ./internal/migrations -run '^TestMigration' -count=1
+
+migration-new: ## Allocate the next migration number from origin/kun and create the empty up/down pair (needs NAME=...)
+	bash scripts/migration-new.sh "$(NAME)"
 
 sqlc: ## Regenerate sqlc code
 	cd server && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate

@@ -56,6 +56,7 @@ import {
 import { useIntentNavigate, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
+import { AgentCLIUpdateControls, readAgentCLIUpdate } from "./agent-cli-update";
 import { ProviderLogo } from "./provider-logo";
 import { HealthIcon, useHealthLabel } from "./shared";
 import { PlanLimitsCell } from "./plan-limits";
@@ -96,7 +97,7 @@ const COLUMN_WIDTHS = {
   agents: 92,
   cost: 96,
   limits: 96,
-  cli: 112,
+  cli: 260,
 } as const;
 
 // Fixed tracks (edges 12+12, name min 140) plus the 9 gap-x-3 gaps
@@ -447,7 +448,13 @@ export function CostCell({
   );
 }
 
-export function CliCell({ runtime }: { runtime: AgentRuntime }) {
+export function CliCell({
+  runtime,
+  canManage = false,
+}: {
+  runtime: AgentRuntime;
+  canManage?: boolean;
+}) {
   const { t } = useT("runtimes");
   const failure = customRuntimeRegistrationFailure(runtime);
   if (failure) {
@@ -502,6 +509,15 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
   // per-agent row.
   const version =
     meta && typeof meta.version === "string" ? meta.version : null;
+  if (readAgentCLIUpdate(meta)) {
+    return (
+      <AgentCLIUpdateControls
+        runtime={runtime}
+        canManage={canManage}
+        compact
+      />
+    );
+  }
 
   if (!version) {
     return <span className="text-caption text-faint-foreground">—</span>;
@@ -841,7 +857,10 @@ export function RuntimeList({
                 <PlanLimitsCell runtime={row.runtime} now={now} />
               </ListGridCell>
               <ListGridCell className="hidden @2xl:flex">
-                <CliCell runtime={row.runtime} />
+                <CliCell
+                  runtime={row.runtime}
+                  canManage={row.canDelete && !row.runtime.profile_id}
+                />
               </ListGridCell>
               <ListGridCell className="justify-end px-0">
                 <span

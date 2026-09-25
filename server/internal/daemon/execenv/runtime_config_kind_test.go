@@ -102,6 +102,9 @@ func TestBuildMetaSkillContentIssueBodyFormatting(t *testing.T) {
 				"do not add a Markdown H1 (`# ...`) to an issue body or description",
 				"start with prose or `##` subheadings",
 				"Only add an H1 when the user specifically requests one",
+				"## Title Style",
+				"`{Project}: {what}`",
+				"issue → 任务",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("brief is missing issue-body formatting guidance %q\n---\n%s", want, out)
@@ -136,6 +139,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		{"## Agent Identity", allKinds},
 		{"## Available Commands", allKinds},
 		{"## Issue Body Formatting", allKinds},
+		{"## Title Style", allKinds},
 		{"### Workflow", allKinds},
 		{"## Important: Always Use the `multica` CLI", allKinds},
 		{"## Output", allKinds},

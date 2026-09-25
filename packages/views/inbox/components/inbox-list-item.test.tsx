@@ -137,33 +137,65 @@ function renderRow(props: {
   );
 }
 
-const unreadDot = (container: HTMLElement) => container.querySelector(".bg-brand");
+const unreadBadge = (container: HTMLElement) =>
+  container.querySelector("span.bg-\\[oklch\\(0\\.62_0\\.14_18\\)\\]");
 const title = (container: HTMLElement) => container.querySelector(".truncate");
 
 describe("InboxListItem unread affordance", () => {
-  it("marks an unread row in the main inbox", () => {
-    const { container } = renderRow({ item: item({ read: false }), view: "inbox" });
+  it("renders an unread badge on an unread row in the main inbox", () => {
+    const { container } = renderRow({
+      item: item({ read: false, unread_count: 3 }),
+      view: "inbox",
+    });
 
-    expect(unreadDot(container)).not.toBeNull();
+    const badge = unreadBadge(container);
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe("3");
+    expect(title(container)?.className).toContain("font-medium");
+  });
+
+  it("renders 99+ when unread count exceeds 99", () => {
+    const { container } = renderRow({
+      item: item({ read: false, unread_count: 105 }),
+      view: "inbox",
+    });
+
+    const badge = unreadBadge(container);
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe("99+");
+  });
+
+  it("defaults to 1 unread when unread_count is not provided but read is false", () => {
+    const { container } = renderRow({
+      item: item({ read: false }),
+      view: "inbox",
+    });
+
+    const badge = unreadBadge(container);
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe("1");
     expect(title(container)?.className).toContain("font-medium");
   });
 
   it("leaves a read row unmarked in the main inbox", () => {
-    const { container } = renderRow({ item: item({ read: true }), view: "inbox" });
+    const { container } = renderRow({
+      item: item({ read: true, unread_count: 0 }),
+      view: "inbox",
+    });
 
-    expect(unreadDot(container)).toBeNull();
+    expect(unreadBadge(container)).toBeNull();
     expect(title(container)?.className).not.toContain("font-medium");
   });
 
   it("renders an unread row as read in the archived view", () => {
     // Archiving preserves `read` so unarchiving can restore real unread state,
-    // which left archived rows showing a dot no action in this view can clear.
+    // which left archived rows showing a badge no action in this view can clear.
     const { container } = renderRow({
-      item: item({ read: false, archived: true }),
+      item: item({ read: false, unread_count: 3, archived: true }),
       view: "archived",
     });
 
-    expect(unreadDot(container)).toBeNull();
+    expect(unreadBadge(container)).toBeNull();
     expect(title(container)?.className).not.toContain("font-medium");
   });
 });

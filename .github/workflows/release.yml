@@ -60,6 +60,13 @@ jobs:
       - name: Verify Go test wrapper
         run: bash scripts/test-go.test.sh
 
+      # Fail fast on a duplicate migration number before the full suite runs:
+      # golang-migrate applies both same-numbered files, so a tag carrying a
+      # collision would ship an ambiguous schema. Same gate as CI's
+      # migration-lint job; see docs/kun/migration-numbering.md.
+      - name: Lint migration numbering
+        run: make migration-lint
+
       - name: Run tests
         run: bash scripts/test-go.sh --race
 

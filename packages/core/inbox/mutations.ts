@@ -46,17 +46,75 @@ export function useMarkInboxRead() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (id: string) => api.markInboxRead(id),
+    mutationFn: async (id: string) => {
+      const list = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId)) ?? [];
+      let target = list.find((item) => item.id === id);
+      if (!target) {
+        const archivedQueries = qc.getQueriesData<ArchivedInboxCache>({
+          queryKey: inboxKeys.archived(wsId),
+        });
+        for (const [_, cache] of archivedQueries) {
+          if (!cache) continue;
+          const items = Array.isArray(cache)
+            ? cache
+            : "pages" in cache
+              ? cache.pages.flatMap((p) => p.items)
+              : cache.items;
+          target = items.find((item) => item.id === id);
+          if (target) break;
+        }
+      }
+      const targetIssueId = target?.issue_id;
+      const siblings = targetIssueId
+        ? list.filter((item) => item.issue_id === targetIssueId)
+        : list.filter((item) => item.id === id);
+
+      const idsToMark = siblings.map((item) => item.id);
+      if (!idsToMark.includes(id)) {
+        idsToMark.push(id);
+      }
+
+      const results = await Promise.all(
+        idsToMark.map((itemId) => api.markInboxRead(itemId)),
+      );
+      return results.find((r) => r?.id === id) ?? results[0]!;
+    },
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       const prev = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));
+      let target = prev?.find((item) => item.id === id);
+      if (!target) {
+        const archivedQueries = qc.getQueriesData<ArchivedInboxCache>({
+          queryKey: inboxKeys.archived(wsId),
+        });
+        for (const [_, cache] of archivedQueries) {
+          if (!cache) continue;
+          const items = Array.isArray(cache)
+            ? cache
+            : "pages" in cache
+              ? cache.pages.flatMap((p) => p.items)
+              : cache.items;
+          target = items.find((item) => item.id === id);
+          if (target) break;
+        }
+      }
+      const targetIssueId = target?.issue_id;
+
       const markRead = (old: InboxItem[] | undefined) =>
-        old?.map((item) => (item.id === id ? { ...item, read: true } : item));
+        old?.map((item) =>
+          item.id === id || (targetIssueId && item.issue_id === targetIssueId)
+            ? { ...item, read: true }
+            : item,
+        );
       qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), markRead);
       // Opening a notification from the archived sub-view marks it read too —
       // patch that cache as well, or its unread dot would sit there until the
       // next refetch.
-      const prevArchived = patchArchivedInboxCaches(qc, wsId, (items) => markRead(items) ?? items);
+      const prevArchived = patchArchivedInboxCaches(
+        qc,
+        wsId,
+        (items) => markRead(items) ?? items,
+      );
       return { prev, prevArchived };
     },
     onError: (_err, _id, ctx) => {

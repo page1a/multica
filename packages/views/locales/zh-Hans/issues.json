@@ -605,7 +605,9 @@
       "resolve_failed": "标记已解决失败",
       "unresolve_failed": "重新打开失败"
     },
-    "align_action": "先就此对齐"
+    "align_action": "先就此对齐",
+    "trigger_blocked_access_requested": "已请智能体主人批准，批准后才会开始",
+    "trigger_blocked_short_access_requested": "等主人批准"
   },
   "reply": {
     "placeholder": "回复...",
@@ -1160,7 +1162,14 @@
     "record_abandoned_hint": "没有产出任务。",
     "assignee_suggestions_loading": "正在查找建议负责人…",
     "assignee_suggestions_failed": "负责人建议暂时不可用。仍可确认，但未分配的任务需要手动选择。",
-    "assignee_unassigned": "未分配——仍可确认，之后再指派。"
+    "assignee_unassigned": "未分配——仍可确认，之后再指派。",
+    "project_will_create": "将新建：{{name}}",
+    "project_create_hint": "将同时新建这个项目，子任务都会挂进去。",
+    "project_use_existing": "改用已有项目",
+    "project_skip": "不挂项目",
+    "project_suggestion": "建议归到「{{name}}」。",
+    "confirm_with_project": "建项目并创建 {{count}} 张任务",
+    "project_directory_failed": "目录没建好，项目和任务都没建。"
   },
   "sub_issue_accordion": {
     "count_other": "{{count}} 个子任务",

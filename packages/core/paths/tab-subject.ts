@@ -13,6 +13,7 @@
  * Chat) rides in the query string, so it is parsed too — the URL is the single
  * source of truth for what a tab has open, including which item.
  */
+import { chatSessionIdFromLocation } from "./paths";
 import { pageForSegment, type WorkspacePageKey } from "./route-icons";
 
 export type TabActorType = "agent" | "member" | "squad";
@@ -41,7 +42,7 @@ export type TabSubject =
    * `archived` is the `?view=archived` sub-list (its own list/cache).
    */
   | { kind: "inbox"; selectedKey: string | null; archived: boolean }
-  /** The Chat container; `sessionId` is the `?session=` selection or null. */
+  /** The Chat container; `sessionId` is the path or `?session=` selection, or null. */
   | { kind: "chat"; sessionId: string | null }
   /** A creation flow that has not produced a resource yet. */
   | { kind: "flow"; flow: "create-agent" | "create-issue" }
@@ -111,7 +112,10 @@ export function parseTabSubject(url: string): TabSubject {
         archived: query.get("view") === "archived",
       };
     case "chat":
-      return { kind: "chat", sessionId: query.get("session") || null };
+      return {
+        kind: "chat",
+        sessionId: chatSessionIdFromLocation("/" + segments.join("/"), query),
+      };
     case "runtimes":
       if (!id) return { kind: "page", page: "runtimes" };
       // `/runtimes/:machineId/runtime/:runtimeId` — nested runtime.

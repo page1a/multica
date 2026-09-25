@@ -42,6 +42,11 @@ threshold (Settings → Routing, default 24 hours):
 - The status is moved to done **only** when the 验收席 already left a pass verdict
   on the ticket, and the comment recording it says which remark it read. With
   nothing from the reviewer on the ticket this branch cannot be taken at all.
+- The sweep does not merge, and it is not the release path. The release path is
+  the acceptance seat's pass: a comment with a standalone `verdict: pass` line
+  (`multica issue comment add <id> --verdict pass`) makes the platform merge the
+  open linked PR and set `done` right away. Waiting for this sweep leaves the PR
+  open.
 - A top-level ticket that reached `in_review` before its 验收席 was ever decided gets the
   slot filled now and is handed on — this is the same row as `in_review` above,
   and it runs even when the assignee is a person.

@@ -195,7 +195,8 @@
     "no_project": "No project",
     "empty": "No projects yet",
     "search_placeholder": "Search projects...",
-    "clear_aria": "Clear project"
+    "clear_aria": "Clear project",
+    "create": "+ New project “{{name}}”"
   },
   "chip": {
     "fallback_label": "Project"
@@ -215,5 +216,32 @@
     "direction_desc": "Descending",
     "section_columns": "Columns",
     "view": "View"
+  },
+  "new_project": {
+    "name": "Name",
+    "icon": "Icon",
+    "icon_placeholder": "One emoji",
+    "positioning": "What this project is for",
+    "positioning_placeholder": "A short description of the business",
+    "directory_enable": "Create a folder on this machine",
+    "directory_unavailable": "Creating the folder needs the desktop app.",
+    "directory_offline": "The local daemon is not running.",
+    "directory_root": "Business project root",
+    "directory_container": "Use the root itself (it will hold several repositories)",
+    "directory_name": "Folder name",
+    "directory_git": "Initialise a Git repository",
+    "directory_mode": "How tasks share this folder",
+    "directory_mode_auto": "Chosen from the folder: {{mode}}. You can change it.",
+    "directory_bad_name": "That folder name is not a single name.",
+    "directory_exists": "That folder already exists. Pick another name.",
+    "directory_failed": "The folder could not be created, so the project was not created either.",
+    "mode": {
+      "worktree": "Separate worktree per task",
+      "shared": "Shared folder",
+      "in_place": "One task at a time"
+    },
+    "back": "Back",
+    "submit": "Create and select",
+    "failed": "The project could not be created."
   }
 }

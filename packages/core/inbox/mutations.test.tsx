@@ -140,6 +140,43 @@ describe("useMarkInboxUnread", () => {
   });
 });
 
+describe("useMarkInboxRead", () => {
+  let queryClient: QueryClient;
+  let markInboxRead: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    markInboxRead = vi.fn(async (id: string) => item({ id, read: true }));
+    setApiInstance({ markInboxRead } as unknown as ApiClient);
+  });
+
+  it("marks all unread notifications of the same issue as read in cache and via api", async () => {
+    queryClient.setQueryData<InboxItem[]>(inboxKeys.list(WORKSPACE_ID), [
+      item({ id: "notif-1", issue_id: "issue-1", read: false, archived: false }),
+      item({ id: "notif-2", issue_id: "issue-1", read: false, archived: false }),
+      item({ id: "other", issue_id: "issue-2", read: false, archived: false }),
+    ]);
+
+    const { result } = renderHook(() => useMarkInboxRead(), {
+      wrapper: createWrapper(queryClient),
+    });
+    result.current.mutate("notif-1");
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(markInboxRead).toHaveBeenCalledWith("notif-1");
+    expect(markInboxRead).toHaveBeenCalledWith("notif-2");
+    expect(markInboxRead).not.toHaveBeenCalledWith("other");
+
+    const cache = listCache(queryClient);
+    expect(cache.find((i) => i.id === "notif-1")?.read).toBe(true);
+    expect(cache.find((i) => i.id === "notif-2")?.read).toBe(true);
+    expect(cache.find((i) => i.id === "other")?.read).toBe(false);
+  });
+});
+
 describe("useUnarchiveInbox", () => {
   let queryClient: QueryClient;
   let unarchiveInbox: ReturnType<typeof vi.fn>;

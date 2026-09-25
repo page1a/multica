@@ -199,13 +199,14 @@ func TestIssueDraftRejectsCrossWorkspaceAndNonOwner(t *testing.T) {
 	// Addressed from another workspace the draft does not exist at all — the
 	// session lookup is workspace-scoped, so this must not leak its existence.
 	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeAs(otherUser, otherWorkspace)).Want(http.StatusNotFound)
-	// A fellow workspace member is not the conversation's creator.
-	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeAs(otherUser, testWorkspaceID)).Want(http.StatusForbidden)
+	// A fellow workspace member cannot see the conversation, so both writes
+	// answer 404 — the same as a missing session, not a 403 that admits it exists.
+	testutil.Call(t, testHandler.FinalizeIssueDraft, finalizeAs(otherUser, testWorkspaceID)).Want(http.StatusNotFound)
 	testutil.Call(t, testHandler.AbandonIssueDraft, withURLParam(
 		testutil.WithHeaders(newRequest(http.MethodPost, "/api/issue-drafts/"+session.SessionID+"/abandon", nil),
 			"X-User-ID", otherUser, "X-Workspace-ID", testWorkspaceID),
 		"sessionId", session.SessionID,
-	)).Want(http.StatusForbidden)
+	)).Want(http.StatusNotFound)
 
 	if got := dbfx.Count(t, `
 		SELECT COUNT(*) FROM issue WHERE workspace_id = $1 AND origin_type = 'issue_draft'

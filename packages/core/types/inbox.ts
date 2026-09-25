@@ -28,7 +28,13 @@ export type InboxItemType =
   // System notifications are intentionally issue-less. Keep them in the
   // same Inbox model so read/archive/realtime behavior remains consistent.
   | "autopilot_paused"
-  | "autopilot_quota_exceeded";
+  | "autopilot_quota_exceeded"
+  // Agent borrowing (kun fork, DENE-808). The request lands with the agent
+  // owner and carries the issue it was raised on; the two receipts go back to
+  // the requester.
+  | "agent_access_request"
+  | "agent_access_approved"
+  | "agent_access_declined";
 
 /**
  * One workspace's unread inbox count in the cross-workspace summary
@@ -64,6 +70,11 @@ export interface InboxItem {
   archived: boolean;
   created_at: string;
   details: Record<string, string> | null;
+  /**
+   * Number of unread notifications in this grouped row.
+   * Computed client-side during issue grouping.
+   */
+  unread_count?: number;
 }
 
 

@@ -22,4 +22,4 @@ export * from "./openclaw-runtime-config";
 export * from "./runtime-binding";
 export * from "./auto-retry";
 export * from "./work-enabled";
-export * from "./switchable-models";
+export * from "./agent-access";

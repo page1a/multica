@@ -293,7 +293,7 @@ func TestPrivateRuntimeReadEndpointsHideKnownRuntimeFromNonOwners(t *testing.T) 
 
 	runtimeID, runtimeOwnerID, plainMemberID := runtimeVisibilityFixture(t)
 
-	modelRequest, err := testHandler.ModelListStore.Create(context.Background(), runtimeID)
+	modelRequest, err := testHandler.ModelListStore.Create(context.Background(), runtimeID, nil)
 	if err != nil {
 		t.Fatalf("create model list request: %v", err)
 	}

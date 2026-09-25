@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // integrationPool returns a pool against the configured DATABASE_URL,
@@ -18,19 +19,8 @@ import (
 // internal/handler/handler_test.go (see those files' TestMain).
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Skipf("scheduler integration tests require Postgres: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("scheduler integration tests require Postgres: %v", err)
-	}
+	pool := testutil.OpenTestDatabase(ctx, t)
 	t.Cleanup(pool.Close)
 	return pool
 }

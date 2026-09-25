@@ -272,6 +272,21 @@
       "timeout": "タイムアウト"
     }
   },
+  "agent_cli": {
+    "versions": "{{current}} / {{latest}}",
+    "update_available": "更新できます",
+    "up_to_date": "最新です",
+    "follow": "最新版に自動で追従",
+    "update_now": "今すぐ更新",
+    "updating": "更新中…",
+    "waiting": "このマシンが空くまで待ちます",
+    "unsupported": "この CLI は自動更新できません",
+    "binary": "更新するコピー：{{path}}",
+    "check_failed": "最新バージョンを確認できません",
+    "follow_failed": "自動追従を保存できませんでした",
+    "update_request_failed": "更新を開始できませんでした",
+    "read_only": "ランタイムの所有者かワークスペース管理者だけが更新できます"
+  },
   "charts": {
     "heatmap_less": "少ない",
     "heatmap_more": "多い",

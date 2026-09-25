@@ -66,6 +66,7 @@ export type WSEventType =
   | "chat:session_read"
   | "chat:session_deleted"
   | "chat:session_updated"
+  | "chat:session_invalidated"
   | "project:created"
   | "project:updated"
   | "project:deleted"
@@ -428,6 +429,7 @@ export interface ChatMessageEventPayload {
   content: string;
   task_id?: string;
   created_at: string;
+  sender_user_id?: string;
 }
 
 export interface ChatDonePayload {
@@ -554,8 +556,13 @@ export interface InvitationRevokedPayload {
 // Broadcast when a daemon heartbeat persisted a new credential-free
 // plan_limits or JEV snapshot. Routine 15s heartbeats do not reach the browser:
 // both flags are set only when the stored row actually changed.
+//
+// Two shapes travel on this event. A runtime snapshot names `runtime_id`; a
+// per-agent snapshot names `agent_id` instead, because one runtime serves every
+// CLI seat on the machine and the agent is what the seat belongs to (DENE-715).
 export interface DaemonHeartbeatPayload {
   runtime_id?: string;
+  agent_id?: string;
   plan_limits_updated?: boolean;
   jev_updated?: boolean;
 }
@@ -644,6 +651,7 @@ export interface WSEventPayloadMap {
   "chat:session_read": ChatSessionReadPayload;
   "chat:session_deleted": ChatSessionDeletedPayload;
   "chat:session_updated": unknown;
+  "chat:session_invalidated": { chat_session_id: string };
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;

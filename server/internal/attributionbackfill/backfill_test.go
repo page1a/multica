@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // These tests exercise the migration-198 backfill hook against a live
-// Postgres. They connect to DATABASE_URL (default
-// postgres://multica:multica@localhost:5432/multica?sslmode=disable),
-// matching every other live-Postgres suite in the repo, and skip cleanly
-// when no database is reachable so CI without a DB sees SKIP, not failure.
+// Postgres. They connect to the run's test database through
+// internal/testutil, like every other live-Postgres suite: a laptop without
+// a database skips, a run that promised one fails instead of skipping.
 //
 // Each test isolates itself in a throwaway schema so it never touches the
 // real agent_task_queue, and drops the schema on cleanup.
@@ -30,19 +30,8 @@ const (
 
 func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Skipf("could not connect to %s: %v", dbURL, err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("database not reachable at %s: %v", dbURL, err)
-	}
+	pool := testutil.OpenTestDatabase(ctx, t)
 	return pool
 }
 

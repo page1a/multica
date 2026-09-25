@@ -83,6 +83,13 @@ func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actor
 		return true
 	}
 
+	// DENE-808: a timed access pass admits its holder exactly like a member
+	// target would, for as long as it is neither expired nor revoked. Checked
+	// before the mode switch so a pass also opens a private agent.
+	if effectiveUser != "" && h.hasActiveAccessPass(ctx, agent.ID, effectiveUser) {
+		return true
+	}
+
 	if agent.PermissionMode != "public_to" {
 		// private (or any unknown mode) is deny-by-default: no admin bypass,
 		// no A2A bypass. Only the owner branch above passes.
@@ -156,6 +163,13 @@ func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, act
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}
+	// DENE-808: a pass holder can open the agent they were granted. A
+	// doorbell-enabled agent is only LISTED to members (see
+	// memberAllowedToViewAgent) — ringing needs the name in the picker, not
+	// the configuration behind the detail page.
+	if h.hasActiveAccessPass(ctx, agent.ID, actorID) {
+		return true
+	}
 	if agent.PermissionMode != "public_to" {
 		return false
 	}
@@ -164,6 +178,17 @@ func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, act
 		return false
 	}
 	return memberHitsInvocationTargets(targets, actorID)
+}
+
+// hasActiveAccessPass reports whether userID currently holds an unexpired,
+// unrevoked access pass for the agent (DENE-808). Errors fail closed.
+func (h *Handler) hasActiveAccessPass(ctx context.Context, agentID pgtype.UUID, userID string) bool {
+	userUUID, err := util.ParseUUID(userID)
+	if err != nil {
+		return false
+	}
+	ok, err := h.Queries.HasActiveAgentAccessPass(ctx, db.HasActiveAgentAccessPassParams{AgentID: agentID, UserID: userUUID})
+	return err == nil && ok
 }
 
 // memberHitsInvocationTargets is the pure predicate deciding whether a regular
@@ -196,10 +221,49 @@ func memberAllowedToViewAgent(agent db.Agent, targets []db.AgentInvocationTarget
 	if uuidToString(agent.OwnerID) == userID {
 		return true
 	}
+	// DENE-808: doorbell-enabled agents are listed so a member can @ them and
+	// ring the bell; pass holders see the agent they were granted. Passes are
+	// checked by the caller via memberAllowedToViewAgentWithPasses so the list
+	// endpoint keeps its single batch load.
+	if agent.DoorbellEnabled {
+		return true
+	}
 	if agent.PermissionMode != "public_to" {
 		return false
 	}
 	return memberHitsInvocationTargets(targets, userID)
+}
+
+// memberAllowedToViewAgentWithPasses is memberAllowedToViewAgent plus the
+// batch-loaded set of agent ids the member holds an active pass for.
+func memberAllowedToViewAgentWithPasses(agent db.Agent, targets []db.AgentInvocationTarget, userID, role string, passAgents map[string]struct{}) bool {
+	if memberAllowedToViewAgent(agent, targets, userID, role) {
+		return true
+	}
+	_, ok := passAgents[uuidToString(agent.ID)]
+	return ok
+}
+
+// activePassAgentIDs returns the ids of agents userID holds an active pass
+// for in the workspace. A lookup failure yields an empty set (fail closed).
+func (h *Handler) activePassAgentIDs(ctx context.Context, workspaceID, userID string) map[string]struct{} {
+	out := map[string]struct{}{}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return out
+	}
+	userUUID, err := util.ParseUUID(userID)
+	if err != nil {
+		return out
+	}
+	passes, err := h.Queries.ListActiveAgentAccessPassesForUser(ctx, db.ListActiveAgentAccessPassesForUserParams{WorkspaceID: wsUUID, UserID: userUUID})
+	if err != nil {
+		return out
+	}
+	for _, p := range passes {
+		out[uuidToString(p.AgentID)] = struct{}{}
+	}
+	return out
 }
 
 // invokeOriginatorFromRequest resolves the top-of-chain human user id for an
@@ -307,10 +371,14 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 	if !ok {
 		return nil, false
 	}
+	var passAgents map[string]struct{}
+	if actorType == "member" {
+		passAgents = h.activePassAgentIDs(ctx, workspaceID, actorID)
+	}
 	allowed := make(map[string]struct{}, len(agents))
 	for _, a := range agents {
 		if actorType == "member" {
-			if !memberAllowedToViewAgent(a, targetsByAgent[uuidToString(a.ID)], actorID, role) {
+			if !memberAllowedToViewAgentWithPasses(a, targetsByAgent[uuidToString(a.ID)], actorID, role, passAgents) {
 				continue
 			}
 		}

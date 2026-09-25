@@ -251,6 +251,27 @@ func TestStaleWakeTellsAMemberReviewerOnce(t *testing.T) {
 	}
 }
 
+// The completion callback may already have queued the reviewer between the
+// list query and this pass. Waking again would be a second run.
+func TestStaleSweepSkipsAnActiveRun(t *testing.T) {
+	store := staleStore()
+	store.activeRun = true
+	judge := &fakeJudge{stale: StaleDecision{Action: StaleWake, Confidence: 0.95}}
+	r := newRouter(store, judge)
+
+	out, err := r.RouteStale(context.Background(), "ws-1", "issue-1")
+	if err != nil {
+		t.Fatalf("route stale: %v", err)
+	}
+	if out.Action != ActionNoop || out.Reason != "active run in progress" {
+		t.Fatalf("action = %q / %q, want noop / active run in progress", out.Action, out.Reason)
+	}
+	if judge.callCount() != 0 || len(store.handoffs) != 0 || len(store.statusWritten) != 0 {
+		t.Fatalf("an active run was judged or woken: calls=%d handoffs=%v status=%v",
+			judge.callCount(), store.handoffs, store.statusWritten)
+	}
+}
+
 // A ticket that has not been quiet long enough is not stalled, even when the
 // single-issue entry point is called on it by hand.
 func TestStaleRowIgnoresTicketsThatAreNotQuietYet(t *testing.T) {

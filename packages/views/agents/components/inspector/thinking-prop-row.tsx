@@ -31,6 +31,7 @@ import { findModelCapabilityEntry } from "./model-capability";
 export function ThinkingPropRow({
   runtimeId,
   runtimeOnline,
+  agentId,
   provider,
   model,
   value,
@@ -39,6 +40,7 @@ export function ThinkingPropRow({
 }: {
   runtimeId: string | null;
   runtimeOnline: boolean;
+  agentId?: string | null;
   /** Runtime provider type (e.g. "codex", "claude"). Used to decide whether an
    *  empty model can safely preview a default model's effort catalog. */
   provider: string;
@@ -49,7 +51,7 @@ export function ThinkingPropRow({
 }) {
   const { t } = useT("agents");
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline ? runtimeId : null, agentId),
   );
 
   const models = modelsQuery.data?.models ?? [];
@@ -74,6 +76,7 @@ export function ThinkingSettingField({
   label,
   runtimeId,
   runtimeOnline,
+  agentId,
   provider,
   model,
   value,
@@ -83,6 +86,7 @@ export function ThinkingSettingField({
   label: ReactNode;
   runtimeId: string | null;
   runtimeOnline: boolean;
+  agentId?: string | null;
   provider: string;
   model: string;
   value: string;
@@ -90,7 +94,7 @@ export function ThinkingSettingField({
   onChange: (next: string) => Promise<void> | void;
 }) {
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline ? runtimeId : null, agentId),
   );
   const models = modelsQuery.data?.models ?? [];
   const entry = pickModelEntry(models, model, provider);

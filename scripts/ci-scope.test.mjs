@@ -21,7 +21,8 @@ for (const [name, files, selected] of [
   ["web changelog", ["apps/web/features/landing/i18n/en.ts"], ["frontend", "quality"]],
   ["UI Lab", ["apps/ui-lab/src/app.tsx"], ["frontend", "quality"]],
   ["mobile UI", ["apps/mobile/app/index.tsx"], ["quality"]],
-  ["migration only", ["server/migrations/999_example.up.sql"], ["backend", "sqlc"]],
+  ["migration only", ["server/migrations/999_example.up.sql"], ["backend", "sqlc", "migrations"]],
+  ["migration lint test", ["server/internal/migrations/migrations_lint_test.go"], ["backend", "runtime", "migrations"]],
   ["agent process code", ["server/pkg/agent/cursor_background.go"], ["backend", "runtime"]],
   ["daemon dependency", ["server/internal/skill/service.go"], ["backend", "runtime"]],
   ["native test compilation dependency", ["server/pkg/db/generated/issues.sql.go"], ["backend", "sqlc", "runtime"]],
@@ -33,6 +34,7 @@ for (const [name, files, selected] of [
   ["PowerShell installer", ["scripts/install.ps1.test.ps1"], ["installer"]],
   ["cleanup script", ["scripts/drop-database.sh"], ["scripts"]],
   ["performance harness", ["scripts/perf-compare.test.sh"], ["scripts"]],
+  ["migration allocation", ["scripts/migration-new.test.sh"], ["scripts"]],
   ["reserved slug source", ["server/internal/handler/reserved_slugs.json"], ["backend", "runtime", "scripts"]],
   ["reserved slug output", ["packages/core/paths/reserved-slugs.ts"], ["frontend", "quality", "scripts"]],
   ["cross-module runtime contract", ["packages/core/runtimes/cli-version.ts"], ["frontend", "backend", "runtime", "quality"]],
@@ -41,7 +43,7 @@ for (const [name, files, selected] of [
   ["radius policy", ["scripts/check-ui-radius-tokens.mjs"], ["quality"]],
   ["shared quality action", [".github/actions/frontend-quality/action.yml"], ["frontend", "quality"]],
   ["new bitmap", ["apps/web/public/hero.png"], ["frontend", "quality", "images"]],
-  ["mixed docs and migration", ["apps/docs/content/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc"]],
+  ["mixed docs and migration", ["apps/docs/content/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc", "migrations"]],
   ["CI configuration", [".github/ci-paths.json"], Object.keys(filters)],
 ]) {
   test(`PR and main select only affected scopes: ${name}`, () => {

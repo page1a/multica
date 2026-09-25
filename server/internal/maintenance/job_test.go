@@ -19,37 +19,22 @@ import (
 
 func fixture(t *testing.T) (*pgxpool.Pool, *Service) {
 	t.Helper()
-	url := os.Getenv("DATABASE_URL")
-	if url == "" {
-		t.Skip("DATABASE_URL required; run through make env-exec")
-	}
 	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin := testutil.OpenTestDatabase(ctx, t)
 	schema := "maintenance_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		admin.Close()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	config, err := pgxpool.ParseConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema + ",pg_catalog"
-	config.MaxConns = 8
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Registered before the scoped pool opens, so it runs after that pool has
+	// closed and the drop does not wait on its connections.
 	t.Cleanup(func() {
-		pool.Close()
-		_, err := admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		admin.Close()
-		if err != nil {
+		if _, err := admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
 			t.Error(err)
 		}
+	})
+	pool := testutil.OpenTestDatabaseConfig(ctx, t, func(config *pgxpool.Config) {
+		config.ConnConfig.RuntimeParams["search_path"] = schema + ",pg_catalog"
+		config.MaxConns = 8
 	})
 	exec := func(sql string) {
 		t.Helper()

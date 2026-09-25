@@ -24,3 +24,7 @@ WHERE workspace_id = $1 AND user_id = $2;
 -- name: DeletePinnedItemsByItem :exec
 DELETE FROM pinned_item
 WHERE item_type = $1 AND item_id = $2;
+
+-- name: GetPinnedItemByItem :one
+SELECT * FROM pinned_item
+WHERE workspace_id = $1 AND user_id = $2 AND item_type = $3 AND item_id = $4;

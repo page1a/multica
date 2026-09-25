@@ -173,6 +173,17 @@ func (r *Router) routeStale(ctx context.Context, workspaceID string, settings Se
 	if quiet < settings.StaleAfter() {
 		return noop("issue is not stale yet"), nil
 	}
+	// The list query already drops tickets with a live run. This is the same
+	// guard for the single-issue entry, so a sweep that listed the ticket
+	// before the completion callback queued the reviewer does not start a
+	// second run.
+	acceptance, err := r.Store.Acceptance(ctx, workspaceID, issue)
+	if err != nil {
+		return noop("acceptance state unreadable"), err
+	}
+	if acceptance.ActiveRun {
+		return noop("active run in progress"), nil
+	}
 
 	if issue.Reviewer.Empty() {
 		// Never decided. That is the in-review row's job, not this one's, and

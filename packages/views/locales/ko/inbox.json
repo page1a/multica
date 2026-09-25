@@ -38,6 +38,7 @@
       "hours": "{{count}}시간",
       "days": "{{count}}일"
     },
+    "unread_count_other": "읽지 않음 {{count}}개",
     "archived_title": "보관됨",
     "archived_empty": "보관된 알림이 없습니다",
     "unarchive_tooltip": "보관 해제",
@@ -55,7 +56,21 @@
     "autopilot_quota_exceeded_body": "이 워크스페이스는 현재 기간의 자동화 실행 한도 {{limit}}회에 도달했습니다. 한도가 {{resetAt}}에 초기화될 때까지 이후 자동화 실행은 시작되지 않습니다.",
     "autopilot_quota_upgrade": "업그레이드 옵션 보기",
     "archive": "보관",
-    "unarchive": "보관 해제"
+    "unarchive": "보관 해제",
+    "access_request_mention_title": "{{requester}}님이 {{agent}}을(를) 멘션했습니다. 승인이 필요합니다",
+    "access_request_assign_title": "{{requester}}님이 {{agent}}에게 할당했습니다. 승인이 필요합니다",
+    "access_request_local_env_note": "이 에이전트는 내 컴퓨터에서 실행됩니다. 승인하면 해당 작업이 로컬 환경(키, 로그인, 파일)에 접근할 수 있습니다.",
+    "access_pass_prompt": "일정 시간 동안 사용도 허용:",
+    "access_pass_2h": "2시간",
+    "access_pass_today": "오늘까지",
+    "access_pass_custom": "직접 지정…",
+    "access_approve_once": "이번만 승인",
+    "access_approve_with_pass": "승인하고 패스 발급",
+    "access_decline": "거절",
+    "access_request_expires": "{{until}}에 만료",
+    "access_status_approved": "승인됨",
+    "access_status_declined": "거절됨",
+    "access_status_expired": "만료됨: 제때 처리되지 않았습니다"
   },
   "types": {
     "issue_assigned": "할당됨",
@@ -78,7 +93,10 @@
     "quick_create_failed": "에이전트 생성 실패",
     "quick_create_unconfirmed": "에이전트 생성 결과 미확인",
     "autopilot_paused": "자동화 일시 중지됨",
-    "autopilot_quota_exceeded": "자동화 실행 한도 도달"
+    "autopilot_quota_exceeded": "자동화 실행 한도 도달",
+    "agent_access_request": "에이전트 사용 요청",
+    "agent_access_approved": "에이전트 사용 승인됨",
+    "agent_access_declined": "에이전트 사용 거절됨"
   },
   "labels": {
     "set_status_to": "상태 변경:",
@@ -92,12 +110,19 @@
     "reacted_to_comment": "내 댓글에 {{emoji}} 반응을 남겼습니다",
     "created_with_agent": "에이전트가 생성: {{identifier}}",
     "failed_with_detail": "실패: {{detail}}",
-    "autopilot_quota_blocked": "한도에 도달하여 실행이 차단됨"
+    "autopilot_quota_blocked": "한도에 도달하여 실행이 차단됨",
+    "access_requested_by": "{{requester}}님이 {{agent}} 사용을 요청했습니다",
+    "access_approved_for": "{{agent}} 사용 요청이 승인되었습니다",
+    "access_declined_for": "{{agent}} 사용 요청이 거절되었습니다"
   },
   "toasts": {
     "source_context_retry_started": "원본 컨텍스트로 재시도를 시작했습니다",
     "archived": "알림을 보관했습니다",
-    "unarchived": "알림을 복원했습니다"
+    "unarchived": "알림을 복원했습니다",
+    "access_approved": "승인됨. 실행이 대기열에 추가되었습니다",
+    "access_approved_with_pass": "승인됨. 패스는 {{until}}까지 유효합니다",
+    "access_approved_but_blocked": "승인했지만 실행을 시작하지 못했습니다. 에이전트 런타임을 확인하세요",
+    "access_declined": "거절됨. 요청자에게 알렸습니다"
   },
   "errors": {
     "archived_lookup_failed": "링크된 알림을 불러오지 못했습니다",
@@ -113,6 +138,9 @@
     "archive_completed_failed": "완료된 항목을 보관하지 못했습니다",
     "unarchive_failed": "보관 해제에 실패했습니다",
     "archived_load_failed": "보관된 알림을 불러오지 못했습니다",
-    "filters_load_failed": "필터를 불러올 수 없습니다"
+    "filters_load_failed": "필터를 불러올 수 없습니다",
+    "access_request_not_pending": "이 요청은 이미 처리되었거나 만료되었습니다",
+    "access_request_failed": "요청을 처리하지 못했습니다",
+    "access_pass_expiry_invalid": "미래의 만료 시각을 선택하세요"
   }
 }

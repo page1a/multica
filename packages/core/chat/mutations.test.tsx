@@ -12,6 +12,7 @@ import {
   useConsumeChatDraftRestore,
   useSetChatSessionArchived,
   useSetChatSessionProjects,
+  useUpdateChatSession,
 } from "./mutations";
 import { chatKeys } from "./queries";
 import type { ChatSession } from "../types";
@@ -127,6 +128,48 @@ describe("useSetChatSessionArchived", () => {
     expect(row.status).toBe("active");
     expect(row.unread_count).toBe(2);
     expect(row.has_unread).toBe(true);
+  });
+});
+
+describe("useUpdateChatSession", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    setApiInstance({
+      updateChatSession: vi.fn().mockResolvedValue(
+        makeSession({ title: "Billing · retry invoices" }),
+      ),
+    } as unknown as ApiClient);
+  });
+
+  afterEach(() => {
+    qc.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("patches the cached list so the renamed row updates in place", async () => {
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [
+      makeSession({ id: "s1", title: "Chat s1" }),
+      makeSession({ id: "s2", title: "Chat s2" }),
+    ]);
+
+    const { result } = renderHook(() => useUpdateChatSession(), {
+      wrapper: createWrapper(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        sessionId: "s1",
+        title: "Billing · retry invoices",
+      });
+    });
+
+    const rows = qc.getQueryData<ChatSession[]>(chatKeys.sessions(WS_ID))!;
+    expect(rows.map((row) => row.title)).toEqual([
+      "Billing · retry invoices",
+      "Chat s2",
+    ]);
   });
 });
 

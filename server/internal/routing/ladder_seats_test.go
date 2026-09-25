@@ -30,6 +30,21 @@ func TestLiveSeatsSitOnTheirTaggedRungsWithAProvider(t *testing.T) {
 	}
 }
 
+func TestSameTierAlternatePrefersADifferentFamilyOnTheSameDirection(t *testing.T) {
+	l := DefaultLadder
+	holder := Seat{ID: "goku", Name: "孙悟空游戏", TierKey: "strong"}
+	roster := map[string]Agent{
+		"孙悟空游戏": {ID: "goku", Name: "孙悟空游戏"},
+		"特兰克斯":  {ID: "trunks", Name: "特兰克斯"},
+		"孙悟天游戏": {ID: "goten", Name: "孙悟天游戏"},
+		"布尔玛游戏": {ID: "bulma", Name: "布尔玛游戏"},
+	}
+	got, ok := l.SameTierAlternate(holder, "游戏", roster)
+	if !ok || got.Name != "孙悟天游戏" || got.TierKey != "strong" {
+		t.Fatalf("alternate = %+v ok=%v, want 孙悟天游戏 on strong", got, ok)
+	}
+}
+
 func TestEveryRoutableSeatHasAProviderFamily(t *testing.T) {
 	for _, tier := range DefaultLadder.Tiers {
 		if len(tier.Seats) == 0 {

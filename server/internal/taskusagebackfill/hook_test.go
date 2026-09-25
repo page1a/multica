@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/multica-ai/multica/server/internal/testutil"
+
 	"github.com/multica-ai/multica/server/internal/migrations"
 	"github.com/multica-ai/multica/server/internal/taskusagebackfill"
 )
@@ -37,15 +39,12 @@ import (
 // disturb the shared development DB. If the postgres server is not
 // reachable the test skips (mirrors the rest of the integration suite).
 func TestHook_DirectV034Upgrade(t *testing.T) {
-	adminURL := os.Getenv("DATABASE_URL")
-	if adminURL == "" {
-		adminURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
-
 	ctx := context.Background()
-	if !databaseReachable(ctx, adminURL) {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
+	// Open-and-drop: the pool only proves the server the run promised is
+	// reachable (or fails the run when it is not). The temp database below is
+	// created through adminURL on that same server.
+	testutil.OpenTestDatabase(ctx, t).Close()
+	adminURL := testutil.TestDatabaseURL()
 
 	tmpDB := fmt.Sprintf("multica_v034_upgrade_%d", time.Now().UnixNano())
 	if err := createDatabase(ctx, adminURL, tmpDB); err != nil {
@@ -157,14 +156,12 @@ func TestHook_DirectV034Upgrade(t *testing.T) {
 // 103, but task_usage is empty. The hook should stamp the watermark
 // (so the guard's "fresh DB" branch passes) and not touch any rows.
 func TestHook_FreshDatabaseStampsWatermarkOnly(t *testing.T) {
-	adminURL := os.Getenv("DATABASE_URL")
-	if adminURL == "" {
-		adminURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
 	ctx := context.Background()
-	if !databaseReachable(ctx, adminURL) {
-		t.Skip("integration test requires Postgres at DATABASE_URL")
-	}
+	// Open-and-drop: the pool only proves the server the run promised is
+	// reachable (or fails the run when it is not). The temp database below is
+	// created through adminURL on that same server.
+	testutil.OpenTestDatabase(ctx, t).Close()
+	adminURL := testutil.TestDatabaseURL()
 
 	tmpDB := fmt.Sprintf("multica_v034_fresh_%d", time.Now().UnixNano())
 	if err := createDatabase(ctx, adminURL, tmpDB); err != nil {
@@ -226,15 +223,6 @@ func resolveMigrationsDir() (string, error) {
 		return "", fmt.Errorf("migrations dir not at %s", dir)
 	}
 	return dir, nil
-}
-
-func databaseReachable(ctx context.Context, url string) bool {
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		return false
-	}
-	defer pool.Close()
-	return pool.Ping(ctx) == nil
 }
 
 func createDatabase(ctx context.Context, adminURL, name string) error {

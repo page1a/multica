@@ -49,6 +49,7 @@ import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
 import { runtimeRowLabel } from "./runtime-machines";
 import { useT, useTimeAgo } from "../../i18n";
+import { AgentCLIUpdateControls } from "./agent-cli-update";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
   if (
@@ -196,6 +197,12 @@ export function RuntimeDetail({
               cliVersion={cliVersion}
               daemonShort={daemonShort}
             />
+            {runtime.runtime_mode === "local" && !isCustomRuntime && (
+              <AgentCLIUpdateControls
+                runtime={runtime}
+                canManage={!!canEditRuntime}
+              />
+            )}
             <PlanLimitsCard runtime={runtime} now={now} />
             {canReadRuntime && <UsageSection runtime={runtime} />}
           </div>

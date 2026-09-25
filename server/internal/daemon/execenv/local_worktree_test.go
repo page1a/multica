@@ -908,6 +908,8 @@ const (
 	turnOneTask   = "11112222-3333-4444-5555-aaaaaaaaaaaa"
 	turnTwoTask   = "11112222-3333-4444-5555-bbbbbbbbbbbb"
 	turnThreeTask = "11112222-3333-4444-5555-cccccccccccc"
+	turnFourTask  = "11112222-3333-4444-5555-dddddddddddd"
+	turnFiveTask  = "11112222-3333-4444-5555-eeeeeeeeeeee"
 )
 
 // The bug this fixes: every comment on one issue produced a new branch forked
@@ -1036,6 +1038,129 @@ func TestPrepareLocalWorktreeReplaysOnlyTheUserEditsSinceTheLastTurn(t *testing.
 	}
 }
 
+// Committed advances of the user's own branch are not local edits. Between
+// turns the daemon fast-forwards a clean checkout, and the user commits on
+// that branch too. Replaying the whole snapshot-tree diff treats every one of
+// those commits as uncommitted work, cherry-picks them onto the conversation
+// branch, and conflicts on any file the agent also changed — then refuses to
+// record the snapshot, so the next turn replays the same commits again
+// (DENE-814). A clean checkout must replay nothing, including when the new
+// commits touch a file the agent edited.
+func TestContinuedReplayIgnoresCommittedAdvancesOnACleanCheckout(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+
+	first := prepareTurn(t, repo, "DENE-814", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "agent version\n")
+	finalizeOK(t, first)
+
+	const advances = 3
+	for i := 1; i <= advances; i++ {
+		writeFile(t, filepath.Join(repo, "tracked.txt"), fmt.Sprintf("committed on the user branch %d\n", i))
+		writeFile(t, filepath.Join(repo, "advance.txt"), fmt.Sprintf("advance %d\n", i))
+		gitRun(t, repo, "add", "-A")
+		gitRun(t, repo, "commit", "-m", fmt.Sprintf("user branch advance %d", i))
+	}
+	if status := gitRun(t, repo, "status", "--porcelain"); status != "" {
+		t.Fatalf("user checkout is not clean before the follow-up turn:\n%s", status)
+	}
+	userTracked := readFile(t, filepath.Join(repo, "tracked.txt"))
+
+	second := prepareTurn(t, repo, "DENE-814", turnTwoTask)
+	if len(second.ReplayConflicts) != 0 {
+		t.Fatalf("committed advances were replayed as local edits and conflicted: %v", second.ReplayConflicts)
+	}
+	if status := gitRun(t, second.Path, "status", "--porcelain"); status != "" {
+		t.Fatalf("follow-up worktree is dirty after a clean user checkout:\n%s", status)
+	}
+	if got := readFile(t, filepath.Join(second.WorkDir, "tracked.txt")); got != "agent version\n" {
+		t.Errorf("tracked.txt = %q, want the agent's version; the user's commits were replayed onto the branch", got)
+	}
+	if _, err := os.Stat(filepath.Join(second.WorkDir, "advance.txt")); !os.IsNotExist(err) {
+		t.Errorf("advance.txt from the user's commits is in the task worktree: %v", err)
+	}
+	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != userTracked {
+		t.Errorf("user checkout tracked.txt changed from %q to %q", userTracked, got)
+	}
+	finalizeOK(t, second)
+
+	// A real uncommitted edit after the branch moved still has to arrive, and
+	// it must not drag the committed advances in with it.
+	writeFile(t, filepath.Join(repo, "extra.txt"), "uncommitted after the branch moved\n")
+	third := prepareTurn(t, repo, "DENE-814", turnThreeTask)
+	if len(third.ReplayConflicts) != 0 {
+		t.Fatalf("uncommitted edit after a committed advance conflicted: %v", third.ReplayConflicts)
+	}
+	if got := readFile(t, filepath.Join(third.WorkDir, "extra.txt")); got != "uncommitted after the branch moved\n" {
+		t.Errorf("extra.txt = %q, want the user's uncommitted file", got)
+	}
+	if got := readFile(t, filepath.Join(third.WorkDir, "tracked.txt")); got != "agent version\n" {
+		t.Errorf("tracked.txt = %q after replaying a new uncommitted file, want the agent's version", got)
+	}
+	if _, err := os.Stat(filepath.Join(third.WorkDir, "advance.txt")); !os.IsNotExist(err) {
+		t.Errorf("committed advance.txt appeared while replaying an uncommitted file: %v", err)
+	}
+}
+
+// Records written before Multica-User-Head still name the user HEAD: it is the
+// parent of the snapshot commit the record points at. Stripping the trailer
+// must not bring back the committed-advance replay.
+func TestOldLocalStateRecordWithoutUserHeadStillSkipsCommittedAdvances(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+
+	first := prepareTurn(t, repo, "DENE-814", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "agent version\n")
+	finalizeOK(t, first)
+	stripUserHeadTrailer(t, repo, first.Branch)
+
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "committed on the user branch\n")
+	writeFile(t, filepath.Join(repo, "advance.txt"), "advance\n")
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-m", "user branch advance")
+	if status := gitRun(t, repo, "status", "--porcelain"); status != "" {
+		t.Fatalf("user checkout is not clean:\n%s", status)
+	}
+
+	second := prepareTurn(t, repo, "DENE-814", turnTwoTask)
+	if len(second.ReplayConflicts) != 0 {
+		t.Fatalf("an old record replayed committed advances: %v", second.ReplayConflicts)
+	}
+	if got := readFile(t, filepath.Join(second.WorkDir, "tracked.txt")); got != "agent version\n" {
+		t.Errorf("tracked.txt = %q, want the agent's version", got)
+	}
+	if _, err := os.Stat(filepath.Join(second.WorkDir, "advance.txt")); !os.IsNotExist(err) {
+		t.Errorf("advance.txt from the user's commit is in the task worktree: %v", err)
+	}
+}
+
+func stripUserHeadTrailer(t *testing.T, repo, branch string) {
+	t.Helper()
+	ref := userStateRef(branch)
+	record := gitRun(t, repo, "rev-parse", ref)
+	body := gitRun(t, repo, "log", "-1", "--format=%B", record)
+	if !strings.Contains(body, userHeadTrailer+":") {
+		t.Fatalf("record has no %s trailer to strip:\n%s", userHeadTrailer, body)
+	}
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), userHeadTrailer+":") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	tree := gitRun(t, repo, "rev-parse", record+"^{tree}")
+	parent1 := gitRun(t, repo, "rev-parse", record+"^1")
+	parent2 := gitRun(t, repo, "rev-parse", record+"^2")
+	rewritten := gitRun(t, repo, "commit-tree", tree, "-p", parent1, "-p", parent2, "-m", strings.Join(kept, "\n"))
+	gitRun(t, repo, "update-ref", ref, rewritten)
+	recovered := recoverCarriedUserHead(repo, rewritten)
+	parentOfSnapshot := gitRun(t, repo, "rev-parse", parent1+"^")
+	if recovered != parentOfSnapshot {
+		t.Fatalf("recoverCarriedUserHead = %s, want snapshot parent %s", recovered, parentOfSnapshot)
+	}
+}
+
 // A real conflict — the user rewrites lines the agent also rewrote — belongs to
 // the agent, not to the daemon. The turn starts on the conflicted tree with
 // both versions in it, because the only alternative that does not lose the
@@ -1043,8 +1168,10 @@ func TestPrepareLocalWorktreeReplaysOnlyTheUserEditsSinceTheLastTurn(t *testing.
 //
 // That turn cannot be delivered while the merge is open: committing would turn
 // conflict markers into the branch's content, and recording the snapshot would
-// tell every later turn the user's edit had landed. So a conflict the agent
-// never resolves stays pending, and the next turn offers it again.
+// tell every later turn the user's edit had landed. The conflict is offered
+// once more. The same replay a second time is skipped, so an unresolved
+// conflict cannot block every later run, and the refusal names the snapshot
+// rather than calling a clean checkout dirty.
 func TestPrepareLocalWorktreeHandsConflictingUserEditsToTheAgent(t *testing.T) {
 	t.Parallel()
 	repo := newTestRepo(t)
@@ -1085,6 +1212,9 @@ func TestPrepareLocalWorktreeHandsConflictingUserEditsToTheAgent(t *testing.T) {
 	if !strings.Contains(err.Error(), "tracked.txt") {
 		t.Errorf("error does not name the unresolved file: %v", err)
 	}
+	if !strings.Contains(err.Error(), "snapshot") {
+		t.Errorf("error does not say the conflict is a snapshot replay: %v", err)
+	}
 	if outcome.Branch != "" {
 		t.Errorf("outcome named branch %q for a turn that committed nothing", outcome.Branch)
 	}
@@ -1103,12 +1233,104 @@ func TestPrepareLocalWorktreeHandsConflictingUserEditsToTheAgent(t *testing.T) {
 	_ = removeLocalWorktreeDir(repo, second.Path, worktreeTestLogger())
 
 	third := prepareTurn(t, repo, "MUL-6881", turnThreeTask)
-	if len(third.ReplayConflicts) == 0 {
-		t.Fatal("the user's edit was forgotten after one unresolved turn")
+	if len(third.ReplayConflicts) != 0 {
+		t.Fatalf("the same conflict was replayed again: %v", third.ReplayConflicts)
 	}
-	if got := readFile(t, filepath.Join(third.WorkDir, "tracked.txt")); !strings.Contains(got, "rewritten by the user instead") {
-		t.Errorf("turn three tracked.txt = %q, want the user's edit still on offer", got)
+	if third.ReplaySkippedNotice == "" || !strings.Contains(third.ReplaySkippedNotice, "tracked.txt") {
+		t.Fatalf("skip notice = %q, want the file and the reason", third.ReplaySkippedNotice)
 	}
+	if got := readFile(t, filepath.Join(third.WorkDir, "tracked.txt")); got != "rewritten by the agent\n" {
+		t.Errorf("turn three tracked.txt = %q, want the branch's version with the replay left out", got)
+	}
+	if outcome := finalizeOK(t, third); outcome.Branch != "agent/j/mul-6881" {
+		t.Errorf("skipping the replay delivered %q", outcome.Branch)
+	}
+	if got := gitRun(t, repo, "show", "agent/j/mul-6881:tracked.txt"); got != "rewritten by the agent" {
+		t.Errorf("branch content after the skipped replay = %q, want the agent's version", got)
+	}
+}
+
+// Skipping a replay must not record the user's still-uncommitted edit as
+// something the branch already carries. Doing so makes the next turn's tree
+// diff empty, so the edit is never offered again — including after the branch
+// has moved to a tree that can take it (DENE-814 review).
+func TestSkippedReplayKeepsUncommittedEditsOutstanding(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "user work in progress\n")
+
+	first := prepareTurn(t, repo, "DENE-814", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "rewritten by the agent\n")
+	finalizeOK(t, first)
+	branch := "agent/j/dene-814"
+	carriedBeforeConflict := carriedFile(t, repo, branch, "tracked.txt")
+	if carriedBeforeConflict != "user work in progress" {
+		t.Fatalf("carried snapshot = %q, want the user's original uncommitted text", carriedBeforeConflict)
+	}
+
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "rewritten by the user instead\n")
+	second := prepareTurn(t, repo, "DENE-814", turnTwoTask)
+	if len(second.ReplayConflicts) == 0 {
+		t.Fatal("turn two saw no conflict")
+	}
+	if _, err := second.Finalize(worktreeTestLogger()); err == nil {
+		t.Fatal("Finalize delivered a branch while the merge was still open")
+	}
+	_ = removeLocalWorktreeDir(repo, second.Path, worktreeTestLogger())
+
+	third := prepareTurn(t, repo, "DENE-814", turnThreeTask)
+	if len(third.ReplayConflicts) != 0 {
+		t.Fatalf("the same conflict blocked delivery again: %v", third.ReplayConflicts)
+	}
+	if third.ReplaySkippedNotice == "" {
+		t.Fatal("turn three skipped nothing; the repeat conflict has no exit")
+	}
+	finalizeOK(t, third)
+	if got := carriedFile(t, repo, branch, "tracked.txt"); got != carriedBeforeConflict {
+		t.Fatalf("skipped replay recorded %q as carried, want the snapshot the branch actually has (%q)", got, carriedBeforeConflict)
+	}
+
+	// The user's edit is still uncommitted. The next turn must not treat the
+	// empty-looking diff of a wrongly advanced snapshot as "already delivered".
+	fourth := prepareTurn(t, repo, "DENE-814", turnFourTask)
+	if len(fourth.ReplayConflicts) != 0 {
+		t.Fatalf("follow-up after a skip blocked on the same conflict: %v", fourth.ReplayConflicts)
+	}
+	if fourth.ReplaySkippedNotice == "" || !strings.Contains(fourth.ReplaySkippedNotice, "tracked.txt") {
+		t.Fatalf("follow-up forgot an outstanding conflicting edit: %q", fourth.ReplaySkippedNotice)
+	}
+	if got := readFile(t, filepath.Join(fourth.WorkDir, "tracked.txt")); got != "rewritten by the agent\n" {
+		t.Fatalf("follow-up worktree = %q, want the branch version while the edit is still outstanding", got)
+	}
+	if got := carriedFile(t, repo, branch, "tracked.txt"); got != carriedBeforeConflict {
+		t.Fatalf("follow-up recorded %q as carried while the edit is still only in the user's checkout", got)
+	}
+	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != "rewritten by the user instead\n" {
+		t.Fatalf("user checkout changed to %q", got)
+	}
+	// Move the branch back to the carried text so the outstanding edit can apply.
+	writeFile(t, filepath.Join(fourth.WorkDir, "tracked.txt"), "user work in progress\n")
+	finalizeOK(t, fourth)
+
+	fifth := prepareTurn(t, repo, "DENE-814", turnFiveTask)
+	if len(fifth.ReplayConflicts) != 0 {
+		t.Fatalf("outstanding edit conflicted after the branch could take it: %v", fifth.ReplayConflicts)
+	}
+	if fifth.ReplaySkippedNotice != "" {
+		t.Fatalf("outstanding edit was skipped again after the branch could take it: %s", fifth.ReplaySkippedNotice)
+	}
+	if got := readFile(t, filepath.Join(fifth.WorkDir, "tracked.txt")); got != "rewritten by the user instead\n" {
+		t.Fatalf("follow-up worktree = %q, want the user's still-uncommitted edit replayed", got)
+	}
+	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != "rewritten by the user instead\n" {
+		t.Fatalf("replaying onto the task branch wrote the user's checkout: %q", got)
+	}
+}
+
+func carriedFile(t *testing.T, repo, branch, name string) string {
+	t.Helper()
+	ref := gitRun(t, repo, "rev-parse", userStateRef(branch))
+	return gitRun(t, repo, "show", ref+":"+name)
 }
 
 // The A/B/C round trip: the user's conflicting edit survives until the agent
@@ -1433,7 +1655,7 @@ func TestBranchRecordRoundTrips(t *testing.T) {
 	}
 	gitRun(t, repo, "branch", "agent/j/mul-6881")
 
-	recorded, err := writeBranchRecord(repo, "agent/j/mul-6881", snapshot, head, testBranchOwner)
+	recorded, err := writeBranchRecord(repo, "agent/j/mul-6881", snapshot, head, testBranchOwner, head, "")
 	if err != nil {
 		t.Fatalf("writeBranchRecord: %v", err)
 	}
@@ -1446,6 +1668,9 @@ func TestBranchRecordRoundTrips(t *testing.T) {
 	}
 	if record.checkpoint != head {
 		t.Errorf("checkpoint = %s, want the branch tip %s", record.checkpoint, head)
+	}
+	if record.userHead != head {
+		t.Errorf("userHead = %s, want the user's HEAD %s", record.userHead, head)
 	}
 	// The tree is the user's directory, which is what the next turn replays from.
 	if got := gitRun(t, repo, "show", record.state+":tracked.txt"); got != "user work" {
@@ -1552,7 +1777,7 @@ func TestPrepareLocalWorktreeRefusesABranchForceMovedOffItsRecord(t *testing.T) 
 	// The deterministic form of the same race: a record written while the ref
 	// already points somewhere else must still pin what was delivered, not
 	// whatever the ref says at the moment of writing.
-	written, err := writeBranchRecord(repo, "agent/j/mul-6881", record.state, delivered, testBranchOwner)
+	written, err := writeBranchRecord(repo, "agent/j/mul-6881", record.state, delivered, testBranchOwner, record.userHead, "")
 	if err != nil {
 		t.Fatalf("writeBranchRecord: %v", err)
 	}

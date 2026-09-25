@@ -1,4 +1,8 @@
-export type PinnedItemType = "issue" | "project" | "view";
+/**
+ * `chat` pins are the person's own (DENE-866): pinning a shared chat never
+ * pins it for the other people who can see it.
+ */
+export type PinnedItemType = "issue" | "project" | "view" | "chat";
 
 /**
  * Pin metadata only. Title / status / identifier / icon are NOT here —

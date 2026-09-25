@@ -250,6 +250,9 @@ type terminalTaskReport struct {
 	// run on the issue or chat can select it again, however many clean rows
 	// still reference it.
 	retiredSessionID string
+	// sessionRestartReason explains a new CLI session opened because the
+	// prior one could not be resumed. Empty on the common path.
+	sessionRestartReason string
 }
 
 type terminalReportSendFunc func(context.Context, terminalTaskReport, []time.Duration) error
@@ -466,6 +469,24 @@ type Daemon struct {
 	// local state change that makes a provider registrable again.
 	agentDiscoveryKick chan struct{}
 
+	// agentCLIUpdateKick wakes agentCLIUpdateLoop for a manual update or for
+	// the moment the machine becomes idle. Buffered like agentDiscoveryKick.
+	agentCLIUpdateKick   chan struct{}
+	agentCLIMu           sync.Mutex
+	agentCLIFollow       map[string]bool // explicit per-provider choice; missing means follow (default on)
+	agentCLIFollowLoaded bool
+	agentCLIFollowFile   string // tests pin this; empty uses the profile dir
+	// agentCLIFollowSeen is the last follow click applied for each runtime.
+	// Heartbeats repeat a click until the server clears it; applying that
+	// same id again would flip the one switch shared by every workspace.
+	agentCLIFollowSeen map[string]string
+	agentCLIManual     agentCLIManual
+	// Test seams. Nil uses the real network, exec, and post-upgrade refresh.
+	agentCLIFetch        func(ctx context.Context, url string) ([]byte, error)
+	agentCLIRun          func(ctx context.Context, name string, args ...string) ([]byte, error)
+	agentCLILookPath     func(name string) (string, error)
+	agentCLIAfterUpgrade func(ctx context.Context, provider string)
+
 	versionsMu    sync.RWMutex      // guards agentVersions
 	agentVersions map[string]string // provider -> detected CLI version (set during registration)
 
@@ -585,6 +606,13 @@ type Daemon struct {
 	planQuotaClaudeURL string
 	planQuotaCodexURL  string
 	planQuotaProbeFn   func() agent.PlanQuotaProbe
+	// planAgentQuota tracks the per-seat account binding behind the runtime
+	// snapshot above: which account directory each agent's task environment
+	// binds, and the newest windows observed for it (DENE-715). Guarded by
+	// planAgentMu. See plan_limits_agent.go for why the runtime row is not
+	// enough on its own.
+	planAgentMu    sync.Mutex
+	planAgentQuota map[string]*agentPlanQuota
 
 	// reconcile fans out a "re-check server state now" signal to subscribers
 	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
@@ -780,6 +808,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		profileLaunchSpecs:        make(map[string]profileLaunchSpec),
 		runtimeSet:                newRuntimeSetWatcher(),
 		agentDiscoveryKick:        make(chan struct{}, 1),
+		agentCLIUpdateKick:        make(chan struct{}, 1),
 		agentVersions:             make(map[string]string),
 		skippedAgents:             make(map[string]string),
 		resolvedPaths:             make(map[string]healedAgent),
@@ -2226,6 +2255,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// workspace sync loop because that one runs on a thirty-minute consistency
 	// interval — far too slow for "install a CLI, see it under Runtimes".
 	go d.agentDiscoveryLoop(ctx)
+	go d.agentCLIUpdateLoop(ctx)
 
 	taskWakeups := make(chan taskWakeup, 256)
 	go d.taskWakeupLoop(ctx, taskWakeups)
@@ -4738,7 +4768,7 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) bool {
 	d.logger.Debug("heartbeat: HTTP tick", "runtime_id", rid)
 	d.maybeRefreshPlanQuota()
 	d.refreshJevStatus()
-	resp, err := d.client.SendHeartbeat(ctx, rid, d.planLimitsForRuntime(rid), d.jevStatusSnapshot())
+	resp, err := d.client.SendHeartbeat(ctx, rid, d.planLimitsForRuntime(rid), d.agentPlanLimitsForRuntime(rid), d.jevStatusSnapshot())
 	if err != nil {
 		if ctx.Err() == nil {
 			if isRuntimeNotFoundError(err) {
@@ -4786,9 +4816,15 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp.PendingUpdate != nil {
 		go d.handleUpdate(ctx, runtimeID, resp.PendingUpdate)
 	}
+	if resp.PendingAgentCLI != nil {
+		d.handleAgentCLICommand(runtimeID, resp.PendingAgentCLI)
+	}
 	if resp.PendingModelList != nil {
 		if rt := d.findRuntime(runtimeID); rt != nil {
-			go d.handleModelList(ctx, *rt, resp.PendingModelList.ID)
+			// The overlay is the agent's custom_env. Endpoint readers let it
+			// win over the machine config. It is not logged.
+			listCtx := agent.WithModelEnvOverlay(ctx, resp.PendingModelList.EnvOverlay)
+			go d.handleModelList(listCtx, *rt, resp.PendingModelList.ID)
 		}
 	}
 	if resp.PendingProviderConfig != nil {
@@ -4890,7 +4926,7 @@ func (d *Daemon) handlePendingWorkHint(runtimeID, kind string) {
 	}
 	hbCtx, cancel := context.WithTimeout(ctx, pendingWorkHeartbeatTimeout)
 	d.refreshJevStatus()
-	resp, err := d.client.SendHeartbeat(hbCtx, runtimeID, d.planLimitsForRuntime(runtimeID), d.jevStatusSnapshot())
+	resp, err := d.client.SendHeartbeat(hbCtx, runtimeID, d.planLimitsForRuntime(runtimeID), d.agentPlanLimitsForRuntime(runtimeID), d.jevStatusSnapshot())
 	cancel()
 	if err != nil {
 		if isRuntimeNotFoundError(err) {
@@ -5770,7 +5806,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			lease := newTaskSlotLease(sem, slot, func() { signalPollerWakeup(wakeup) })
 			go func(t Task, lease *taskSlotLease) {
 				defer taskWG.Done()
-				defer d.activeTasks.Add(-1)
+				defer d.finishActiveTask()
 				// Release local capacity before waking the poller (the lease does
 				// both). The task's terminal callback and local cleanup have both
 				// finished at this point, so a successor that was previously
@@ -6664,6 +6700,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			durableWorkDir:        result.DurableWorkDir,
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
+			sessionRestartReason:  result.SessionRestartReason,
 		})
 		if err == nil {
 			return
@@ -6677,10 +6714,12 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		failureReason := result.FailureReason
 		if failureReason == "" {
 			if result.Status == "cancelled" {
-				// "cancelled" is a deliberate non-failure terminal
-				// state masquerading as a failure_reason — preserved
-				// outside the canonical taxonomy so the UI can render
-				// it differently from a real failure.
+				// The run context died and the server had not already
+				// finalized this row (a person cancel is observed by the
+				// poller above and never reaches here). The server treats
+				// failure_reason "cancelled" as a recoverable platform
+				// interrupt: it retries within max_attempts and leaves a
+				// notice on the issue (DENE-813).
 				failureReason = "cancelled"
 			} else {
 				// MUL-2946: classify the agent's comment text so the
@@ -6708,6 +6747,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			failureReason:         failureReason,
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
+			sessionRestartReason:  result.SessionRestartReason,
 		}); err != nil {
 			taskLog.Error("report failed task failed", "error", err)
 		}
@@ -6807,9 +6847,9 @@ func (d *Daemon) sendTerminalTaskReport(ctx context.Context, report terminalTask
 	}
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, schedule)
+		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.sessionRestartReason, schedule)
 	case terminalTaskReportFail:
-		return d.client.failTaskWithRetrySchedule(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, schedule)
+		return d.client.failTaskWithRetrySchedule(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.sessionRestartReason, schedule)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}
@@ -6997,16 +7037,32 @@ func sharedModeBriefDelivery(provider string) sharedBriefDelivery {
 		return sharedBriefViaCursorAddDir
 	case "antigravity":
 		return sharedBriefViaAntigravityAddDir
-	case "openclaw", "kimi", "traecli", "qwenpaw",
+	case "openclaw", "kimi", "traecli", "qwenpaw", "qwen", "pi", "omp", "codearts",
 		"codebuddy", "dim", "devin", "grok", "dsh", "kiro", "qoder", "qoderclicn", "zeroclaw":
 		return sharedBriefInline
 	default:
-		// mcode is intentionally unsupported: it ignores ExecOptions.SystemPrompt
-		// and only reads cwd-scoped AGENTS.md (see mcode.go). Shared mode writes
-		// the brief under the sidecar root, so listing mcode here would start a
-		// task with no brief and no skills.
+		// Refused on purpose; sharedModeRefusedProviders records why.
 		return sharedBriefUnsupported
 	}
+}
+
+// sharedModeRefusedProviders is every supported runtime that shared mode
+// refuses, with the reason it has no brief route yet. The provider-table test
+// requires each agent.SupportedTypes entry to have a route or an entry here,
+// so a new backend cannot fall into shared mode's refusal unnoticed.
+var sharedModeRefusedProviders = map[string]string{
+	// Hermes ACP deliberately drops SystemPrompt: prepending the full brief
+	// to the user turn has tripped upstream safety filters (hermes.go).
+	"hermes": "inline brief trips upstream safety filters",
+	// mcode ignores ExecOptions.SystemPrompt and only reads cwd AGENTS.md
+	// (mcode.go, DENE-125).
+	"mcode": "reads the brief only from cwd AGENTS.md",
+	// reasonix sends the bare prompt over ACP and has no verified route.
+	"reasonix": "no verified brief route",
+	// copilot and deveco carry the prompt on argv; a brief of tens of KB
+	// there breaks the Windows command-line limit.
+	"copilot": "prompt travels on argv",
+	"deveco":  "prompt travels on argv",
 }
 
 // sharedModeBriefOverlay is the ExtraArgs / SystemPrompt pair a shared-mode
@@ -7501,6 +7557,9 @@ func gateCodexResumeToRolloutPresence(task *Task, taskCtx *execenv.TaskContextFo
 	}
 	taskLog.Warn("dropping prior codex session: rollout not present in task CODEX_HOME; starting a fresh thread",
 		"session_id", task.PriorSessionID, "codex_home", codexHome)
+	if task.ContinueInterruptedSession && task.SessionRestartReason == "" {
+		task.SessionRestartReason = "原来的 Codex 会话文件不在本机，这次重试续不上，所以新开了对话。"
+	}
 	task.PriorSessionID = ""
 	taskCtx.PriorSessionResumed = false
 	// The user expected this run to continue the prior conversation; surface the
@@ -8899,8 +8958,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				// that stripped it for a daemon lacking the capability, lands
 				// on the same default — which is what this daemon implements
 				// either way (DENE-617).
-				WorktreeRoot:  strings.TrimSpace(localAssignment.Ref.WorktreeRoot),
-				ResumeWorkDir: resumeWorkDir,
+				WorktreeRoot:    strings.TrimSpace(localAssignment.Ref.WorktreeRoot),
+				ResumeWorkDir:   resumeWorkDir,
+				CanonicalBranch: strings.TrimSpace(task.CanonicalBranch),
 			}
 			// Take the per-path mutex for the snapshot alone, then hand it
 			// straight back — long enough to read a consistent tree, short
@@ -9242,6 +9302,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.LocalWorktree != nil && env.LocalWorktree.StaleBaselineNotice != "" {
 		promptOptions = append(promptOptions, WithStaleLocalBaseline(env.LocalWorktree.StaleBaselineNotice))
 	}
+	if env.LocalWorktree != nil && env.LocalWorktree.ReplaySkippedNotice != "" {
+		promptOptions = append(promptOptions, WithReplaySkipped(env.LocalWorktree.ReplaySkippedNotice))
+	}
 	if command := dependencyInstallCommand(env.WorkDir); command != "" {
 		promptOptions = append(promptOptions, WithDependencyInstallCommand(command))
 	}
@@ -9367,6 +9430,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	// Remember which CLI account this agent's child will run as, read from the
+	// environment we just layered (DENE-715). The plan-quota probe is per
+	// runtime, and one runtime serves every seat on this machine, so without
+	// this the quota panel of an agent switched to a numbered account would
+	// keep naming the daemon's own account.
+	d.recordAgentAccountBinding(task.RuntimeID, task.AgentID, provider, agentCustomEnv, agentEnv)
 	// Shared-mode OpenCode: the sidecar is an additive config directory, not
 	// a replacement for the user's global config. Set this after custom_env
 	// so a user OPENCODE_CONFIG_DIR cannot point the child away from the
@@ -9664,6 +9733,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// through the chat_session pointer (GH #6066).
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
+	defer func() {
+		reason := result.SessionRestartReason
+		if reason == "" {
+			reason = task.SessionRestartReason
+		}
+		taskResult.SessionRestartReason = reason
+	}()
 
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
@@ -9907,11 +9983,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Usage:         usageEntries,
 		}, nil
 	case "cancelled":
-		// Server cancelled the task (e.g. issue reassignment, user cancel).
-		// handleTask's cancelledByPoll branch already discards this result,
-		// so this case is mainly defensive — and preserves the "cancelled"
-		// status string for the "agent finished" log line so operators can
-		// distinguish "task cancelled by server" from a real timeout.
+		// The run context was cancelled and no server-side terminal status
+		// had been observed yet (handleTask's cancelledByPoll branch
+		// discards that case before we get here). Reaching this report means
+		// the daemon itself is stopping the process — restart, self-reload,
+		// or shutdown — and the server will retry it (DENE-813). The comment
+		// string is the machine record; the issue notice is written server-side.
 		return TaskResult{
 			Status:    "cancelled",
 			Comment:   "task cancelled by server",

@@ -33,6 +33,7 @@ Use `Makefile`, workspace `package.json` files, and `pnpm-workspace.yaml` for cu
 - Use the checkout's managed environment: `make up`, `make status`, `make down`. `make down` preserves data; `make destroy` removes the environment and its data.
 - Worktrees share PostgreSQL but have isolated databases/ports. Use the environment scripts and `.env.worktree`; do not copy the main checkout's `.env` or manually create a database through an assumed PostgreSQL instance.
 - Regenerate sqlc with `make sqlc` after SQL changes.
+- Allocate a migration with `make migration-new NAME=...`: it takes the next number after the latest on `origin/kun` (never after your branch's local files) and creates the empty up/down pair; run `make migration-lint` before opening the PR. See `docs/kun/migration-numbering.md`.
 - Run the narrowest useful checks while iterating, then broaden when risk warrants it. Report what actually ran and any skipped checks.
 
 Run these from the repository root:
@@ -64,4 +65,6 @@ Root frontend commands and `make check` do not verify mobile. Docs-only changes 
 
 工作单住 Multica Issues，用 `multica` CLI。代码 PR 走 GitHub（`jeff-kunkun/multica`）：标题带 identifier，关单写 `Closes DENE-N`。不要再开 GitHub issue。
 
-`main` 只做官方镜像，`kun` 是魔改主线：功能分支从 `kun` 切出、PR 打回 `kun`。上游同步流程见 `KUN-FORK.md`。
+`main` 只做官方镜像，`kun` 是魔改主线兼**测试线**：功能分支从 `kun` 切出、PR 打回 `kun`。`release` 是**发布线**，只接受从 `kun` 快进合入，不直接开发。Desktop 双通道发版（`vX.Y.Z-test.N` 走测试通道、`vX.Y.Z` 走正式通道）与上游同步流程见 `KUN-FORK.md`。
+
+魔改功能只要需要 Agent 做超过一步，就收成一条由服务端校验的命令（例：收口 `multica issue close`、交棒 `multica issue handoff`，见 DENE-858）。简报只写动词和决策表，不让 Agent 背多步仪式。

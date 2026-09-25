@@ -4,6 +4,27 @@
     "select_prompt": "选择一个对话，或点 + 新建",
     "agent_link_no_access": "你没有权限与该智能体聊天。"
   },
+  "project_bar": {
+    "all": "全部",
+    "more": "⋯ 更多 ({{count}})",
+    "menu_title": "项目栏",
+    "done": "完成",
+    "search": "搜项目…",
+    "pinned": "置顶（拖动调整顺序）",
+    "pinned_empty": "还没有置顶",
+    "other": "其他项目（按最近聊天自动排）",
+    "none": "无项目",
+    "chat_count_other": "{{count}} 个聊天",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "drag": "拖动调整顺序",
+    "empty": "这个项目下还没有聊天",
+    "unread": "有未读"
+  },
+  "project_nudge": {
+    "bind": "绑定到项目",
+    "casual": "这是随手聊，不需要项目"
+  },
   "fab": {
     "running": "Multica 正在工作...",
     "unread_other": "{{count}} 条未读对话",
@@ -242,14 +263,23 @@
     "archive": "归档",
     "unarchive": "取消归档",
     "archived_title": "已归档",
-    "row_actions_aria": "聊天操作"
+    "row_actions_aria": "聊天操作",
+    "edit_access": "编辑权限",
+    "private_tag": "私密",
+    "extra_tag": "额外成员"
   },
   "header": {
     "view_profile": "查看智能体资料",
     "rename": "重命名会话",
     "delete": "删除会话",
     "archive": "归档会话",
-    "unarchive": "取消归档"
+    "unarchive": "取消归档",
+    "copy_link": "复制会话链接",
+    "link_copied": "已复制会话链接",
+    "copy_conversation": "复制整段对话为 Markdown",
+    "conversation_copied": "已复制整段对话",
+    "copy_role_user": "你",
+    "copy_role_assistant": "助手"
   },
   "provider_quota": {
     "label": "额度",
@@ -258,5 +288,34 @@
     "used": "{{percent}}%",
     "resets": "{{when}} 重置",
     "updated": "更新于 {{when}}"
+  },
+  "sharing": {
+    "title": "编辑权限",
+    "follow": "跟随项目",
+    "follow_hint_bound": "{{projects}} 的项目成员都能看，也能发言",
+    "follow_hint_unbound": "这个聊天没绑项目，先绑项目才能选",
+    "extra": "跟随项目 + 额外加人",
+    "extra_hint": "项目成员，再加上下面单独加的人",
+    "private": "私密",
+    "private_hint": "只有你能看到，其他人的列表里直接不显示",
+    "view": "只能看",
+    "speak": "可发言",
+    "add": "添加成员…",
+    "remove": "移除",
+    "save": "保存",
+    "cancel": "取消",
+    "note_bound": "改成私密后，其他人的聊天列表里立刻看不到它；随时可以改回来。",
+    "note_unbound": "没绑项目的聊天默认就是私密。",
+    "view_only": "你可以看这个聊天，但不能发言。",
+    "header_private": "仅自己可见",
+    "header_project": "项目成员可见，也能发言",
+    "header_extra": "项目成员可见，另有额外成员",
+    "search": "搜成员…"
+  },
+  "notice": {
+    "title": "有些聊天现在项目成员能看到",
+    "body": "你有 {{count}} 个聊天现在项目成员能看到。",
+    "make_private": "把勾选的设为私密",
+    "dismiss": "知道了"
   }
 }

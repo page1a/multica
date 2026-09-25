@@ -69,6 +69,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	b.WriteString(buildSharedLocalDirectoryBlock(opts.sharedLocalDirectory))
 	b.WriteString(buildSharedWorkspaceBlock(opts.sharedWorkspace))
 	b.WriteString(buildWorktreeReplayConflictBlock(opts.worktreeReplayConflicts))
+	b.WriteString(buildReplaySkippedBlock(opts.replaySkippedNotice))
 	b.WriteString(buildStaleLocalBaselineBlock(opts.staleLocalBaselineNotice))
 	b.WriteString(buildDependencyInstallBlock(opts.dependencyInstallCommand))
 	b.WriteString(buildSparseCheckoutBlock(task.CheckoutPaths))
@@ -87,6 +88,7 @@ type promptOpts struct {
 	sharedLocalDirectory     bool
 	sharedWorkspace          bool
 	worktreeReplayConflicts  []string
+	replaySkippedNotice      string
 	staleLocalBaselineNotice string
 	dependencyInstallCommand string
 }
@@ -121,6 +123,13 @@ func WithSharedWorkspace() PromptOption {
 // resolves it (MUL-6881).
 func WithWorktreeReplayConflicts(files []string) PromptOption {
 	return func(o *promptOpts) { o.worktreeReplayConflicts = files }
+}
+
+// WithReplaySkipped tells the turn that a local-directory replay was not
+// applied because the same conflict already happened once. The notice is the
+// text execenv built, including which snapshot and which files.
+func WithReplaySkipped(notice string) PromptOption {
+	return func(o *promptOpts) { o.replaySkippedNotice = strings.TrimSpace(notice) }
 }
 
 // WithStaleLocalBaseline explains that a local_directory worktree could not
@@ -163,6 +172,13 @@ func buildSharedWorkspaceBlock(shared bool) string {
 	b.WriteString("Your working directory is a shared workspace: the project owner set it to run tasks concurrently, so other tasks on this machine may be working in it right now and no task holds a lock on it. Multica keeps its own runtime files out of this directory; nothing here was written for you except by the workspace itself.\n\n")
 	b.WriteString("Follow the workspace's own conventions for isolation — typically a task-specific branch or worktree inside the sub-repository you are changing. Do not edit a shared checkout's mainline (main/dev) in place, do not run commands that rewrite files across the whole directory, and when you must change a file other tasks may also touch, say so in your reply.\n\n")
 	return b.String()
+}
+
+func buildReplaySkippedBlock(notice string) string {
+	if strings.TrimSpace(notice) == "" {
+		return ""
+	}
+	return "## Local edits were not replayed\n\n" + strings.TrimSpace(notice) + "\n\n"
 }
 
 func buildStaleLocalBaselineBlock(notice string) string {
@@ -239,6 +255,9 @@ func buildIssueContextBlock(task Task) string {
 	if task.IssueAssigneeType != "" || task.IssueAssigneeID != "" {
 		fmt.Fprintf(&b, "Assignee: %s %s\n", task.IssueAssigneeType, task.IssueAssigneeID)
 	}
+	// Ahead of the description: the snapshot is cut from the end, and a long
+	// plan must not be what pushes the division of labour out of it.
+	writeCoordinatorRole(&b, task.IssueSubIssues)
 	if task.IssueDescription != "" {
 		fmt.Fprintf(&b, "Description:\n%s\n", task.IssueDescription)
 	}
@@ -287,6 +306,37 @@ func buildIssueContextBlock(task Task) string {
 	return cut + marker
 }
 
+// writeCoordinatorRole states the division of labour when the task issue is a
+// parent (DENE-812): the work lives in the sub-issues, each held by its own
+// executor, and this run supervises. Without it a woken parent reads the whole
+// plan in its description and does every sub-issue's work itself, leaving the
+// sub-issues it was split into as empty bookkeeping.
+func writeCoordinatorRole(b *strings.Builder, subs []SubIssueRef) {
+	if len(subs) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "Coordinator role: this issue is the parent of %d sub-issue(s). The work lives in the sub-issues, each held by its own executor and moved forward there; this issue supervises. On this issue you: keep every open sub-issue held (an unassigned one gets an executor via `multica issue route <id>` or `multica issue assign`); when a stage closes, promote the next stage's sub-issues from backlog to todo; unblock or reassign a stuck sub-issue; and once the whole tree is terminal, check the pieces fit and move this issue to acceptance. Do not implement a sub-issue's deliverable here, and do not finish a sub-issue for its executor; new work that fits no sub-issue becomes a new sub-issue.\n", len(subs))
+	b.WriteString("Sub-issues:\n")
+	for _, s := range subs {
+		name := s.Identifier
+		if name == "" {
+			name = s.ID
+		}
+		holder := "UNASSIGNED"
+		if s.AssigneeType != "" {
+			holder = s.AssigneeType
+			if s.AssigneeName != "" {
+				holder += " " + s.AssigneeName
+			}
+		}
+		stage := ""
+		if s.Stage > 0 {
+			stage = fmt.Sprintf(", stage %d", s.Stage)
+		}
+		fmt.Fprintf(b, "- %s %q (%s%s, %s)\n", name, s.Title, s.Status, stage, holder)
+	}
+}
+
 // buildWorktreeReplayConflictBlock tells the turn that its own working tree
 // starts out mid-merge, and that finishing that merge comes before the task.
 //
@@ -326,7 +376,7 @@ func buildWorktreeReplayConflictBlock(files []string) string {
 		fmt.Fprintf(&b, "- …and %d more; `git status` in this worktree lists them all\n", len(files)-listed)
 	}
 	b.WriteString("\nResolve it before anything else, with ordinary git commands — `git status` lists the unmerged paths, `git diff` shows both sides, `git add <file>` marks each one done. The \"ours\" side is what you wrote last turn; \"theirs\" is the user's newer edit, and it is the side you have not seen before, so read it before choosing. Keep both intentions where they are compatible; where they are not, prefer the user's and say so in your reply.\n\n")
-	b.WriteString("This run cannot deliver its branch while any file is still unmerged — the task fails and the worktree is kept for a human instead. Do not commit conflict markers.\n\n")
+	b.WriteString("This run cannot deliver its branch while any file is still unmerged — the task fails and the worktree is kept for a human instead. Do not commit conflict markers. The same conflict is offered once; if this run leaves it unresolved, the next run skips the replay and continues the branch without those edits.\n\n")
 	return b.String()
 }
 
@@ -414,7 +464,11 @@ func buildPromptBody(task Task, provider string) string {
 // shouldContinueInterruptedSession requires a live PriorSessionID.
 func buildInterruptedRetryPrompt(task Task, provider string) string {
 	var b strings.Builder
-	b.WriteString("Your previous turn was interrupted by a transient error before it finished. Continue from where you left off in this same session. Do not restart the task, and do not re-read or re-send the original request unless you no longer have that context.\n\n")
+	if task.ContinueAfterTimeLimit {
+		b.WriteString("Your previous turn stopped because it reached the workspace task time limit. The work was not rejected. Continue in this same session and the same working directory. First close out the progress already on disk so it is not lost. Then split whatever is still unfinished into smaller pieces, and finish the next piece in this turn. Do not restart the task from scratch.\n\n")
+	} else {
+		b.WriteString("Your previous turn was interrupted by a transient error before it finished. Continue from where you left off in this same session. Do not restart the task, and do not re-read or re-send the original request unless you no longer have that context.\n\n")
+	}
 	if task.ChatSessionID != "" {
 		return b.String()
 	}
@@ -462,8 +516,21 @@ func buildQuickCreatePrompt(task Task) string {
 
 	b.WriteString("Field rules:\n\n")
 
-	// title
-	b.WriteString("- **title**: required. A concise but semantically rich summary. If the input references external resources (PRs, issues, URLs), use your judgment on whether fetching the resource would produce a meaningfully better title — e.g. \"review PR #123\" → \"Review PR #123: Refactor auth module to OAuth2\". Strip filler words but preserve key semantic information.\n\n")
+	// title — the shape lives once, in the brief's Title Style section.
+	// This line only names this run's project, so the two prompts cannot
+	// drift into different title styles.
+	b.WriteString("- **title**: required. Follow `## Title Style`. ")
+	switch {
+	case task.ProjectTitle != "":
+		fmt.Fprintf(&b, "This issue's project name is %q — copy it into the title exactly as that section describes.\n", task.ProjectTitle)
+	case task.ProjectExplicitNone:
+		b.WriteString("This issue has no project — omit the project segment of the title.\n")
+	case task.ProjectID != "":
+		b.WriteString("A project was picked, but its display name is not in this message — omit the project segment of the title rather than inventing a name. The `--project` flag below still places the issue.\n")
+	default:
+		b.WriteString("No project was picked — omit the project segment of the title unless the user named one.\n")
+	}
+	b.WriteString("  If the input references a PR or URL, you may fetch it so the work phrase names the real change. The shape does not change.\n\n")
 
 	// description — the core optimization
 	b.WriteString("- **description**: The description is the executing agent's primary context. Aim for high fidelity — they should grasp the user's intent as if they had read the raw input themselves. Use a two-section structure:\n\n")

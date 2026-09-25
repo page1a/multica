@@ -34,6 +34,10 @@ import type { useT } from "../i18n";
 // profile (DSH's `multica` profile, which supplies the protocol Multica
 // drives). "Reinstall the CLI" copy sends the user to re-run an install that
 // was never broken; the fix is installing the profile.
+// `access_requested` (DENE-808) is not a refusal at all: the doorbell took the
+// trigger and the agent's owner has a pending approval in their inbox. The
+// copy must say "waiting on the owner", never "no permission", or the user
+// re-mentions and rings the bell again.
 type IssuesT = ReturnType<typeof useT<"issues">>["t"];
 
 // Full sentence — for tooltips and other surfaces with room to explain.
@@ -53,6 +57,8 @@ export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
       return t(($) => $.comment.trigger_blocked_agent_runtime_required);
     case "runtime_access_denied":
       return t(($) => $.comment.trigger_blocked_runtime_access_denied);
+    case "access_requested":
+      return t(($) => $.comment.trigger_blocked_access_requested);
     default:
       return t(($) => $.comment.trigger_blocked_generic);
   }
@@ -76,6 +82,8 @@ export function blockedShortReasonLabel(reasonCode: string, t: IssuesT): string 
       return t(($) => $.comment.trigger_blocked_short_agent_runtime_required);
     case "runtime_access_denied":
       return t(($) => $.comment.trigger_blocked_short_runtime_access_denied);
+    case "access_requested":
+      return t(($) => $.comment.trigger_blocked_short_access_requested);
     default:
       return t(($) => $.comment.trigger_blocked_short_generic);
   }

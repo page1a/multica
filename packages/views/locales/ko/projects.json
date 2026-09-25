@@ -194,7 +194,8 @@
     "no_project": "프로젝트 없음",
     "empty": "아직 프로젝트가 없습니다",
     "search_placeholder": "프로젝트 검색...",
-    "clear_aria": "프로젝트 지우기"
+    "clear_aria": "프로젝트 지우기",
+    "create": "＋ 새 프로젝트 「{{name}}」"
   },
   "chip": {
     "fallback_label": "프로젝트"
@@ -213,5 +214,32 @@
     "direction_desc": "내림차순",
     "section_columns": "열",
     "view": "보기"
+  },
+  "new_project": {
+    "name": "이름",
+    "icon": "아이콘",
+    "icon_placeholder": "이모지 하나",
+    "positioning": "이 프로젝트가 하는 일",
+    "positioning_placeholder": "무엇을 위한 프로젝트인지",
+    "directory_enable": "이 컴퓨터에 폴더 만들기",
+    "directory_unavailable": "폴더를 만들려면 데스크톱 앱이 필요합니다.",
+    "directory_offline": "로컬 daemon이 실행 중이 아닙니다.",
+    "directory_root": "업무 프로젝트 루트",
+    "directory_container": "루트 자체를 사용 (여러 저장소를 둠)",
+    "directory_name": "폴더 이름",
+    "directory_git": "Git 저장소 초기화",
+    "directory_mode": "작업이 이 폴더를 어떻게 나눌지",
+    "directory_mode_auto": "폴더 기준으로 「{{mode}}」를 골랐습니다. 바꿀 수 있습니다.",
+    "directory_bad_name": "폴더 이름은 한 단계여야 합니다.",
+    "directory_exists": "그 폴더는 이미 있습니다. 다른 이름을 쓰세요.",
+    "directory_failed": "폴더를 만들지 못해 프로젝트도 만들지 않았습니다.",
+    "mode": {
+      "worktree": "작업마다 워크트리",
+      "shared": "공유 폴더",
+      "in_place": "한 번에 작업 하나"
+    },
+    "back": "뒤로",
+    "submit": "만들고 선택",
+    "failed": "프로젝트를 만들지 못했습니다."
   }
 }

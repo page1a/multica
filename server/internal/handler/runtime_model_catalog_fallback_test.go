@@ -59,7 +59,7 @@ func TestReportModelListResult_FallbackDoesNotPoisonCache(t *testing.T) {
 	cache := withModelListStores(t)
 
 	// 1. A real discovery lands and is cached.
-	real, err := testHandler.ModelListStore.Create(ctx, testRuntimeID)
+	real, err := testHandler.ModelListStore.Create(ctx, testRuntimeID, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestReportModelListResult_FallbackDoesNotPoisonCache(t *testing.T) {
 	}
 
 	// 2. Discovery fails; the daemon reports the static stand-in.
-	fallback, err := testHandler.ModelListStore.Create(ctx, testRuntimeID)
+	fallback, err := testHandler.ModelListStore.Create(ctx, testRuntimeID, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestReportModelListResult_OmittedFallbackKeepsOldDaemonBehaviour(t *testing
 	ctx := context.Background()
 	cache := withModelListStores(t)
 
-	req, err := testHandler.ModelListStore.Create(ctx, testRuntimeID)
+	req, err := testHandler.ModelListStore.Create(ctx, testRuntimeID, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestReportModelListResult_EmptyCatalogStillDropsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	cache := withModelListStores(t)
 
-	seeded, err := testHandler.ModelListStore.Create(ctx, testRuntimeID)
+	seeded, err := testHandler.ModelListStore.Create(ctx, testRuntimeID, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestReportModelListResult_EmptyCatalogStillDropsSnapshot(t *testing.T) {
 		t.Fatalf("seed: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	empty, err := testHandler.ModelListStore.Create(ctx, testRuntimeID)
+	empty, err := testHandler.ModelListStore.Create(ctx, testRuntimeID, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Archive, Pencil, Loader2, Square } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Archive, Pencil, Loader2, Square, LockKeyhole } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -54,6 +54,7 @@ import {
 } from "@multica/core/chat/queries";
 import {
   useCreateChatSession,
+  useDismissChatProjectNudge,
   useMarkChatSessionRead,
   useRegenerateChatQuickActions,
   useSetChatSessionArchived,
@@ -75,6 +76,9 @@ import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatInputFocus } from "./use-chat-input-focus";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
+import { ChatAccessDialog } from "./chat-access-dialog";
+import { ChatVisibilityNotice } from "./chat-visibility-notice";
+import { ChatProjectNudge } from "./chat-project-nudge";
 import { ChatInput } from "./chat-input";
 import { ProviderQuotaStrip } from "./provider-quota-strip";
 import { ChatQueue } from "./chat-queue";
@@ -119,6 +123,7 @@ export function ChatWindow() {
   // Toast when an accepted refresh later fails in the daemon (async half).
   useQuickActionsFailureToast(activeSessionId ?? null);
   const regenerateQuickActions = useRegenerateChatQuickActions();
+  const dismissProjectNudge = useDismissChatProjectNudge();
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectedProjectIds = useChatStore((s) => s.selectedProjectIds);
   const setOpen = useChatStore((s) => s.setOpen);
@@ -283,17 +288,24 @@ export function ChatWindow() {
   const sessionAgent = currentSession
     ? agents.find((a) => a.id === currentSession.agent_id) ?? null
     : null;
-  const isAgentArchived = !!sessionAgent?.archived_at;
+  const sharedSpeaker =
+    !!currentSession &&
+    currentSession.access === "speak" &&
+    currentSession.creator_id !== user?.id;
+  const isChatViewOnly = currentSession?.access === "view";
+  const isAgentArchived = sharedSpeaker
+    ? !!currentSession?.agent_archived
+    : !!sessionAgent?.archived_at;
 
-  // Resolve selected agent: open session's agent → stored preference → first
-  // available. New chats have no session, so they fall through to the picker.
-  const activeAgent =
-    sessionAgent ??
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
-  const activeAgentRuntimeBound =
-    !!activeAgent && isAgentRuntimeBound(activeAgent);
+  // An open session stays on its own agent. A new chat falls through to the picker.
+  const activeAgent = currentSession
+    ? sessionAgent
+    : (availableAgents.find((a) => a.id === selectedAgentId) ??
+      availableAgents[0] ??
+      null);
+  const activeAgentRuntimeBound = sharedSpeaker
+    ? currentSession?.agent_runtime_bound !== false
+    : !!activeAgent && isAgentRuntimeBound(activeAgent);
 
   // A session outlives the permission that created it: the agent can be flipped
   // to personal, change owner, or drop this member from its allow-list, and the
@@ -301,8 +313,12 @@ export function ChatWindow() {
   // serving the transcript (MUL-4525). Judge the SESSION's agent, not just the
   // picker list, so the composer goes read-only up front rather than after the
   // user types (MUL-6380). Mirrors use-chat-controller.ts.
+  // A shared speaker is exempt: the server authorizes the run as the creator.
   const isAgentAccessRevoked =
-    !!activeAgent && !canAssignAgent(activeAgent, user?.id, memberRole);
+    !sharedSpeaker &&
+    !isChatViewOnly &&
+    !!activeAgent &&
+    !canAssignAgent(activeAgent, user?.id, memberRole);
 
   // "Customize" under the starter buttons — the only place the empty state
   // admits that those buttons are configuration at all.
@@ -468,7 +484,8 @@ export function ChatWindow() {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
     ): Promise<boolean> => {
-      if (!activeAgent) {
+      if (isChatViewOnly) return false;
+      if (!activeAgent && !sharedSpeaker) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
         return false;
       }
@@ -478,7 +495,7 @@ export function ChatWindow() {
       if (isAgentArchived) {
         apiLogger.warn("sendChatMessage skipped: agent is archived", {
           sessionId: activeSessionId,
-          agentId: activeAgent.id,
+          agentId: activeAgent?.id,
         });
         return false;
       }
@@ -488,7 +505,7 @@ export function ChatWindow() {
       if (isAgentAccessRevoked) {
         apiLogger.warn("sendChatMessage skipped: invoke permission revoked", {
           sessionId: activeSessionId,
-          agentId: activeAgent.id,
+          agentId: activeAgent?.id,
         });
         return false;
       }
@@ -510,7 +527,7 @@ export function ChatWindow() {
       apiLogger.info("sendChatMessage.start", {
         sessionId: activeSessionId,
         isNewSession,
-        agentId: activeAgent.id,
+        agentId: activeAgent?.id ?? currentSession?.agent_id,
         contentLength: finalContent.length,
         attachmentCount: attachmentIds?.length ?? 0,
       });
@@ -645,6 +662,9 @@ export function ChatWindow() {
     [
       activeSessionId,
       activeAgent,
+      currentSession,
+      sharedSpeaker,
+      isChatViewOnly,
       activeAgentRuntimeBound,
       isAgentArchived,
       isAgentAccessRevoked,
@@ -959,6 +979,15 @@ export function ChatWindow() {
         </div>
       </div>
 
+      {currentSession && (
+        <ChatProjectNudge
+          session={currentSession}
+          onBind={handleProjectsChange}
+          onDismiss={() => dismissProjectNudge.mutate(currentSession.id)}
+          dismissing={dismissProjectNudge.isPending}
+        />
+      )}
+
       {/* Messages / skeleton / empty state */}
       {showSkeleton ? (
         <ChatMessageSkeleton />
@@ -990,6 +1019,7 @@ export function ChatWindow() {
               : undefined
           }
           quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
+          creatorId={currentSession?.creator_id}
         />
       ) : (
         <EmptyState
@@ -1011,6 +1041,10 @@ export function ChatWindow() {
        *  first agent-list response stays banner-free. */}
       {noAgent ? (
         <NoAgentBanner />
+      ) : isChatViewOnly ? (
+        <p className="px-3 py-2 text-caption text-muted-foreground">
+          {t(($) => $.sharing.view_only)}
+        </p>
       ) : isAgentAccessRevoked ? (
         <AgentAccessRevokedBanner agentName={activeAgent?.name} />
       ) : isAgentArchived ? (
@@ -1043,7 +1077,7 @@ export function ChatWindow() {
         conversationStarterRequest={conversationStarterRequest}
         onConversationStarterApplied={handleConversationStarterApplied}
         onRestoreDraftApplied={handleRestoreDraftApplied}
-        uploadEnabled={!!activeAgent && !isAgentAccessRevoked}
+        uploadEnabled={(!!activeAgent || sharedSpeaker) && !isAgentAccessRevoked && !isChatViewOnly}
         onStop={handleStop}
         isRunning={!!pendingTaskId}
         allowSubmitWhileRunning={pendingTask?.supports_queue === true}
@@ -1051,6 +1085,7 @@ export function ChatWindow() {
           isSessionArchived ||
           isAgentArchived ||
           isAgentAccessRevoked ||
+          isChatViewOnly ||
           !activeAgentRuntimeBound
         }
         noAgent={noAgent}
@@ -1078,6 +1113,7 @@ export function ChatWindow() {
         focusRequest={focusRequest}
       />
       <ProviderQuotaStrip />
+      <ChatVisibilityNotice />
     </motion.div>
   );
 }
@@ -1276,6 +1312,8 @@ function SessionDropdown({
   // session id (not the full session) so a stale closure can't overwrite a
   // newer rename pulled in via WS.
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [accessSession, setAccessSession] = useState<ChatSession | null>(null);
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const setArchived = useSetChatSessionArchived();
   const updateSession = useUpdateChatSession();
   const setActiveSession = useChatStore((s) => s.setActiveSession);
@@ -1446,33 +1484,45 @@ function SessionDropdown({
           ? t(($) => $.session_history.row_subtitle.new_reply)
           : formatTimeAgo(session.updated_at);
 
-    // One list drives both action surfaces — the compact menu without hover
-    // and the hover strip with it — so they cannot drift.
-    const rowActions: SessionRowAction[] = isRunning
-      ? [
-          {
-            key: "stop",
-            icon: <Square className="size-2.5 fill-current" />,
-            label: t(($) => $.session_history.row_stop_aria),
-            stripText: t(($) => $.session_history.stop_action),
-            danger: true,
-            onSelect: () => setConfirmingStopId(session.id),
-          },
-        ]
-      : [
-          {
-            key: "rename",
-            icon: <Pencil className="size-3.5" />,
-            label: t(($) => $.session_history.row_rename_aria),
-            onSelect: () => setRenamingId(session.id),
-          },
-          {
-            key: "archive",
-            icon: <Archive className="size-3.5" />,
-            label: t(($) => $.list.archive),
-            onSelect: () => handleArchive(session),
-          },
-        ];
+    // Rename, access, and archive write the session. Only the creator can.
+    // Stop stays available to anyone who can see a running reply.
+    const canManage = session.creator_id === currentUserId;
+    const rowActions: SessionRowAction[] = [
+      ...(isRunning
+        ? [
+            {
+              key: "stop",
+              icon: <Square className="size-2.5 fill-current" />,
+              label: t(($) => $.session_history.row_stop_aria),
+              stripText: t(($) => $.session_history.stop_action),
+              danger: true,
+              onSelect: () => setConfirmingStopId(session.id),
+            },
+          ]
+        : []),
+      ...(canManage && !isRunning
+        ? [
+            {
+              key: "rename",
+              icon: <Pencil className="size-3.5" />,
+              label: t(($) => $.session_history.row_rename_aria),
+              onSelect: () => setRenamingId(session.id),
+            },
+            {
+              key: "access",
+              icon: <LockKeyhole className="size-3.5" />,
+              label: t(($) => $.list.edit_access),
+              onSelect: () => setAccessSession(session),
+            },
+            {
+              key: "archive",
+              icon: <Archive className="size-3.5" />,
+              label: t(($) => $.list.archive),
+              onSelect: () => handleArchive(session),
+            },
+          ]
+        : []),
+    ];
 
     return (
       <div
@@ -1516,16 +1566,34 @@ function SessionDropdown({
             <div className="truncate text-body font-medium text-destructive">
               {t(($) => $.session_history.stop_dialog.title)}
             </div>
-          ) : (
-            <div
-              className={cn("truncate text-body", (showUnread || showCompleted) && !isRunning && "font-medium")}
+          ) : canManage ? (
+            <button
+              type="button"
+              title={t(($) => $.session_history.row_rename_aria)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setRenamingId(session.id);
+              }}
+              className={cn(
+                "block w-full truncate text-left text-body outline-none",
+                (showUnread || showCompleted) && !isRunning && "font-medium",
+              )}
               style={{
                 maskImage: "linear-gradient(to right, black calc(100% - 18px), transparent)",
                 WebkitMaskImage: "linear-gradient(to right, black calc(100% - 18px), transparent)",
               }}
             >
               {titleText}
-            </div>
+            </button>
+          ) : (
+            <span
+              className={cn(
+                "block w-full truncate text-left text-body",
+                (showUnread || showCompleted) && !isRunning && "font-medium",
+              )}
+            >
+              {titleText}
+            </span>
           )}
         </div>
         {!isRenaming && (
@@ -1582,10 +1650,13 @@ function SessionDropdown({
               </div>
               {/* Touch has no hover: without it the status above stays put and
                   these same actions move into the row's compact menu. */}
-              <RowActionsMenu
-                label={t(($) => $.session_history.row_actions_aria)}
-                groups={[rowActions]}
-              />
+              {rowActions.length > 0 && (
+                <RowActionsMenu
+                  label={t(($) => $.session_history.row_actions_aria)}
+                  groups={[rowActions]}
+                />
+              )}
+              {rowActions.length > 0 && (
               <div className="hidden h-7 items-center gap-0.5 [@media(hover:hover)]:group-hover/history-row:flex [@media(hover:hover)]:group-focus-within/history-row:flex">
                 {rowActions.map((action) => (
                   <button
@@ -1613,6 +1684,7 @@ function SessionDropdown({
                   </button>
                 ))}
               </div>
+              )}
             </div>
           )
         )}
@@ -1682,6 +1754,13 @@ function SessionDropdown({
           )}
         </PopoverContent>
       </Popover>
+      <ChatAccessDialog
+        session={accessSession}
+        open={accessSession != null}
+        onOpenChange={(next) => {
+          if (!next) setAccessSession(null);
+        }}
+      />
     </>
   );
 }

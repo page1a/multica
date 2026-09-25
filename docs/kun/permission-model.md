@@ -13,8 +13,8 @@ DENE-695 权限系统的判定规则。这篇是给人读的矩阵；可执行�
 - 档位永远不给视野：Member 再怎么是正式成员，没共享给他的东西他也看不到。
 - 唯一的例外方向是 Owner / Admin 的「管理兜底」，见下文——它来自 `listAccessibleProjectIDs` 的既有行为，不是新规则。
 
-**范围内的资源**：Issue（评论、附件跟随所属 issue）、项目、仓库。
-**不在范围内**：Agent 与 Squad（归 `agent.permission_mode` + `agent_invocation_target`，Parent B）；工作区设置 / 成员 / 计费（只看档位，不参与共享）。
+**范围内的资源**：Issue（评论、附件跟随所属 issue）、项目、仓库、聊天。聊天的三档在界面上叫「跟随项目 / 跟随项目 + 额外加人 / 私密」：`project` 让任一绑定项目的成员能看也能发言，`resource_share`（`resource_type = chat_session`，`access` 为 `view` 或 `speak`）是额外的人，`private` 只有创建人。已读游标在 `chat_session_read`，每人一条。只有创建人能改这个范围。
+**不在范围内**：Agent 与 Squad（归 `agent.permission_mode` + `agent_invocation_target`；门铃请求与限时通行证也只作用在这条调用门上，不进入本矩阵。Parent B）；工作区设置 / 成员 / 计费（只看档位，不参与共享）。
 
 ## 判定顺序
 

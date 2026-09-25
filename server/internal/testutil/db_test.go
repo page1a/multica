@@ -27,23 +27,23 @@ const (
 // promised one (scripts/test-db.sh sets MULTICA_REQUIRE_TEST_DB), a suite that
 // cannot reach it fails instead, so green here always means the fixtures ran.
 func TestMain(m *testing.M) {
-	ctx := context.Background()
-	dbURL := TestDatabaseURL()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		fmt.Printf("DB fixture tests unavailable: %v\n", err)
+	// The subprocess cases in database_require_test.go re-run this binary to
+	// watch one helper fail or skip on its own; they must not be answered by
+	// TestMain making the same decision first.
+	if os.Getenv(helperProcessEnv) == "1" {
 		os.Exit(m.Run())
 	}
-	if err := pool.Ping(ctx); err != nil {
-		fmt.Printf("DB fixture tests unavailable: %v\n", err)
-		pool.Close()
+
+	ctx := context.Background()
+	pool, err := ConnectTestDatabase(ctx)
+	if err != nil {
+		ExitIfDatabaseRequired(err)
 		os.Exit(m.Run())
 	}
 
 	if err := seedFixtureWorkspace(ctx, pool); err != nil {
-		fmt.Printf("DB fixture tests unavailable: %v\n", err)
 		pool.Close()
+		ExitIfDatabaseRequired(fmt.Errorf("seed fixture workspace: %w", err))
 		os.Exit(m.Run())
 	}
 	testPool = pool

@@ -2,14 +2,14 @@
 
 本页是 DENE-229 长程任务的 close protocol 契约。Stage 2（DENE-231）按本页落地，不再自行决定字段名、写入时机、收尾状态或唤醒动作。本页只定义机制与最小闭环，**不重写调度器**，不改角色权限、模型绑定、外部通知策略。
 
-核对基线：`origin/kun` @ `32fd66b6e`（2026-09-15）。行号指向该提交。本页描述的 Stage 4 补偿扫描（DENE-233）已在 DENE-520 摘除，恢复到官方 upstream 行为：没有补偿扫描，只有平台既有事件驱动唤醒（见 §7）。
+核对基线：`origin/kun` @ `32fd66b6e`（2026-09-15）。行号指向该提交。本页描述的 Stage 4 补偿扫描（DENE-233）已在 DENE-520 摘除，恢复到官方 upstream 行为。之后又补回两条窄兜底：run 收工但票还在 `in_progress` 时补排一次 run（DENE-382），以及阻塞 / 待验收的等待巡检（DENE-850），见 §7。
 
 ## 0. 一页结论
 
 - 平台今天**只会**在子票从非终态进入 `done` 或 `cancelled`、且该完成**关闭了 stage 屏障**时，才给父票写系统评论并唤醒父票 assignee。评论本身、`in_review`、`blocked`、跨票文字依赖，都不会唤醒父票。
 - Agent 运行时 brief 把「交付本票自己的 ask」写成 `in_review`。`in_review` **不是** stage 终态。按 brief 正确收尾的 staged 子票会把父票卡在 `in_progress`。这是 DENE-196 / DENE-209 / DENE-189 停滞的机制原因，也是本协议要解开的点。
 - 统一收尾五要素：`结论 + 状态 + 证据 + 下一责任人 + 唤醒动作`。缺任一要素视为未收口。
-- 唤醒失败没有补偿扫描（错误被 warn 后吞掉），这是官方行为，DENE-520 已确认保持。停滞只能靠平台既有事件被人发现：屏障关闭的 child-done 唤醒、`close.waiting_on` 的即时唤醒、或人读评论/看板。
+- child-done 唤醒失败没有补偿扫描（错误被 warn 后吞掉），这是官方行为，DENE-520 已确认保持。兜底只有两条，都有频率上限：run 收工而票停在 `in_progress` 时补排一次同一执行人的 run；阻塞或待验收的票安静 30 分钟后由等待巡检叫醒一次（§7）。其余停滞仍靠 child-done、`close.waiting_on` 的即时唤醒或人读评论/看板发现。
 
 ## 1. 现状盘点（真实案例 × 代码）
 
@@ -177,10 +177,11 @@ multica issue metadata set <issue-id> --key close.at --value 2026-09-15T12:00:00
 - 证据：PR URL、验证命令、未测项。
 - 下一责任人：Reviewer agent UUID。
 - 唤醒：证据评论含 `mention://agent/<reviewer>`。**禁止**同时 `done`。
+- 通过之后不留在本场景。验收席发一条带单独 `verdict: pass` 行的评论（`multica issue comment add <id> --verdict pass`），平台合并关联 PR 并置 `done`；合不进去就改成结构化阻塞（DENE-850）。停在 `in_review` 只属于场景 D，而且必须写明人和决定。路由的「需要人拍板」不是场景 D。
 
 **`in_review`（场景 D，人工验收）**
 
-- 用：真机、余额、第三方账号、kk zi 本人感受。DENE-193 电话播报是原型。
+- 用：真机、余额、第三方账号、kk zi 本人感受。DENE-193 电话播报是原型。这不是默认。验收通过但没写明人和决定的，走放行，不走这里。
 - 状态：`in_review`。
 - 证据：已做项 +「待人工测试」清单，不得把未测写成已过。
 - 下一责任人：人类 member。`wake_action=none`（member mention 不入队）。若需要 agent 盯着，另设 dispatcher 为 next_owner 并 `mention`。
@@ -277,7 +278,7 @@ Agent 评论必须让人类不看 metadata 也能读懂。固定小标题，顺�
 
 ## 4. 触发矩阵
 
-事件 → 唤醒谁 → 载体 → 失败表现。「失败时补偿」一列写的是官方行为下的实际兜底：**没有自动补偿扫描**（DENE-520 摘除 Stage 4 看门狗后），失败只留 warn 日志或 `trigger_outcomes` 记录，靠人读评论/看板发现。
+事件 → 唤醒谁 → 载体 → 失败表现。「失败时补偿」一列写的是实际兜底：Stage 4 看门狗已在 DENE-520 摘除，下表各行的入队失败只留 warn 日志或 `trigger_outcomes` 记录。§7 的两条窄兜底只看票的状态（收工仍 `in_progress`、安静的 `blocked` / `in_review`），不重放这里失败的某一次入队。
 
 | ID | 事件 | 唤醒谁 | 载体 | 失败表现 | 补偿 |
 | --- | --- | --- | --- | --- | --- |
@@ -302,7 +303,7 @@ Agent 评论必须让人类不看 metadata 也能读懂。固定小标题，顺�
 - `HasPendingTaskForIssueAndAgent` 按 `(issue, agent, reviewed head)` 去重（`issue_child_done.go:749-757`、`issue_trigger.go:203-218`）。
 - T15 跨票等待唤醒按 `HasActiveTaskForIssueAndAgent` 去重：同一 `(issue, agent)` 已有 queued / dispatched / running / waiting_local_directory ⇒ 仍写系统评论，跳过 enqueue（`issue_waiting_on.go` `dispatchWaitingOnAssigneeTrigger`）。
 - 同线程 pending 的 mention 结果是 `coalesced`，禁止重发。
-- 没有补偿扫描（DENE-520）。任何补发的 mention 都是人/Dispatcher 的手工动作，且必须先读 pending/active；已有则只写评论不 enqueue。
+- 没有针对单次入队失败的补偿扫描（DENE-520）。§7 的窄兜底之外，任何补发的 mention 都是人/Dispatcher 的手工动作，且必须先读 pending/active；已有则只写评论不 enqueue。
 
 ## 5. 不变约束
 
@@ -318,7 +319,7 @@ Stage 2–5 改代码时必须保持。违反任一条约等于重写调度器�
 8. **backlog 父票保持静默。** 避免 #4320 / MUL-3497 的自动激活（`:119-126`）。
 9. **Agent 不得对 daemon 任务分支 `reset --hard` / `rebase`。** 已有工作流约束，close protocol 不放开。
 10. **`mention://member` 与 `mention://issue` 永不入队。** 协议里的「唤醒」只允许 `mention://agent`、`mention://squad`、或 server stage 屏障。
-11. **不启用 Autopilot 扫票。** server 没有 issue 停滞扫描（DENE-520 摘除 Stage 4 看门狗后恢复官方行为），停滞由既有事件 + 人发现，不引入新 autopilot 规则（避免和权限/通知纠缠）。
+11. **不启用 Autopilot 扫票。** 停滞兜底只有 §7 的两条 server 内置路径，不引入新 autopilot 规则（避免和权限/通知纠缠）。
 12. **不把 `KindStageWakeup` 接到新代码路径。** 它未被任何 enqueue 使用；补偿扫描已摘除，也不再有归因写入。
 
 ## 6. Stage 2 接口（DENE-231 直接照做）
@@ -344,6 +345,8 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 
 阻塞扩展校验：`conclusion=blocked` 的新记录必须同时提供上述两个字段；旧记录缺少两字段时保持可读兼容。`block_kind=dependency` 必须有非空 `close.waiting_on`，且 `decision` / `permission` 必须指定具体的 `member`、`agent` 或 `squad` 责任人。非 blocked 收口的两个字段必须为空或不存在，避免解除阻塞后残留旧原因。人类审核逾期阈值按产品决策为 24 小时；`capacity` 阻塞不计入“需要你”摘要。
 
+切到 `blocked` 本身还要在 `multica issue status` 上带上挡路说明（DENE-850）：`--blocked-by`、`--wake-at`、`--wait-condition` 加 `--wait-timeout`、或 `--needs-human`，至少一种。Agent 不带这些字段会被拒绝；上次用过、已经到点或已经叫醒过的记录不算。票离开 `blocked` 时整套 `block.*` 等待会被清掉。`close.waiting_on` 仍然会在被等票进入终态时叫醒等待方；`block.blocked_by` 是同一条边上的多票写法。验收通过只认单独一行的 `verdict: pass`（或 `multica issue comment add --verdict pass`），由平台合并并关票，合不进去就写成结构化阻塞，不留在 `in_review`。句子里的「通过」只提示怎么写这一行，不会合并。同一段等待最多叫醒一次；验收人是人、或票在等 `needs_human` 时只留言，不排运行。巡检只看本功能开始盯上之后才进入阻塞或待验收的票。这层不替代取消重试（DENE-813）、额度换席（DENE-836）或停用席位叫醒（DENE-848）。跑满工作区时限（`task_time_limit`）按重试预算在原会话和工作目录里续跑，续跑先收口已有进度再把剩余工作拆小；预算用尽改为 `blocked` 并留言，不再停在 `todo`。执行席是 agent 的父票切到 `in_review` 时如果验收席为空，补一个异族验收席并开始验收，选不出来就不进 `in_review`。直接写成 `done` 时，关联 PR 还开着：能干净合并且检查是绿的就先合并再关，否则改成带等待条件和到点叫醒的结构化阻塞。
+
 校验（Stage 2 测试写死）：
 
 - `close.status` ∈ 七个 canonical key，且 `== issue.status`。
@@ -362,12 +365,22 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 | Builder（父票有 PR/需审） | `awaiting_review` | `in_review` | mention Reviewer。PR 标题带 identifier；**不要**在仍等 Reviewer 时 `done`。`Closes` 留给合并 |
 | Builder（子票交付） | `delivered` | `done` | `stage_done`；不设置或触发独立 Reviewer，由父票统一验收 |
 | Builder（无验收门） | `delivered` | `done` | `stage_done`，禁止再 mention 父 assignee |
-| Reviewer 通过且尚未合并 | 不改结论 | 保持 `in_review` | 不新开 run 给 Builder，除非 `needs-work` |
-| Reviewer 通过且 Builder 已合并 / Reviewer 自合并 | `delivered` | 若 webhook 未把票打成 `done`，CLI 补 `done` | `stage_done` |
+| Reviewer 通过，这次改动自己的检查是绿的，且没有显式人工保留 | `delivered` | 发 `--verdict pass` 评论，平台合并 PR 并置 `done`；合不进去平台改成 `blocked` 并叫醒执行人 | `stage_done` |
+| Reviewer 通过，但票上写明在等某个人做某个只有这个人能做的决定 | `awaiting_human` | `in_review` | `none`。评论写出那个人和要定的事。路由评论里的「需要人拍板」不是这一行 |
+| Reviewer 通过，但这次改动自己的检查是红的 | 不收口 | `in_progress`，mention Builder | `mention` |
+| Reviewer 通过且已经合并 | `delivered` | 若 webhook 未把票打成 `done`，CLI 补 `done` | `stage_done` |
 | Reviewer `needs-work` | 不收口 | `in_progress` 或保持，并 mention Builder | `mention` |
 | Operator 发布/运维票交付 | `delivered` | `done` | `stage_done` 或按 AC mention 下一席 |
 | Dispatcher 晋升下一 stage | 不写子票 `close.*` | 子票 `backlog → todo`（T9） | server 入队；Dispatcher 本票保持 `in_progress` 直到整条链完成 |
 | 任一角色人工验收未完成 | `awaiting_human` | `in_review` | 见 2.3 D |
+
+验收通过的默认是放行，不是停在 `in_review` 等人去点合并。DENE-792 停在这里：验收已经通过，这次改动自己的检查是绿的，主干上本来就红、且和基线一致的检查被写成了「暂不合并、暂不关票」。那不是停的理由。`kun` 没有分支保护，当时的 PR 是可以合并的。
+
+放行条件，同一轮做完：验收结论是通过；这次改动自己负责的检查是绿的（基线上同样失败的检查不算这次的失败）；票上没有写明还在等哪个人做哪个决定。然后合并 PR，再把票写成 `done`（合并 webhook 已经写成 `done` 就不要再写一遍）。
+
+仍然停在 `in_review` 的唯一通过路径是显式人工保留：`close.conclusion=awaiting_human`，评论里写出那个人和要定的事。路由评论里的「需要人拍板」不是这张保留——那句话的意思是席位照样检查、合并、关票，只有人能定的那一件再 @ 人。
+
+这次改动自己的检查是红的：不收口，退回 `in_progress` 并 mention Builder。GitHub 真的拒绝合并时，把拒绝原因写进评论，用 `blocked` + `block_kind=permission`，不要在 PR 仍可合并时假装要等人。
 
 Dispatcher **禁止**在 Stage N 子票仍是 `in_review`/`blocked`/`in_progress` 时把 Stage N+1 从 `backlog` 提到 `todo`。晋升条件写死：`issue children` 里该 stage 的 `done` 计数 = `total`（cancelled 计入 done 侧，与 `status_category` 终态一致）。
 
@@ -388,14 +401,19 @@ Dispatcher **禁止**在 Stage N 子票仍是 `in_review`/`blocked`/`in_progress
 - Autopilot 规则。
 - 新的 `KindStageWakeup` 入队路径。
 
-## 7. 没有补偿扫描（DENE-520 恢复官方行为）
+## 7. 补偿：看门狗已摘除，只留两条窄兜底
 
-官方 upstream 没有唤醒失败的补偿扫描，本 fork 也不再有：DENE-233 引入的 Stage 4 看门狗（四扫描 A–D、`stagnation_watchdog*.go`、5 分钟 sweeper 旁路）已在 DENE-520 按 kk zi 的判定整层摘除。
+官方 upstream 没有唤醒失败的补偿扫描，本 fork 也不再有针对单次唤醒失败的扫描：DENE-233 引入的 Stage 4 看门狗（四扫描 A–D、`stagnation_watchdog*.go`、5 分钟 sweeper 旁路）已在 DENE-520 按 kk zi 的判定整层摘除。
 
 - child-done 的五类失败（加载父票、列兄弟、写系统评论、enqueue agent、enqueue squad leader）只写 **best-effort warn 日志**，不重试、不落表、不补扫。状态已经提交，失败不回滚。
 - 评论 mention 的失败同样只体现在 `trigger_outcomes`（`blocked` / `coalesced` / `deferred`），没有后台补发。
 - 停滞因此只能由平台既有事件解开，或由人读评论/看板发现：§4 的 T1/T2（stage 屏障关闭）、T15（`close.waiting_on` 被等票进入终态）、T5/T9/T10（mention / 状态 / 指派入队）。
 - 保留 `stage_wakeup_failure` 表与迁移 480–482：自建实例已应用，删迁移会破坏迁移历史；表不再有新写入，也不再被读取。
+
+之后补回的两条兜底只看票的状态，不重放某一次失败的入队：
+
+- **收工仍在 `in_progress`（DENE-382）。** run 正常结束、票还在 `in_progress`、后面没有排队的 run，也没有未终态子票时，平台写一条带 `completion-stall:run-completed-without-terminal-status` 的系统评论，并给同一执行人补排一次 run，让它按收口协议收尾。同一张票 30 分钟内最多一次。不改状态。代码：`server/internal/service/task_completion_stall.go`。
+- **阻塞 / 待验收的等待巡检（DENE-850）。** 每分钟扫一次。`blocked` 或 `in_review` 的票安静满 30 分钟、没有 run 在跑时，按 `block.*` 等待记录叫醒执行人或验收席；同一段等待最多叫醒一次，等的是人时只留言不排 run。代码：`server/internal/blockwait/`、`server/internal/handler/issue_block_wait.go`。
 
 
 ## 8. 哪些结论会唤醒谁（给 Dispatcher 的速查）

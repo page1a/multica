@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +22,7 @@ import (
 func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 	store := &RedisModelListStore{}
 	now := time.Now().UTC().Truncate(time.Microsecond) // JSON loses sub-µs precision
+	const secret = "sk-envelope-do-not-leak"
 	req := &ModelListRequest{
 		ID:           "id-1",
 		RuntimeID:    "rt-1",
@@ -28,6 +31,7 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 		CreatedAt:    now.Add(-time.Second),
 		UpdatedAt:    now,
 		RunStartedAt: &now,
+		EnvOverlay:   map[string]string{"OPENAI_API_KEY": secret},
 	}
 	data, err := store.marshalRequest(req)
 	if err != nil {
@@ -49,6 +53,16 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 	if got.ID != "id-1" || got.RuntimeID != "rt-1" {
 		t.Errorf("identifiers lost: %+v", got)
 	}
+	if got.EnvOverlay["OPENAI_API_KEY"] != secret {
+		t.Fatalf("EnvOverlay lost on round trip: %#v", got.EnvOverlay)
+	}
+	public, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal public request: %v", err)
+	}
+	if strings.Contains(string(public), secret) {
+		t.Fatalf("HTTP body would leak the overlay: %s", public)
+	}
 }
 
 func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
@@ -56,7 +70,7 @@ func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-1")
+	req, err := store.Create(ctx, "runtime-1", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -103,7 +117,7 @@ func TestRedisModelListStore_CreateWithoutMultiPermission(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-no-multi")
+	req, err := store.Create(ctx, "runtime-no-multi", nil)
 	if err != nil {
 		t.Fatalf("create without MULTI permission: %v", err)
 	}
@@ -136,7 +150,7 @@ func TestRedisModelListStore_PopPendingAcrossInstances(t *testing.T) {
 	nodeA := NewRedisModelListStore(rdb)
 	nodeB := NewRedisModelListStore(rdb)
 
-	req, err := nodeA.Create(ctx, "runtime-cross")
+	req, err := nodeA.Create(ctx, "runtime-cross", nil)
 	if err != nil {
 		t.Fatalf("node A create: %v", err)
 	}
@@ -176,7 +190,7 @@ func TestRedisModelListStore_PopPendingConcurrent(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-race")
+	req, err := store.Create(ctx, "runtime-race", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -228,7 +242,7 @@ func TestRedisModelListStore_PendingTimeout(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-timeout")
+	req, err := store.Create(ctx, "runtime-timeout", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -267,7 +281,7 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-running-timeout")
+	req, err := store.Create(ctx, "runtime-running-timeout", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -306,7 +320,7 @@ func TestRedisModelListStore_HasPending(t *testing.T) {
 		t.Fatalf("empty store should not report pending: has=%v err=%v", has, err)
 	}
 
-	if _, err := store.Create(ctx, "rt-1"); err != nil {
+	if _, err := store.Create(ctx, "rt-1", nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if has, err := store.HasPending(ctx, "rt-1"); err != nil || !has {

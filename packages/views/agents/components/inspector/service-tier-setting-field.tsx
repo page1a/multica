@@ -23,6 +23,7 @@ export function ServiceTierSettingField({
   label,
   runtimeId,
   runtimeOnline,
+  agentId,
   provider,
   model,
   value,
@@ -32,6 +33,7 @@ export function ServiceTierSettingField({
   label: ReactNode;
   runtimeId: string | null;
   runtimeOnline: boolean;
+  agentId?: string | null;
   provider: string;
   model: string;
   value: string;
@@ -39,7 +41,7 @@ export function ServiceTierSettingField({
   onChange: (next: string) => Promise<void> | void;
 }) {
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline ? runtimeId : null, agentId),
   );
   const models = modelsQuery.data?.models ?? [];
   const entry = findModelCapabilityEntry(models, model, provider);

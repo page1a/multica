@@ -298,7 +298,7 @@ func TestSwitchIssueDraftPolicyRequiresOwnership(t *testing.T) {
 	testutil.Call(t, testHandler.SwitchIssueDraftPolicy, testutil.WithHeaders(
 		switchPolicyRequest(t, session.SessionID, issueDraftPolicyConversation),
 		"X-User-ID", otherUser,
-	)).Want(http.StatusForbidden)
+	)).Want(http.StatusNotFound)
 
 	questionPolicy, _ := issueDraftPolicyByKey(issueDraftPolicyQuestion)
 	if got := carrierInstructions(t, session.AgentID); got != defaultInstructions(t, questionPolicy) {
@@ -425,8 +425,8 @@ func TestIssueDraftContractAsksForTheFrontendSection(t *testing.T) {
 	if !ok {
 		t.Fatal("the conversation policy is not registered")
 	}
-	if plain.Version != "3" {
-		t.Fatalf("the conversation policy is at version %q, want 3", plain.Version)
+	if plain.Version != "4" {
+		t.Fatalf("the conversation policy is at version %q, want 4", plain.Version)
 	}
 }
 
@@ -441,8 +441,8 @@ func TestIssueDraftQuestionPolicyHandsScopeAndDirectionToTheUser(t *testing.T) {
 	if !ok || !guided.Guided {
 		t.Fatal("the guided question policy is not registered as guided")
 	}
-	if guided.Version != "4" {
-		t.Fatalf("the guided policy is at version %q, want 4", guided.Version)
+	if guided.Version != "5" {
+		t.Fatalf("the guided policy is at version %q, want 5", guided.Version)
 	}
 	for _, want := range []string{
 		// Scope: the priority call is the user's, and the carrier proposes.
@@ -488,8 +488,8 @@ func TestIssueDraftFrontendPolicyRunsTheLookRound(t *testing.T) {
 	if !frontend.Guided {
 		t.Fatal("the front-end policy reports itself unguided, so its one question at a time would never render answer chips")
 	}
-	if frontend.Version != "2" {
-		t.Fatalf("the front-end policy is at version %q, want 2", frontend.Version)
+	if frontend.Version != "3" {
+		t.Fatalf("the front-end policy is at version %q, want 3", frontend.Version)
 	}
 	for _, want := range []string{
 		// The user picked this style, so the round starts instead of being

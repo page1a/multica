@@ -4,27 +4,18 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
-	pool, err := pgxpool.New(context.Background(), dbURL)
-	if err != nil {
-		t.Skipf("connect to database: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		t.Skipf("database not reachable: %v", err)
-	}
+	ctx := context.Background()
+	pool := testutil.OpenTestDatabase(ctx, t)
 	return pool
 }
 

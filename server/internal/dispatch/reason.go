@@ -24,6 +24,11 @@ const (
 	// target under the invocation-permission model. Deliberately generic — it
 	// does not distinguish "target is private" from "target does not exist".
 	ReasonInvocationNotAllowed ReasonCode = "invocation_not_allowed"
+	// ReasonAccessRequested (DENE-808): the acting member may not trigger this
+	// agent, but the agent's doorbell is on, so an approval request was left
+	// for its owner instead of a plain refusal. No run exists yet; approval
+	// replays the trigger.
+	ReasonAccessRequested ReasonCode = "access_requested"
 	// ReasonTargetUnavailable: the target cannot run (archived agent, deleted /
 	// archived squad, unresolvable leader, or no assignee).
 	ReasonTargetUnavailable ReasonCode = "target_unavailable"

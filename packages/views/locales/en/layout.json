@@ -60,6 +60,8 @@
     "ai_team_group": "AI Team",
     "show_more_pins": "Show {{count}} more…",
     "show_fewer_pins": "Show fewer",
+    "pin_drop_hint": "Drop here to pin",
+    "chat_untitled": "New chat",
     "unread_overflow": "99+",
     "discord_card": {
       "title": "Join our Discord",

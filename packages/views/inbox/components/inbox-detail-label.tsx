@@ -37,6 +37,9 @@ export function useTypeLabels(): Record<InboxItemType, string> {
     quick_create_unconfirmed: t(($) => $.types.quick_create_unconfirmed),
     autopilot_paused: t(($) => $.types.autopilot_paused),
     autopilot_quota_exceeded: t(($) => $.types.autopilot_quota_exceeded),
+    agent_access_request: t(($) => $.types.agent_access_request),
+    agent_access_approved: t(($) => $.types.agent_access_approved),
+    agent_access_declined: t(($) => $.types.agent_access_declined),
   };
 }
 
@@ -136,6 +139,28 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
     }
     case "autopilot_quota_exceeded":
       return <span>{t(($) => $.labels.autopilot_quota_blocked)}</span>;
+    case "agent_access_request": {
+      const requester = details.requester_name;
+      const agent = details.agent_name;
+      if (requester && agent) {
+        return <span>{t(($) => $.labels.access_requested_by, { requester, agent })}</span>;
+      }
+      return <span>{typeLabels[item.type]}</span>;
+    }
+    case "agent_access_approved":
+    case "agent_access_declined": {
+      const agent = details.agent_name;
+      if (agent) {
+        return (
+          <span>
+            {item.type === "agent_access_approved"
+              ? t(($) => $.labels.access_approved_for, { agent })
+              : t(($) => $.labels.access_declined_for, { agent })}
+          </span>
+        );
+      }
+      return <span>{typeLabels[item.type]}</span>;
+    }
     default:
       return <span>{typeLabels[item.type] ?? item.type}</span>;
   }

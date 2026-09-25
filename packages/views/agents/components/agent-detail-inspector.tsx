@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import type {
   Agent,
   AgentRuntime,
-  AgentSwitchableModel,
   MemberWithUser,
 } from "@multica/core/types";
 import {
@@ -14,9 +13,6 @@ import {
   AGENT_MAX_CONCURRENT_TASKS_MIN,
   isAgentAutoRetryEnabled,
   isAgentWorkEnabled,
-  normaliseSwitchableModelsDraft,
-  selectAgentSwitchableModels,
-  switchableModelsEqual,
 } from "@multica/core/agents";
 import {
   isRuntimeUsableForUser,
@@ -45,7 +41,6 @@ import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
 import { RoutingTierSettingField } from "./inspector/routing-tier-setting-field";
-import { SwitchableModelsEditor } from "./switchable-models-editor";
 import {
   canEditRuntimeProfile,
   runtimeInheritanceState,
@@ -168,7 +163,10 @@ export function AgentDetailInspector({
   // costs no extra request. `null` = not authoritative (offline runtime, still
   // loading, or discovery failed) and must not trigger any clearing.
   const modelsQuery = useQuery(
-    runtimeModelsOptions(canDiscoverRuntimeModels ? agent.runtime_id : null),
+    runtimeModelsOptions(
+      canDiscoverRuntimeModels ? agent.runtime_id : null,
+      agent.id,
+    ),
   );
   const modelCatalog = useMemo<ModelCatalog>(
     () =>
@@ -191,71 +189,6 @@ export function AgentDetailInspector({
         }),
       ),
     [agent.service_tier, agent.thinking_level, modelCatalog, runtime?.provider, update],
-  );
-
-  // Display-only model lineup (DENE-200). Until DENE-610 it was writable only
-  // through `multica agent update --switchable-models`, so an agent that had
-  // picked one up could not be put back on a single model from the UI at all.
-  const savedSwitchableModels = useMemo(
-    () => selectAgentSwitchableModels(agent),
-    [agent],
-  );
-  const [switchableRows, setSwitchableRows] = useState<AgentSwitchableModel[]>(
-    savedSwitchableModels,
-  );
-  // The switch is local, not derived: a freshly added row has no model yet, so
-  // the saved lineup is still empty while the editor must stay open.
-  const [switchableOpen, setSwitchableOpen] = useState(
-    savedSwitchableModels.length > 0,
-  );
-
-  useEffect(() => {
-    const next = selectAgentSwitchableModels(agent);
-    setSwitchableRows(next);
-    setSwitchableOpen(next.length > 0);
-    // Reset only when moving to another agent, for the same reason the profile
-    // draft above does: an autosave in flight must not be clobbered by the
-    // cache update it caused.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.id]);
-
-  const switchableDraft = useMemo(
-    () => normaliseSwitchableModelsDraft(switchableRows),
-    [switchableRows],
-  );
-  const saveSwitchableModels = useCallback(
-    async (next: AgentSwitchableModel[]) => {
-      await update({ switchable_models: next });
-    },
-    [update],
-  );
-  const switchableAutoSave = useAutoSave({
-    value: switchableDraft,
-    savedValue: savedSwitchableModels,
-    onSave: saveSwitchableModels,
-    enabled: canEdit,
-    isEqual: switchableModelsEqual,
-  });
-  const { saveNow: saveSwitchableNow } = switchableAutoSave;
-  const toggleSwitchable = useCallback(
-    (enabled: boolean) => {
-      setSwitchableOpen(enabled);
-      if (enabled) {
-        // Seed the lineup with the model the agent actually runs, so the
-        // first row already says something true.
-        setSwitchableRows((rows) =>
-          rows.length > 0
-            ? rows
-            : [{ model: agent.model ?? "", role: "default", note: "" }],
-        );
-        return;
-      }
-      // Back to a single model. Written immediately rather than on the debounce
-      // so the header chip clears with the switch.
-      setSwitchableRows([]);
-      saveSwitchableNow([]);
-    },
-    [agent.model, saveSwitchableNow],
   );
 
   return (
@@ -398,6 +331,7 @@ export function AgentDetailInspector({
               showLabel={false}
               runtimeId={agent.runtime_id}
               runtimeOnline={canDiscoverRuntimeModels}
+              agentId={agent.id}
               value={agent.model ?? ""}
               canEdit={canEditRuntime}
               onChange={handleModelChange}
@@ -407,6 +341,7 @@ export function AgentDetailInspector({
             label={t(($) => $.inspector.prop_thinking)}
             runtimeId={agent.runtime_id}
             runtimeOnline={canDiscoverRuntimeModels}
+            agentId={agent.id}
             provider={runtime?.provider ?? ""}
             model={agent.model ?? ""}
             value={agent.thinking_level ?? ""}
@@ -419,6 +354,7 @@ export function AgentDetailInspector({
             label={t(($) => $.inspector.prop_speed)}
             runtimeId={agent.runtime_id}
             runtimeOnline={canDiscoverRuntimeModels}
+            agentId={agent.id}
             provider={runtime?.provider ?? ""}
             model={agent.model ?? ""}
             value={agent.service_tier ?? ""}
@@ -433,38 +369,6 @@ export function AgentDetailInspector({
             onChange={(routingTier) => update({ routing_tier: routingTier })}
           />
           <SettingsRow
-            label={t(($) => $.inspector.prop_switchable_models)}
-            description={
-              switchableOpen
-                ? t(($) => $.inspector.prop_switchable_models_hint_on)
-                : t(($) => $.inspector.prop_switchable_models_hint_off)
-            }
-          >
-            <Switch
-              checked={switchableOpen}
-              disabled={!canEdit}
-              onCheckedChange={toggleSwitchable}
-              aria-label={t(($) => $.inspector.prop_switchable_models)}
-            />
-          </SettingsRow>
-          {switchableOpen ? (
-            <div className="px-4 py-3.5">
-              <SwitchableModelsEditor
-                value={switchableRows}
-                onChange={setSwitchableRows}
-                disabled={!canEdit}
-              />
-              <div className="mt-2 flex justify-end">
-                <SettingsSaveState
-                  status={switchableAutoSave.status}
-                  savingLabel={ts(($) => $.auto_save.saving)}
-                  savedLabel={ts(($) => $.auto_save.saved)}
-                  errorLabel={ts(($) => $.auto_save.failed)}
-                />
-              </div>
-            </div>
-          ) : null}
-          <SettingsRow
             label={t(($) => $.inspector.prop_concurrency)}
             size="select-wide"
           >
@@ -476,7 +380,13 @@ export function AgentDetailInspector({
           </SettingsRow>
           <SettingsRow
             label={t(($) => $.inspector.prop_work_enabled)}
-            description={t(($) => $.inspector.prop_work_enabled_hint)}
+            description={
+              isAgentWorkEnabled(agent) || !agent.work_pause
+                ? t(($) => $.inspector.prop_work_enabled_hint)
+                : agent.work_pause.reason === "balance_exhausted"
+                  ? t(($) => $.inspector.prop_work_pause_balance)
+                  : t(($) => $.inspector.prop_work_pause_quota)
+            }
           >
             <Switch
               checked={isAgentWorkEnabled(agent)}

@@ -10,7 +10,10 @@ invent field names, write order, statuses, or wake actions.
 
 Write order — stop on the first failure:
 
-1. `multica issue status <id> <status>`
+1. `multica issue status <id> <status>`. Moving to `blocked` must carry the
+   wait on this command: `--blocked-by`, `--wake-at`, `--wait-condition` with
+   `--wait-timeout`, or `--needs-human`. Writing `close.*` afterwards does
+   not replace that.
 2. Evidence comment (`--content-file`; keep `--parent` when this turn has a
    trigger). Capture the comment id. Headings, in this order:
    `## 结论` / `## 状态` / `## 证据` / `## 下一责任人` / `## 唤醒动作`
@@ -67,11 +70,25 @@ Role defaults:
 |---|---|---|---|
 | Builder (PR / needs review) | `awaiting_review` | `in_review` | mention Reviewer. Title carries the identifier. Do not `done` while waiting. Leave `Closes` for merge |
 | Builder (no acceptance gate) | `delivered` | `done` | `stage_done`; do not mention the parent assignee |
-| Reviewer pass, not yet merged | do not change conclusion | keep `in_review` | do not start a Builder run unless `needs-work` |
-| Reviewer pass and merged | `delivered` | `done` if the webhook did not | `stage_done` |
+| Reviewer pass, owned checks green, no explicit human hold | `delivered` | `multica issue comment add <id> --verdict pass`; the platform merges the open linked PR and sets `done` | `stage_done` |
+| Reviewer pass, but the ticket explicitly names a person and a decision only they can make | `awaiting_human` | `in_review` | `none`. The comment names that person and the decision. A routing note that says 需要人拍板 is not this row |
+| Reviewer pass, but a check this change owns is red | not a close | `in_progress`, mention Builder | `mention` |
+| Reviewer pass and already merged | `delivered` | `done` if the webhook did not | `stage_done` |
 | Reviewer `needs-work` | not a close | `in_progress` or keep, mention Builder | `mention` |
 | Operator ship/ops delivery | `delivered` | `done` | `stage_done`, or mention the next seat if AC says so |
 | Dispatcher promoting the next stage | do not write child `close.*` | child `backlog → todo` | server enqueues. Keep the parent `in_progress` until the chain is done |
+
+A pass does not stop at `in_review`, and it is a verdict line, not a sentence.
+Only a comment by the issue's 验收席 on an `in_review` issue that carries a
+standalone `verdict: pass` line (what `--verdict pass` writes) releases it:
+the platform merges the open linked PR and sets `done`, or sets `done` directly
+when there is no open PR. When the merge fails — no merge permission on this
+server, PR not mergeable, merge error — the platform moves the issue to
+`blocked` with a structured wait and, for missing permission, wakes the
+executor to merge. 通过 inside a sentence merges nothing. A check that is
+already red on the base branch belongs to the base branch, not to this change,
+and is not a reason to withhold the verdict. The only pass that stays in
+`in_review` is the explicit human row above.
 
 A Dispatcher advancement turn is only: `multica issue children`, read `close.*`
 on the parent and the current stage's children, then either promote the next
@@ -84,22 +101,26 @@ Dispatcher must not promote Stage N+1 while Stage N still has a child in
 `in_review` / `blocked` / `in_progress`. Promote only when that stage's `done`
 count equals `total` (cancelled counts as done).
 
-Stage 4 compensation scans (server, every 5 minutes) mention the parent
-assignee or `close.next_owner` when a barrier closed with nobody running, an
-`in_progress` issue has been idle 30 minutes with no active task, a child-done
-wake failed, or `close.waiting_on` / `close.wake_action=mention` stalled. They
-never write `done`, never promote `backlog` children, and never change models.
+There is no scan that retries a failed wake (the Stage 4 watchdog was removed
+in DENE-520). Two narrow backstops look at issue state instead:
 
-The completion path has its own compensation, fired by the run's `/complete`
-rather than by the clock: a run that ends cleanly while the issue is still
-`in_progress` with no active task behind it posts a
-`completion-stall:run-completed-without-terminal-status` system comment naming
-the assignee and the parent issue. Same discipline as the scans above — it moves
-no status and starts no run, and one issue is signalled at most once per 30
-minutes. A parent that still has a non-terminal child is excluded: dispatching
-sub-issues and staying `in_progress` is how "work continues below" is recorded,
-so the parent is only signalled once every child is `done` or `cancelled`. Treat it as the patrol record that a partial delivery exists; decide
-from the deliverable whether to continue the work or close the issue out.
+- **Block-wait patrol** (server, every minute). A `blocked` or `in_review`
+  issue that has been quiet for 30 minutes with no run working on it is woken
+  from its `block.*` wait: the executor, or the 验收席 for review. One wake per
+  wait segment; when the wait is a person, it only comments and starts no run.
+  It never promotes `backlog` children and never changes models.
+- **Completion path**, fired by the run's `/complete` rather than by the
+  clock: a run that ends cleanly while the issue is still `in_progress` with no
+  active task behind it posts a
+  `completion-stall:run-completed-without-terminal-status` system comment
+  naming the assignee and the parent issue, then queues **one recovery run for
+  the same assignee** that is told to finish through this protocol. It moves no
+  status, and one issue is signalled at most once per 30 minutes. A parent that
+  still has a non-terminal child is excluded: dispatching sub-issues and staying
+  `in_progress` is how "work continues below" is recorded, so the parent is
+  only signalled once every child is `done` or `cancelled`. Ending a turn in
+  `in_progress` after a partial delivery therefore costs another run; close
+  the issue yourself instead.
 
 Checks: `close.status` equals `issue.status` and is a built-in key;
 `wake_action=stage_done` implies status in {`done`,`cancelled`} and

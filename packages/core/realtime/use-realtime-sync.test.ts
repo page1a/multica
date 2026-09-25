@@ -340,6 +340,40 @@ describe("applyChatSessionUpdatedToCache", () => {
 
   // A plain rename carries neither status nor pinned; it must not touch unread
   // (a live active session keeps its real unread count) or re-sort.
+  it("records a project-nudge dismissal without touching unread or pin", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [
+      makeSession({ pinned: true }),
+    ]);
+
+    applyChatSessionUpdatedToCache(qc, WS_ID, {
+      chat_session_id: "s1",
+      title: "Session 1",
+      project_nudge_dismissed: true,
+    });
+
+    const row = qc.getQueryData<ChatSession[]>(chatKeys.sessions(WS_ID))![0]!;
+    expect(row.project_nudge_dismissed).toBe(true);
+    expect(row.pinned).toBe(true);
+    expect(row.unread_count).toBe(2);
+  });
+
+  it("leaves the nudge flag untouched when the event omits it", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [
+      makeSession({ project_nudge_dismissed: true }),
+    ]);
+
+    applyChatSessionUpdatedToCache(qc, WS_ID, {
+      chat_session_id: "s1",
+      title: "Renamed",
+    });
+
+    const row = qc.getQueryData<ChatSession[]>(chatKeys.sessions(WS_ID))![0]!;
+    expect(row.project_nudge_dismissed).toBe(true);
+    expect(row.title).toBe("Renamed");
+  });
+
   it("leaves unread untouched on a rename-only event", () => {
     const qc = createQueryClient();
     qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [makeSession()]);

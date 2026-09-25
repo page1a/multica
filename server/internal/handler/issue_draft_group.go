@@ -14,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/permission"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -643,6 +644,74 @@ func (h *Handler) createIssueGroupForDraft(w http.ResponseWriter, r *http.Reques
 	}
 	writeIssueDraftCreateError(w, r, err)
 	return nil, false, false
+}
+
+// issueGroupProjectFromRequest turns the confirm's new-project body into the
+// row CreateGroup inserts in the same transaction as the issues. A directory
+// ref is checked the same way a standalone project create checks one, including
+// the daemon's ability to run the chosen execution mode — a daemon that cannot
+// is a 422, and nothing is created.
+func (h *Handler) issueGroupProjectFromRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	session db.ChatSession,
+	userID string,
+	group service.IssueGroupParams,
+	req *FinalizeNewProjectRequest,
+) (*service.IssueGroupProject, bool) {
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		writeErrorCode(w, http.StatusBadRequest, "rolled_back", "new project title is required")
+		return nil, false
+	}
+	wsUUID := session.WorkspaceID
+	var resources []service.IssueGroupProjectResource
+	if len(bytesTrimSpace(req.Directory)) > 0 && string(bytesTrimSpace(req.Directory)) != "null" {
+		ref, err := validateAndNormalizeResourceRef("local_directory", req.Directory)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, "rolled_back", "new project directory: "+err.Error())
+			return nil, false
+		}
+		if !h.requireModeCapableDaemon(w, r, wsUUID, "local_directory", ref) {
+			return nil, false
+		}
+		creator, _ := h.parseUserUUIDOrZero(userID)
+		resources = append(resources, service.IssueGroupProjectResource{
+			ResourceType: "local_directory",
+			ResourceRef:  ref,
+			Position:     0,
+			CreatedBy:    creator,
+		})
+	}
+
+	params := db.CreateProjectParams{
+		WorkspaceID: wsUUID,
+		Title:       title,
+		Description: ptrToText(req.Description),
+		Icon:        ptrToText(req.Icon),
+		Status:      "planned",
+		Priority:    "none",
+		Visibility:  pgtype.Text{String: string(permission.DefaultVisibility), Valid: true},
+	}
+	if creator, err := parseUUIDSafe(userID); err == nil {
+		params.CreatedBy = creator
+	}
+	// The person who will do the work, when the draft already names them.
+	// Routing may still fill an empty seat after the confirm; a lead it has
+	// not chosen yet stays empty rather than guessing.
+	if len(group.Nodes) > 0 {
+		root := group.Nodes[0].Params
+		kind := root.AssigneeType.String
+		if root.AssigneeID.Valid && (kind == "member" || kind == "agent") {
+			params.LeadType = root.AssigneeType
+			params.LeadID = root.AssigneeID
+		}
+	}
+	return &service.IssueGroupProject{Create: params, Resources: resources}, true
+}
+
+func bytesTrimSpace(raw json.RawMessage) json.RawMessage {
+	return json.RawMessage(strings.TrimSpace(string(raw)))
 }
 
 // carryIssueDraftAttachments binds the files this alignment produced to the

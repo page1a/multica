@@ -75,6 +75,7 @@ import {
 } from "../../layout/collection-page";
 import { availabilityConfig } from "../presence";
 import { AgentRowActions } from "./agent-row-actions";
+import { providerSeatModelDisplay } from "./provider-seat-model";
 import {
   flattenSpecializationItems,
   SPECIALIZATION_DERIVE_ROW_HEIGHT,
@@ -1561,7 +1562,9 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       {isColVisible("model") ? (
                         <ListGridCell className="hidden @2xl:flex">
                           <span className="min-w-0 truncate text-caption text-muted-foreground">
-                            {row.agent.model || "—"}
+                            {row.agent.model
+                              ? providerSeatModelDisplay(row.agent.model)
+                              : "—"}
                           </span>
                         </ListGridCell>
                       ) : (

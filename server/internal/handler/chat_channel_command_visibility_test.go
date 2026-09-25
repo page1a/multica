@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -98,7 +100,8 @@ func TestChannelCommandVisibility_SessionProjectionUsesPublicMessages(t *testing
 
 	active, err := testHandler.Queries.ListChatSessionsByCreator(context.Background(), db.ListChatSessionsByCreatorParams{
 		WorkspaceID: parseUUID(testWorkspaceID),
-		CreatorID:   parseUUID(testUserID),
+		ViewerID:    parseUUID(testUserID),
+		ProjectIds:  []pgtype.UUID{},
 	})
 	if err != nil {
 		t.Fatalf("list active chat sessions: %v", err)
@@ -132,7 +135,8 @@ func TestChannelCommandVisibility_SessionProjectionUsesPublicMessages(t *testing
 	}
 	all, err := testHandler.Queries.ListAllChatSessionsByCreator(context.Background(), db.ListAllChatSessionsByCreatorParams{
 		WorkspaceID: parseUUID(testWorkspaceID),
-		CreatorID:   parseUUID(testUserID),
+		ViewerID:    parseUUID(testUserID),
+		ProjectIds:  []pgtype.UUID{},
 	})
 	if err != nil {
 		t.Fatalf("list all chat sessions: %v", err)

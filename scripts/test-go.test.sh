@@ -9,6 +9,7 @@ PSQL_CALLS_FILE="$TEST_DIR/psql-calls.log"
 COMMITS_FILE="$TEST_DIR/xact-commit"
 OUTPUT_FILE="$TEST_DIR/output.log"
 RUN_DB_FILE="$TEST_DIR/run-db.log"
+ENV_FILE_LOG="$TEST_DIR/go-env.log"
 
 cleanup() {
   rm -rf "$TEST_DIR"
@@ -16,14 +17,22 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$BIN_DIR"
+
+# The runner reads the checkout's env file when nothing is exported, and a
+# developer's .env names a per-worktree database. Pin the input so the run
+# database's name is predictable wherever this test runs.
+export DATABASE_URL='postgres://multica:multica@localhost:5432/multica?sslmode=disable'
+unset TEST_DATABASE_URL MULTICA_REQUIRE_TEST_DB MULTICA_TEST_DB_ACTIVE MULTICA_TEST_DB_EXPECT_USE
 export MULTICA_TEST_GO_CALLS="$CALLS_FILE"
 export MULTICA_TEST_PSQL_CALLS="$PSQL_CALLS_FILE"
 export MULTICA_TEST_PSQL_COMMITS="$COMMITS_FILE"
 export MULTICA_TEST_RUN_DB="$RUN_DB_FILE"
+export MULTICA_TEST_GO_ENV="$ENV_FILE_LOG"
 : >"$CALLS_FILE"
 : >"$PSQL_CALLS_FILE"
 printf '0' >"$COMMITS_FILE"
 : >"$RUN_DB_FILE"
+: >"$ENV_FILE_LOG"
 
 cat >"$BIN_DIR/go" <<'FAKE'
 #!/usr/bin/env bash
@@ -43,6 +52,10 @@ case "${1:-}" in
     ;;
   test)
     printf '%s\n' "$*" >>"$MULTICA_TEST_GO_CALLS"
+    # What the suite sees: the promise internal/testutil enforces, and the
+    # database it was pointed at.
+    printf 'MULTICA_REQUIRE_TEST_DB=%s DATABASE_URL=%s\n' \
+      "${MULTICA_REQUIRE_TEST_DB:-unset}" "${DATABASE_URL:-unset}" >>"$MULTICA_TEST_GO_ENV"
     ;;
   run)
     # `go run ./cmd/migrate up` against the run's private database.
@@ -67,7 +80,11 @@ printf '%s\n' "$*" >>"$MULTICA_TEST_PSQL_CALLS"
 case "$*" in
   *xact_commit*)
     commits=$(cat "$MULTICA_TEST_PSQL_COMMITS")
-    commits=$((commits + 1))
+    # MULTICA_TEST_PSQL_FROZEN models a suite that never connected: the
+    # counter reads the same before and after.
+    if [ "${MULTICA_TEST_PSQL_FROZEN:-0}" != "1" ]; then
+      commits=$((commits + 1))
+    fi
     printf '%s' "$commits" >"$MULTICA_TEST_PSQL_COMMITS"
     printf '%s\n' "$commits"
     ;;
@@ -112,6 +129,25 @@ expect_provisioned_database() {
   fi
   : >"$PSQL_CALLS_FILE"
   : >"$RUN_DB_FILE"
+}
+
+# Every `go test` that can open a database must run under the promise: with
+# MULTICA_REQUIRE_TEST_DB=1 a DB-backed test that cannot reach its database
+# fails instead of skipping (internal/testutil). $2 is the database the suite
+# must have been pointed at.
+expect_required_database() {
+  label=$1
+  if ! grep -q "^MULTICA_REQUIRE_TEST_DB=1 DATABASE_URL=$2\$" "$ENV_FILE_LOG"; then
+    echo "$label ran go test without promising the database:" >&2
+    cat "$ENV_FILE_LOG" >&2
+    exit 1
+  fi
+  if grep -q 'MULTICA_REQUIRE_TEST_DB=unset' "$ENV_FILE_LOG"; then
+    echo "$label ran a go test outside the promise:" >&2
+    cat "$ENV_FILE_LOG" >&2
+    exit 1
+  fi
+  : >"$ENV_FILE_LOG"
 }
 
 # pkg/agent opens no database, and the CI job that runs it has no Postgres
@@ -160,10 +196,14 @@ expect_usage_failure() {
   fi
 }
 
+# The run database is named after the base with a per-run suffix.
+run_db_pattern='postgres://multica:multica@localhost:5432/multica_t[0-9]*?sslmode=disable'
+
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --race
 expect_calls "--race" "$regular_call
 $agent_call"
 expect_provisioned_database "--race"
+expect_required_database "--race" "$run_db_pattern"
 
 # check.sh calls the wrapper with no arguments at all. It forwards its own
 # argument list across the re-exec, and on bash 3.2 (the system bash on macOS)
@@ -177,6 +217,59 @@ expect_provisioned_database "no arguments"
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --race --only regular
 expect_calls "--only regular" "$regular_call"
 expect_provisioned_database "--only regular"
+expect_required_database "--only regular" "$run_db_pattern"
+
+# A database someone else provisioned (CI's Postgres service, a remote server)
+# is used as-is — no create, migrate or drop — but it is the same promise: the
+# suite runs under MULTICA_REQUIRE_TEST_DB=1 and must be seen connecting.
+provisioned_url='postgres://ci:ci@db.example:5432/multica_ci?sslmode=disable'
+TEST_DATABASE_URL="$provisioned_url" PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --only regular
+expect_calls "TEST_DATABASE_URL" "${regular_call/ -race/}"
+expect_required_database "TEST_DATABASE_URL" "$provisioned_url"
+if grep -q 'CREATE DATABASE\|DROP DATABASE' "$PSQL_CALLS_FILE" || [ -s "$RUN_DB_FILE" ]; then
+  echo "TEST_DATABASE_URL provisioned a database it was told already exists:" >&2
+  cat "$PSQL_CALLS_FILE" "$RUN_DB_FILE" >&2
+  exit 1
+fi
+if [ "$(grep -c 'xact_commit' "$PSQL_CALLS_FILE")" -ne 2 ]; then
+  echo "TEST_DATABASE_URL did not check that the suite reached the database:" >&2
+  cat "$PSQL_CALLS_FILE" >&2
+  exit 1
+fi
+# Reading the counter through the run database moves it by itself (the
+# connection's own startup transaction), so the reads must go elsewhere.
+if grep 'xact_commit' "$PSQL_CALLS_FILE" | grep -q 'db.example:5432/multica_ci'; then
+  echo "TEST_DATABASE_URL read the commit counter through the run database itself:" >&2
+  cat "$PSQL_CALLS_FILE" >&2
+  exit 1
+fi
+: >"$PSQL_CALLS_FILE"
+
+# A run whose DB-backed tests never connected proved nothing and must fail,
+# on both paths, even though every `go test` exited 0.
+for frozen_case in provisioned as-is; do
+  set +e
+  if [ "$frozen_case" = as-is ]; then
+    TEST_DATABASE_URL="$provisioned_url" MULTICA_TEST_PSQL_FROZEN=1 PATH="$BIN_DIR:$PATH" \
+      bash "$SCRIPT_DIR/test-go.sh" --only regular >"$OUTPUT_FILE" 2>&1
+  else
+    MULTICA_TEST_PSQL_FROZEN=1 PATH="$BIN_DIR:$PATH" \
+      bash "$SCRIPT_DIR/test-go.sh" --only regular >"$OUTPUT_FILE" 2>&1
+  fi
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "$frozen_case: a run with no database use passed:" >&2
+    cat "$OUTPUT_FILE" >&2
+    exit 1
+  fi
+  if ! grep -q 'No test connected to' "$OUTPUT_FILE"; then
+    echo "$frozen_case: failure did not say the suite never connected:" >&2
+    cat "$OUTPUT_FILE" >&2
+    exit 1
+  fi
+  : >"$CALLS_FILE"; : >"$PSQL_CALLS_FILE"; : >"$RUN_DB_FILE"; : >"$ENV_FILE_LOG"
+done
 
 # Option order must not matter: CI spells it one way, humans another.
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT_DIR/test-go.sh" --only agent --race

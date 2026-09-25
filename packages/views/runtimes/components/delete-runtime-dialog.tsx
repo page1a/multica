@@ -28,6 +28,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
+import { providerSeatModelDisplay } from "../../agents/components/provider-seat-model";
 import { useT } from "../../i18n";
 import { isSelfHealingRuntime } from "../utils";
 
@@ -512,8 +513,9 @@ function AgentPlanTable({
               <PresenceCell presence={presence} />
               <VisibilityCell visibility={agent.visibility} />
               <span className="truncate text-muted-foreground">
-                {agent.model ||
-                  t(($) => $.detail.delete_dialog.cascade.table.model_unset)}
+                {agent.model
+                  ? providerSeatModelDisplay(agent.model)
+                  : t(($) => $.detail.delete_dialog.cascade.table.model_unset)}
               </span>
             </div>
           );

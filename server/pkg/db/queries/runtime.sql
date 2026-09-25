@@ -86,7 +86,12 @@ DO UPDATE SET
     runtime_mode = EXCLUDED.runtime_mode,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    -- Registration rebuilds metadata from the probe. cli_update is written by
+    -- the agent-CLI updater between registers; keep it or the page blanks
+    -- every time a version refresh upserts the row.
+    metadata = EXCLUDED.metadata || jsonb_strip_nulls(jsonb_build_object(
+        'cli_update', agent_runtime.metadata->'cli_update'
+    )),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
@@ -120,7 +125,9 @@ DO UPDATE SET
     provider = EXCLUDED.provider,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    metadata = EXCLUDED.metadata || jsonb_strip_nulls(jsonb_build_object(
+        'cli_update', agent_runtime.metadata->'cli_update'
+    )),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
@@ -191,6 +198,16 @@ WHERE workspace_id = @workspace_id
 UPDATE agent_runtime
 SET last_seen_at = now()
 WHERE id = $1 AND status = 'online';
+
+-- name: MergeAgentRuntimeCLIUpdate :execrows
+-- Stores the agent-CLI updater snapshot (current/latest/phase/error) under
+-- metadata.cli_update. IS DISTINCT FROM skips the write when nothing the
+-- page shows has changed, so a 10-minute check does not broadcast.
+UPDATE agent_runtime
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('cli_update', @cli_update::jsonb),
+    updated_at = now()
+WHERE id = @id
+  AND COALESCE(metadata->'cli_update', 'null'::jsonb) IS DISTINCT FROM @cli_update::jsonb;
 
 -- name: UpdateAgentRuntimePlanLimits :execrows
 -- Stores only the normalized, credential-free provider snapshot accepted by

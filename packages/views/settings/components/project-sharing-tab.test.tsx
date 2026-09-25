@@ -21,8 +21,8 @@ vi.mock("@multica/core/permissions", () => ({
   useCurrentMember: () => ({ ...memberState, member: null, isLoading: false }),
 }));
 vi.mock("../../common/share-scope-dialog", () => ({
-  ShareScopeDialog: ({ target }: { target: { resourceId: string; currentScope?: string } }) => (
-    <div role="dialog">share dialog {target.resourceId} {target.currentScope}</div>
+  ShareScopeDialog: ({ target, initialScope }: { target: { resourceId: string; currentScope?: string }; initialScope?: string }) => (
+    <div role="dialog">share dialog {target.resourceId} {target.currentScope} {initialScope ? `start:${initialScope}` : ""}</div>
   ),
 }));
 
@@ -95,6 +95,29 @@ describe("ProjectSharingTab", () => {
     expect(await screen.findByText(/No one picked yet/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Pick people" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("share dialog p1 project");
+  });
+
+  it("opens the people picker straight away when switching to specific people", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Change sharing for Roadmap" }), "project");
+    expect(screen.getByRole("dialog")).toHaveTextContent("share dialog p1 private start:project");
+    expect(screen.queryByText(/update 7 resources/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the people picker reachable once people are picked", async () => {
+    api.listProjects.mockResolvedValue({ projects: [{ ...project, visibility: "project" }], total: 1 });
+    renderTab();
+    expect(await screen.findByRole("button", { name: "Pick people" })).toBeInTheDocument();
+    expect(screen.queryByText(/No one picked yet/)).not.toBeInTheDocument();
+  });
+
+  it("does not claim a workspace-wide project is missing people", async () => {
+    api.listProjects.mockResolvedValue({ projects: [{ ...project, visibility: "workspace" }], total: 1 });
+    api.listProjectMembers.mockResolvedValue([]);
+    renderTab();
+    await screen.findByRole("combobox", { name: "Change sharing for Roadmap" });
+    expect(screen.queryByText(/No one picked yet/)).not.toBeInTheDocument();
   });
 
   it("does not claim a private project is missing people", async () => {

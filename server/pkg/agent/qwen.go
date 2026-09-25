@@ -149,9 +149,14 @@ func (b *qwenBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 	// drains it, and the child cannot drain while we are not yet reading its
 	// stdout. Closing stdin is what signals end-of-prompt — qwen reads to
 	// EOF — so we always close, on both the success and error paths.
+	// Qwen Code only reads its context files (QWEN.md) from the cwd, so a
+	// brief the daemon keeps out of the cwd (shared local_directory mode)
+	// arrives as SystemPrompt and rides the same stdin, prepended the way
+	// grok/kimi/dsh do.
+	userText := withSystemPrompt(opts.SystemPrompt, prompt)
 	writeErrCh := make(chan error, 1)
 	go func() {
-		_, err := io.WriteString(stdin, prompt)
+		_, err := io.WriteString(stdin, userText)
 		closeStdin()
 		writeErrCh <- err
 	}()

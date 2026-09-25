@@ -272,6 +272,21 @@
       "timeout": "超时"
     }
   },
+  "agent_cli": {
+    "versions": "{{current}} / {{latest}}",
+    "update_available": "可更新",
+    "up_to_date": "已是最新",
+    "follow": "自动跟随最新版",
+    "update_now": "立即更新",
+    "updating": "正在更新…",
+    "waiting": "等这台机器没有任务后再更新",
+    "unsupported": "这个 CLI 还不能自动更新",
+    "binary": "更新的是这一份：{{path}}",
+    "check_failed": "查不到最新版本",
+    "follow_failed": "没能保存自动跟随",
+    "update_request_failed": "没能开始更新",
+    "read_only": "只有运行时所有者或工作区管理员能更新这个 CLI"
+  },
   "charts": {
     "heatmap_less": "少",
     "heatmap_more": "多",

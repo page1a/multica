@@ -28,6 +28,19 @@ func completeTaskViaHandler(t *testing.T, taskID, output string) *httptest.Respo
 	return w
 }
 
+// keepParentOffCompletionStall inserts a non-terminal child so a reconcile
+// assertion is not also looking at the completion-stall closeout run. A run
+// that finishes on an in_progress issue with nothing queued behind it queues
+// that closeout on purpose; an open child is the documented "work continues
+// below" case, and the stall path stays quiet.
+func keepParentOffCompletionStall(t *testing.T, parentIssueID string) {
+	t.Helper()
+	dbfx.Issue(t, "open child keeps the parent off the stall path", testutil.Cols{
+		"status":          "in_progress",
+		"parent_issue_id": parentIssueID,
+	})
+}
+
 // pendingTaskCountForAgentIssue counts claimable (queued/dispatched) tasks for
 // an (issue, agent) pair.
 func pendingTaskCountForAgentIssue(t *testing.T, issueID, agentID string) int {
@@ -185,6 +198,7 @@ func TestCompleteTask_NoReconcileWhenNoNewMemberComment(t *testing.T) {
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
 	})
+	keepParentOffCompletionStall(t, issueID)
 
 	triggerCommentID := dbfx.Comment(t, issueID, "the only request", testutil.Cols{
 		"created_at": testutil.Raw("now() - interval '10 minutes'"),
@@ -236,6 +250,7 @@ func TestCompleteTask_DoesNotReTriggerOtherAgentMentionedDuringRun(t *testing.T)
 		"assignee_type": "agent",
 		"assignee_id":   agentA,
 	})
+	keepParentOffCompletionStall(t, issueID)
 
 	// A's trigger comment, created before the run starts.
 	triggerCommentID := dbfx.Comment(t, issueID, "initial request", testutil.Cols{
@@ -401,6 +416,7 @@ func TestCompleteTask_DoesNotReconcilePlainAgentReply(t *testing.T) {
 		"assignee_type": "agent",
 		"assignee_id":   agentB,
 	})
+	keepParentOffCompletionStall(t, issueID)
 
 	triggerCommentID := dbfx.Comment(t, issueID, "initial request", testutil.Cols{
 		"created_at": testutil.Raw("now() - interval '10 minutes'"),

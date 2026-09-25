@@ -158,5 +158,17 @@
   },
   "navigation": {
     "open_in_new_tab": "Open in new tab"
+  },
+  "work_thread": {
+    "thread": "Thread · {{state}}",
+    "queued_count": "{{count}} queued",
+    "continue": "Continue",
+    "continue_aria": "Continue work thread",
+    "interrupt": "Interrupt",
+    "interrupt_aria": "Interrupt work thread",
+    "queue": "Queue",
+    "queue_aria": "Queue work thread input",
+    "insert": "Insert",
+    "prioritize_aria": "Prioritize {{id}}"
   }
 }
