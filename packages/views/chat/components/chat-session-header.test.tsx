@@ -44,6 +44,7 @@ import { ChatSessionHeader } from "./chat-session-header";
 
 const TEST_RESOURCES = { en: { chat: enChat } };
 const RENAME_LABEL = enChat.header.rename;
+const MORE_LABEL = enChat.list.row_actions_aria;
 const OUTSIDE_LABEL = "Outside control";
 
 const session: ChatSession = {
@@ -70,7 +71,10 @@ function startRename(): HTMLInputElement {
       <button type="button">{OUTSIDE_LABEL}</button>
     </>,
   );
-  fireEvent.click(screen.getByTitle(RENAME_LABEL));
+  // The title is plain text; rename opens only from the ⋯ menu.
+  expect(screen.queryByTitle(RENAME_LABEL)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: MORE_LABEL }));
+  fireEvent.click(screen.getByRole("menuitem", { name: RENAME_LABEL }));
   return screen.getByRole("textbox", { name: RENAME_LABEL });
 }
 

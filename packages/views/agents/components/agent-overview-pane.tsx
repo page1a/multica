@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   Agent,
@@ -51,7 +51,11 @@ import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
-import type { InheritedPromptState } from "../specialization";
+import {
+  followsBaseRoleExecutionConfig,
+  runtimeInheritanceState,
+  type InheritedPromptState,
+} from "../specialization";
 
 type DetailSection = "overview" | "work" | "capabilities" | "settings";
 
@@ -194,6 +198,32 @@ export function AgentOverviewPane({
   const [activeDirty, setActiveDirty] = useState(false);
   const [pendingView, setPendingView] = useState<DetailTab | null>(null);
   const lastUrlViewRef = useRef(urlView);
+
+  // A specialisation that follows its base role holds a copy of the base
+  // role's runtime config and — with the same owner — its env, custom args and
+  // MCP config (DENE-505 / DENE-854). The server refuses edits to that copy, so
+  // those editors render read-only with a pointer to where the value lives.
+  const baseRole = agent.parent_agent_id
+    ? agents?.find((a) => a.id === agent.parent_agent_id)
+    : undefined;
+  const baseRoleName = baseRole?.name ?? agent.parent_agent_name ?? "";
+  const runtimeConfigLocked = runtimeInheritanceState(agent) === "inherited";
+  const executionConfigLocked = followsBaseRoleExecutionConfig(agent, baseRole);
+  const lockedByBaseRole = (locked: boolean, editor: ReactNode) =>
+    locked ? (
+      <div className="space-y-4">
+        <p className="rounded-md border bg-muted/40 px-3 py-2 text-caption text-muted-foreground">
+          {t(($) => $.inspector.inherited_config_notice, {
+            name: baseRoleName,
+          })}
+        </p>
+        <fieldset disabled className="min-w-0">
+          {editor}
+        </fieldset>
+      </div>
+    ) : (
+      editor
+    );
 
   const { data: larkListing } = useQuery({
     ...larkInstallationsOptions(wsId),
@@ -531,14 +561,17 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "mcp_config" && (
-                    <McpConfigTab
-                      agent={agent}
-                      runtime={runtime}
-                      currentUserId={currentUserId}
-                      canEdit={canEdit}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
-                      onDirtyChange={setActiveDirty}
-                    />
+                    lockedByBaseRole(
+                      executionConfigLocked,
+                      <McpConfigTab
+                        agent={agent}
+                        runtime={runtime}
+                        currentUserId={currentUserId}
+                        canEdit={canEdit && !executionConfigLocked}
+                        onSave={(updates) => onUpdate(agent.id, updates)}
+                        onDirtyChange={setActiveDirty}
+                      />,
+                    )
                   )}
                   {effectiveView === "composio_mcp" && (
                     <AgentMcpTab agent={agent} />
@@ -577,12 +610,15 @@ export function AgentOverviewPane({
                             ($) => $.inspector.section_accounts_hint,
                           )}
                         >
-                          <AgentAccountsTab
-                            agent={agent}
-                            runtimeDevice={runtime ?? undefined}
-                            onSave={(updates) => onUpdate(agent.id, updates)}
-                            onDirtyChange={setActiveDirty}
-                          />
+                          {lockedByBaseRole(
+                            executionConfigLocked,
+                            <AgentAccountsTab
+                              agent={agent}
+                              runtimeDevice={runtime ?? undefined}
+                              onSave={(updates) => onUpdate(agent.id, updates)}
+                              onDirtyChange={setActiveDirty}
+                            />,
+                          )}
                         </SettingsSection>
                       ) : null}
                     </div>
@@ -597,22 +633,31 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "env" && (
-                    <EnvTab agent={agent} onDirtyChange={setActiveDirty} />
+                    lockedByBaseRole(
+                      executionConfigLocked,
+                      <EnvTab agent={agent} onDirtyChange={setActiveDirty} />,
+                    )
                   )}
                   {effectiveView === "custom_args" && (
-                    <CustomArgsTab
-                      agent={agent}
-                      runtimeDevice={runtime ?? undefined}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
-                      onDirtyChange={setActiveDirty}
-                    />
+                    lockedByBaseRole(
+                      executionConfigLocked,
+                      <CustomArgsTab
+                        agent={agent}
+                        runtimeDevice={runtime ?? undefined}
+                        onSave={(updates) => onUpdate(agent.id, updates)}
+                        onDirtyChange={setActiveDirty}
+                      />,
+                    )
                   )}
                   {effectiveView === "runtime_config" && (
-                    <RuntimeConfigTab
-                      agent={agent}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
-                      onDirtyChange={setActiveDirty}
-                    />
+                    lockedByBaseRole(
+                      runtimeConfigLocked,
+                      <RuntimeConfigTab
+                        agent={agent}
+                        onSave={(updates) => onUpdate(agent.id, updates)}
+                        onDirtyChange={setActiveDirty}
+                      />,
+                    )
                   )}
                 </div>
               </div>

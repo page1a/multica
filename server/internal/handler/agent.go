@@ -530,6 +530,21 @@ func (h *Handler) syncInheritedAgentRuntimeProfiles(ctx context.Context, parentA
 	return children
 }
 
+// followsExecutionConfig reports whether a following specialisation also takes
+// its base role's execution config — custom_env, custom_args, mcp_config
+// (DENE-854). Only within one owner: env and MCP config carry the base role's
+// credentials, and a member who specialises someone else's public base role
+// must not receive them through their own env reveal. Mirrors the owner guard
+// in SyncInheritedAgentRuntimeProfiles; a NULL owner never matches.
+func followsExecutionConfig(childOwner, parentOwner pgtype.UUID) bool {
+	return childOwner.Valid && parentOwner.Valid && childOwner == parentOwner
+}
+
+// executionConfigFields are the UpdateAgent fields that belong to the
+// execution config a following specialisation takes from its base role.
+// custom_env is not listed: it has its own endpoint (UpdateAgentEnv).
+var executionConfigFields = []string{"custom_args", "mcp_config"}
+
 // publishAgentUpdate fans one agent row out to the workspace as an
 // agent:updated event. Used for the specialisations a base-role edit cascaded
 // into: their rows changed while the request's actor was editing the base role,
@@ -2186,6 +2201,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		createdModel = parentAgent.Model
 		createdThinkingLevel = parentAgent.ThinkingLevel
 		createdServiceTier = parentAgent.ServiceTier
+		if followsExecutionConfig(parseUUID(ownerID), parentAgent.OwnerID) {
+			ce = parentAgent.CustomEnv
+			ca = parentAgent.CustomArgs
+			mc = parentAgent.McpConfig
+		}
 	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -2681,6 +2701,28 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "this agent follows its base role's runtime; pass runtime_inherited=false to give it its own runtime configuration")
 		return
 	}
+	// The execution config follows too, within one owner (DENE-854). Refused
+	// the same way as a runtime field: the next base-role edit would overwrite
+	// it, so accepting the write would only lose it later.
+	executionConfigTouched := false
+	for _, field := range executionConfigFields {
+		if _, ok := rawFields[field]; ok {
+			executionConfigTouched = true
+			break
+		}
+	}
+	if executionConfigTouched && inheritRuntime && parentAfter.Valid {
+		parentRow, err := h.Queries.GetAgent(r.Context(), parentAfter)
+		if err != nil {
+			slog.Warn("update agent: load base role failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update agent")
+			return
+		}
+		if followsExecutionConfig(existing.OwnerID, parentRow.OwnerID) {
+			writeError(w, http.StatusBadRequest, "this agent follows its base role's custom_args and mcp_config; edit the base role, or pass runtime_inherited=false to give it its own configuration")
+			return
+		}
+	}
 	if !parentAfter.Valid && inheritRuntime {
 		// Detaching. SetAgentParentAgent clears the flag with the parent, and the
 		// materialised profile stays behind, so the agent keeps exactly what it
@@ -3165,9 +3207,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// exclusive by construction, because a row with a parent is not a base role.
 	//
 	// Run after the parent/flag writes so the copy is taken from the row this
-	// request just committed. Only a touched runtime field can have moved a base
-	// role's profile, so an unrelated edit (a rename, a prompt) does not walk
-	// the children.
+	// request just committed. Only a touched runtime or execution-config field can
+	// have moved a base role's profile, so an unrelated edit (a rename, a
+	// prompt) does not walk the children.
 	var syncedChildren []db.Agent
 	switch {
 	case updated.RuntimeInherited && updated.ParentAgentID.Valid:
@@ -3180,7 +3222,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 				updated = child
 			}
 		}
-	case !updated.ParentAgentID.Valid && runtimeFieldsTouched:
+	case !updated.ParentAgentID.Valid && (runtimeFieldsTouched || executionConfigTouched):
 		syncedChildren = h.syncInheritedAgentRuntimeProfiles(r.Context(), updated.ID, r)
 	}
 

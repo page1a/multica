@@ -1262,8 +1262,13 @@ export const useTabStore = create<TabStore>()(
         // Same page already open in another tab: go there. Don't turn this
         // tab into a second copy (the way chat-session opens used to, once
         // a chat tab already existed beside the one you were navigating).
+        // Only for a push: a replace is the page rewriting its own address
+        // (the chat ⊕ clearing /chat/<id> back to /chat, canonicalizing a
+        // link, stripping a one-shot param) and must stay in this tab — else
+        // "new chat" lands on another chat tab's old conversation.
         const key = resourceKeyForUrl(clean);
-        if (key !== current.resourceKey) {
+        const replace = opts?.replace === true;
+        if (!replace && key !== current.resourceKey) {
           const otherIndex = group.tabs.findIndex(
             (tab) => tab.id !== current.id && tab.resourceKey === key,
           );
@@ -1287,7 +1292,6 @@ export const useTabStore = create<TabStore>()(
           }
         }
 
-        const replace = opts?.replace === true;
         const stack = replace
           ? [
               ...current.history.stack.slice(0, current.history.index),

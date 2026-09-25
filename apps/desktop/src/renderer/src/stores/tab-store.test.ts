@@ -1699,6 +1699,28 @@ describe("chat session dedupe", () => {
     );
   });
 
+  it("keeps a new chat in its own tab instead of focusing another chat tab", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+    store.openTab("/acme/chat?session=old", "Chat", { activate: true });
+    const oldChatId = getActiveTab(useTabStore.getState())!.id;
+    store.addTab("/acme/chat/current", "Chat");
+    const currentId = useTabStore
+      .getState()
+      .byWorkspace.acme.tabs.find((tab) => tab.url === "/acme/chat/current")!.id;
+    store.setActiveTab(currentId);
+
+    // The chat ⊕ clears the open session: the page replaces /chat/<id> → /chat.
+    store.navigateActiveSession("/acme/chat", { replace: true });
+
+    const state = useTabStore.getState();
+    expect(getActiveTab(state)?.id).toBe(currentId);
+    expect(getActiveTab(state)?.url).toBe("/acme/chat");
+    expect(state.byWorkspace.acme.tabs.find((tab) => tab.id === oldChatId)?.url).toBe(
+      "/acme/chat?session=old",
+    );
+  });
+
   it("keeps a list filter when focusing the existing tab", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");

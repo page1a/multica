@@ -161,7 +161,17 @@ function account(id: string, overrides: Record<string, unknown> = {}) {
 
 function renderPane(
   runtimes: AgentRuntime[],
-  { canEdit = true, view }: { canEdit?: boolean; view?: string } = {},
+  {
+    canEdit = true,
+    view,
+    agent = baseAgent,
+    agents,
+  }: {
+    canEdit?: boolean;
+    view?: string;
+    agent?: Agent;
+    agents?: Agent[];
+  } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -180,7 +190,8 @@ function renderPane(
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={queryClient}>
           <AgentOverviewPane
-            agent={baseAgent}
+            agent={agent}
+            agents={agents}
             runtime={runtimes[0] ?? null}
             owner={null}
             runtimes={runtimes}
@@ -487,5 +498,37 @@ describe("AgentOverviewPane horizontal alignment", () => {
     // and that aside, not the form behind it, is what meets the tabs above.
     expect(panelFor(container as HTMLElement)).toHaveClass(RAIL_SENTINEL);
     expect(container.querySelector("aside")).toHaveClass(GUTTER_SENTINEL);
+  });
+});
+
+describe("AgentOverviewPane execution config inherited from the base role", () => {
+  const baseRole: Agent = { ...baseAgent, id: "base-1", name: "Goku" };
+  const follower: Agent = {
+    ...baseAgent,
+    parent_agent_id: "base-1",
+    runtime_inherited: true,
+  };
+
+  it.each([
+    ["env", "env-tab"],
+    ["custom_args", "custom-args-tab"],
+  ])("renders the %s editor read-only while following", (view, editor) => {
+    renderPane([makeRuntime("codex")], {
+      view,
+      agent: follower,
+      agents: [baseRole, follower],
+    });
+    expect(screen.getByText(/follows the base role “Goku”/)).toBeTruthy();
+    expect(screen.getByText(editor).closest("fieldset")?.disabled).toBe(true);
+  });
+
+  it("keeps the editor live for a base role owned by someone else", () => {
+    renderPane([makeRuntime("codex")], {
+      view: "env",
+      agent: follower,
+      agents: [{ ...baseRole, owner_id: "user-2" }, follower],
+    });
+    expect(screen.queryByText(/follows the base role/)).toBeNull();
+    expect(screen.getByText("env-tab").closest("fieldset")).toBeNull();
   });
 });

@@ -84,12 +84,20 @@ Inherited, and read-only on the child:
     daemon claim enforces). Creating a specialisation of a base role whose
     runtime is another member's private runtime therefore needs an explicit
     `runtime_id` — which lands as an independent runtime, not an error.
+- **Execution config** (DENE-854): `custom_env`, `custom_args` and `mcp_config`
+  ride the same flag and the same copy points, but only when the child and the
+  base role have the same owner — env and MCP config carry the base role's
+  credentials, and another member's follower must not reveal them through its
+  own env endpoint. A same-owner follower refuses edits to them (`PUT
+  /api/agents/{id}` with `custom_args`/`mcp_config`, and `PUT
+  /api/agents/{id}/env`, are 400); edit the base role, or set
+  `runtime_inherited: false` first. Across owners they stay the child's own.
 
 Everything else stays INDEPENDENT per agent — a specialisation is the same role
-with its own configuration, not a clone. In particular `max_concurrent_tasks`,
-`custom_args`, `custom_env`, `mcp_config` and invocation permissions are set
-separately on the child and are NOT inherited from the parent, and the child
-does not override the parent's values either.
+with its own configuration, not a clone. In particular `max_concurrent_tasks`
+and invocation permissions are set separately on the child and are NOT
+inherited from the parent, and the child does not override the parent's values
+either.
 
 `work_enabled` is the one exception, and only in one direction. Turning a base
 role off also turns off its direct specialisations. Turning the base role back

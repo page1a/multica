@@ -20,8 +20,8 @@ import (
 // runtime_config, model, thinking_level, service_tier — because those are the
 // ones a daemon claim reads to decide where and how the agent runs. Prompts and
 // skills are the DENE-302 inheritance and are covered there; custom_args,
-// custom_env and mcp_config stay per-agent on purpose (see the migration
-// comment on 492_agent_runtime_inherited).
+// custom_env and mcp_config follow too, within one owner (DENE-854), and are
+// covered in agent_execution_config_inheritance_test.go.
 //
 // Fixture rows are built through dbfx and every handler call goes through
 // testutil.Call/Decode, so a failure prints the request line, both statuses and

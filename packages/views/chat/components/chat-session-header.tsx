@@ -47,8 +47,9 @@ import { useAuthStore } from "@multica/core/auth";
 import { conversationToMarkdown } from "../lib/copy-text";
 
 /**
- * Per-session header for the conversation pane: agent avatar + editable chat
- * title + agent subtitle, with a ⋯ menu (rename / view agent profile / delete).
+ * Per-session header for the conversation pane: agent avatar + chat title +
+ * agent subtitle, with a ⋯ menu (rename / view agent profile / delete). The
+ * title itself is not clickable — renaming lives only in the ⋯ menu.
  * The avatar's hover card is the lightweight "view profile" affordance; the
  * menu item navigates to the full agent page.
  */
@@ -244,14 +245,7 @@ export function ChatSessionHeader({
             className="w-full rounded-sm bg-background px-1 py-0.5 text-body font-semibold outline-none ring-1 ring-border focus-visible:ring-brand"
           />
         ) : (
-          <button
-            type="button"
-            onClick={startRename}
-            title={t(($) => $.header.rename)}
-            className="block max-w-full truncate text-left text-body font-semibold text-foreground outline-none hover:text-foreground/80 focus-visible:text-foreground/80"
-          >
-            {title}
-          </button>
+          <div className="truncate text-body font-semibold text-foreground">{title}</div>
         )}
         {(agent || session.agent_name) && (
           <div className="truncate text-caption text-muted-foreground">
@@ -278,7 +272,14 @@ export function ChatSessionHeader({
 
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" />}
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              aria-label={t(($) => $.list.row_actions_aria)}
+            />
+          }
         >
           <MoreHorizontal className="h-4 w-4" />
         </DropdownMenuTrigger>

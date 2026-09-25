@@ -160,6 +160,26 @@ export function canEditRuntimeProfile(
 }
 
 /**
+ * Whether this specialisation also takes its base role's execution config —
+ * env, custom args, MCP config (DENE-854). The server copies those only while
+ * the agent follows its base role AND both rows share an owner (they carry the
+ * base role's credentials), and refuses an edit to them in exactly that case.
+ * A base role this client cannot see answers `false`: the server still has the
+ * final word, but a guess of "locked" would hide controls that may work.
+ */
+export function followsBaseRoleExecutionConfig(
+  agent: Pick<Agent, "parent_agent_id" | "runtime_inherited" | "owner_id">,
+  baseRole: Pick<Agent, "owner_id"> | null | undefined,
+): boolean {
+  return (
+    runtimeInheritanceState(agent) === "inherited" &&
+    baseRole != null &&
+    baseRole.owner_id != null &&
+    baseRole.owner_id === agent.owner_id
+  );
+}
+
+/**
  * The prompt a specialisation actually runs with: the base role's prompt, a
  * blank line, then its own. Mirrors `composeAgentInstructions` on the server,
  * including the "no stray blank lines when one side is empty" rule — the

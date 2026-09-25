@@ -202,6 +202,22 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		req.CustomEnv = map[string]string{}
 	}
 
+	// A specialisation that follows its base role takes its env from there
+	// (DENE-854); a write here would be overwritten by the next base-role edit.
+	if agent.RuntimeInherited && agent.ParentAgentID.Valid {
+		parent, err := h.Queries.GetAgent(r.Context(), agent.ParentAgentID)
+		if err != nil {
+			slog.Warn("agent_env update: load base role failed",
+				append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
+			writeError(w, http.StatusInternalServerError, "failed to update env")
+			return
+		}
+		if followsExecutionConfig(agent.OwnerID, parent.OwnerID) {
+			writeError(w, http.StatusBadRequest, "this agent follows its base role's env; edit the base role's env, or set runtime_inherited=false on this agent first")
+			return
+		}
+	}
+
 	existing := unmarshalCustomEnv(agent)
 	merged, audit := mergeAgentEnv(existing, req.CustomEnv)
 
@@ -276,6 +292,15 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := uuidToString(updated.WorkspaceID)
 	h.publish(protocol.EventAgentStatus, workspaceID, "member", uuidToString(member.UserID), map[string]any{"agent": broadcastAgentResponse(resp)})
+
+	// A base role's env is also the env of every same-owner specialisation
+	// that follows it (DENE-854). The copy is not audited per child: the
+	// base role's row above is the one change a person made.
+	if !updated.ParentAgentID.Valid {
+		for _, child := range h.syncInheritedAgentRuntimeProfiles(r.Context(), updated.ID, r) {
+			h.publishAgentUpdate(r, child)
+		}
+	}
 
 	writeJSON(w, http.StatusOK, AgentEnvResponse{
 		AgentID:   uuidToString(updated.ID),

@@ -11,6 +11,7 @@ import {
   canEditRuntimeProfile,
   childrenOf,
   composeEffectiveInstructions,
+  followsBaseRoleExecutionConfig,
   hasInheritedPrompt,
   inheritedPromptReadState,
   inheritedSkillChips,
@@ -405,6 +406,39 @@ describe("runtime inheritance state", () => {
       canEditRuntimeProfile(
         agent({ parent_agent_id: "base-1", runtime_inherited: false }),
         false,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("execution config inheritance", () => {
+  const base = agent({ id: "base-1", owner_id: "user-1" });
+  const following = agent({
+    parent_agent_id: "base-1",
+    runtime_inherited: true,
+    owner_id: "user-1",
+  });
+
+  it("follows only while following a base role with the same owner", () => {
+    expect(followsBaseRoleExecutionConfig(following, base)).toBe(true);
+    expect(
+      followsBaseRoleExecutionConfig(
+        { ...following, runtime_inherited: false },
+        base,
+      ),
+    ).toBe(false);
+    // Another member's base role keeps its credentials to itself.
+    expect(
+      followsBaseRoleExecutionConfig({ ...following, owner_id: "user-2" }, base),
+    ).toBe(false);
+  });
+
+  it("does not lock against a base role it cannot see or an ownerless row", () => {
+    expect(followsBaseRoleExecutionConfig(following, undefined)).toBe(false);
+    expect(
+      followsBaseRoleExecutionConfig(
+        { ...following, owner_id: null },
+        { owner_id: null },
       ),
     ).toBe(false);
   });
