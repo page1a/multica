@@ -22,7 +22,6 @@ import { useT } from "@multica/views/i18n";
 import { hasCompletedTransferExport } from "@multica/views/platform";
 import {
   DEFAULT_ENTRY_RUNTIME_CONFIG,
-  SELF_HOSTED_PRESET_URL,
   desktopProfileName,
   isOfficialCloudConfig,
   runtimeConfigFromServerUrl,
@@ -31,8 +30,6 @@ import {
 } from "../../../shared/runtime-config";
 
 type SwitchTarget = { type: "official" } | { type: "url"; url: string };
-
-const SELF_HOSTED_CONFIG = runtimeConfigFromServerUrl(SELF_HOSTED_PRESET_URL);
 
 function bootConfig(): RuntimeConfig | null {
   const result = window.desktopAPI.runtimeConfig;
@@ -114,7 +111,6 @@ export function ServerSettingsTab() {
 
   const displayed = config ?? DEFAULT_ENTRY_RUNTIME_CONFIG;
   const official = isOfficialCloudConfig(displayed);
-  const selfHosted = displayed.apiUrl === SELF_HOSTED_CONFIG.apiUrl;
   const showExportHint =
     pending !== null && !hasCompletedTransferExport();
 
@@ -188,35 +184,6 @@ export function ServerSettingsTab() {
                 disabled={saving}
               >
                 {t(($) => $.desktop.server.switch_to_official)}
-              </Button>
-            )}
-          </SettingsRow>
-
-          <SettingsRow
-            label={
-              <span className="flex flex-wrap items-center gap-2">
-                {t(($) => $.desktop.server.preset_self_hosted)}
-                <span className="rounded-full border border-border px-1.5 py-0.5 text-caption font-normal text-muted-foreground">
-                  {t(($) => $.desktop.server.default_entry_badge)}
-                </span>
-              </span>
-            }
-            description={t(($) => $.desktop.server.preset_self_hosted_description)}
-          >
-            {selfHosted ? (
-              <span className="text-caption text-muted-foreground">
-                {t(($) => $.desktop.server.current_badge)}
-              </span>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  openConfirm({ type: "url", url: SELF_HOSTED_PRESET_URL })
-                }
-                disabled={saving}
-              >
-                {t(($) => $.desktop.server.switch)}
               </Button>
             )}
           </SettingsRow>

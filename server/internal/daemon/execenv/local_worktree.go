@@ -75,6 +75,9 @@ const (
 	// that record, and without a separate mark the next turn would retry the
 	// same replay forever (DENE-814).
 	localReplayAttemptRefPrefix = "refs/multica/local-replay-attempt/"
+	// localSupersededRefPrefix keeps the line a rebased delivery replaced on a
+	// continued branch, so earlier turns stay reachable (DENE-874).
+	localSupersededRefPrefix = "refs/multica/superseded/"
 
 	// snapshotCommitTitle is the subject of the commit captureUserSnapshot
 	// writes. The user's HEAD at that moment is its parent. Records written
@@ -229,6 +232,14 @@ type LocalWorktree struct {
 	// The worktree is clean. The prompt tells the agent to say so: the edits
 	// are still in the user's checkout, and they are not on this branch.
 	ReplaySkippedNotice string `json:"replay_skipped_notice,omitempty"`
+	// Upstream is the user's tracking branch (e.g. origin/main) when it has
+	// one. The opening message names it as the one way to pick up newer code
+	// without leaving the task branch.
+	Upstream string `json:"upstream,omitempty"`
+	// PreparedAt is when Prepare started, in unix seconds. A branch whose
+	// reflog begins strictly after it is the agent's own, and Finalize may delete it
+	// once its work is on the task branch. Zero means unknown: delete nothing.
+	PreparedAt int64 `json:"prepared_at,omitempty"`
 	// createdBranch records that this prepare put the branch where it is, so
 	// dropping it discards nothing an earlier turn delivered. False for a
 	// continued branch: that one has to survive even a turn that produced
@@ -349,6 +360,10 @@ type LocalWorktreeOutcome struct {
 	// AutoCommitted is true when the agent left uncommitted changes that
 	// Finalize committed so they would survive the worktree's removal.
 	AutoCommitted bool
+	// Notice is a one-line remark about a delivery that succeeded but not in
+	// the ordinary way — today, a rebased delivery that does not carry the
+	// local-directory snapshot.
+	Notice string
 	// PreservedPath is set only when Finalize could NOT commit the agent's
 	// changes. The worktree at this path was intentionally left on disk because
 	// it is the only remaining copy of that work.
@@ -370,6 +385,7 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 		return nil, errors.New("execenv: local worktree requires a task id")
 	}
 
+	preparedAt := time.Now().Unix()
 	gitRoot, err := resolveGitRoot(params.LocalPath)
 	if err != nil {
 		return nil, err
@@ -475,7 +491,7 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	// checkout is clean and the update is a true fast-forward. Dirty or
 	// diverged repositories are deliberately left alone; the notice travels
 	// with the prepared worktree and is rendered in the agent's first message.
-	staleBaselineNotice := refreshLocalBaseline(gitRoot, logger)
+	staleBaselineNotice, upstream := refreshLocalBaseline(gitRoot, logger)
 
 	headSHA, err := runGitTrimmed(gitRoot, "rev-parse", "--verify", "HEAD")
 	if err != nil {
@@ -536,6 +552,8 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 		WorkDir:             filepath.Join(worktreePath, rel),
 		Branch:              actualBranch,
 		StaleBaselineNotice: staleBaselineNotice,
+		Upstream:            upstream,
+		PreparedAt:          preparedAt,
 		BaseCommit:          plan.base,
 		Continued:           plan.continues,
 		createdBranch:       createdBranch,
@@ -674,18 +692,19 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 
 // refreshLocalBaseline updates a clean local checkout to its fetched upstream
 // tip when that update is a fast-forward. It never resets, merges, or touches
-// a dirty/diverged checkout. A non-empty return value is safe to show in the
-// run prompt and explains why the task intentionally started from an older
-// baseline.
-func refreshLocalBaseline(gitRoot string, logger *slog.Logger) string {
+// a dirty/diverged checkout. A non-empty notice is safe to show in the run
+// prompt and explains why the task intentionally started from an older
+// baseline; upstream is the tracking branch ("" when there is none), which the
+// prompt names as the way to pick up newer code on the task branch.
+func refreshLocalBaseline(gitRoot string, logger *slog.Logger) (notice, upstream string) {
 	branch, err := runGitTrimmed(gitRoot, "symbolic-ref", "--short", "HEAD")
 	if err != nil || branch == "" {
 		// Detached HEADs have no tracking branch to refresh.
-		return ""
+		return "", ""
 	}
-	upstream, err := runGitTrimmed(gitRoot, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	upstream, err = runGitTrimmed(gitRoot, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	if err != nil || upstream == "" {
-		return ""
+		return "", ""
 	}
 
 	fetchCtx, cancelFetch := context.WithTimeout(context.Background(), localBaselineFetchTimeout)
@@ -696,47 +715,75 @@ func refreshLocalBaseline(gitRoot string, logger *slog.Logger) string {
 		if logger != nil {
 			logger.Warn("execenv: local baseline refresh failed", "git_root", gitRoot, "branch", branch, "upstream", upstream, "error", fetchErr)
 		}
-		return notice
-	}
-
-	status, statusErr := runGit(gitRoot, "status", "--porcelain", "--untracked-files=all")
-	if statusErr != nil {
-		return fmt.Sprintf("The local checkout on branch %q may be stale: its working tree could not be checked before refresh (%s).", branch, strings.Join(strings.Fields(statusErr.Error()), " "))
-	}
-	if strings.TrimSpace(status) != "" {
-		return fmt.Sprintf("The local checkout on branch %q may be stale: it has local edits, so Multica left it untouched instead of fast-forwarding to %q.", branch, upstream)
+		return notice, upstream
 	}
 
 	counts, countErr := runGitTrimmed(gitRoot, "rev-list", "--left-right", "--count", "HEAD..."+upstream)
 	if countErr != nil {
-		return fmt.Sprintf("The local checkout on branch %q may be stale: could not compare it with %q (%s).", branch, upstream, strings.Join(strings.Fields(countErr.Error()), " "))
+		return fmt.Sprintf("The local checkout on branch %q may be stale: could not compare it with %q (%s).", branch, upstream, strings.Join(strings.Fields(countErr.Error()), " ")), upstream
 	}
 	fields := strings.Fields(counts)
 	if len(fields) != 2 {
-		return fmt.Sprintf("The local checkout on branch %q may be stale: git returned an unexpected comparison with %q.", branch, upstream)
+		return fmt.Sprintf("The local checkout on branch %q may be stale: git returned an unexpected comparison with %q.", branch, upstream), upstream
 	}
 	ahead, aheadErr := strconv.Atoi(fields[0])
 	behind, behindErr := strconv.Atoi(fields[1])
 	if aheadErr != nil || behindErr != nil {
-		return fmt.Sprintf("The local checkout on branch %q may be stale: git returned an invalid comparison with %q.", branch, upstream)
+		return fmt.Sprintf("The local checkout on branch %q may be stale: git returned an invalid comparison with %q.", branch, upstream), upstream
 	}
 	if behind == 0 {
-		return ""
+		return "", upstream
+	}
+
+	status, statusErr := runGit(gitRoot, "status", "--porcelain", "--untracked-files=all")
+	if statusErr != nil {
+		return fmt.Sprintf("The local checkout on branch %q may be stale: its working tree could not be checked before refresh (%s).", branch, strings.Join(strings.Fields(statusErr.Error()), " ")), upstream
+	}
+	if dirty := porcelainPaths(status); len(dirty) > 0 {
+		// Say how far behind and why, so the agent does not go looking for the
+		// cause itself — and does not "fix" it by starting a branch of its own.
+		return fmt.Sprintf("The local checkout on branch %q is %d commit%s behind %q because these files have uncommitted changes: %s. "+
+			"Multica left it untouched instead of fast-forwarding, so this worktree has local edits but an older base.",
+			branch, behind, pluralSuffix(behind), upstream, summarizePaths(dirty, 5)), upstream
 	}
 	if ahead != 0 {
-		return fmt.Sprintf("The local checkout on branch %q may be stale: it diverges from %q (%d local commit%s, %d upstream commit%s), so Multica left it untouched.", branch, upstream, ahead, pluralSuffix(ahead), behind, pluralSuffix(behind))
+		return fmt.Sprintf("The local checkout on branch %q may be stale: it diverges from %q (%d local commit%s, %d upstream commit%s), so Multica left it untouched.", branch, upstream, ahead, pluralSuffix(ahead), behind, pluralSuffix(behind)), upstream
 	}
 
 	if _, err := runGit(gitRoot, "merge", "--ff-only", upstream); err != nil {
 		if logger != nil {
 			logger.Warn("execenv: local baseline fast-forward failed", "git_root", gitRoot, "branch", branch, "upstream", upstream, "error", err)
 		}
-		return fmt.Sprintf("The local checkout on branch %q may be stale: it is %d commit%s behind %q, but the fast-forward failed. Multica left it untouched.", branch, behind, pluralSuffix(behind), upstream)
+		return fmt.Sprintf("The local checkout on branch %q may be stale: it is %d commit%s behind %q, but the fast-forward failed. Multica left it untouched.", branch, behind, pluralSuffix(behind), upstream), upstream
 	}
 	if logger != nil {
 		logger.Info("execenv: fast-forwarded local baseline", "git_root", gitRoot, "branch", branch, "upstream", upstream, "commits", behind)
 	}
-	return ""
+	return "", upstream
+}
+
+// porcelainPaths reads the paths out of `git status --porcelain` output.
+func porcelainPaths(status string) []string {
+	var paths []string
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		if _, to, renamed := strings.Cut(path, " -> "); renamed {
+			path = to
+		}
+		paths = append(paths, strings.Trim(path, `"`))
+	}
+	return paths
+}
+
+// summarizePaths lists up to max paths, then counts the rest.
+func summarizePaths(paths []string, max int) string {
+	if len(paths) <= max {
+		return strings.Join(paths, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(paths[:max], ", "), len(paths)-max)
 }
 
 func pluralSuffix(n int) string {
@@ -846,15 +893,66 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 		outcome.AutoCommitted = committed
 	}
 
-	// A branch still sitting exactly on its base commit means the task changed
-	// nothing — the read-only case. Delete it so the user's branch list only
-	// ever grows for tasks that actually produced work. Only ever the branch
-	// this task created: a continued branch sits on its base precisely because
-	// this turn added nothing to what earlier turns delivered, and deleting it
-	// would take their work with it.
-	tip, err := runGitTrimmed(w.Path, "rev-parse", "--verify", "HEAD")
-	producedWork := err != nil || tip != w.BaseCommit
+	// Sort where the run ended into one of the delivery classes (DENE-874). The
+	// task branch is the contract; HEAD is only evidence of what was built, so
+	// an agent that switched branches is delivered, not failed.
+	head, headErr := runGitTrimmed(w.Path, "rev-parse", "--verify", "HEAD")
+	if headErr != nil {
+		head = ""
+	}
+	headBranch := worktreeBranch(w.Path)
+	facts := w.gatherDeliveryFacts(head, headBranch)
+	decision := classifyDelivery(facts)
+	if decision.class == deliveryStuck {
+		outcome.Branch = ""
+		outcome.PreservedPath = w.Path
+		if logger != nil {
+			logger.Error("execenv: the run's delivery point cannot be recorded as this conversation's; nothing recorded, worktree kept",
+				"path", w.Path, "branch", w.Branch, "git_root", w.GitRoot, "head", head, "head_branch", headBranch,
+				"base", w.BaseCommit, "reason", decision.reason)
+		}
+		return outcome, w.stuckDeliveryError(decision.reason, head, headBranch)
+	}
+
+	// tip is the commit the task branch ends on. A read-only run on a branch
+	// this turn created ends on nothing: the branch is dropped. A read-only
+	// run on a continued branch ends where the turn found it — putting the
+	// branch back if the agent reset it, because that branch carries every
+	// earlier turn and the run added nothing to replace them.
+	tip := decision.point
+	if decision.class == deliveryReadOnly {
+		tip = w.BaseCommit
+	}
+	producedWork := decision.class != deliveryReadOnly && tip != w.BaseCommit
 	dropped := !producedWork && w.createdBranch
+
+	if !dropped && facts.BranchTip != tip {
+		if decision.class == deliveryRebased && w.Continued && facts.BranchTip != "" {
+			// The line being replaced carries earlier turns. Keep it reachable
+			// and out of `git branch`; the notice says where.
+			if out, err := runGit(w.GitRoot, "update-ref", supersededRef(w.Branch), facts.BranchTip); err != nil && logger != nil {
+				logger.Warn("execenv: could not keep the superseded task line",
+					"branch", w.Branch, "tip", facts.BranchTip, "output", strings.TrimSpace(out), "error", err)
+			}
+		}
+		if err := w.moveTaskBranch(tip, facts.BranchTip); err != nil {
+			outcome.Branch = ""
+			outcome.PreservedPath = w.Path
+			return outcome, w.stuckDeliveryError(err.Error(), head, headBranch)
+		}
+	}
+	if decision.class == deliveryRebased {
+		// The delivery stands on another base, so it does not carry the user's
+		// local-directory snapshot. Record the user's clean HEAD as what it
+		// carries: the next turn then replays their local edits onto it.
+		w.userState = w.resolvedUserHead()
+		w.replayAbandoned = ""
+		outcome.Notice = fmt.Sprintf("the run delivered %s on a base other than the one it started from, "+
+			"so the branch does not carry the local-directory snapshot; the next run replays your local edits onto it", shortID(tip))
+		if w.Continued {
+			outcome.Notice += fmt.Sprintf("; the earlier line is kept at %s", supersededRef(w.Branch))
+		}
+	}
 
 	// A turn that started mid-merge only gets to advance the branch's recorded
 	// state if it committed something after resolving. When the branch is still
@@ -899,18 +997,6 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 	// makes that recoverable — the worktree is still there to preserve, exactly
 	// as for a commit that could not be made.
 	if !dropped {
-		if verifyErr := w.verifyDeliveryPoint(tip); verifyErr != nil {
-			outcome.Branch = ""
-			outcome.PreservedPath = w.Path
-			if logger != nil {
-				logger.Error("execenv: the run's delivery point cannot be recorded as this conversation's; nothing recorded, worktree kept",
-					"path", w.Path, "branch", w.Branch, "git_root", w.GitRoot, "tip", tip, "base", w.BaseCommit, "error", verifyErr)
-			}
-			return outcome, fmt.Errorf(
-				"refusing to record branch %s: %w; the task worktree is preserved at %s (listed by `git worktree list` in %s) — "+
-					"recover the work from there, and let the run keep the commit the worktree started from instead of resetting past it",
-				w.Branch, verifyErr, w.Path, w.GitRoot)
-		}
 		if recErr := w.recordState(tip, logger); recErr != nil {
 			outcome.PreservedPath = w.Path
 			if logger != nil {
@@ -936,6 +1022,15 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 		dropBranch(w.GitRoot, w.Branch, logger)
 		outcome.Branch = ""
 	}
+	// The agent's own name for its work goes once that work is on the task
+	// branch — or, for a read-only run, once it is known to hold nothing.
+	if headBranch != w.Branch {
+		delivered := tip
+		if decision.class == deliveryReadOnly {
+			delivered = head
+		}
+		w.dropAgentBranch(headBranch, delivered, logger)
+	}
 
 	if logger != nil {
 		logger.Info("execenv: local worktree finalized",
@@ -943,6 +1038,7 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 			"branch", outcome.Branch,
 			"auto_committed", outcome.AutoCommitted,
 			"produced_work", producedWork,
+			"delivery", decision.class.String(),
 			"continued", w.Continued,
 		)
 	}
@@ -2250,46 +2346,6 @@ func quotedPaths(paths []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// verifyDeliveryPoint checks that tip is a commit this conversation can put its
-// name on before it becomes the branch's recorded checkpoint.
-//
-// Two things are asserted, and they are the two ways a delivery can be
-// something other than what this task built. The tip has to BE the task's
-// branch — a run that checked out something else, or a branch someone moved
-// underneath it, delivers a commit this record has no business describing. And
-// it has to still contain the commit this turn started from — this turn's own
-// baseline when it made one, otherwise the branch tip it continued. A run that
-// resets its worktree back to the user's own HEAD passes neither test but the
-// second is the one that matters, twice over: recording a plain user commit as
-// the checkpoint is what makes a branch they later recreate there look like
-// ours, and a tip without this turn's starting point no longer carries the
-// snapshot about to be recorded as delivered (MUL-6881 review).
-func (w *LocalWorktree) verifyDeliveryPoint(tip string) error {
-	if !w.tracksState {
-		// Nothing will be recorded for this branch, so there is nothing to prove.
-		return nil
-	}
-	if tip == "" {
-		return errors.New("the task worktree has no resolvable HEAD")
-	}
-	branchTip, err := runGitTrimmed(w.GitRoot, "rev-parse", "--verify", "refs/heads/"+w.Branch)
-	if err != nil {
-		return fmt.Errorf("resolve branch %s: %w", w.Branch, err)
-	}
-	if branchTip != tip {
-		return fmt.Errorf("the worktree delivered %s while branch %s points at %s, so the run did not deliver onto its own branch",
-			shortID(tip), w.Branch, shortID(branchTip))
-	}
-	if w.BaseCommit == "" {
-		return fmt.Errorf("branch %s has no commit of this task's own to prove it by", w.Branch)
-	}
-	if _, err := runGit(w.GitRoot, "merge-base", "--is-ancestor", w.BaseCommit, tip); err != nil {
-		return fmt.Errorf("the delivered commit %s no longer contains %s, the commit this turn started from",
-			shortID(tip), shortID(w.BaseCommit))
-	}
-	return nil
-}
-
 // unmergedPaths lists the files git considers unresolved in a worktree.
 func unmergedPaths(worktreePath string) ([]string, error) {
 	out, err := runGitStdout(worktreePath, "diff", "--name-only", "--diff-filter=U", "-z")
@@ -2380,6 +2436,7 @@ func dropBranch(gitRoot, branch string, logger *slog.Logger) {
 func pruneOrphanedStateRefs(gitRoot string, logger *slog.Logger) {
 	pruneOrphanedRefs(gitRoot, localStateRefPrefix, logger)
 	pruneOrphanedRefs(gitRoot, localReplayAttemptRefPrefix, logger)
+	pruneOrphanedRefs(gitRoot, localSupersededRefPrefix, logger)
 }
 
 func pruneOrphanedRefs(gitRoot, prefix string, logger *slog.Logger) {

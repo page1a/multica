@@ -120,6 +120,32 @@ func TestBuildPromptIncludesStaleBaselineAndDeterministicInstallGuidance(t *test
 	}
 }
 
+// A worktree run is told which branch it delivers on and the one legal way to
+// pick up newer code, so it has no reason to switch branches (DENE-874).
+func TestBuildPromptNamesTheDeliveryBranchAndTheLegalAction(t *testing.T) {
+	out := BuildPrompt(Task{IssueID: "issue-1"}, "claude",
+		WithStaleLocalBaseline(`The local checkout on branch "kun" is 3 commits behind "origin/kun" because these files have uncommitted changes: a.go.`),
+		WithDeliveryBranch("agent/agent/dene-874", "origin/kun"),
+	)
+	for _, want := range []string{
+		"3 commits behind \"origin/kun\"",
+		"## Your delivery branch",
+		"You are on `agent/agent/dene-874`",
+		"run `git merge origin/kun` on this branch",
+		"do not create or switch to another branch",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("BuildPrompt output missing %q\n%s", want, out)
+		}
+	}
+	if !strings.Contains(BuildPrompt(Task{IssueID: "issue-1"}, "claude", WithDeliveryBranch("agent/j/x", "")), "git merge origin/<main branch>") {
+		t.Error("without a known upstream the block should still name the action")
+	}
+	if strings.Contains(BuildPrompt(Task{IssueID: "issue-1"}, "claude"), "## Your delivery branch") {
+		t.Error("a run without a worktree branch got the delivery-branch block")
+	}
+}
+
 func TestBuildQuickCreatePromptLargestAcceptedSourceContextFitsBudget(t *testing.T) {
 	const emptyObject = `{"text":""}`
 	snapshot := []byte(`{"text":"` + strings.Repeat("x", service.SourceContextMaxAgentSnapshotBytes-len(emptyObject)) + `"}`)

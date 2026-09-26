@@ -26,9 +26,6 @@ const translations = {
       switch_description: "Quit after switching",
       preset_official: "Official cloud",
       preset_official_description: "multica.ai",
-      preset_self_hosted: "Self-hosted",
-      preset_self_hosted_description: "ai.ferryway.cc",
-      default_entry_badge: "Default entry",
       current_badge: "Current",
       custom_url: "Custom URL",
       custom_url_description: "http or https only",
@@ -100,10 +97,12 @@ describe("ServerSettingsTab", () => {
     await waitFor(() => expect(mocks.getPrefs).toHaveBeenCalled());
   });
 
-  it("marks the self-hosted preset as the entry default", async () => {
+  it("offers only official cloud and a custom URL, with no self-hosted preset", async () => {
     render(<ServerSettingsTab />);
 
-    expect(screen.getByText("Default entry")).toBeInTheDocument();
+    expect(screen.queryByText("Default entry")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Switch" })).toHaveLength(1);
+    expect(screen.getByLabelText("Custom URL")).toBeInTheDocument();
     await waitFor(() => expect(mocks.getPrefs).toHaveBeenCalled());
   });
 
@@ -113,7 +112,7 @@ describe("ServerSettingsTab", () => {
     fireEvent.change(screen.getByLabelText("Custom URL"), {
       target: { value: "ftp://evil.example" },
     });
-    fireEvent.click(screen.getAllByRole("button", { name: "Switch" })[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "Switch" }));
 
     expect(
       await screen.findByText("Enter a valid http or https URL."),
@@ -122,7 +121,7 @@ describe("ServerSettingsTab", () => {
     expect(screen.queryByText("Switch server?")).not.toBeInTheDocument();
   });
 
-  it("warns about auto-stop, writes the self-hosted preset, and asks for a full quit", async () => {
+  it("warns about auto-stop, writes the custom URL, and asks for a full quit", async () => {
     mocks.switchServer.mockResolvedValue({
       ok: true,
       config: {
@@ -134,7 +133,10 @@ describe("ServerSettingsTab", () => {
     });
     render(<ServerSettingsTab />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Switch" })[0]!);
+    fireEvent.change(screen.getByLabelText("Custom URL"), {
+      target: { value: SELF_HOSTED_PRESET_URL },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Switch" }));
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("Switch server?")).toBeInTheDocument();
@@ -210,7 +212,10 @@ describe("ServerSettingsTab", () => {
     window.localStorage.setItem(TRANSFER_EXPORT_COMPLETED_KEY, "1");
     render(<ServerSettingsTab />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Switch" })[0]!);
+    fireEvent.change(screen.getByLabelText("Custom URL"), {
+      target: { value: SELF_HOSTED_PRESET_URL },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Switch" }));
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("Switch server?")).toBeInTheDocument();

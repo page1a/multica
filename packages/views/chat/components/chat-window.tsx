@@ -1566,25 +1566,6 @@ function SessionDropdown({
             <div className="truncate text-body font-medium text-destructive">
               {t(($) => $.session_history.stop_dialog.title)}
             </div>
-          ) : canManage ? (
-            <button
-              type="button"
-              title={t(($) => $.session_history.row_rename_aria)}
-              onClick={(e) => {
-                e.stopPropagation();
-                setRenamingId(session.id);
-              }}
-              className={cn(
-                "block w-full truncate text-left text-body outline-none",
-                (showUnread || showCompleted) && !isRunning && "font-medium",
-              )}
-              style={{
-                maskImage: "linear-gradient(to right, black calc(100% - 18px), transparent)",
-                WebkitMaskImage: "linear-gradient(to right, black calc(100% - 18px), transparent)",
-              }}
-            >
-              {titleText}
-            </button>
           ) : (
             <span
               className={cn(

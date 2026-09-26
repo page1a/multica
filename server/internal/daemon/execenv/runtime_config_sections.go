@@ -457,7 +457,7 @@ func writeRepositories(b *strings.Builder, ctx TaskContextForEnv) {
 func executionModeSummary(mode string) string {
 	switch mode {
 	case "worktree":
-		return "`worktree` — this task has its own git worktree of that repository; your edits do NOT touch the user's working copy, and you deliver work as a branch"
+		return "`worktree` — this task has its own git worktree of that repository; your edits do NOT touch the user's working copy, and you deliver work on the task branch you start on (stay on it; merge newer code into it instead of switching branches)"
 	case "shared":
 		return "`shared` — you are in the user's own directory, and other tasks may be running in it at the same time; keep your work on your own branch"
 	default:

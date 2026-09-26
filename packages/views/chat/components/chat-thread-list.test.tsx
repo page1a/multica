@@ -326,37 +326,20 @@ describe("ChatThreadList compact row menu", () => {
   });
 });
 
-describe("ChatThreadList title rename", () => {
+describe("ChatThreadList title", () => {
   beforeEach(() => {
     authState.userId = "user-1";
     updateMutate.mockClear();
   });
 
-  it("opens rename from the title and does not select the row", () => {
+  it("opens the chat instead of renaming when the title is clicked", () => {
     const { onSelectSession } = renderList(null);
 
-    fireEvent.click(screen.getByRole("button", { name: "Chat s1" }));
+    fireEvent.click(screen.getByText("Chat s1"));
 
-    expect(onSelectSession).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("textbox", { name: enChat.session_history.row_rename_aria }),
-    ).toBeInTheDocument();
-  });
-
-  it("saves the new title for the list to pick up", () => {
-    renderList(null);
-
-    fireEvent.click(screen.getByRole("button", { name: "Chat s1" }));
-    const input = screen.getByRole("textbox", {
-      name: enChat.session_history.row_rename_aria,
-    });
-    fireEvent.change(input, { target: { value: "Billing · retry invoices" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    expect(updateMutate).toHaveBeenCalledWith({
-      sessionId: "s1",
-      title: "Billing · retry invoices",
-    });
+    expect(onSelectSession).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(updateMutate).not.toHaveBeenCalled();
   });
 });
 

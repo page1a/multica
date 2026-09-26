@@ -9084,6 +9084,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				taskResult.EnvRoot = env.RootDir
 			}
 			outcome, finalizeErr := env.LocalWorktree.Finalize(taskLog)
+			if outcome.Notice != "" {
+				taskLog.Info("local_directory: worktree delivered with a notice", "branch", outcome.Branch, "notice", outcome.Notice)
+			}
 			if outcome.Branch != "" {
 				taskResult.BranchName = outcome.Branch
 			}
@@ -9301,6 +9304,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if env.LocalWorktree != nil && env.LocalWorktree.StaleBaselineNotice != "" {
 		promptOptions = append(promptOptions, WithStaleLocalBaseline(env.LocalWorktree.StaleBaselineNotice))
+	}
+	if env.LocalWorktree != nil && env.LocalWorktree.Branch != "" {
+		promptOptions = append(promptOptions, WithDeliveryBranch(env.LocalWorktree.Branch, env.LocalWorktree.Upstream))
 	}
 	if env.LocalWorktree != nil && env.LocalWorktree.ReplaySkippedNotice != "" {
 		promptOptions = append(promptOptions, WithReplaySkipped(env.LocalWorktree.ReplaySkippedNotice))

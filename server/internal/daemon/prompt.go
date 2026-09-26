@@ -71,6 +71,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	b.WriteString(buildWorktreeReplayConflictBlock(opts.worktreeReplayConflicts))
 	b.WriteString(buildReplaySkippedBlock(opts.replaySkippedNotice))
 	b.WriteString(buildStaleLocalBaselineBlock(opts.staleLocalBaselineNotice))
+	b.WriteString(buildDeliveryBranchBlock(opts.deliveryBranch, opts.deliveryUpstream))
 	b.WriteString(buildDependencyInstallBlock(opts.dependencyInstallCommand))
 	b.WriteString(buildSparseCheckoutBlock(task.CheckoutPaths))
 	if task.PriorSessionResumeUnavailable {
@@ -90,6 +91,8 @@ type promptOpts struct {
 	worktreeReplayConflicts  []string
 	replaySkippedNotice      string
 	staleLocalBaselineNotice string
+	deliveryBranch           string
+	deliveryUpstream         string
 	dependencyInstallCommand string
 }
 
@@ -179,6 +182,29 @@ func buildReplaySkippedBlock(notice string) string {
 		return ""
 	}
 	return "## Local edits were not replayed\n\n" + strings.TrimSpace(notice) + "\n\n"
+}
+
+// WithDeliveryBranch names the task branch of a local_directory worktree run
+// and the one legal way to pick up newer code on it. Finalize delivers any end
+// state it can prove (DENE-874); this keeps runs from needing that.
+func WithDeliveryBranch(branch, upstream string) PromptOption {
+	return func(o *promptOpts) {
+		o.deliveryBranch = strings.TrimSpace(branch)
+		o.deliveryUpstream = strings.TrimSpace(upstream)
+	}
+}
+
+func buildDeliveryBranchBlock(branch, upstream string) string {
+	if branch == "" {
+		return ""
+	}
+	target := "origin/<main branch>"
+	if upstream != "" {
+		target = upstream
+	}
+	return "## Your delivery branch\n\n" +
+		"You are on `" + branch + "`: this run delivers whatever is committed on it when you finish. " +
+		"To work on newer code, run `git merge " + target + "` on this branch — do not create or switch to another branch.\n\n"
 }
 
 func buildStaleLocalBaselineBlock(notice string) string {
