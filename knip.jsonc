@@ -73,6 +73,10 @@
       "project": ["**/*.{ts,tsx}"]
     },
 
+    "packages/plugin-sdk": {
+      "entry": ["eslint.config.mjs"]
+    },
+
     "packages/eslint-config": {},
     "packages/tsconfig": {}
   }

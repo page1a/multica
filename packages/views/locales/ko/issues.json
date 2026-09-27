@@ -974,8 +974,6 @@
     "delete_description": "「{{name}}」이(가) 볼 수 있는 모든 구성원에게서 삭제됩니다",
     "toast_deleted": "뷰가 삭제되었습니다",
     "context_edit": "뷰 편집",
-    "context_pin": "사이드바에 고정",
-    "context_unpin": "사이드바 고정 해제",
     "row_menu": "추가 작업",
     "row_hide": "바에서 숨기기",
     "row_show": "바에 표시",

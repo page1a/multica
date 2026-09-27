@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/permission"
 
 	"github.com/multica-ai/multica/server/internal/realtime"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -145,6 +146,13 @@ func (h *Handler) chatVisibilityDecision(ctx context.Context, sessionID string, 
 	return func(userID string) ([]byte, bool) {
 		if userID == creatorID {
 			return frame, true
+		}
+		if session.Visibility == "workspace" {
+			viewer, ok := viewers.get(userID)
+			if ok && viewer.role != permission.RoleGuest {
+				return frame, true
+			}
+			return nil, false
 		}
 		if session.Visibility != "project" {
 			return nil, false

@@ -140,6 +140,7 @@ import {
   type SubIssueRowPropertyKey,
 } from "@multica/core/issues/stores";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
+import { useMarkIssueInboxRead } from "@multica/core/inbox/mutations";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import { useIssueTimeline } from "../hooks/use-issue-timeline";
 import { useIssueReactions } from "../hooks/use-issue-reactions";
@@ -1455,6 +1456,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         status: issue.status,
       });
     }
+  }, [issue?.id, wsId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Opening a ticket reads its inbox rows, from wherever it was opened
+  // (DENE-901). The server keeps the rows an open call on the viewer hangs on.
+  const { mutate: readIssueInbox } = useMarkIssueInboxRead();
+  useEffect(() => {
+    if (issue && user && !isGuest) readIssueInbox(issue.id);
   }, [issue?.id, wsId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fire `onDelete` once when the issue transitions from loaded to missing.

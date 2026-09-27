@@ -6,14 +6,6 @@ import { chatKeys } from "../chat/queries";
 import { useWorkspaceId } from "../hooks";
 import type { PinnedItem, PinnedItemType } from "../types";
 
-/**
- * Drag payload type a Chat list row carries so the sidebar's pinned group can
- * accept it as a native HTML drop. Native DnD (not dnd-kit) because the list
- * and the sidebar live in separate trees; a MIME of our own keeps a stray
- * text drop from being mistaken for a chat.
- */
-export const CHAT_PIN_DRAG_TYPE = "application/x-multica-chat-session";
-
 export function useCreatePin() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

@@ -26,7 +26,6 @@ import {
   useSetChatSessionArchived,
   useSetChatSessionPinned,
 } from "@multica/core/chat/mutations";
-import { CHAT_PIN_DRAG_TYPE } from "@multica/core/pins/mutations";
 import { useChatStore } from "@multica/core/chat";
 import { useAuthStore } from "@multica/core/auth";
 import type { Agent, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
@@ -360,14 +359,6 @@ export function ChatThreadList({
         key={session.id}
         aria-current={isCurrent ? "true" : undefined}
         tabIndex={0}
-        // A row can be dragged into the sidebar's pinned group to pin it
-        // (DENE-866). Native DnD, since the sidebar is a separate tree.
-        draggable={view !== "archived"}
-        onDragStart={(e) => {
-          e.dataTransfer.setData(CHAT_PIN_DRAG_TYPE, session.id);
-          e.dataTransfer.setData("text/plain", session.title ?? "");
-          e.dataTransfer.effectAllowed = "copy";
-        }}
         onClick={(e) => {
           if (isConfirmingAction || e.defaultPrevented) return;
           // Plain click keeps the master-detail selection. On web, a modifier

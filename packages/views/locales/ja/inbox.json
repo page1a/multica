@@ -96,7 +96,8 @@
     "autopilot_quota_exceeded": "自動化の実行上限に達しました",
     "agent_access_request": "エージェント利用リクエスト",
     "agent_access_approved": "エージェント利用が承認されました",
-    "agent_access_declined": "エージェント利用が拒否されました"
+    "agent_access_declined": "エージェント利用が拒否されました",
+    "parking_unexplained": "理由なく停止"
   },
   "labels": {
     "set_status_to": "ステータスを変更:",
@@ -142,5 +143,98 @@
     "access_request_not_pending": "このリクエストは既に処理済みか期限切れです",
     "access_request_failed": "リクエストを処理できませんでした",
     "access_pass_expiry_invalid": "未来の期限を選んでください"
+  },
+  "board": {
+    "title": "Inbox",
+    "lede": "One row per issue: running or stopped, why it stopped, what happened before, who moves next. Open the issue for details.",
+    "activity_link": "All activity",
+    "back_to_board": "One row per issue",
+    "lanes": {
+      "waiting": {
+        "title": "Waiting on you",
+        "hint": "Issues that asked for you. Reply and the row goes away; the agent picks up again",
+        "empty": "Nothing is waiting on you"
+      },
+      "stalled": {
+        "title": "Stopped · unexplained",
+        "hint": "No agent is running and the issue was never closed out. The server traced why",
+        "empty": "Nothing stopped without an explanation"
+      },
+      "running": {
+        "title": "Running",
+        "hint": "Just a marker, no noise",
+        "empty": "No agent is running right now"
+      },
+      "fresh": {
+        "title": "新着あり",
+        "hint": "前回以降に未読があり、上のどのレーンにも入らないチケット。今回だけ表示",
+        "empty": "新着はありません"
+      },
+      "done": {
+        "title": "Done today",
+        "hint": "Shown once, folded after you have seen it",
+        "empty": "Nothing finished today yet"
+      }
+    },
+    "tag": {
+      "needs_human": "Your call",
+      "manual": "Your turn",
+      "mention": "Asked for you",
+      "routing": "Nobody picked up",
+      "patrol": "No reviewer",
+      "time_limit": "Timed out",
+      "quota_relay": "Out of quota",
+      "waiting_person": "Your call",
+      "waiting_default": "Waiting",
+      "stalled_delivery": "Delivery stuck",
+      "stalled_unclosed": "Done, not closed",
+      "stalled_reply_unclosed": "Replied, not closed",
+      "running": "Running",
+      "fresh": "新着",
+      "done": "Done"
+    },
+    "stuck": {
+      "branch_refused": "The platform refused to record the delivery branch",
+      "pr_not_linked": "No linked PR, so the move to review was refused",
+      "review_refused": "The move to review was refused",
+      "close_refused": "Closing was refused",
+      "run_failed": "The run ended in failure",
+      "no_wait_record": "Blocked, but nothing says what it waits on",
+      "woken_no_close": "Replied after being woken, but did not close out again",
+      "no_close": "The run ended and the issue was not closed out",
+      "default": "Stopped without an explanation"
+    },
+    "event": {
+      "run_started": "Run started",
+      "run_completed": "Run finished",
+      "run_failed": "Run failed",
+      "run_cancelled": "Run cancelled",
+      "pr_linked": "PR linked",
+      "pr_merged": "PR merged",
+      "rejected": "Refused by the platform",
+      "closed": "Closed out",
+      "after": "No run and no close since"
+    },
+    "server_mark": "Server verdict",
+    "unread_other": "新着 {{count}} 件",
+    "before": "Before: {{text}}",
+    "next": "Next: {{name}}",
+    "next_none": "Next: nobody",
+    "next_issue": "Waiting on {{id}}",
+    "from_to_you": "{{name}} → you",
+    "you": "you",
+    "running_for": "running {{time}}",
+    "children_other": "{{count}} sub-issues",
+    "expand": "Why",
+    "collapse": "Hide",
+    "reply_placeholder": "Reply here; it posts on the issue and wakes {{name}}",
+    "reply_placeholder_default": "Reply here; it posts on the issue",
+    "reply": "Reply",
+    "reply_sent": "Replied; the agent will pick it up",
+    "reply_failed": "The reply was not sent",
+    "open_issue": "Open issue",
+    "seen_other": "{{count}} already seen",
+    "hide_seen": "Hide seen",
+    "load_error": "Some of this did not load; it will retry shortly"
   }
 }

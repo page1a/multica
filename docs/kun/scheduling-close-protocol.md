@@ -108,7 +108,7 @@ DENE-213 的任务说明要求「去 DENE-196 发一条评论，mention 验收�
 | 状态 | `close.status` **且** `issue.status` 与之相等 | 见 2.3 决策表 |
 | 证据 | `close.evidence_comment_id` | 本票一条评论（UUID）；可带 `--attachment` |
 | 下一责任人 | `close.next_owner_type` + `close.next_owner_id` | `agent` / `squad` / `member` / `none` + UUID 或空串 |
-| 唤醒动作 | `close.wake_action` | `stage_done` / `mention` / `none` |
+| 唤醒动作 | `close.wake_action` | `stage_done` / `mention` / `route` / `none` |
 
 可选：`close.waiting_on`（另一个 issue 的 identifier，如 `DENE-196`），仅当本票在等另一张票时写。这把 1.3 的隐式等待变成显式字段。
 
@@ -116,23 +116,45 @@ DENE-213 的任务说明要求「去 DENE-196 发一条评论，mention 验收�
 
 载体：issue metadata KV（已有 API，`issue_metadata.go:21-32`）。键规则 `^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`，值只能是 string / number / bool。所以全部用扁平 `close.*` 字符串，禁止 JSON 对象。
 
-CLI（现有，不新增子命令）：
+CLI（DENE-859 起）：一条命令做完整个收口。
 
 ```bash
-multica issue metadata set <issue-id> --key close.conclusion --value delivered
-multica issue metadata set <issue-id> --key close.status --value done
-multica issue metadata set <issue-id> --key close.evidence_comment_id --value <comment-uuid>
-multica issue metadata set <issue-id> --key close.next_owner_type --value agent
-multica issue metadata set <issue-id> --key close.next_owner_id --value <agent-uuid>
-multica issue metadata set <issue-id> --key close.wake_action --value stage_done
-multica issue metadata set <issue-id> --key close.waiting_on --value DENE-196   # 可选
-multica issue metadata set <issue-id> --key close.at --value 2026-09-15T12:00:00Z
+multica issue close <id> --outcome done      --evidence-file ./close.md                     # 交付：子票、或没有验收门的顶层票；关联 PR 还开着就先合并，合不进去落成 blocked 并在回复里说明
+multica issue close <id> --outcome in_review --evidence-file ./close.md                     # 顶层票交付，等验收；要有关联 PR（纯文档票用 --no-code <原因>）；验收席为空则同一次调用补异族席位，再由路由交棒
+multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # 或 --wake-at / --wait-condition + --wait-timeout / --needs-human
+multica issue close <id> --outcome done --verdict pass --evidence-file ./close.md           # 验收席放行：平台合并 PR，再写 done
 ```
 
-写入时机（顺序写死，Stage 2 测试按此断言）：
+服务端（`POST /api/issues/{id}/close`）在**一个事务**里做三件事：建证据评论、改 `issue.status`、写全部 `close.*` 键；落库前先过 `closeprotocol.Validate`，不合规就整体拒绝，并在错误里点名缺的那一项（缺证据、缺等待、子票不进 `in_review`、`awaiting_human` 缺责任人……）。事务外只剩叫醒（父票屏障、`waiting_on` 等待方、路由）——这些照原有路径跑，失败不回滚已落库的收口。
 
-1. 先写 `issue.status`（`multica issue status …`）。失败则停止，不写 metadata，不发唤醒 mention。
-2. 再发证据评论（`--content-file`）。若本回合有 triggering comment，用同一 `--parent`。评论必须含五要素的人读版（见 2.5）。拿到评论 id。
+- `--evidence`（或 `--evidence-file` / `--evidence-stdin`）必填，`--summary` 放在证据上方。本回合有 triggering comment 时带同一 `--parent`；评论触发的 run 在同一张票上默认回那条线程。
+- `--outcome blocked` 必须带 DENE-850 的等待字段之一：`--blocked-by`、`--wake-at`、`--wait-condition` + `--wait-timeout`、`--needs-human`。不带即拒绝。
+- `--outcome in_review` 只给顶层票；子票用它会被拒绝（做完 `done`，卡住 `blocked`）。它走和 `issue status in_review` 同一道送审门禁（DENE-869）：智能体送审必须有关联的 open/draft/merged PR，纯文档或调研票用 `--no-code <原因>` 说明，否则被拒。带 `--needs-human <member>` 记成 `awaiting_human`；不带则是 `awaiting_review` + `wake_action=route`，由路由填验收席，不要求评论里 @ 谁。
+- `--verdict pass` 只配 `--outcome done`，且票必须已在 `in_review`、调用者是验收席：平台先合并 PR 再写 `done`；合不进去（PR 脏、检查红、host 拒绝）回 `blocked` + `block_kind=external`，把原因写进评论。验收不通过不是收口：`multica issue comment add <id> --verdict hold --content-file ./review.md` 叫醒执行人。
+- 返回值如实报：实际写入的状态、PR 有没有合并、叫醒了谁。评论里照抄，不要凭记忆复述。
+
+不收口、只叫醒下一棒时用 `multica issue handoff`（DENE-863，`POST /api/issues/{id}/handoff`），不要手写 @：服务端负责路由和查重，回复以实际落库为准（`target_name`、`run_created`、`duplicate`）。
+
+| 想要 | 调用 |
+|---|---|
+| 交给某个智能体（验收退回执行人、派一件具体的事） | `multica issue handoff <id> --to <智能体名>`；该智能体在这张票上已有进行中的 run 就回 `duplicate: true`，不再排第二个 |
+| 让调度席决定下一棒 | `multica issue handoff <id> --to dispatcher` |
+| 票已在 `in_review`，验收席却没开跑 | `multica issue handoff <id> --to reviewer`；验收席是人时回 409，路由永远不往这个席位填人 |
+
+收口本身已经负责交棒：`--outcome in_review` 会自己路由到验收席，后面不要再补一次 `handoff --to reviewer`。
+
+叫人用 `multica issue summon <id> --to <成员> --reason "..."`（DENE-880，`POST /api/issues/{id}/summon`），不要手写 @。一次调用把四件事做完：写这个人的收件箱（`needs_you`，最高级「需要你」）、把他加成关注者、票上留一条看得见的 @、记一条「等他」的待回复记录。他回复之前再叫一次只回 `duplicate: true`，不出第二条。他回复后平台叫醒执行智能体（叫人的智能体，否则执行人）；那次运行结束票还停在 `blocked`，平台再提醒一次补收口。`issue close` / `issue status` 带 `--needs-human` 已经替你叫了这个人，不用再 summon。路由没人接（`routing_needs_you`）、巡检补不上验收席、跑满时限、额度熔断没人接力，这些场景都走同一个入口。成员自己 @ 成员照旧由提及通知进收件箱，入口只补一条「等他」记录，让他回复时叫醒执行者。
+
+每个人「等我回复」的清单：`GET /api/summons/waiting`（当前用户、当前工作区，未回复、票未结束，按时间倒序），每行带票号、标题、谁叫的（`caller_type` / `caller_name`）、来源（`source`）和原因（`reason`）。
+
+建一整棵分阶段子票用 `multica plan apply <plan.yaml>`（DENE-864，`POST /api/issues/plan-apply`），不要逐张 `issue create` 再改派：父票和全部子票在一个事务里建好，执行人建票时就坐上，stage 1 进 `todo` 开跑，后面的 stage 停在 `backlog`。同一份 plan 再 apply 只补缺的节点，已有的票不改。示例见 `docs/kun/examples/dene-858.plan.yaml`。
+
+阶段自动推进卡住、或调度席决定手动放下一段时用 `multica issue stage advance <父票>`（`POST /api/issues/{id}/stage-advance`）：当前 stage 全部终态才把下一 stage 的 `backlog` 提到 `todo` 并叫醒执行人；没完就回 409，点名还差哪几张票和它们的状态，什么都不写。
+
+旧路径仍然可用（`multica issue status …` → 证据评论 → `multica issue metadata set` 逐键写 `close.*`），顺序写死：
+
+1. 先写 `issue.status`。切到 `blocked` 时同样要带等待字段。失败则停止，不写 metadata，不发唤醒 mention。
+2. 再发证据评论（`--content-file`）。评论必须含五要素的人读版（见 2.5）。拿到评论 id。
 3. 若 `wake_action = mention`，证据评论**正文内**必须含合法 `[@Name](mention://agent|squad/<uuid>)`。`mention://member/…` 和 `mention://issue/…` 不算唤醒。
 4. 最后逐键写 `close.*`。`close.status` 必须等于步骤 1 写入后的 `issue.status`。`close.evidence_comment_id` 必须等于步骤 2 的评论 id。
 5. 同一回合退出前，`issue.status`、评论、metadata 三者一致。缺一视为未收口。
@@ -153,12 +175,12 @@ multica issue metadata set <issue-id> --key close.at --value 2026-09-15T12:00:00
 | --- | --- | --- | --- | --- | --- | --- |
 | A | `delivered` | 本票 ask 已交付，**不** `needs_acceptance`，且 `is_staged_child` | `done` | 父票 assignee（agent/squad）或 `none`（父票 member/无 assignee） | `stage_done` | 仅当本完成关闭屏障时，由 **server** 唤醒父票 assignee。Agent **不要**再 mention 父票 assignee（防双发） |
 | B | `delivered` | 本票 ask 已交付，**不** `needs_acceptance`，不是 staged child | `done` | `none`，除非 AC 点名要叫醒某人 | `none` 或 `mention`（仅当 AC 点名） | 无父票屏障。需要叫醒时必须 `mention` |
-| C | `awaiting_review` | 顶层父票 `needs_acceptance` 且验收人是 agent（Reviewer 席） | `in_review` | 该 Reviewer agent | `mention` | 证据评论里 `mention://agent/<reviewer>`。**不** `done`；子票屏障已由终态事实关闭 |
+| C | `awaiting_review` | 顶层父票 `needs_acceptance` 且验收人是 agent（Reviewer 席） | `in_review` | 该 Reviewer agent，或 `none` 交给路由填席 | `route`（`issue close --outcome in_review` 写的就是这个）或 `mention` | `route`：路由把票交给验收席，无需评论里 @；`mention`：证据评论里 `mention://agent/<reviewer>`。**不** `done`；子票屏障已由终态事实关闭 |
 | D | `awaiting_human` | 顶层父票 `needs_acceptance` 且验收人是人类 | `in_review` | 该 member | `none` | `mention://member/…` **不会入队**。人类靠 inbox/看板。可另 `mention` 一个 dispatcher agent 做看门，此时 `wake_action=mention` 且 next_owner 是那个 agent |
 | E | `blocked` | 缺权限 / 外人决策 / 外部依赖 | `blocked` | 能解阻塞的人：人类决策用 member；能继续跑的 agent 用 agent | `mention`（next_owner 是 agent/squad 时）或 `none`（纯人类） | 不关屏障。父票继续等 |
 | F | 本回合没有交付本票 ask（答问、旁证） | — | **不改状态** | — | — | 不写 `close.*` |
 
-`cancelled` 不在本协议的 agent 收尾表里。取消是用户决策（`issues.md` cancelled 段）。Agent 不得把做不完写成 `cancelled`。
+`cancelled` 不在本协议的 agent 收尾表里。取消是用户决策（`issues.md` cancelled 段）。Agent 不得把做不完写成 `cancelled`。 `issue close --outcome cancelled` 存在只是为了让人（或被人明确授权的 agent）取消时也留下完整收口记录：它记成 `delivered` + `stage_done`，父票屏障按 cancelled 计入 done 侧。
 
 ### 2.4 四种收尾场景（对照上表）
 
@@ -176,15 +198,15 @@ multica issue metadata set <issue-id> --key close.at --value 2026-09-15T12:00:00
 - 状态：`in_review`。
 - 证据：PR URL、验证命令、未测项。
 - 下一责任人：Reviewer agent UUID。
-- 唤醒：证据评论含 `mention://agent/<reviewer>`。**禁止**同时 `done`。
-- 通过之后不留在本场景。验收席发一条带单独 `verdict: pass` 行的评论（`multica issue comment add <id> --verdict pass`），平台合并关联 PR 并置 `done`；合不进去就改成结构化阻塞（DENE-850）。停在 `in_review` 只属于场景 D，而且必须写明人和决定。路由的「需要人拍板」不是场景 D。
+- 唤醒：`issue close --outcome in_review` 写 `wake_action=route`，路由把票交给验收席；手写记录则用 `multica issue handoff <id> --to reviewer` 叫醒验收席，不在评论里手写 @。**禁止**同时 `done`。
+- 通过之后不留在本场景。验收席用 `multica issue close <id> --outcome done --verdict pass`（或发一条带单独 `verdict: pass` 行的评论），平台合并关联 PR 并置 `done`；合不进去就改成结构化阻塞（DENE-850）。停在 `in_review` 只属于场景 D，而且必须写明人和决定。路由的「需要人拍板」不是场景 D。
 
 **`in_review`（场景 D，人工验收）**
 
 - 用：真机、余额、第三方账号、kk zi 本人感受。DENE-193 电话播报是原型。这不是默认。验收通过但没写明人和决定的，走放行，不走这里。
 - 状态：`in_review`。
 - 证据：已做项 +「待人工测试」清单，不得把未测写成已过。
-- 下一责任人：人类 member。`wake_action=none`（member mention 不入队）。若需要 agent 盯着，另设 dispatcher 为 next_owner 并 `mention`。
+- 下一责任人：人类 member（`issue close --outcome in_review --needs-human <member>`）。`wake_action=none`（member mention 不入队）。若需要 agent 盯着，另设 dispatcher 为 next_owner 并 `mention`。
 - 唤醒：不关屏障。父票继续等，这是故意的——人工验收未过不能晋升下一 stage。
 
 **`blocked`（场景 E）**
@@ -193,7 +215,7 @@ multica issue metadata set <issue-id> --key close.at --value 2026-09-15T12:00:00
 - 状态：`blocked`。
 - 证据：缺什么、谁能给、不猜替代。
 - 下一责任人：能解阻塞的 agent 或人类。
-- 唤醒：agent/squad 用 `mention`；人类 `none`。不关屏障。
+- 唤醒：agent/squad 用 `mention`；人类 `none`。不关屏障。`issue close --outcome blocked` 把 DENE-850 的等待字段和 `close.block_kind` / `close.block_action` 一起写好：`--blocked-by` → `dependency`，`--needs-human` → `decision`，其余 → `external`，`block_action` 取 `--summary` 或等待条件。
 
 ### 2.5 证据评论人读模板
 
@@ -337,7 +359,7 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 | `close.evidence_comment_id` | 评论 UUID | 同上 | 证据评论创建成功之后 |
 | `close.next_owner_type` | `agent` `squad` `member` `none` | 同上 | 同上 |
 | `close.next_owner_id` | UUID；type=`none` 时 `""` | 同上 | 同上 |
-| `close.wake_action` | `stage_done` `mention` `none` | 同上 | 同上 |
+| `close.wake_action` | `stage_done` `mention` `route` `none` | 同上 | 同上 |
 | `close.waiting_on` | identifier（`DENE-196`）或 `""` | 同上 | 有跨票等待时必填，否则 `""` |
 | `close.at` | RFC3339 UTC | 同上 | 最后一键 |
 | `close.block_kind` | `decision` `permission` `external` `dependency` `capacity`；仅 blocked 收口必填 | 收尾 agent | 与 blocked 收口一并写入 |
@@ -345,15 +367,16 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 
 阻塞扩展校验：`conclusion=blocked` 的新记录必须同时提供上述两个字段；旧记录缺少两字段时保持可读兼容。`block_kind=dependency` 必须有非空 `close.waiting_on`，且 `decision` / `permission` 必须指定具体的 `member`、`agent` 或 `squad` 责任人。非 blocked 收口的两个字段必须为空或不存在，避免解除阻塞后残留旧原因。人类审核逾期阈值按产品决策为 24 小时；`capacity` 阻塞不计入“需要你”摘要。
 
-切到 `blocked` 本身还要在 `multica issue status` 上带上挡路说明（DENE-850）：`--blocked-by`、`--wake-at`、`--wait-condition` 加 `--wait-timeout`、或 `--needs-human`，至少一种。Agent 不带这些字段会被拒绝；上次用过、已经到点或已经叫醒过的记录不算。票离开 `blocked` 时整套 `block.*` 等待会被清掉。`close.waiting_on` 仍然会在被等票进入终态时叫醒等待方；`block.blocked_by` 是同一条边上的多票写法。验收通过只认单独一行的 `verdict: pass`（或 `multica issue comment add --verdict pass`），由平台合并并关票，合不进去就写成结构化阻塞，不留在 `in_review`。句子里的「通过」只提示怎么写这一行，不会合并。同一段等待最多叫醒一次；验收人是人、或票在等 `needs_human` 时只留言，不排运行。巡检只看本功能开始盯上之后才进入阻塞或待验收的票。这层不替代取消重试（DENE-813）、额度换席（DENE-836）或停用席位叫醒（DENE-848）。跑满工作区时限（`task_time_limit`）按重试预算在原会话和工作目录里续跑，续跑先收口已有进度再把剩余工作拆小；预算用尽改为 `blocked` 并留言，不再停在 `todo`。执行席是 agent 的父票切到 `in_review` 时如果验收席为空，补一个异族验收席并开始验收，选不出来就不进 `in_review`。直接写成 `done` 时，关联 PR 还开着：能干净合并且检查是绿的就先合并再关，否则改成带等待条件和到点叫醒的结构化阻塞。
+切到 `blocked` 本身还要在 `multica issue status`（或 `multica issue close --outcome blocked`）上带上挡路说明（DENE-850）：`--blocked-by`、`--wake-at`、`--wait-condition` 加 `--wait-timeout`、或 `--needs-human`，至少一种。Agent 不带这些字段会被拒绝；上次用过、已经到点或已经叫醒过的记录不算。票离开 `blocked` 时整套 `block.*` 等待会被清掉。`close.waiting_on` 仍然会在被等票进入终态时叫醒等待方；`block.blocked_by` 是同一条边上的多票写法。验收通过只认单独一行的 `verdict: pass`（或 `multica issue comment add --verdict pass`），由平台合并并关票，合不进去就写成结构化阻塞，不留在 `in_review`。句子里的「通过」只提示怎么写这一行，不会合并。同一段等待最多叫醒一次；验收人是人、或票在等 `needs_human` 时只留言，不排运行。巡检只看本功能开始盯上之后才进入阻塞或待验收的票。这层不替代取消重试（DENE-813）、额度换席（DENE-836）或停用席位叫醒（DENE-848）。跑满工作区时限（`task_time_limit`）按重试预算在原会话和工作目录里续跑，续跑先收口已有进度再把剩余工作拆小；预算用尽改为 `blocked` 并留言，不再停在 `todo`。执行席是 agent 的父票切到 `in_review` 时如果验收席为空，补一个异族验收席并开始验收，选不出来就不进 `in_review`。直接写成 `done` 时，关联 PR 还开着：能干净合并且检查是绿的就先合并再关，否则改成带等待条件和到点叫醒的结构化阻塞。
 
 校验（Stage 2 测试写死）：
 
 - `close.status` ∈ 七个 canonical key，且 `== issue.status`。
 - `wake_action=stage_done` ⇒ `close.status` ∈ {`done`,`cancelled`} 且 `close.conclusion=delivered`。
 - `wake_action=mention` ⇒ `next_owner_type` ∈ {`agent`,`squad`} 且 `next_owner_id` 非空，且证据评论 body 匹配 `mention://(agent|squad)/<next_owner_id>`。
-- `conclusion=awaiting_review` ⇒ `close.status=in_review` 且 `wake_action=mention`。
-- `conclusion=awaiting_human` ⇒ `close.status=in_review` 且 `next_owner_type=member`（若同时 mention 了 dispatcher，允许 `next_owner_type=agent` 且 `wake_action=mention`，但 `waiting_on` 或证据里必须写出人类验收人）。
+- `wake_action=route` ⇒ `close.status=in_review`（路由填验收席，DENE-859）。
+- `conclusion=awaiting_review` ⇒ `close.status=in_review` 且 `wake_action` ∈ {`mention`,`route`}。
+- `conclusion=awaiting_human` ⇒ `close.status=in_review` 且 `next_owner_type=member`（若同时 mention 了 dispatcher，允许 `next_owner_type=agent` 且 `wake_action` ∈ {`mention`,`route`}，但 `waiting_on` 或证据里必须写出人类验收人）。
 - `conclusion=blocked` ⇒ `close.status=blocked`。
 - `conclusion=blocked` ⇒ 新记录的 `close.block_kind` / `close.block_action` 合法且动作不超过 80 个字符；`dependency` 必须配 `waiting_on`。
 - `waiting_on` 非空 ⇒ `close.status` ∈ {`in_review`,`blocked`,`in_progress`}，禁止 `done`。
@@ -362,10 +385,10 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 
 | 角色 | 默认结论 | 默认状态 | 唤醒 |
 | --- | --- | --- | --- |
-| Builder（父票有 PR/需审） | `awaiting_review` | `in_review` | mention Reviewer。PR 标题带 identifier；**不要**在仍等 Reviewer 时 `done`。`Closes` 留给合并 |
+| Builder（父票有 PR/需审） | `awaiting_review` | `in_review` | `issue close --outcome in_review`，路由交给 Reviewer。PR 标题带 identifier；**不要**在仍等 Reviewer 时 `done`。`Closes` 留给合并 |
 | Builder（子票交付） | `delivered` | `done` | `stage_done`；不设置或触发独立 Reviewer，由父票统一验收 |
 | Builder（无验收门） | `delivered` | `done` | `stage_done`，禁止再 mention 父 assignee |
-| Reviewer 通过，这次改动自己的检查是绿的，且没有显式人工保留 | `delivered` | 发 `--verdict pass` 评论，平台合并 PR 并置 `done`；合不进去平台改成 `blocked` 并叫醒执行人 | `stage_done` |
+| Reviewer 通过，这次改动自己的检查是绿的，且没有显式人工保留 | `delivered` | `issue close --outcome done --verdict pass`（或发 `--verdict pass` 评论）：同一次调用里平台合并 PR 并置 `done`；合不进去平台改成 `blocked` 并叫醒执行人 | `stage_done` |
 | Reviewer 通过，但票上写明在等某个人做某个只有这个人能做的决定 | `awaiting_human` | `in_review` | `none`。评论写出那个人和要定的事。路由评论里的「需要人拍板」不是这一行 |
 | Reviewer 通过，但这次改动自己的检查是红的 | 不收口 | `in_progress`，mention Builder | `mention` |
 | Reviewer 通过且已经合并 | `delivered` | 若 webhook 未把票打成 `done`，CLI 补 `done` | `stage_done` |
@@ -385,6 +408,9 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 Dispatcher **禁止**在 Stage N 子票仍是 `in_review`/`blocked`/`in_progress` 时把 Stage N+1 从 `backlog` 提到 `todo`。晋升条件写死：`issue children` 里该 stage 的 `done` 计数 = `total`（cancelled 计入 done 侧，与 `status_category` 终态一致）。
 
 ### 6.3 Stage 2 代码落点（最小，不改调度器）
+
+DENE-859 之后的落点：`server/internal/handler/issue_close.go`（`POST /api/issues/{id}/close`，事务内评论 + 状态 + `close.*`，落库前 `closeprotocol.Validate`；`done` / `in_review` 走和 `issue status` 相同的 `guardSilentStall`（DENE-857）：开着的 PR 先合、验收席空则补席，改写了状态时 `close.*` 随实际状态写，回复里带 `warnings`），`server/cmd/multica/cmd_issue.go`（`issue close`），`closeprotocol.WakeRoute`。四个场景的自动断言在 `issue_close_test.go`：`done` 缺证据被拒、`blocked` 缺等待被拒、正常 `in_review`、验收 `--verdict pass` 后合并。以下是 Stage 2 当时的记录。
+
 
 1. **builtin skill** `server/internal/service/builtin_skills/multica-platform/references/issues.md`：加「Close protocol」一节，指向本页决策表。这是 agent 运行时会读到的约束。
 2. **本 fork 文档**保持本页为权威；skill 节是摘录，不得另写一套状态含义。

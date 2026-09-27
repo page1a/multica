@@ -437,7 +437,10 @@ type Handler struct {
 	// PRMerger overrides PRRefresh for the acceptance-pass merge (DENE-850).
 	// Tests set it; production leaves it nil and uses PRRefresh.
 	PRMerger PullMerger
-	cfg      Config
+	// PRBaseChecks overrides PRRefresh for reading a PR's base branch CI in
+	// the merge gates (DENE-892). Tests set it; production leaves it nil.
+	PRBaseChecks BaseCheckReader
+	cfg          Config
 }
 
 // PullMerger merges one linked pull request. A nil result from the deployment
@@ -569,6 +572,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			},
 		},
 	})
+	// The parking record's one sentence comes from the same routing model,
+	// under the same switch and breaker (DENE-881).
+	taskSvc.ParkingSummarizer = h.Routing
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	// The default passthrough scheduler reports sweeper-race recoveries so the
 	// daemon:register refresh fires even without the production batched wiring.

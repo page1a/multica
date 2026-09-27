@@ -698,6 +698,10 @@ func (c *Client) ReportUpdateResult(ctx context.Context, runtimeID, updateID str
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/update/%s/result", runtimeID, updateID), result, nil)
 }
 
+func (c *Client) ReportDaemonPullRequests(ctx context.Context, workspaceID string, prs any) error {
+	return c.postJSON(ctx, "/api/daemon/pull-requests/report", map[string]any{"workspace_id": workspaceID, "pull_requests": prs}, nil)
+}
+
 // ReportAgentCLIStatus stores the current/latest/error snapshot for one
 // agent CLI on the runtime row the page reads.
 func (c *Client) ReportAgentCLIStatus(ctx context.Context, runtimeID string, body map[string]any) error {

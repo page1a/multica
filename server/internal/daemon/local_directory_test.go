@@ -1363,8 +1363,13 @@ func TestWaitingTaskReleasesItsSlotWhileParked(t *testing.T) {
 	// The second task arrives with a slot of its own (a two-slot poller would
 	// have handed it one). Give it slot 7 so the index it holds afterwards is
 	// distinguishable from the first task's slot 0.
-	var woke atomic.Int32
-	secondLease := newTaskSlotLease(sem, 7, func() { woke.Add(1) })
+	woke := make(chan struct{}, 1)
+	secondLease := newTaskSlotLease(sem, 7, func() {
+		select {
+		case woke <- struct{}{}:
+		default:
+		}
+	})
 	type result struct {
 		release func()
 		abort   bool
@@ -1386,7 +1391,11 @@ func TestWaitingTaskReleasesItsSlotWhileParked(t *testing.T) {
 	if returned != 7 {
 		t.Fatalf("returned slot = %d, want 7 (the waiter's own slot)", returned)
 	}
-	if woke.Load() == 0 {
+	// Release hands the slot back before it calls wakeup, so the wakeup can
+	// land just after the slot is received here: wait for it, don't sample.
+	select {
+	case <-woke:
+	case <-time.After(5 * time.Second):
 		t.Error("returning the slot did not wake the poller")
 	}
 	select {

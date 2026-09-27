@@ -368,14 +368,26 @@ func BuildIssueDelivery(ctx context.Context, q *db.Queries, issue db.Issue) (*Is
 		}
 	}
 
+	// A merged canonical PR is delivery. A closed issue counts too, but only
+	// when no PR on the line contradicts it: DENE-859 was `done` with its PR
+	// still open, and the line must not claim that was merged. A closed issue
+	// whose line never had a PR (no-code, or rescued elsewhere) stays merged so
+	// its worktrees remain cleanable.
 	issueClosed := issue.Status == issuestatus.Done || issue.Status == issuestatus.Cancelled
+	unmergedPR := false
+	for _, b := range out.Branches {
+		if b.PullRequest != nil && b.PullRequest.MergedAt == nil {
+			unmergedPR = true
+		}
+	}
 	if out.Canonical == nil {
 		if len(out.Branches) > 0 {
 			out.Problems = append(out.Problems, "没有 canonical 交付线：用 set-canonical 指定一条")
 		}
-		out.Merged = issueClosed
+		out.Merged = issueClosed && !unmergedPR
 	} else {
-		out.Merged = issueClosed || (out.Canonical.PullRequest != nil && out.Canonical.PullRequest.MergedAt != nil)
+		canonicalMerged := out.Canonical.PullRequest != nil && out.Canonical.PullRequest.MergedAt != nil
+		out.Merged = canonicalMerged || (issueClosed && !unmergedPR)
 	}
 	for _, b := range out.Branches {
 		if b.Role == DeliveryRoleCanonical {

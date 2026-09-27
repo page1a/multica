@@ -42,6 +42,22 @@ function refreshInboxAfterWrite(qc: QueryClient, wsId: string) {
   void onInboxSummaryInvalidate(qc);
 }
 
+/**
+ * Read one issue's inbox rows when its detail opens (DENE-901). The server
+ * skips the rows an open call on the viewer hangs on; those clear when the
+ * call is answered or closed.
+ */
+export function useMarkIssueInboxRead() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (issueId: string) => api.markIssueInboxRead(issueId),
+    onSuccess: (data) => {
+      if (data.count > 0) refreshInboxAfterWrite(qc, wsId);
+    },
+  });
+}
+
 export function useMarkInboxRead() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

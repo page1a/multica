@@ -6339,7 +6339,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, lease *taskSlotLease
 		return
 	}
 
-	d.reportTaskResult(ctx, task.ID, result, taskLog)
+	d.reportTaskResultForTask(ctx, task, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
 	// can look up the parent record (issue / chat session / autopilot run /
@@ -6687,6 +6687,11 @@ func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Tas
 // the next chat turn to resume there rather than start over and "forget"
 // the conversation.
 func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result TaskResult, taskLog *slog.Logger) {
+	d.reportTaskResultForTask(ctx, Task{ID: taskID}, result, taskLog)
+}
+
+func (d *Daemon) reportTaskResultForTask(ctx context.Context, task Task, result TaskResult, taskLog *slog.Logger) {
+	taskID := task.ID
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
@@ -6703,6 +6708,9 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			sessionRestartReason:  result.SessionRestartReason,
 		})
 		if err == nil {
+			if err := d.reportLocalPullRequests(ctx, task, result); err != nil {
+				taskLog.Warn("daemon PR report failed", "error", err)
+			}
 			return
 		}
 		// The original completion is already durable. Never overwrite it with a

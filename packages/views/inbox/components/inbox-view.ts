@@ -13,3 +13,19 @@
 export type InboxView = "inbox" | "archived";
 
 export const ARCHIVED_VIEW_PARAM = "archived";
+
+/**
+ * The inbox has two layers (DENE-882): the one-row-per-issue board on top, and
+ * the full notification list below it, opened as `?layer=activity`. A link that
+ * already points into the list — `?issue=` or `?view=archived` — lands there too.
+ */
+export const LAYER_PARAM = "layer";
+export const ACTIVITY_LAYER_PARAM = "activity";
+
+export function isActivityLayer(searchParams: URLSearchParams): boolean {
+  return (
+    searchParams.get(LAYER_PARAM) === ACTIVITY_LAYER_PARAM ||
+    searchParams.has("issue") ||
+    searchParams.get("view") === ARCHIVED_VIEW_PARAM
+  );
+}

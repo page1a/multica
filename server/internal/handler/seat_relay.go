@@ -13,7 +13,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/stagegate"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // stagePlan is what closing a stage should do besides the existing comment.
@@ -149,9 +148,7 @@ func (h *Handler) promoteClearNextStage(ctx context.Context, parent db.Issue, ch
 		if label == "" {
 			label = item.Title
 		}
-		updated, err := h.Queries.PromoteBacklogIssueToTodo(ctx, db.PromoteBacklogIssueToTodoParams{
-			ID: child.ID, WorkspaceID: child.WorkspaceID,
-		})
+		_, ran, err := h.promoteChildToTodo(ctx, child, "system", "")
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Another close already moved this child out of backlog.
 			continue
@@ -161,18 +158,8 @@ func (h *Handler) promoteClearNextStage(ctx context.Context, parent db.Issue, ch
 			held = append(held, stagegate.Hold{ID: item.ID, Identifier: item.Identifier, Title: item.Title, Reason: "提到待办失败"})
 			continue
 		}
-		h.publish(protocol.EventIssueUpdated, uuidToString(updated.WorkspaceID), "system", "", RoutingIssueUpdatedPayload(child, updated))
-		ran := false
-		if h.IssueService != nil {
-			if trigger, ok := h.IssueService.WillEnqueueRun(ctx, service.IssueTriggerInput{
-				Issue: updated, PrevStatus: child.Status, StatusChanged: true,
-			}, service.IssueTriggerProbe{}); ok {
-				h.dispatchIssueRun(ctx, updated, trigger, "system", "", "")
-				ran = true
-				started++
-			}
-		}
 		if ran {
+			started++
 			promoted = append(promoted, label)
 			continue
 		}

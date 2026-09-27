@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -456,5 +457,48 @@ func TestStaleAfterFallsBackToTheDefault(t *testing.T) {
 	}
 	if got := (Settings{StaleReviewHours: 6}).StaleAfter(); got != 6*time.Hour {
 		t.Errorf("StaleAfter(6) = %v, want 6h", got)
+	}
+}
+
+func TestSweepRoutesQuietTodoSeatsWithinSharedBudget(t *testing.T) {
+	store := newFakeStore()
+	store.workspaces = []string{"ws-1"}
+	store.todoIDs = []string{"issue-1"}
+	store.issue.Status = "todo"
+	store.issue.LastActivityAt = time.Now().Add(-time.Hour)
+	judge := &fakeJudge{verdict: confidentVerdict()}
+
+	report, err := newRouter(store, judge).Sweep(context.Background())
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if report.Examined != 1 {
+		t.Fatalf("examined = %d, want 1", report.Examined)
+	}
+	if len(store.assigns) != 1 {
+		t.Fatalf("todo executor assignments = %v, want one", store.assigns)
+	}
+}
+
+// Todos Route cannot seat come back every pass; they must not crowd the
+// acceptance row out of the shared budget.
+func TestSweepKeepsHalfTheBudgetForStaleReviews(t *testing.T) {
+	store := newFakeStore()
+	store.workspaces = []string{"ws-1"}
+	for i := 0; i < staleSweepLimit; i++ {
+		store.todoIDs = append(store.todoIDs, fmt.Sprintf("todo-%d", i))
+		store.staleIDs = append(store.staleIDs, fmt.Sprintf("review-%d", i))
+	}
+	store.issue.Status = "backlog" // every pass is a noop; only the budget matters
+
+	report, err := newRouter(store, &fakeJudge{verdict: confidentVerdict()}).Sweep(context.Background())
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if report.Examined != staleSweepLimit {
+		t.Fatalf("examined = %d, want the full budget %d", report.Examined, staleSweepLimit)
+	}
+	if store.staleLimit != staleSweepLimit/2 || store.todoLimit != staleSweepLimit-staleSweepLimit/2 {
+		t.Fatalf("budget split stale=%d todo=%d, want %d/%d", store.staleLimit, store.todoLimit, staleSweepLimit/2, staleSweepLimit-staleSweepLimit/2)
 	}
 }

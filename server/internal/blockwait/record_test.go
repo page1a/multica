@@ -421,3 +421,60 @@ func TestFailureWakeBacksOff(t *testing.T) {
 		t.Fatalf("patrol did not wake once the backoff elapsed: %+v", d)
 	}
 }
+
+// DENE-892: the gate holds a PR only for the failures it brings in itself.
+func TestGateLetsThroughOnlyBaselineFailures(t *testing.T) {
+	now := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	kunRed := &BaseChecks{Branch: "kun", Failed: []string{"backend-tests", "frontend-test"}}
+	red := func(base *BaseChecks, failed ...string) PRSnapshot {
+		return PRSnapshot{Number: 380, State: "open", Mergeable: "unstable", Checks: "FAILURE", FailedChecks: failed, Base: base}
+	}
+	gates := map[string]func([]PRSnapshot, time.Time) Decision{"close": DecideClose, "release": DecideRelease}
+	for name, gate := range gates {
+		same := gate([]PRSnapshot{red(kunRed, "frontend-test")}, now)
+		if same.Action != ReleaseMerge || strings.Join(same.Inherited, ",") != "frontend-test" || same.BaseBranch != "kun" {
+			t.Fatalf("%s: baseline red + same red = %#v", name, same)
+		}
+		if !strings.Contains(same.Reason, "因主线原有失败放行：frontend-test") {
+			t.Fatalf("%s: reason = %q", name, same.Reason)
+		}
+
+		green := gate([]PRSnapshot{red(&BaseChecks{Branch: "kun"}, "frontend-test")}, now)
+		if green.Action != ReleaseBlock || !strings.Contains(green.Record.WaitCondition, "新引入：frontend-test") {
+			t.Fatalf("%s: baseline green + red = %#v", name, green)
+		}
+
+		extra := gate([]PRSnapshot{red(kunRed, "frontend-test", "migration-lint")}, now)
+		if extra.Action != ReleaseBlock || !strings.Contains(extra.Record.WaitCondition, "新引入：migration-lint") || len(extra.Inherited) != 0 {
+			t.Fatalf("%s: baseline red + extra red = %#v", name, extra)
+		}
+
+		unknown := gate([]PRSnapshot{red(nil, "frontend-test")}, now)
+		if unknown.Action != ReleaseBlock || !strings.Contains(unknown.Record.WaitCondition, "没拿到主线基线") {
+			t.Fatalf("%s: no baseline = %#v", name, unknown)
+		}
+
+		running := red(kunRed, "frontend-test")
+		running.RunningChecks = 1
+		if d := gate([]PRSnapshot{running}, now); d.Action != ReleaseBlock {
+			t.Fatalf("%s: still running = %#v", name, d)
+		}
+
+		conflict := red(kunRed, "frontend-test")
+		conflict.Mergeable = "dirty"
+		if d := gate([]PRSnapshot{conflict}, now); d.Action != ReleaseBlock || !strings.Contains(d.Record.WaitCondition, "合并冲突") {
+			t.Fatalf("%s: conflict = %#v", name, d)
+		}
+
+		protected := red(kunRed, "frontend-test")
+		protected.Mergeable = "blocked"
+		if d := gate([]PRSnapshot{protected}, now); d.Action != ReleaseBlock || !strings.Contains(d.Record.WaitCondition, "分支保护") {
+			t.Fatalf("%s: branch rule = %#v", name, d)
+		}
+
+		namesMissing := red(kunRed)
+		if d := gate([]PRSnapshot{namesMissing}, now); d.Action != ReleaseBlock {
+			t.Fatalf("%s: red rollup without names = %#v", name, d)
+		}
+	}
+}

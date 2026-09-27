@@ -36,7 +36,6 @@ import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { ChatMessageList, ChatMessageSkeleton } from "./components/chat-message-list";
 import { ChatInput } from "./components/chat-input";
-import { ProviderQuotaStrip } from "./components/provider-quota-strip";
 import { ChatQueue } from "./components/chat-queue";
 import { ChatThreadList } from "./components/chat-thread-list";
 import { ChatProjectBar } from "./components/chat-project-bar";
@@ -416,7 +415,6 @@ export function ChatPage() {
         isProjectUpdating={c.isProjectUpdating}
         focusRequest={c.focusInputRequest}
       />
-      <ProviderQuotaStrip />
     </div>
   );
 

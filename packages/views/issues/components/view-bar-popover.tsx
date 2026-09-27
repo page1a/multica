@@ -20,8 +20,6 @@ import {
   GripVertical,
   MoreHorizontal,
   Pencil,
-  Pin,
-  PinOff,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -112,20 +110,16 @@ export function DeleteViewConfirm({
 function SortablePanelRow({
   item,
   active,
-  pinned,
   onSelect,
   onEdit,
   onDelete,
-  onTogglePin,
   onHide,
 }: {
   item: ViewBarItem;
   active: boolean;
-  pinned: boolean;
   onSelect: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
-  onTogglePin?: () => void;
   onHide?: () => void;
 }) {
   const { t } = useT("issues");
@@ -201,12 +195,6 @@ function SortablePanelRow({
                 {t(($) => $.view_bar.delete)}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onClick={onTogglePin}>
-              {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-              {pinned
-                ? t(($) => $.view_bar.context_unpin)
-                : t(($) => $.view_bar.context_pin)}
-            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onHide}>
               <EyeOff className="size-3.5" />
@@ -230,12 +218,10 @@ export function ViewListPanel({
   items,
   fitCount,
   activeViewId,
-  pinnedViewIds,
   onMoveItem,
   onSelectItem,
   onEditView,
   onDeleteView,
-  onTogglePin,
   onHideItem,
 }: {
   /** All bar candidates in order (hidden ones excluded, as on the bar). */
@@ -243,13 +229,11 @@ export function ViewListPanel({
   /** How many currently fit on the bar — the fold line. */
   fitCount: number;
   activeViewId: string | null;
-  pinnedViewIds: ReadonlySet<string>;
   /** Reorder request: move the item with `activeId` next to `overId`. */
   onMoveItem: (activeId: string, overId: string) => void;
   onSelectItem: (item: ViewBarItem) => void;
   onEditView: (view: IssueView) => void;
   onDeleteView: (view: IssueView) => void;
-  onTogglePin: (view: IssueView, pinned: boolean) => void;
   onHideItem: (barItemId: string) => void;
 }) {
   const sensors = useSensors(
@@ -291,15 +275,9 @@ export function ViewListPanel({
                     ? item.view.id === activeViewId
                     : false
                 }
-                pinned={!!item.view && pinnedViewIds.has(item.view.id)}
                 onSelect={() => onSelectItem(item)}
                 onEdit={item.view ? () => onEditView(item.view!) : undefined}
                 onDelete={item.view ? () => onDeleteView(item.view!) : undefined}
-                onTogglePin={
-                  item.view
-                    ? () => onTogglePin(item.view!, pinnedViewIds.has(item.view!.id))
-                    : undefined
-                }
                 onHide={() => onHideItem(item.barItemId)}
               />
             </div>

@@ -308,7 +308,21 @@ FROM (
               )
         ))
       )
-    ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
+    -- An unread row an open call hangs on keeps its issue unread even under
+    -- a newer row that was read (DENE-901): MarkAllInboxRead leaves exactly
+    -- those rows, and the badge must keep counting the "等你" ticket.
+    ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id),
+             (i.read = false AND NOT NOT EXISTS (
+          SELECT 1 FROM issue_summon s
+          JOIN issue siss ON siss.id = s.issue_id
+          WHERE s.issue_id = i.issue_id
+            AND s.recipient_id = i.recipient_id
+            AND s.answered_at IS NULL
+            AND siss.status NOT IN ('done', 'cancelled')
+            AND (s.inbox_item_id = i.id
+                 OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+      )) DESC,
+             i.created_at DESC
 ) newest
 WHERE newest.read = false
 GROUP BY newest.workspace_id
@@ -719,9 +733,117 @@ func (q *Queries) ListInboxItems(ctx context.Context, arg ListInboxItemsParams) 
 	return items, nil
 }
 
+const listUnreadInboxIssues = `-- name: ListUnreadInboxIssues :many
+SELECT i.issue_id,
+       count(*)::bigint AS unread_count,
+       count(*) FILTER (WHERE NOT (NOT EXISTS (
+      SELECT 1 FROM issue_summon s
+      JOIN issue siss ON siss.id = s.issue_id
+      WHERE s.issue_id = i.issue_id
+        AND s.recipient_id = i.recipient_id
+        AND s.answered_at IS NULL
+        AND siss.status NOT IN ('done', 'cancelled')
+        AND (s.inbox_item_id = i.id
+             OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+  )))::bigint AS held_count,
+       max(i.created_at)::timestamptz AS latest_at,
+       bool_and(i.type IN ('agent_access_request', 'agent_access_approved', 'agent_access_declined'))::bool AS personal_only,
+       iss.number AS issue_number,
+       iss.title AS issue_title,
+       iss.status AS issue_status,
+       iss.parent_issue_id AS issue_parent_issue_id,
+       COALESCE(iss.visibility, 'workspace')::text AS issue_visibility,
+       COALESCE(iss.creator_type, '')::text AS issue_creator_type,
+       iss.creator_id AS issue_creator_id,
+       iss.project_id AS issue_project_id,
+       COALESCE(iss.assignee_type, '')::text AS issue_assignee_type,
+       iss.assignee_id AS issue_assignee_id
+FROM inbox_item i
+JOIN issue iss ON iss.id = i.issue_id
+WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
+  AND i.read = false AND i.archived = false
+GROUP BY i.issue_id, iss.id
+ORDER BY max(i.created_at) DESC
+LIMIT 300
+`
+
+type ListUnreadInboxIssuesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+}
+
+type ListUnreadInboxIssuesRow struct {
+	IssueID            pgtype.UUID        `json:"issue_id"`
+	UnreadCount        int64              `json:"unread_count"`
+	HeldCount          int64              `json:"held_count"`
+	LatestAt           pgtype.Timestamptz `json:"latest_at"`
+	PersonalOnly       bool               `json:"personal_only"`
+	IssueNumber        int32              `json:"issue_number"`
+	IssueTitle         string             `json:"issue_title"`
+	IssueStatus        string             `json:"issue_status"`
+	IssueParentIssueID pgtype.UUID        `json:"issue_parent_issue_id"`
+	IssueVisibility    string             `json:"issue_visibility"`
+	IssueCreatorType   string             `json:"issue_creator_type"`
+	IssueCreatorID     pgtype.UUID        `json:"issue_creator_id"`
+	IssueProjectID     pgtype.UUID        `json:"issue_project_id"`
+	IssueAssigneeType  string             `json:"issue_assignee_type"`
+	IssueAssigneeID    pgtype.UUID        `json:"issue_assignee_id"`
+}
+
+// The board's unread snapshot (DENE-901): one row per ticket with unread
+// notifications for this person, how many, and how many of them hang on an
+// open call (those survive MarkAllInboxRead). Issue-less rows are not on the
+// board. Visibility is checked by the handler, like ListInboxItems.
+func (q *Queries) ListUnreadInboxIssues(ctx context.Context, arg ListUnreadInboxIssuesParams) ([]ListUnreadInboxIssuesRow, error) {
+	rows, err := q.db.Query(ctx, listUnreadInboxIssues, arg.WorkspaceID, arg.RecipientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnreadInboxIssuesRow{}
+	for rows.Next() {
+		var i ListUnreadInboxIssuesRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.UnreadCount,
+			&i.HeldCount,
+			&i.LatestAt,
+			&i.PersonalOnly,
+			&i.IssueNumber,
+			&i.IssueTitle,
+			&i.IssueStatus,
+			&i.IssueParentIssueID,
+			&i.IssueVisibility,
+			&i.IssueCreatorType,
+			&i.IssueCreatorID,
+			&i.IssueProjectID,
+			&i.IssueAssigneeType,
+			&i.IssueAssigneeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAllInboxRead = `-- name: MarkAllInboxRead :execrows
-UPDATE inbox_item SET read = true
-WHERE workspace_id = $1 AND recipient_type = 'member' AND recipient_id = $2 AND archived = false AND read = false
+UPDATE inbox_item i SET read = true
+WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
+  AND i.archived = false AND i.read = false
+  AND NOT EXISTS (
+      SELECT 1 FROM issue_summon s
+      JOIN issue siss ON siss.id = s.issue_id
+      WHERE s.issue_id = i.issue_id
+        AND s.recipient_id = i.recipient_id
+        AND s.answered_at IS NULL
+        AND siss.status NOT IN ('done', 'cancelled')
+        AND (s.inbox_item_id = i.id
+             OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+  )
 `
 
 type MarkAllInboxReadParams struct {
@@ -729,6 +851,13 @@ type MarkAllInboxReadParams struct {
 	RecipientID pgtype.UUID `json:"recipient_id"`
 }
 
+// Entering the board reads everything (DENE-901) except the rows an open call
+// hangs on: a summon the person has not answered, on a ticket that is not
+// finished, stays unread until it is answered or closed (see
+// MarkIssueSummonInboxRead). A row hangs on a call when the call wrote it
+// (inbox_item_id) or when it notifies the comment carrying the call's @ — a
+// mention summon writes no row of its own; the mention listener does. Keep the
+// predicate in step with MarkIssueInboxRead and ListUnreadInboxIssues.
 func (q *Queries) MarkAllInboxRead(ctx context.Context, arg MarkAllInboxReadParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markAllInboxRead, arg.WorkspaceID, arg.RecipientID)
 	if err != nil {
@@ -799,6 +928,92 @@ func (q *Queries) MarkInboxUnread(ctx context.Context, id pgtype.UUID) (InboxIte
 		&i.Details,
 	)
 	return i, err
+}
+
+const markIssueInboxRead = `-- name: MarkIssueInboxRead :many
+UPDATE inbox_item i SET read = true
+WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
+  AND i.issue_id = $3 AND i.archived = false AND i.read = false
+  AND NOT EXISTS (
+      SELECT 1 FROM issue_summon s
+      JOIN issue siss ON siss.id = s.issue_id
+      WHERE s.issue_id = i.issue_id
+        AND s.recipient_id = i.recipient_id
+        AND s.answered_at IS NULL
+        AND siss.status NOT IN ('done', 'cancelled')
+        AND (s.inbox_item_id = i.id
+             OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+  )
+RETURNING i.id
+`
+
+type MarkIssueInboxReadParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+// Opening a ticket reads its notifications (DENE-901), except the rows an
+// open call hangs on — same rule as MarkAllInboxRead.
+func (q *Queries) MarkIssueInboxRead(ctx context.Context, arg MarkIssueInboxReadParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, markIssueInboxRead, arg.WorkspaceID, arg.RecipientID, arg.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markIssueSummonInboxRead = `-- name: MarkIssueSummonInboxRead :many
+UPDATE inbox_item i SET read = true
+FROM issue_summon s
+WHERE s.id = ANY($1::uuid[])
+  AND i.workspace_id = s.workspace_id
+  AND i.recipient_type = 'member'
+  AND i.recipient_id = s.recipient_id
+  AND i.issue_id = s.issue_id
+  AND i.archived = false AND i.read = false
+  AND (i.id = s.inbox_item_id
+       OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+RETURNING i.id, i.workspace_id, i.recipient_id
+`
+
+type MarkIssueSummonInboxReadRow struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+}
+
+// The rows a call hangs on, read once the call is answered or closed.
+func (q *Queries) MarkIssueSummonInboxRead(ctx context.Context, summonIds []pgtype.UUID) ([]MarkIssueSummonInboxReadRow, error) {
+	rows, err := q.db.Query(ctx, markIssueSummonInboxRead, summonIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MarkIssueSummonInboxReadRow{}
+	for rows.Next() {
+		var i MarkIssueSummonInboxReadRow
+		if err := rows.Scan(&i.ID, &i.WorkspaceID, &i.RecipientID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const unarchiveInboxByIssue = `-- name: UnarchiveInboxByIssue :execrows

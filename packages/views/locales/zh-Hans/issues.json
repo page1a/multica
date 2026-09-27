@@ -974,8 +974,6 @@
     "delete_description": "「{{name}}」将对所有可见成员删除",
     "toast_deleted": "视图已删除",
     "context_edit": "编辑视图",
-    "context_pin": "固定到侧栏",
-    "context_unpin": "从侧栏取消固定",
     "row_menu": "更多操作",
     "row_hide": "在栏中隐藏",
     "row_show": "在栏中显示",

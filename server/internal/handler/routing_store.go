@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/routing"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -558,29 +559,65 @@ func (s routingStore) writeAcceptanceNotice(ctx context.Context, q *db.Queries, 
 	if err != nil {
 		return err
 	}
-	if _, err := q.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
-		IssueID: id, UserType: "member", UserID: uid, Reason: "mentioned",
-	}); err != nil {
-		return err
-	}
 	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: id, WorkspaceID: wsID})
 	if err != nil {
 		return err
 	}
-	_, err = q.CreateInboxItem(ctx, db.CreateInboxItemParams{
+	return writeRoutingSummon(ctx, q, issue, uid)
+}
+
+const routingSummonReason = "这张票需要你看一眼——路由没有人会继续推进它。"
+
+// writeRoutingSummon calls the person through the summon entry (DENE-880) and
+// writes this stay's routing_needs_you row. The summon records the open call
+// so the person's reply wakes the executor and it shows on their waiting
+// list; the inbox row stays per stay (HasAcceptanceNoticeSince), so a later
+// stay notifies again even while an earlier call is still unanswered.
+func writeRoutingSummon(ctx context.Context, q *db.Queries, issue db.Issue, uid pgtype.UUID) error {
+	res, err := service.SummonWith(ctx, q, service.SummonInput{
+		Issue:      issue,
+		Recipient:  uid,
+		CallerType: "system",
+		Source:     service.SummonSourceRouting,
+		Reason:     routingSummonReason,
+		NoComment:  true,
+		SkipInbox:  true,
+	})
+	if err != nil && !errors.Is(err, service.ErrSummonNotMember) {
+		return err
+	}
+	details := []byte("{}")
+	if res.Summon.ID.Valid {
+		details, _ = json.Marshal(map[string]any{
+			"summon_id": util.UUIDToString(res.Summon.ID),
+			"source":    service.SummonSourceRouting,
+		})
+	}
+	if _, err := q.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
+		IssueID: issue.ID, UserType: "member", UserID: uid, Reason: "mentioned",
+	}); err != nil {
+		return err
+	}
+	item, err := q.CreateInboxItem(ctx, db.CreateInboxItemParams{
 		ID:            dbid.NewV7(),
-		WorkspaceID:   wsID,
+		WorkspaceID:   issue.WorkspaceID,
 		RecipientType: "member",
 		RecipientID:   uid,
 		Type:          "routing_needs_you",
 		Severity:      "action_required",
-		IssueID:       id,
+		IssueID:       issue.ID,
 		Title:         issue.Title,
-		Body:          pgtype.Text{String: "这张票需要你看一眼——路由没有人会继续推进它。", Valid: true},
+		Body:          pgtype.Text{String: routingSummonReason, Valid: true},
 		ActorType:     pgtype.Text{String: "system", Valid: true},
-		Details:       []byte("{}"),
+		Details:       details,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if res.Summon.ID.Valid && !res.Duplicate {
+		return q.SetIssueSummonDelivery(ctx, db.SetIssueSummonDeliveryParams{ID: res.Summon.ID, InboxItemID: item.ID})
+	}
+	return nil
 }
 
 // reviewRoundSince is when this ticket last entered in_review. ok is false
@@ -692,31 +729,11 @@ func (s routingStore) Subscribe(ctx context.Context, workspaceID, issueID, userI
 	if err != nil {
 		return err
 	}
-	if _, err := s.h.Queries.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
-		IssueID: id, UserType: "member", UserID: uid, Reason: "mentioned",
-	}); err != nil {
-		return err
-	}
 	issue, err := s.h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: id, WorkspaceID: wsID})
 	if err != nil {
 		return err
 	}
-	if _, err := s.h.Queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
-		ID:            dbid.NewV7(),
-		WorkspaceID:   wsID,
-		RecipientType: "member",
-		RecipientID:   uid,
-		Type:          "routing_needs_you",
-		Severity:      "action_required",
-		IssueID:       id,
-		Title:         issue.Title,
-		Body:          pgtype.Text{String: "这张票需要你看一眼——路由没有人会继续推进它。", Valid: true},
-		ActorType:     pgtype.Text{String: "system", Valid: true},
-		Details:       []byte("{}"),
-	}); err != nil {
-		return err
-	}
-	return nil
+	return writeRoutingSummon(ctx, s.h.Queries, issue, uid)
 }
 
 // NotifyTarget is the whole "who do we @" rule: the person who created the
@@ -838,6 +855,29 @@ func (s routingStore) EnabledWorkspaces(ctx context.Context) ([]string, error) {
 	}
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
+		out = append(out, util.UUIDToString(id))
+	}
+	return out, nil
+}
+
+// UnassignedTodos lists quiet todo tickets with at least one empty routing
+// seat. The SQL filters the cheap, stable eligibility set; Route repeats the
+// human-held guard and applies the fill-only writes atomically.
+func (s routingStore) UnassignedTodos(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.h.Queries.ListUnassignedTodoIssues(ctx, db.ListUnassignedTodoIssuesParams{
+		WorkspaceID: wsID,
+		Before:      pgtype.Timestamptz{Time: before, Valid: true},
+		Lim:         int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, id := range rows {
 		out = append(out, util.UUIDToString(id))
 	}
 	return out, nil

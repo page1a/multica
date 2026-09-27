@@ -388,7 +388,8 @@
       "mcp": "MCP",
       "billing": "請求とプラン",
       "config_transfer": "設定の書き出し/読み込み",
-      "routing": "ルーティング"
+      "routing": "ルーティング",
+      "project_sharing": "権限と共有"
     },
     "groups": {
       "personal": "個人設定",
@@ -1766,5 +1767,31 @@
     "quota_updated": "{{when}} 更新",
     "seats_title": "候補の席",
     "seats_empty": "候補の席はまだありません。"
+  },
+  "project_sharing": {
+    "title": "権限と共有",
+    "description": "プロジェクト、タスク、接続されたリソースを閲覧できるユーザーを選択します。",
+    "section_title": "プロジェクトのアクセス",
+    "section_description": "プロジェクトを「自分のみ」「特定のユーザー」「ワークスペース全体」のいずれかに設定します。既存のタスクとリポジトリはプロジェクトの範囲に従います。",
+    "loading": "プロジェクトを読み込み中…",
+    "empty": "プロジェクトはまだありません。",
+    "visibility_private": "自分のみ",
+    "visibility_project": "特定のユーザー",
+    "visibility_workspace": "ワークスペース全体",
+    "members": "メンバー {{count}} 人",
+    "guests": "ゲスト {{count}} 人",
+    "resources": "リソース {{count}} 件",
+    "no_members": "まだ誰も選択されていないため、このプロジェクトは自分だけが閲覧できます。",
+    "manage_members": "ユーザーを選択",
+    "read_only": "ゲストは共有されたプロジェクトを閲覧できますが、共有設定は変更できません。",
+    "change_for": "{{name}} の共有設定を変更",
+    "confirm_title": "{{name}} の共有設定を変更しますか？",
+    "confirm_description": "{{count}} 件のリソースが {{visibility}} に変更されます。現在非公開の {{privateCount}} 件も含まれます。",
+    "cancel": "キャンセル",
+    "confirm": "適用",
+    "saving": "適用中…",
+    "preview_loading": "プレビューを読み込み中… 準備ができるまで変更は適用できません。",
+    "save_failed": "共有範囲を変更できませんでした。もう一度お試しください。",
+    "preview_failed": "プレビューを読み込めませんでした。変更を適用する前にもう一度お試しください。"
   }
 }

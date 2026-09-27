@@ -96,7 +96,8 @@
     "autopilot_quota_exceeded": "自动化执行次数已用完",
     "agent_access_request": "智能体借用申请",
     "agent_access_approved": "智能体借用已批准",
-    "agent_access_declined": "智能体借用已拒绝"
+    "agent_access_declined": "智能体借用已拒绝",
+    "parking_unexplained": "停了没交代"
   },
   "labels": {
     "set_status_to": "状态设为",
@@ -142,5 +143,98 @@
     "access_request_not_pending": "这条申请已被处理或已过期",
     "access_request_failed": "处理申请失败",
     "access_pass_expiry_invalid": "请选择一个未来的截止时间"
+  },
+  "board": {
+    "title": "收件箱",
+    "lede": "每张票一行：在跑还是停了、为什么停、停之前做了什么、下一棒是谁。细节点进任务看。",
+    "activity_link": "全部动态",
+    "back_to_board": "一票一行",
+    "lanes": {
+      "waiting": {
+        "title": "等你",
+        "hint": "点名要你对齐或动手的。你回复后这一行消失，执行的智能体接着干",
+        "empty": "没有在等你的票"
+      },
+      "stalled": {
+        "title": "停了 · 没交代",
+        "hint": "没有智能体在跑，票却没有收口。前因后果由服务端查清",
+        "empty": "没有停了没交代的票"
+      },
+      "running": {
+        "title": "在跑",
+        "hint": "只亮一个标记，不打扰你",
+        "empty": "现在没有智能体在跑"
+      },
+      "fresh": {
+        "title": "有新动态",
+        "hint": "上次来过之后有新消息、又不在上面几栏的票。只在这次显示",
+        "empty": "没有新动态"
+      },
+      "done": {
+        "title": "今天做完",
+        "hint": "显示一次，看过后自动收起",
+        "empty": "今天还没有做完的票"
+      }
+    },
+    "tag": {
+      "needs_human": "等你决定",
+      "manual": "等你处理",
+      "mention": "有人找你",
+      "routing": "没人接手",
+      "patrol": "验收席空缺",
+      "time_limit": "运行超时",
+      "quota_relay": "额度用完",
+      "waiting_person": "等你决定",
+      "waiting_default": "等你",
+      "stalled_delivery": "交付卡住",
+      "stalled_unclosed": "做完没收口",
+      "stalled_reply_unclosed": "回了话没收口",
+      "running": "在跑",
+      "fresh": "新动态",
+      "done": "做完"
+    },
+    "stuck": {
+      "branch_refused": "运行结束时平台拒绝登记交付分支",
+      "pr_not_linked": "PR 没关联上，转待验收被拒",
+      "review_refused": "转待验收被拒",
+      "close_refused": "关单被拒",
+      "run_failed": "运行以失败结束",
+      "no_wait_record": "挂在阻塞，但没写在等什么",
+      "woken_no_close": "被叫醒后回了话，没有重新收口",
+      "no_close": "运行结束了，票没有收口",
+      "default": "停下了，没有交代"
+    },
+    "event": {
+      "run_started": "开始运行",
+      "run_completed": "运行结束",
+      "run_failed": "运行失败",
+      "run_cancelled": "运行被取消",
+      "pr_linked": "关联 PR",
+      "pr_merged": "PR 合并",
+      "rejected": "被平台拒绝",
+      "closed": "收口",
+      "after": "之后没有新的运行，也没有收口"
+    },
+    "server_mark": "服务端判断",
+    "unread_other": "{{count}} 条新",
+    "before": "停之前：{{text}}",
+    "next": "下一棒：{{name}}",
+    "next_none": "下一棒：没人接",
+    "next_issue": "等 {{id}}",
+    "from_to_you": "{{name}} → 你",
+    "you": "你",
+    "running_for": "已跑 {{time}}",
+    "children_other": "{{count}} 张子票",
+    "expand": "前因后果",
+    "collapse": "收起",
+    "reply_placeholder": "直接在这里回复，会发到票上并叫醒{{name}}",
+    "reply_placeholder_default": "直接在这里回复，会发到票上",
+    "reply": "回复",
+    "reply_sent": "已回复，执行的智能体会接着干",
+    "reply_failed": "回复没发出去",
+    "open_issue": "去任务",
+    "seen_other": "已看过的 {{count}} 条",
+    "hide_seen": "收起看过的",
+    "load_error": "有一部分数据没加载出来，稍后会自动重试"
   }
 }

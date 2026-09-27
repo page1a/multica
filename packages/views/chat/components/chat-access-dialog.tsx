@@ -20,7 +20,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
-type Mode = "project" | "extra" | "private";
+type Mode = "workspace" | "project" | "extra" | "private";
 
 interface DraftShare {
   user_id: string;
@@ -28,7 +28,7 @@ interface DraftShare {
 }
 
 /**
- * The creator's three-way access editor: follow the project, follow it and
+ * The creator's four-way access editor: share with the workspace, follow the project, follow it and
  * name extra people, or keep the chat private.
  */
 export function ChatAccessDialog({
@@ -63,7 +63,7 @@ export function ChatAccessDialog({
 
   useEffect(() => {
     if (!settings) return;
-    setMode(settings.has_project ? settings.mode : "private");
+    setMode(settings.mode === "workspace" ? "workspace" : settings.has_project ? settings.mode : "private");
     setShares(settings.shares.map((share) => ({ user_id: share.user_id, access: share.access })));
   }, [settings]);
 
@@ -77,7 +77,7 @@ export function ChatAccessDialog({
   const save = useMutation({
     mutationFn: () =>
       api.putChatAccess(session!.id, {
-        mode: bound ? mode : "private",
+        mode: mode === "workspace" || bound ? mode : "private",
         shares: mode === "extra" ? shares : [],
       }),
     onSuccess: async () => {
@@ -110,6 +110,12 @@ export function ChatAccessDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-2">
+          <AccessOption
+            selected={mode === "workspace"}
+            title={t(($) => $.sharing.workspace)}
+            hint={t(($) => $.sharing.workspace_hint)}
+            onSelect={() => setMode("workspace")}
+          />
           <AccessOption
             selected={mode === "project"}
             disabled={!bound}

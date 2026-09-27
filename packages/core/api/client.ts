@@ -1,5 +1,6 @@
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
+import type { ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
 import type { WorkThreadSnapshot } from "../types/work_thread";
 import { configStore } from "../config";
 import type {
@@ -3125,6 +3126,25 @@ export class ApiClient {
     return this.fetch(`/api/agent-task-snapshot`);
   }
 
+  // Latest parking record of every issue that has one (DENE-881): running or
+  // parked, why it stopped, what came before, who moves next.
+  async listIssueParkingRecords(params?: {
+    unexplainedOnly?: boolean;
+    limit?: number;
+  }): Promise<ParkingRecordsResponse> {
+    const search = new URLSearchParams();
+    if (params?.unexplainedOnly) search.set("unexplained_only", "true");
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/issues/parking${query ? `?${query}` : ""}`);
+  }
+
+  // The current user's unanswered calls in this workspace (DENE-880). A call
+  // closes server-side when the person replies on the issue.
+  async listWaitingSummons(): Promise<WaitingSummon[]> {
+    return this.fetch(`/api/summons/waiting`);
+  }
+
   // Independent workspace-level projection. Unlike the task snapshot, this
   // already deduplicates running agents and returns only the display fields
   // consumers need. Callers may narrow the projection by task source and, for
@@ -3344,6 +3364,17 @@ export class ApiClient {
 
   async markAllInboxRead(): Promise<{ count: number }> {
     return this.fetch("/api/inbox/mark-all-read", { method: "POST" });
+  }
+
+  // Issues the current user has unread inbox rows on, one row each (DENE-901).
+  // The board takes this as its snapshot before it marks everything read.
+  async listUnreadInboxIssues(): Promise<UnreadInboxIssue[]> {
+    return this.fetch("/api/inbox/unread-issues");
+  }
+
+  // Read one issue's inbox rows, except the ones an open call hangs on.
+  async markIssueInboxRead(issueId: string): Promise<{ count: number }> {
+    return this.fetch(`/api/inbox/issues/${issueId}/read`, { method: "POST" });
   }
 
   async archiveAllInbox(): Promise<{ count: number }> {
@@ -4394,7 +4425,7 @@ export class ApiClient {
   async putChatAccess(
     sessionId: string,
     body: {
-      mode: "project" | "extra" | "private";
+      mode: "workspace" | "project" | "extra" | "private";
       shares?: { user_id: string; access: "view" | "speak" }[];
     },
   ): Promise<import("../types").ChatAccessSettings> {

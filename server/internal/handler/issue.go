@@ -3990,7 +3990,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tr := h.guardSilentStall(r.Context(), prevIssue, statusKeyForGuard, statusActorType, deref(req.NoCodeReason), params.AssigneeType, params.AssigneeID, params.ReviewerType, params.ReviewerID, touchedReviewerType || touchedReviewerID)
+	actorIDForGuard := ""
+	if statusActorType != "" {
+		_, actorIDForGuard = h.resolveActor(r, userID, workspaceID)
+	}
+	tr := h.guardSilentStall(r.Context(), prevIssue, statusKeyForGuard, statusActorType, actorIDForGuard, deref(req.NoCodeReason), params.AssigneeType, params.AssigneeID, params.ReviewerType, params.ReviewerID, touchedReviewerType || touchedReviewerID)
 	if tr.refuse != "" {
 		writeError(w, http.StatusConflict, tr.refuse)
 		return
@@ -4056,6 +4060,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue = h.finishStatusTransition(r.Context(), issue, tr)
+	if tr.noCode != "" {
+		h.setIssueMetaString(r.Context(), issue, "close.no_code_reason", tr.noCode)
+	}
 
 	// Determine actor identity: agent (via X-Agent-ID header) or member.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
@@ -4159,6 +4166,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if persistBlock {
 		h.persistBlockRecord(r.Context(), issue, blockRecord)
+		h.summonNeedsHuman(r.Context(), issue, blockRecord.NeedsHuman, actorType, actorID, "")
 	}
 	if statusChanged {
 		h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
@@ -4859,7 +4867,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		batchActorType, _ := h.resolveActor(r, userID, workspaceID)
-		batchTransition := h.guardSilentStall(r.Context(), prevIssue, batchStatusKey, batchActorType, "", params.AssigneeType, params.AssigneeID, params.ReviewerType, params.ReviewerID, false)
+		_, batchActorID := h.resolveActor(r, userID, workspaceID)
+		batchTransition := h.guardSilentStall(r.Context(), prevIssue, batchStatusKey, batchActorType, batchActorID, "", params.AssigneeType, params.AssigneeID, params.ReviewerType, params.ReviewerID, false)
 		if batchTransition.refuse != "" {
 			continue
 		}

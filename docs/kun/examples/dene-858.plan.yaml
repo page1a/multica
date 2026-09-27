@@ -1,0 +1,34 @@
+# DENE-858 的结构写成一份 plan，`multica plan apply` 一条命令建出整棵树。
+# 同一份文件再 apply 一次不会重复建票：key 是这份计划的身份。
+# assignee 写智能体名字，按你的工作区替换。
+key: dene-858-ritual-commands
+parent:
+  title: 魔改仪式收成深接口：多步流程收成一条服务端校验的命令
+  description: 魔改功能只要需要 Agent 做超过一步，就收成一条由服务端校验的命令。
+  assignee: 孙悟空
+  priority: high
+children:
+  - key: close
+    title: multica issue close 一条命令收口
+    stage: 1
+    assignee: 孙悟空
+  - key: desktop-release-cut
+    title: desktop-release cut 一条命令切发版
+    stage: 1
+    assignee: 孙悟天
+  - key: migration-new
+    title: make migration-new 一条命令分配迁移号
+    stage: 1
+    assignee: 孙悟天
+  - key: sync-upstream
+    title: sync-upstream.sh 一条命令同步上游
+    stage: 1
+    assignee: 孙悟天
+  - key: handoff
+    title: multica issue handoff 一条命令交棒
+    stage: 2
+    assignee: 孙悟空
+  - key: plan-apply
+    title: multica plan apply 建计划 + issue stage advance 推进阶段
+    stage: 3
+    assignee: 孙悟空

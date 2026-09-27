@@ -155,7 +155,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 		slog.Warn("child done: failed to resolve sibling statuses", "error", err, "parent_id", uuidToString(parent.ID))
 		return
 	}
-	if !stageBarrierClosed(children, issue, statuses.isTerminal) {
+	if !stageBarrierClosed(children, issue, h.realChildTerminalPredicate(ctx, statuses)) {
 		return
 	}
 	staged := siblingsAreStaged(children)
@@ -252,7 +252,7 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 			// Unstaged: one implicit stage. Fire once iff every child is terminal
 			// in the final state. stageBarrierClosed ignores `completed` on the
 			// unstaged path, so any completed child stands in for the barrier check.
-			if !stageBarrierClosed(children, g.children[0], statuses.isTerminal) {
+			if !stageBarrierClosed(children, g.children[0], h.realChildTerminalPredicate(ctx, statuses)) {
 				continue
 			}
 			h.postChildDoneComment(ctx, parent, g.children[0], children, false, 0, batch, statuses, g.children)
@@ -267,7 +267,7 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		// reality rather than a mid-batch snapshot. A lower closed stage would
 		// re-introduce the stale "advance the next stage" instruction the bug was
 		// about.
-		rep, found := highestClosedBatchStage(children, g.children, statuses.isTerminal)
+		rep, found := highestClosedBatchStage(children, g.children, h.realChildTerminalPredicate(ctx, statuses))
 		if !found {
 			continue
 		}
@@ -599,6 +599,42 @@ func (s resolvedChildStatuses) status(child db.Issue) string {
 
 func (s resolvedChildStatuses) isTerminal(child db.Issue) bool {
 	return isTerminalChildStatus(s.status(child))
+}
+
+// realChildTerminalPredicate keeps a done child from advancing a stage when
+// its own PR evidence contradicts the status: linked PRs exist and none of them
+// is merged (DENE-859/862 were done with their PRs still open). A done child
+// with no linked PR stays terminal — agents cannot reach that state without the
+// close gate's no-code declaration, and a member's done is authoritative.
+// Cancelled children remain terminal by definition.
+func (h *Handler) realChildTerminalPredicate(ctx context.Context, statuses resolvedChildStatuses) func(db.Issue) bool {
+	cache := map[pgtype.UUID]bool{}
+	return func(child db.Issue) bool {
+		if !statuses.isTerminal(child) {
+			return false
+		}
+		if statuses.status(child) != issuestatus.Done {
+			return true
+		}
+		if real, ok := cache[child.ID]; ok {
+			return real
+		}
+		real := true
+		prs, err := h.Queries.ListPullRequestsByIssue(ctx, child.ID)
+		if err != nil {
+			slog.Warn("child done: failed to list child PRs", "error", err, "issue_id", uuidToString(child.ID))
+		} else if len(prs) > 0 {
+			real = false
+			for _, pr := range prs {
+				if pr.MergedAt.Valid {
+					real = true
+					break
+				}
+			}
+		}
+		cache[child.ID] = real
+		return real
+	}
 }
 
 // resolveChildStatuses checks every status needed by the stage barrier and

@@ -205,8 +205,8 @@ export interface ChatShareGrant {
 }
 
 export interface ChatAccessSettings {
-  mode: "project" | "extra" | "private";
-  visibility: "private" | "project";
+	mode: "workspace" | "project" | "extra" | "private";
+	visibility: "private" | "project" | "workspace";
   can_edit: boolean;
   has_project: boolean;
   shares: ChatShareGrant[];

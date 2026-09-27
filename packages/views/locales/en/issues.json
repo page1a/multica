@@ -1005,8 +1005,6 @@
     "delete_description": "“{{name}}” will be deleted for everyone who can see it",
     "toast_deleted": "View deleted",
     "context_edit": "Edit view",
-    "context_pin": "Pin to sidebar",
-    "context_unpin": "Unpin from sidebar",
     "row_menu": "More actions",
     "row_hide": "Hide from bar",
     "row_show": "Show on bar",

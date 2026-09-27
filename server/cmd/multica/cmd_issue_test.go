@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -5097,4 +5098,119 @@ func TestRunIssueCommentDeleteKeepsReplies(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestResolveIssueRef_Link: an issue URL is accepted wherever a key is
+// (DENE-897). Into this workspace it resolves to the issue; into another
+// workspace the generic resolver refuses, because every command that resolves
+// an id does so in order to act on it, and a linked issue is read-only.
+func TestResolveIssueRef_Link(t *testing.T) {
+	newLinkServer := func(t *testing.T, cross bool, hits *[]string) *httptest.Server {
+		t.Helper()
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*hits = append(*hits, r.Method+" "+r.URL.Path+"?url="+r.URL.Query().Get("url"))
+			if r.URL.Path != "/api/links/issue" {
+				http.NotFound(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"issue": map[string]any{"id": "1881a167-4bb6-4602-944b-f40ce4192fe6", "identifier": "DA-7", "title": "linked"},
+				"runs":  []any{},
+				"provenance": map[string]any{
+					"workspace_id":     "ws-a",
+					"workspace_slug":   "dene-a",
+					"issue_id":         "1881a167-4bb6-4602-944b-f40ce4192fe6",
+					"issue_identifier": "DA-7",
+					"cross_workspace":  cross,
+					"notice":           "n",
+				},
+			})
+		}))
+	}
+	link := "https://app.example.test/dene-a/issues/DA-7"
+
+	t.Run("same-workspace link resolves through the link route", func(t *testing.T) {
+		var hits []string
+		srv := newLinkServer(t, false, &hits)
+		defer srv.Close()
+		client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
+		got, err := resolveIssueRef(context.Background(), client, link)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.ID != "1881a167-4bb6-4602-944b-f40ce4192fe6" || got.Display != "DA-7" {
+			t.Fatalf("got %#v", got)
+		}
+		if len(hits) != 1 || hits[0] != "GET /api/links/issue?url="+link {
+			t.Fatalf("hits = %#v", hits)
+		}
+	})
+
+	t.Run("cross-workspace link is refused as read-only", func(t *testing.T) {
+		var hits []string
+		srv := newLinkServer(t, true, &hits)
+		defer srv.Close()
+		client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
+		_, err := resolveIssueRef(context.Background(), client, link)
+		if err == nil {
+			t.Fatal("expected cross-workspace link to be refused")
+		}
+		for _, want := range []string{"read-only", "issue get", "issue comment list", "dene-a"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q lacks %q", err.Error(), want)
+			}
+		}
+	})
+
+	t.Run("read target keeps the cross-workspace link", func(t *testing.T) {
+		var hits []string
+		srv := newLinkServer(t, true, &hits)
+		defer srv.Close()
+		client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
+		ref, linked, err := resolveIssueReadTarget(context.Background(), client, link)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if linked == nil || !linked.Provenance.CrossWorkspace || ref.Display != "DA-7" {
+			t.Fatalf("ref=%#v linked=%#v", ref, linked)
+		}
+	})
+
+	t.Run("server refusal codes map to user messages", func(t *testing.T) {
+		for code, want := range map[string]string{
+			"link_no_originator":   "no person behind it",
+			"link_not_member":      "not a member of the workspace",
+			"link_write_forbidden": "read-only",
+		} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]any{"error": "refused", "code": code})
+			}))
+			client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
+			_, err := resolveIssueRef(context.Background(), client, link)
+			srv.Close()
+			if err == nil {
+				t.Fatalf("%s: expected error", code)
+			}
+			var um *cli.UserMessageError
+			if !errors.As(err, &um) || !strings.Contains(um.Msg, want) {
+				t.Fatalf("%s: error %v does not carry user message %q", code, err, want)
+			}
+		}
+	})
+
+	t.Run("looksLikeIssueLink", func(t *testing.T) {
+		for in, want := range map[string]bool{
+			link:                                   true,
+			"/dene-a/issues/DA-7":                  true,
+			"DA-7":                                 false,
+			"1881a167-4bb6-4602-944b-f40ce4192fe6": false,
+			"dene-a/issues/DA-7":                   false,
+			"https://x.test/dene-a":                false,
+		} {
+			if got := looksLikeIssueLink(in); got != want {
+				t.Errorf("%q: got %v want %v", in, got, want)
+			}
+		}
+	})
 }

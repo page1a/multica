@@ -75,6 +75,10 @@ func TestTaskMessageCallIDLiveAndHistory(t *testing.T) {
 		for _, suffix := range []string{"", "?since=2"} {
 			t.Run(reader.name+suffix, func(t *testing.T) {
 				req := testutil.JSONRequest(http.MethodGet, "/api/tasks/"+taskID+"/messages"+suffix, nil)
+				// The user-facing reader now gates on the run's issue
+				// visibility (DENE-896), which needs the caller identity the
+				// auth middleware always stamps in production.
+				req.Header.Set("X-User-ID", testUserID)
 				req = testutil.WithURLParams(req, "taskId", taskID)
 				ctx := middleware.WithDaemonContext(req.Context(), testWorkspaceID, "call-id-daemon")
 				ctx = middleware.SetMemberContext(ctx, testWorkspaceID, db.Member{})

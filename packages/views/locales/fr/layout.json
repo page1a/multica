@@ -11,7 +11,8 @@
     "usage": "Statistiques",
     "runtimes": "Runtimes",
     "skills": "Skills",
-    "settings": "Paramètres"
+    "settings": "Paramètres",
+    "permissions": "Autorisations"
   },
   "tab": {
     "issue": "Tâche",
@@ -45,6 +46,18 @@
     "unpin_tooltip": "Détacher",
     "workspaces_label": "Espaces de travail",
     "create_workspace": "Créer un espace de travail",
+    "search_workspaces_placeholder": "Rechercher un espace de travail…",
+    "no_matching_workspaces": "Aucun espace de travail ne correspond à « {{query}} »",
+    "pin_workspace": "Épingler en haut",
+    "unpin_workspace": "Désépingler",
+    "organize_workspaces": "Organiser les espaces de travail…",
+    "organize_title": "Organiser les espaces de travail",
+    "organize_description": "Faites glisser pour réordonner ; glissez dans Épinglés pour épingler. Ne change que l’ordre que vous voyez, pas celui des autres membres.",
+    "organize_drag": "Faire glisser {{name}}",
+    "organize_rest_label": "Autres espaces de travail",
+    "organize_pin_hint": "Glissez ici pour épingler",
+    "organize_autosave": "Les modifications sont enregistrées automatiquement",
+    "organize_done": "Terminé",
     "pending_invitations_label": "Invitations en attente",
     "invitation_workspace_fallback": "Espace de travail",
     "invitation_join": "Rejoindre",
@@ -57,8 +70,6 @@
     "ai_team_group": "Équipe IA",
     "show_more_pins": "Afficher {{count}} de plus…",
     "show_fewer_pins": "Afficher moins",
-    "pin_drop_hint": "Déposer ici pour épingler",
-    "chat_untitled": "Nouvelle discussion",
     "unread_overflow": "99+",
     "discord_card": {
       "title": "Rejoignez notre Discord",

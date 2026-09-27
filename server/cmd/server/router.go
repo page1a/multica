@@ -1513,6 +1513,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
 		r.Post("/heartbeat", h.DaemonHeartbeat)
+		r.Post("/pull-requests/report", h.ReportDaemonPullRequests)
 		r.Get("/ws", h.DaemonWebSocket)
 		r.Get("/workspaces", h.ListDaemonWorkspaces)
 		r.Get("/workspaces/{workspaceId}/repos", h.GetDaemonWorkspaceRepos)
@@ -1625,7 +1626,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// server/internal/handler/onboarding_shim.go.
 		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
-		r.Post("/api/cli-token", h.IssueCliToken)
+		// Credential exchange is human-only (DENE-896). A mat_ task token is
+		// bound to one workspace by its row; letting it mint a JWT here would
+		// hand a running agent an unbound human credential. Callers today are
+		// the web login page only (JWT cookie → JWT for CLI/desktop); no daemon
+		// or CLI path reaches this route with a machine credential.
+		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
 		// Sliding session renewal for clients that hold the session as a
 		// string (Desktop, mobile). Browsers get theirs re-issued inline by
 		// middleware.Auth and never call this (MUL-7436).
@@ -1653,6 +1659,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// because they are JSON-API consumers that always have
 		// workspace context.
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
+		// Read an issue by its link, workspace resolved from the URL, GET only
+		// (DENE-897). Gates run inside against the link's workspace.
+		h.MountLinkReadRoutes(r)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -1899,6 +1908,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/share-links/join", h.JoinByShareLink)
 
 		r.Route("/api/tokens", func(r chi.Router) {
+			// Same boundary as /api/cli-token: a mat_ task token must not
+			// mint, list, renew, or revoke unbound mul_ tokens. Legitimate
+			// callers are `multica login` (JWT), the desktop daemon-manager
+			// (JWT) and the daemon's renewal loop (its own mul_ PAT, which
+			// the auth middleware leaves unmarked, so it passes this guard).
+			r.Use(handler.RequireHumanActor)
 			r.Get("/", h.ListPersonalAccessTokens)
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
@@ -1988,6 +2003,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/table/facets", h.ListIssueTableFacets)
 				r.Get("/search", h.SearchIssues)
 				r.Get("/child-progress", h.ChildIssueProgress)
+				// Latest parking record per issue (DENE-881).
+				r.Get("/parking", h.ListIssueParkingRecords)
 				r.Get("/children", h.ListChildrenByParents)
 				r.Get("/grouped", h.ListGroupedIssues)
 				r.Get("/", h.ListIssues)
@@ -1998,6 +2015,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/quick-create", h.QuickCreateIssue)
 				r.Post("/preview-trigger", h.PreviewIssueTrigger)
 				r.Post("/batch-update", h.BatchUpdateIssues)
+				// One plan file, one transaction, the whole staged tree
+				// (DENE-864) — `multica plan apply`.
+				r.Post("/plan-apply", h.ApplyPlan)
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
@@ -2032,6 +2052,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// and with the outcome in the response — `multica issue
 					// route` is this endpoint.
 					r.Post("/route", h.RouteIssue)
+					// One-shot close protocol (DENE-859): evidence comment,
+					// status and close.* keys in one transaction, checked by
+					// closeprotocol.Validate — `multica issue close`.
+					r.Post("/close", h.CloseIssue)
+					// PR state from the caller's gh, refreshed by `issue
+					// close` so the done gate sees merges without a GitHub App.
+					r.Post("/pull-requests/report", h.ReportIssuePullRequests)
+					// One-shot handoff (DENE-863): server routes, dedupes and
+					// reports what actually landed — `multica issue handoff`.
+					r.Post("/handoff", h.HandoffIssue)
+					// One "叫人" entry (DENE-880): inbox, subscription, a
+					// visible @ and an open call the reply answers —
+					// `multica issue summon`.
+					r.Post("/summon", h.SummonIssue)
+					// Promote the next stage once the one below is terminal
+					// (DENE-864) — `multica issue stage advance`.
+					r.Post("/stage-advance", h.AdvanceIssueStage)
 					r.Post("/quick-actions/{quickActionId}/run", h.RunQuickAction)
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)
 					r.Get("/task-runs", h.ListTasksByIssue)
@@ -2516,6 +2553,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/{id}/approve", h.ApproveAgentAccessRequest)
 				r.Post("/{id}/decline", h.DeclineAgentAccessRequest)
 			})
+			// Calls still waiting on the current user (DENE-880).
+			r.Get("/api/summons/waiting", h.ListWaitingSummons)
 			r.Route("/api/inbox", func(r chi.Router) {
 				r.Get("/", h.ListInbox)
 				// Archived notifications, for the inbox's "Archived" sub-view.
@@ -2529,6 +2568,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// user. Backs the workspace-switcher dot for OTHER workspaces.
 				r.Get("/unread-summary", h.UnreadInboxSummary)
 				r.Post("/mark-all-read", h.MarkAllInboxRead)
+				// The board's unread snapshot and the ticket-level read
+				// (DENE-901).
+				r.Get("/unread-issues", h.ListUnreadInboxIssues)
+				r.Post("/issues/{issueId}/read", h.MarkIssueInboxRead)
 				r.Post("/archive-all", h.ArchiveAllInbox)
 				r.Post("/archive-all-read", h.ArchiveAllReadInbox)
 				r.Post("/archive-completed", h.ArchiveCompletedInbox)

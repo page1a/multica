@@ -399,8 +399,8 @@ function SpecificPeoplePicker({
 
       {loading ? (
         <div className="space-y-2" aria-label={t(($) => $.loading)}>
-          <div className="h-9 w-full animate-pulse rounded bg-muted" />
-          <div className="h-9 w-4/5 animate-pulse rounded bg-muted" />
+          <div className="h-9 w-full animate-pulse rounded-md bg-muted" />
+          <div className="h-9 w-4/5 animate-pulse rounded-md bg-muted" />
         </div>
       ) : candidates.length === 0 ? (
         <p className="text-caption leading-5 text-muted-foreground">{t(($) => $.share_scope.picker_no_members)}</p>

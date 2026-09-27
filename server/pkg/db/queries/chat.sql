@@ -100,7 +100,8 @@ WHERE cs.workspace_id = sqlc.arg(workspace_id)
   AND (
     cs.creator_id = sqlc.arg(viewer_id)
     OR (
-      cs.visibility = 'project'
+      (cs.visibility = 'workspace' AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = cs.workspace_id AND m.user_id = sqlc.arg(viewer_id) AND m.role <> 'guest'))
+      OR (cs.visibility = 'project'
       AND (
         EXISTS (
           SELECT 1 FROM resource_share rs
@@ -115,7 +116,7 @@ WHERE cs.workspace_id = sqlc.arg(workspace_id)
             AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
         )
         OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
-      )
+      ))
     )
   )
   AND (
@@ -200,7 +201,8 @@ WHERE cs.workspace_id = sqlc.arg(workspace_id)
   AND (
     cs.creator_id = sqlc.arg(viewer_id)
     OR (
-      cs.visibility = 'project'
+      (cs.visibility = 'workspace' AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = cs.workspace_id AND m.user_id = sqlc.arg(viewer_id) AND m.role <> 'guest'))
+      OR (cs.visibility = 'project'
       AND (
         EXISTS (
           SELECT 1 FROM resource_share rs
@@ -215,7 +217,7 @@ WHERE cs.workspace_id = sqlc.arg(workspace_id)
             AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
         )
         OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
-      )
+      ))
     )
   )
   AND (
@@ -1605,7 +1607,8 @@ WHERE atq.chat_session_id IS NOT NULL
   AND (
     cs.creator_id = sqlc.arg(viewer_id)
     OR (
-      cs.visibility = 'project'
+      (cs.visibility = 'workspace' AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = cs.workspace_id AND m.user_id = sqlc.arg(viewer_id) AND m.role <> 'guest'))
+      OR (cs.visibility = 'project'
       AND (
         EXISTS (
           SELECT 1 FROM resource_share rs
@@ -1620,7 +1623,7 @@ WHERE atq.chat_session_id IS NOT NULL
             AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
         )
         OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
-      )
+      ))
     )
   )
 ORDER BY atq.created_at DESC;

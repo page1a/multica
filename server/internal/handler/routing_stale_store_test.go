@@ -215,6 +215,67 @@ func TestStaleReviewStoreQueries(t *testing.T) {
 	})
 }
 
+// UnassignedTodos is the SQL half of the存量 todo sweep. In particular, child
+// issues never have an acceptance seat, so treating a missing reviewer as an
+// empty seat would spend the shared 25-ticket budget on rows Route must ignore.
+func TestUnassignedTodoStoreQueries(t *testing.T) {
+	ctx := context.Background()
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	store := testHandler.RoutingStore()
+	wsID := fx.Workspace(t, "unassigned-todo-query", fmt.Sprintf("unassigned-todo-%d", time.Now().UnixNano()))
+	quiet := time.Now().Add(-2 * time.Hour)
+	runtimeID := fx.Runtime(t, "unassigned-todo-runtime")
+	agentID := fx.Agent(t, "unassigned-todo-agent", runtimeID)
+	reviewerID := fx.Agent(t, "unassigned-todo-reviewer", runtimeID)
+
+	eligible := fx.Issue(t, "eligible top-level todo", testutil.Cols{"workspace_id": wsID, "status": "todo", "last_activity_at": quiet})
+	backlog := fx.Issue(t, "backlog", testutil.Cols{"workspace_id": wsID, "status": "backlog", "last_activity_at": quiet})
+	blocked := fx.Issue(t, "blocked", testutil.Cols{"workspace_id": wsID, "status": "blocked", "last_activity_at": quiet})
+	memberHeld := fx.Issue(t, "member held", testutil.Cols{"workspace_id": wsID, "status": "todo", "assignee_type": "member", "assignee_id": testUserID, "last_activity_at": quiet})
+	full := fx.Issue(t, "both seats filled", testutil.Cols{"workspace_id": wsID, "status": "todo", "assignee_type": "agent", "assignee_id": agentID, "reviewer_type": "agent", "reviewer_id": reviewerID, "last_activity_at": quiet})
+	running := fx.Issue(t, "active run", testutil.Cols{"workspace_id": wsID, "status": "todo", "last_activity_at": quiet})
+	fx.Task(t, agentID, testutil.Cols{"issue_id": running, "status": "running", "runtime_id": runtimeID})
+	child := fx.Issue(t, "child with execution seat", testutil.Cols{"workspace_id": wsID, "status": "todo", "parent_issue_id": eligible, "assignee_type": "agent", "assignee_id": agentID, "last_activity_at": quiet})
+	if child == "" {
+		t.Fatal("fixture returned an empty child id")
+	}
+
+	ids, err := store.UnassignedTodos(ctx, wsID, time.Now().Add(-time.Hour), 25)
+	if err != nil {
+		t.Fatalf("unassigned todos: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	if !seen[eligible] {
+		t.Fatalf("eligible top-level todo missing from %v", ids)
+	}
+	for label, id := range map[string]string{
+		"backlog":                       backlog,
+		"blocked":                       blocked,
+		"member-held":                   memberHeld,
+		"both seats filled":             full,
+		"active run":                    running,
+		"child without acceptance seat": child,
+	} {
+		if seen[id] {
+			t.Errorf("%s was selected by the query", label)
+		}
+	}
+
+	for i := 0; i < 30; i++ {
+		fx.Issue(t, fmt.Sprintf("budget candidate %d", i), testutil.Cols{"workspace_id": wsID, "status": "todo", "last_activity_at": quiet.Add(-time.Duration(i) * time.Minute)})
+	}
+	ids, err = store.UnassignedTodos(ctx, wsID, time.Now().Add(-time.Hour), 25)
+	if err != nil {
+		t.Fatalf("unassigned todo limit: %v", err)
+	}
+	if len(ids) != 25 {
+		t.Fatalf("query returned %d candidates, want shared budget limit 25", len(ids))
+	}
+}
+
 // The sweep's budget must not be spent on child rows.
 //
 // Acceptance is parent-scoped, so a child is not a candidate at all. That

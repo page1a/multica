@@ -440,3 +440,30 @@ func (h *Handler) visibleWorkspaceRepos(r *http.Request, ws db.Workspace) []work
 	}
 	return visible
 }
+
+// requireTaskIssueVisible gates a run by the issue it belongs to: a caller who
+// cannot see the issue must not read the run's transcript or log export, which
+// carry the issue's content and the agent's tool input/output (DENE-896). A
+// run without an issue (chat-backed) is left to its own access rules. The deny
+// response is the task-level 404 so the run stays indistinguishable from one
+// that does not exist.
+func (h *Handler) requireTaskIssueVisible(w http.ResponseWriter, r *http.Request, task db.AgentTaskQueue) bool {
+	if !task.IssueID.Valid {
+		return true
+	}
+	issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+	if err != nil {
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, "task not found")
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load task")
+		return false
+	}
+	viewer, err := h.visibilityViewerFor(r, issue.WorkspaceID)
+	if err != nil || !viewer.canSeeIssue(issue) {
+		writeError(w, http.StatusNotFound, "task not found")
+		return false
+	}
+	return true
+}

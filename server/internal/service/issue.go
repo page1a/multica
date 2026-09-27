@@ -360,6 +360,33 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		if !projectID.Valid && !p.ProjectPinned {
 			projectID = parent.ProjectID
 		}
+		// `none` is the create-time empty value. A child inherits the queue
+		// ordering of its parent only in that empty case; an explicit priority
+		// is never overwritten.
+		if p.Priority == "none" && parent.Priority != "" {
+			p.Priority = parent.Priority
+		}
+	}
+	// Agent-created issues can also be children of the run's source rather
+	// than carrying an explicit parent. Inherit a project only when the source
+	// resolves to exactly one project; a multi-project chat is intentionally
+	// left unset because choosing one would be a guess.
+	if !projectID.Valid && !p.ProjectPinned && p.OriginID.Valid && p.OriginType.Valid &&
+		(p.OriginType.String == "agent_create" || p.OriginType.String == "quick_create") {
+		if source, err := qtx.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: p.OriginID, WorkspaceID: p.WorkspaceID}); err == nil {
+			if source.IssueID.Valid {
+				if sourceIssue, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: source.IssueID, WorkspaceID: p.WorkspaceID}); err == nil {
+					projectID = sourceIssue.ProjectID
+				}
+			} else if source.ChatSessionID.Valid {
+				if _, err := qtx.GetChatSessionInWorkspace(ctx, db.GetChatSessionInWorkspaceParams{ID: source.ChatSessionID, WorkspaceID: p.WorkspaceID}); err == nil {
+					projects, err := qtx.ListChatSessionProjectIDs(ctx, source.ChatSessionID)
+					if err == nil && len(projects) == 1 {
+						projectID = projects[0]
+					}
+				}
+			}
+		}
 	}
 	// A new issue is private unless it lands in a project, in which case it
 	// takes that project's current scope as its initial value and is then

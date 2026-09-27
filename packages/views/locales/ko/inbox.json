@@ -96,7 +96,8 @@
     "autopilot_quota_exceeded": "자동화 실행 한도 도달",
     "agent_access_request": "에이전트 사용 요청",
     "agent_access_approved": "에이전트 사용 승인됨",
-    "agent_access_declined": "에이전트 사용 거절됨"
+    "agent_access_declined": "에이전트 사용 거절됨",
+    "parking_unexplained": "설명 없이 멈춤"
   },
   "labels": {
     "set_status_to": "상태 변경:",
@@ -142,5 +143,98 @@
     "access_request_not_pending": "이 요청은 이미 처리되었거나 만료되었습니다",
     "access_request_failed": "요청을 처리하지 못했습니다",
     "access_pass_expiry_invalid": "미래의 만료 시각을 선택하세요"
+  },
+  "board": {
+    "title": "Inbox",
+    "lede": "One row per issue: running or stopped, why it stopped, what happened before, who moves next. Open the issue for details.",
+    "activity_link": "All activity",
+    "back_to_board": "One row per issue",
+    "lanes": {
+      "waiting": {
+        "title": "Waiting on you",
+        "hint": "Issues that asked for you. Reply and the row goes away; the agent picks up again",
+        "empty": "Nothing is waiting on you"
+      },
+      "stalled": {
+        "title": "Stopped · unexplained",
+        "hint": "No agent is running and the issue was never closed out. The server traced why",
+        "empty": "Nothing stopped without an explanation"
+      },
+      "running": {
+        "title": "Running",
+        "hint": "Just a marker, no noise",
+        "empty": "No agent is running right now"
+      },
+      "fresh": {
+        "title": "새 소식",
+        "hint": "지난 방문 이후 읽지 않은 소식이 있고 위 레인에 없는 티켓. 이번 방문에만 표시",
+        "empty": "새 소식이 없습니다"
+      },
+      "done": {
+        "title": "Done today",
+        "hint": "Shown once, folded after you have seen it",
+        "empty": "Nothing finished today yet"
+      }
+    },
+    "tag": {
+      "needs_human": "Your call",
+      "manual": "Your turn",
+      "mention": "Asked for you",
+      "routing": "Nobody picked up",
+      "patrol": "No reviewer",
+      "time_limit": "Timed out",
+      "quota_relay": "Out of quota",
+      "waiting_person": "Your call",
+      "waiting_default": "Waiting",
+      "stalled_delivery": "Delivery stuck",
+      "stalled_unclosed": "Done, not closed",
+      "stalled_reply_unclosed": "Replied, not closed",
+      "running": "Running",
+      "fresh": "새 소식",
+      "done": "Done"
+    },
+    "stuck": {
+      "branch_refused": "The platform refused to record the delivery branch",
+      "pr_not_linked": "No linked PR, so the move to review was refused",
+      "review_refused": "The move to review was refused",
+      "close_refused": "Closing was refused",
+      "run_failed": "The run ended in failure",
+      "no_wait_record": "Blocked, but nothing says what it waits on",
+      "woken_no_close": "Replied after being woken, but did not close out again",
+      "no_close": "The run ended and the issue was not closed out",
+      "default": "Stopped without an explanation"
+    },
+    "event": {
+      "run_started": "Run started",
+      "run_completed": "Run finished",
+      "run_failed": "Run failed",
+      "run_cancelled": "Run cancelled",
+      "pr_linked": "PR linked",
+      "pr_merged": "PR merged",
+      "rejected": "Refused by the platform",
+      "closed": "Closed out",
+      "after": "No run and no close since"
+    },
+    "server_mark": "Server verdict",
+    "unread_other": "새 소식 {{count}}건",
+    "before": "Before: {{text}}",
+    "next": "Next: {{name}}",
+    "next_none": "Next: nobody",
+    "next_issue": "Waiting on {{id}}",
+    "from_to_you": "{{name}} → you",
+    "you": "you",
+    "running_for": "running {{time}}",
+    "children_other": "{{count}} sub-issues",
+    "expand": "Why",
+    "collapse": "Hide",
+    "reply_placeholder": "Reply here; it posts on the issue and wakes {{name}}",
+    "reply_placeholder_default": "Reply here; it posts on the issue",
+    "reply": "Reply",
+    "reply_sent": "Replied; the agent will pick it up",
+    "reply_failed": "The reply was not sent",
+    "open_issue": "Open issue",
+    "seen_other": "{{count}} already seen",
+    "hide_seen": "Hide seen",
+    "load_error": "Some of this did not load; it will retry shortly"
   }
 }

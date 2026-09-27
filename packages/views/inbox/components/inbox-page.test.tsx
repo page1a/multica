@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { ApiError } from "@multica/core/api";
 import type { InboxItem } from "@multica/core/types";
 import { useInboxFilterStore } from "@multica/core/inbox/filter-store";
-import { InboxPage } from "./inbox-page";
+import { InboxActivityPage as InboxPage } from "./inbox-page";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -404,7 +404,9 @@ describe("InboxPage", () => {
     render(<InboxPage />);
 
     expect(screen.queryByTestId("row")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
+    // The header's back-to-board button shares the mocked name; the clear
+    // action is the last button on the page.
+    fireEvent.click(screen.getAllByRole("button", { name: "Inbox" }).at(-1)!);
     expect(screen.getByTestId("row")).toHaveTextContent("todo-high");
   });
 
@@ -563,7 +565,7 @@ describe("InboxPage", () => {
     render(<InboxPage />);
     fireEvent.click(screen.getByTestId("row"));
 
-    expect(replace).toHaveBeenCalledWith("/acme/inbox?view=archived&issue=issue-9");
+    expect(replace).toHaveBeenCalledWith("/acme/inbox?layer=activity&view=archived&issue=issue-9");
   });
 
   it("writes a bare issue param when selecting in the main view", () => {
@@ -573,7 +575,7 @@ describe("InboxPage", () => {
     render(<InboxPage />);
     fireEvent.click(screen.getByTestId("row"));
 
-    expect(replace).toHaveBeenCalledWith("/acme/inbox?issue=issue-3");
+    expect(replace).toHaveBeenCalledWith("/acme/inbox?layer=activity&issue=issue-3");
   });
 
   // `InboxItem.issue_id` is nullable: a quick-create outcome is a notification,
@@ -823,7 +825,7 @@ describe("InboxPage", () => {
       replace.mockClear();
       pressArchiveKey();
 
-      expect(replace).toHaveBeenCalledWith("/acme/inbox?issue=issue-b");
+      expect(replace).toHaveBeenCalledWith("/acme/inbox?layer=activity&issue=issue-b");
     });
 
     it("does not fire while typing in an editable control", () => {
@@ -975,6 +977,6 @@ describe("InboxPage", () => {
     render(<InboxPage />);
 
     expect(replace).toHaveBeenCalledWith("/acme/issues/issue-404");
-    expect(replace).not.toHaveBeenCalledWith("/acme/inbox");
+    expect(replace).not.toHaveBeenCalledWith("/acme/inbox?layer=activity");
   });
 });

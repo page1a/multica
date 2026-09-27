@@ -29,15 +29,25 @@
 
 ## 上游同步流程
 
-每次上游有更新时执行：
+每次上游有更新时执行一条命令：
+
+```bash
+# 预检 / 模拟运行（不写远端、不开 PR，检查是否有更新与冲突）
+bash scripts/sync-upstream.sh --dry-run
+
+# 执行同步（自动更新 main 镜像、切分支合并、检查迁移编号、推分支开 PR）
+bash scripts/sync-upstream.sh
+```
+
+该命令封装了以下标准流程：
 
 1. `git fetch upstream --prune && git fetch origin --prune`
-2. 看有什么新东西：`git log --oneline kun..upstream/main`。为空则「上游无更新」，结束。
-3. 先更新镜像：`git checkout main && git merge --ff-only upstream/main && git push origin main`
-4. 冲突预检（不碰 kun）：`git checkout -b sync/upstream-$(date +%Y%m%d) kun && git merge --no-ff upstream/main`
-   - 有冲突：`git diff --name-only --diff-filter=U` 列出冲突文件，`git merge --abort`，检查冲突是否能按既有代码与项目约定可靠解决；涉及尚未确定的产品选择时再交给人决策。
-   - 无冲突：跑构建和测试（Go 与前端各跑一次，命令以仓库 README / Makefile 为准）。
-5. 推送同步分支并开 PR：`git push -u origin sync/upstream-<日期>`，`gh pr create --base kun --title "sync: upstream main <日期>"`。Reviewer 通过后直接合并；没有 Reviewer 结论时，Agent 完成按风险自检并认为可接受也可合并，不等待本人再次确认。
+2. 检查更新：`git log --oneline kun..upstream/main`。为空则提示「上游无更新」并退出。
+3. 镜像更新：将 `main` 快进（`--ff-only`）到 `upstream/main` 并推送到 `origin main`。
+4. 冲突预检与合并：从 `kun` 切出 `sync/upstream-<日期>` 分支并执行 `git merge --no-ff main`。
+   - 有冲突：脚本自动停下并列出所有冲突文件，执行 `git merge --abort` 保持工作区干净，不自行乱解，等待人工或专门决策介入。
+   - 无冲突：自动执行 `make migration-lint` 检查迁移编号是否重复冲突。
+5. 推送与开 PR：推送 `sync/upstream-<日期>` 到 `origin`，并调用 `gh pr create --base kun --title "sync: upstream main <日期>"`。Reviewer 通过后直接合并；没有 Reviewer 结论时，Agent 完成按风险自检并认为可接受也可合并，不等待本人再次确认。
 
 ### 已提前照搬到 `kun`、上游还没合并的 PR
 

@@ -7,14 +7,14 @@ vi.mock("@multica/core/issue-statuses/hooks", () => ({
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { renderWithI18n } from "../test/i18n";
+import type { PinnedItem } from "@multica/core/types";
 import { AppSidebar } from "./app-sidebar";
+import { useWorkspaceSwitcherPreferenceStore } from "@multica/core/workspace/switcher-preference";
 
-const { appForeground, chatDetail, chatSessions, chatStore, createPin, detail, deletePin, invitationApi, modules, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
+const { appForeground, chatSessions, chatStore, detail, deletePin, invitationApi, modules, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   appForeground: { current: true },
   sidebarState: { setOpenMobile: vi.fn() },
   chatSessions: { current: [] as { id?: string; title?: string | null; unread_count?: number }[] },
-  createPin: vi.fn(),
-  chatDetail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
@@ -37,8 +37,8 @@ const { appForeground, chatDetail, chatSessions, chatStore, createPin, detail, d
         id: "pin-1",
         workspace_id: "ws-1",
         user_id: "user-1",
-        item_type: "issue" as "issue" | "chat",
-        item_id: "issue-1",
+        item_type: "project" as PinnedItem["item_type"],
+        item_id: "project-1",
         position: 0,
         created_at: "2026-05-06T00:00:00Z",
       },
@@ -53,6 +53,7 @@ const { appForeground, chatDetail, chatSessions, chatStore, createPin, detail, d
 
 vi.mock("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  KeyboardSensor: vi.fn(),
   PointerSensor: vi.fn(),
   closestCenter: vi.fn(),
   useSensor: vi.fn(),
@@ -62,15 +63,15 @@ vi.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useSortable: () => ({ attributes: {}, listeners: {}, setNodeRef: vi.fn() }),
   verticalListSortingStrategy: vi.fn(),
+  sortableKeyboardCoordinates: vi.fn(),
+  arrayMove: vi.fn(),
 }));
 vi.mock("@dnd-kit/utilities", () => ({ CSS: { Transform: { toString: () => undefined } } }));
 vi.mock("@multica/ui/components/ui/sidebar", () => ({
   Sidebar: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarFooter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarGroup: ({ children, onDragOver, onDrop }: { children: React.ReactNode; onDragOver?: React.DragEventHandler; onDrop?: React.DragEventHandler }) => (
-    <div data-testid="sidebar-group" onDragOver={onDragOver} onDrop={onDrop}>{children}</div>
-  ),
+  SidebarGroup: ({ children }: { children: React.ReactNode }) => <div data-testid="sidebar-group">{children}</div>,
   SidebarGroupContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -187,7 +188,6 @@ vi.mock("@multica/core/inbox/queries", () => ({
   unreadWorkspaceIds: (entries: { workspace_id: string; count: number }[]) =>
     new Set(entries.filter((s) => s.count > 0).map((s) => s.workspace_id)),
 }));
-vi.mock("@multica/core/issues/queries", () => ({ issueDetailOptions: () => ({ queryKey: ["issue"] }) }));
 vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
   useCreateModeStore: { getState: () => ({ lastMode: "agent" }) },
   openCreateIssueWithPreference: vi.fn(),
@@ -195,14 +195,11 @@ vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
 vi.mock("@multica/core/issues/stores/draft-store", () => ({ useIssueDraftStore: () => false }));
 vi.mock("@multica/core/modals", () => ({ useModalStore: { getState: () => ({ modal: null, open: vi.fn() }) } }));
 vi.mock("@multica/core/pins/mutations", () => ({
-  CHAT_PIN_DRAG_TYPE: "application/x-multica-chat-session",
-  useCreatePin: () => ({ mutate: createPin }),
   useDeletePin: () => ({ mutate: deletePin }),
   useReorderPins: () => ({ mutate: vi.fn() }),
 }));
 vi.mock("@multica/core/chat/queries", () => ({
   chatSessionsOptions: (wsId: string) => ({ queryKey: ["chat", wsId, "sessions"] }),
-  chatSessionOptions: (wsId: string, id: string) => ({ queryKey: ["chat", wsId, "session", id] }),
 }));
 vi.mock("@multica/core/pins/queries", () => ({ pinListOptions: () => ({ queryKey: ["pins"] }) }));
 vi.mock("@multica/core/projects/queries", () => ({ projectDetailOptions: () => ({ queryKey: ["project"] }) }));
@@ -220,12 +217,11 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   },
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "pins") return { data: pins.current };
-    if (queryKey[0] === "issue") return detail.current;
+    if (queryKey[0] === "project") return detail.current;
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
     if (queryKey[0] === "workspaces" && queryKey[2] === "modules") return { data: modules.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
     if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current, isSuccess: true };
-    if (queryKey[0] === "chat" && queryKey[2] === "session") return chatDetail.current;
     return { data: [] };
   },
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: invitationApi.invalidateQueries }),
@@ -254,18 +250,18 @@ describe("PinRow", () => {
   });
 
   it("renders loaded details", async () => {
-    detail.current = { isPending: false, isError: false, data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" }, error: null };
+    detail.current = { isPending: false, isError: false, data: { id: "project-1", title: "Keep this pin" }, error: null };
     render(<AppSidebar />);
     expect(await screen.findByText("Keep this pin")).toBeInTheDocument();
     expect(screen.queryByText("MUL-123 Keep this pin")).not.toBeInTheDocument();
   });
 
   it("does not also highlight the parent workspace nav for an active pin", async () => {
-    navigation.current.pathname = "/acme/issues/issue-1";
+    navigation.current.pathname = "/acme/projects/project-1";
     detail.current = {
       isPending: false,
       isError: false,
-      data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" },
+      data: { id: "project-1", title: "Keep this pin" },
       error: null,
     };
 
@@ -275,7 +271,7 @@ describe("PinRow", () => {
       "data-active",
       "true",
     );
-    expect(container.querySelector('button[data-href="/acme/issues"]')).not.toHaveAttribute("data-active");
+    expect(container.querySelector('button[data-href="/acme/projects"]')).not.toHaveAttribute("data-active");
   });
 
   it("keeps the parent route active until a hidden pin is expanded", () => {
@@ -283,21 +279,21 @@ describe("PinRow", () => {
     pins.current = Array.from({ length: 6 }, (_, index) => ({
       ...originalPins[0]!,
       id: `pin-${index + 1}`,
-      item_id: `issue-${index + 1}`,
+      item_id: `project-${index + 1}`,
       position: index,
     }));
-    navigation.current.pathname = "/acme/issues/issue-6";
+    navigation.current.pathname = "/acme/projects/project-6";
     detail.current = {
       isPending: false,
       isError: false,
-      data: { identifier: "MUL-123", title: "Pinned issue", status: "todo" },
+      data: { id: "project-6", title: "Pinned project" },
       error: null,
     };
 
     try {
       const { container } = renderWithI18n(<AppSidebar />);
-      const parent = () => container.querySelector('button[data-href="/acme/issues"]');
-      const lastPin = () => container.querySelector('button[data-href="/acme/issues/issue-6"]');
+      const parent = () => container.querySelector('button[data-href="/acme/projects"]');
+      const lastPin = () => container.querySelector('button[data-href="/acme/projects/project-6"]');
 
       expect(lastPin()).not.toBeInTheDocument();
       expect(parent()).toHaveAttribute("data-active", "true");
@@ -586,25 +582,24 @@ describe("Pending invitation self-heal", () => {
   });
 });
 
-describe("chat pins (DENE-866)", () => {
-  const chatPin = {
-    id: "pin-chat",
-    workspace_id: "ws-1",
-    user_id: "user-1",
-    item_type: "chat" as const,
-    item_id: "chat-1",
-    position: 1,
-    created_at: "2026-05-06T00:00:00Z",
-  };
+// The pinned group holds projects only. Issue pins still rank issues in their
+// lists and chat pins still fill the Chat list's pinned group — neither shows
+// here, and neither is auto-unpinned for being hidden. (DENE-876)
+describe("pinned group holds projects only (DENE-876)", () => {
   const savedPins = pins.current;
+  const pinOf = (item_type: PinnedItem["item_type"], item_id: string, position: number) => ({
+    ...savedPins[0]!,
+    id: `pin-${item_id}`,
+    item_type,
+    item_id,
+    position,
+  });
 
   beforeEach(() => {
-    createPin.mockReset();
     deletePin.mockReset();
     navigation.current.pathname = "/acme/issues";
-    detail.current = { isPending: false, isError: false, data: { identifier: "MUL-1", title: "Issue pin", status: "todo" }, error: null };
-    chatDetail.current = { isPending: false, isError: false, data: null, error: null };
-    chatSessions.current = [];
+    detail.current = { isPending: false, isError: false, data: { id: "project-1", title: "Project pin" }, error: null };
+    chatSessions.current = [{ id: "chat-1", title: "Roadmap sync", unread_count: 0 }];
     summary.current = [];
     workspaces.current = [];
     modules.current = undefined;
@@ -614,53 +609,85 @@ describe("chat pins (DENE-866)", () => {
     pins.current = savedPins;
   });
 
-  it("renders a pinned chat by its title from the loaded chat list", async () => {
-    pins.current = [...savedPins, chatPin];
-    chatSessions.current = [{ id: "chat-1", title: "Roadmap sync", unread_count: 0 }];
-    renderWithI18n(<AppSidebar />);
-    const button = (await screen.findByText("Roadmap sync")).closest("button");
-    expect(button).toHaveAttribute("data-href", "/acme/chat/chat-1");
+  it("renders only the project pin next to issue, view and chat pins", () => {
+    pins.current = [
+      pinOf("chat", "chat-1", 0),
+      pinOf("issue", "issue-1", 1),
+      pinOf("view", "view-1", 2),
+      pinOf("project", "project-1", 3),
+    ];
+    const { container } = renderWithI18n(<AppSidebar />);
+    expect(screen.getByText("Project pin")).toBeInTheDocument();
+    expect(screen.queryByText("Roadmap sync")).not.toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/chat/chat-1"]')).not.toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/issues/issue-1"]')).not.toBeInTheDocument();
     expect(deletePin).not.toHaveBeenCalled();
   });
 
-  it("falls back to the untitled label for a pinned chat without a title", async () => {
-    pins.current = [...savedPins, chatPin];
-    chatSessions.current = [{ id: "chat-1", title: null, unread_count: 0 }];
+  it("hides the pinned group when no project is pinned", () => {
+    pins.current = [pinOf("chat", "chat-1", 0), pinOf("issue", "issue-1", 1)];
     renderWithI18n(<AppSidebar />);
-    expect(await screen.findByText("New chat")).toBeInTheDocument();
+    expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
+  });
+});
+
+describe("workspace switcher arrangement", () => {
+  const names = () =>
+    screen
+      .getAllByText(/ WS$/)
+      .map((node) => node.textContent);
+
+  beforeEach(() => {
+    summary.current = [];
+    useWorkspaceSwitcherPreferenceStore.setState({ byUser: {} });
+    workspaces.current = [
+      { id: "ws-1", name: "Active WS", slug: "active", avatar_url: null },
+      { id: "ws-2", name: "Beta WS", slug: "beta", avatar_url: null },
+      { id: "ws-3", name: "Gamma WS", slug: "gamma", avatar_url: null },
+    ];
   });
 
-  it("unpins a chat whose detail 404s after the list came back without it", async () => {
-    pins.current = [...savedPins, chatPin];
-    chatSessions.current = [{ id: "other", title: "Other", unread_count: 0 }];
-    chatDetail.current = { isPending: false, isError: true, data: null, error: new ApiError("missing", 404, "Not Found") };
+  it("lists pinned workspaces first and pins from the row without navigating", () => {
     renderWithI18n(<AppSidebar />);
-    await waitFor(() => expect(deletePin).toHaveBeenCalledWith({ itemType: "chat", itemId: "chat-1" }));
+    expect(names()).toEqual(["Active WS", "Beta WS", "Gamma WS"]);
+
+    const pinButtons = screen.getAllByRole("button", { name: "Pin to top" });
+    fireEvent.click(pinButtons[2]!);
+
+    expect(names()).toEqual(["Gamma WS", "Active WS", "Beta WS"]);
+    expect(useWorkspaceSwitcherPreferenceStore.getState().byUser["user-1"]?.pinned).toEqual(["ws-3"]);
+    expect(screen.getAllByRole("button", { name: "Unpin" })).toHaveLength(1);
   });
 
-  it("pins a chat dropped onto the pinned group, once", () => {
-    chatSessions.current = [{ id: "chat-9", title: "Dropped", unread_count: 0 }];
-    renderWithI18n(<AppSidebar />);
-    const group = screen.getAllByTestId("sidebar-group").find((el) => el.textContent?.includes("Issue pin"))!;
-    const dataTransfer = {
-      types: ["application/x-multica-chat-session"],
-      getData: (type: string) => (type === "application/x-multica-chat-session" ? "chat-9" : ""),
-      dropEffect: "none",
-    };
-    fireEvent.dragOver(group, { dataTransfer });
-    fireEvent.drop(group, { dataTransfer });
-    expect(createPin).toHaveBeenCalledTimes(1);
-    expect(createPin).toHaveBeenCalledWith({ item_type: "chat", item_id: "chat-9" });
-  });
-
-  it("ignores a drop of a chat that is already pinned", () => {
-    pins.current = [...savedPins, chatPin];
-    chatSessions.current = [{ id: "chat-1", title: "Roadmap sync", unread_count: 0 }];
-    renderWithI18n(<AppSidebar />);
-    const group = screen.getAllByTestId("sidebar-group").find((el) => el.textContent?.includes("Roadmap sync"))!;
-    fireEvent.drop(group, {
-      dataTransfer: { types: ["application/x-multica-chat-session"], getData: () => "chat-1", dropEffect: "none" },
+  it("keeps a person's arrangement to themselves", () => {
+    useWorkspaceSwitcherPreferenceStore.setState({
+      byUser: { "someone-else": { order: ["ws-3", "ws-2", "ws-1"], pinned: ["ws-3"] } },
     });
-    expect(createPin).not.toHaveBeenCalled();
+    renderWithI18n(<AppSidebar />);
+    expect(names()).toEqual(["Active WS", "Beta WS", "Gamma WS"]);
+  });
+
+  it("hides the search box until the list outgrows a glance", () => {
+    renderWithI18n(<AppSidebar />);
+    expect(screen.queryByRole("textbox", { name: "Search workspaces…" })).toBeNull();
+  });
+
+  it("filters by name once there are more than five workspaces", () => {
+    workspaces.current = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"].map((name, i) => ({
+      id: `ws-${i + 1}`,
+      name: `${name} WS`,
+      slug: name.toLowerCase(),
+      avatar_url: null,
+    }));
+    renderWithI18n(<AppSidebar />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces…" }), {
+      target: { value: "eta" },
+    });
+    expect(names()).toEqual(["Beta WS", "Zeta WS"]);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces…" }), {
+      target: { value: "nope" },
+    });
+    expect(screen.getByText("No workspaces match “nope”")).toBeTruthy();
   });
 });

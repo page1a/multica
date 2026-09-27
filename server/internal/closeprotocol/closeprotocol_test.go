@@ -379,3 +379,41 @@ func rule(err error) string {
 	}
 	return ""
 }
+
+// DENE-859: `multica issue close --outcome in_review` hands the ticket to the
+// acceptance seat through routing, not through an executor @mention. The
+// record says so with wake_action=route, which only makes sense on in_review.
+func TestValidate_RouteWake(t *testing.T) {
+	ok := base(map[string]string{
+		KeyConclusion:    ConclusionAwaitingReview,
+		KeyStatus:        issuestatus.InReview,
+		KeyNextOwnerType: OwnerNone,
+		KeyNextOwnerID:   "",
+		KeyWakeAction:    WakeRoute,
+	})
+	if err := Validate(ok, issuestatus.InReview, "PR #1 绿了。"); err != nil {
+		t.Fatalf("awaiting_review via route should validate without a mention, got %v", err)
+	}
+
+	human := base(map[string]string{
+		KeyConclusion:    ConclusionAwaitingHuman,
+		KeyStatus:        issuestatus.InReview,
+		KeyNextOwnerType: OwnerMember,
+		KeyNextOwnerID:   memberID,
+		KeyWakeAction:    WakeRoute,
+	})
+	if err := Validate(human, issuestatus.InReview, "等人验收。"); err != nil {
+		t.Fatalf("awaiting_human via route should validate, got %v", err)
+	}
+
+	wrongStatus := base(map[string]string{
+		KeyNextOwnerType: OwnerNone,
+		KeyNextOwnerID:   "",
+		KeyWakeAction:    WakeRoute,
+	})
+	err := Validate(wrongStatus, issuestatus.Done, "done")
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Rule != "route" {
+		t.Fatalf("route on done should fail rule route, got %v", err)
+	}
+}

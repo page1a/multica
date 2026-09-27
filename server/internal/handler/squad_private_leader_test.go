@@ -392,9 +392,12 @@ func TestChildDone_SquadPrivateLeader_AgentActorWakesLeader(t *testing.T) {
 	})
 
 	// Worker agent moves the child to done (agent actor via X-Agent-ID/X-Task-ID).
+	// The child has no PR or delivery branch, so an agent close must declare it
+	// no-code (DENE-875).
 	w = httptest.NewRecorder()
 	r = newRequest("PATCH", "/api/issues/"+child.ID, map[string]any{
-		"status": "done",
+		"status":         "done",
+		"no_code_reason": "test fixture has no code delivery",
 	})
 	r.Header.Set("X-Agent-ID", workerAgentID)
 	r.Header.Set("X-Task-ID", workerTaskID)

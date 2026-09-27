@@ -2,6 +2,7 @@ package blockwait
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -71,6 +72,11 @@ type Decision struct {
 	MarkReview     bool
 	// CommentOnly leaves the sentence and does not enqueue a run.
 	CommentOnly bool
+	// Inherited names the red checks a merge decision let through because the
+	// same checks are already red on the base branch (DENE-892). BaseBranch is
+	// that branch.
+	Inherited  []string
+	BaseBranch string
 }
 
 // DecidePatrol picks a single next step for one stalled issue.
@@ -191,6 +197,95 @@ type PRSnapshot struct {
 	Mergeable string
 	Checks    string
 	URL       string
+	// FailedChecks names the PR's own red checks; RunningChecks counts the
+	// ones that have not finished.
+	FailedChecks  []string
+	RunningChecks int
+	// Base is the latest CI on the PR's base branch. Nil means it could not
+	// be read, and every red check counts as this PR's own.
+	Base *BaseChecks
+}
+
+// BaseChecks is the base branch's latest CI, reduced to the red check names.
+type BaseChecks struct {
+	Branch string
+	Failed []string
+}
+
+// inheritedFailures reports the red checks a PR only carries over from its
+// base branch (DENE-892). It holds when every red check of the PR is also red,
+// by name, on the base, nothing is still running, and the PR is otherwise
+// mergeable. A conflict, a branch rule, a pending check, or a missing baseline
+// keeps the gate closed.
+func inheritedFailures(pr PRSnapshot) ([]string, bool) {
+	switch strings.ToLower(strings.TrimSpace(pr.Checks)) {
+	case "failure", "error", "failing":
+	default:
+		return nil, false
+	}
+	switch strings.ToLower(strings.TrimSpace(pr.Mergeable)) {
+	case "clean", "has_hooks", "unstable":
+	default:
+		return nil, false
+	}
+	if pr.RunningChecks > 0 || pr.Base == nil || len(pr.FailedChecks) == 0 {
+		return nil, false
+	}
+	if len(newFailures(pr)) > 0 {
+		return nil, false
+	}
+	return uniqueSorted(pr.FailedChecks), true
+}
+
+// newFailures lists the PR's red checks that are not red on the base.
+func newFailures(pr PRSnapshot) []string {
+	baseRed := map[string]bool{}
+	if pr.Base != nil {
+		for _, name := range pr.Base.Failed {
+			baseRed[name] = true
+		}
+	}
+	var fresh []string
+	for _, name := range uniqueSorted(pr.FailedChecks) {
+		if !baseRed[name] {
+			fresh = append(fresh, name)
+		}
+	}
+	return fresh
+}
+
+func uniqueSorted(names []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// InheritedSentence is the line every report of a let-through carries.
+func InheritedSentence(base string, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	if base == "" {
+		base = "主线"
+	}
+	return fmt.Sprintf("因主线原有失败放行：%s（%s 最新一次 CI 上同名检查本来就是红的；按 job 比对，同一个 job 里 PR 新加的失败会被一起放过）。", strings.Join(names, "、"), base)
+}
+
+// letThrough records the inherited checks of one PR on the decision.
+func (d *Decision) letThrough(pr PRSnapshot, names []string) {
+	d.Inherited = uniqueSorted(append(d.Inherited, names...))
+	if d.BaseBranch == "" && pr.Base != nil {
+		d.BaseBranch = pr.Base.Branch
+	}
 }
 
 // Release actions.
@@ -216,7 +311,12 @@ func DecideRelease(prs []PRSnapshot, now time.Time) Decision {
 	if len(open) == 0 {
 		return Decision{Action: ReleaseDone, Reason: "验收已经通过，没有还开着的 PR，这张票可以关了。"}
 	}
+	var through Decision
 	for _, pr := range open {
+		if names, ok := inheritedFailures(pr); ok {
+			through.letThrough(pr, names)
+			continue
+		}
 		if prBlocked(pr) {
 			rec := Record{
 				WaitCondition:  prBlockReason(pr),
@@ -234,9 +334,11 @@ func DecideRelease(prs []PRSnapshot, now time.Time) Decision {
 	}
 	label := prLabel(open[0])
 	return Decision{
-		Action: ReleaseMerge,
-		Reason: fmt.Sprintf("验收已经通过，平台合并 %s 并关票。", label),
-		Record: Record{HasWakeAt: true, WakeAt: now.Add(QuietAfter), WaitCondition: "验收已通过，等待合并 " + label},
+		Action:     ReleaseMerge,
+		Reason:     fmt.Sprintf("验收已经通过，平台合并 %s 并关票。", label) + InheritedSentence(through.BaseBranch, through.Inherited),
+		Record:     Record{HasWakeAt: true, WakeAt: now.Add(QuietAfter), WaitCondition: "验收已通过，等待合并 " + label},
+		Inherited:  through.Inherited,
+		BaseBranch: through.BaseBranch,
 	}
 }
 
@@ -256,8 +358,13 @@ func DecideClose(prs []PRSnapshot, now time.Time) Decision {
 	if len(open) == 0 {
 		return Decision{Action: ReleaseDone}
 	}
+	var through Decision
 	for _, pr := range open {
 		if prReadyToMerge(pr) {
+			continue
+		}
+		if names, ok := inheritedFailures(pr); ok {
+			through.letThrough(pr, names)
 			continue
 		}
 		rec := Record{
@@ -274,10 +381,16 @@ func DecideClose(prs []PRSnapshot, now time.Time) Decision {
 		}
 	}
 	label := prLabel(open[0])
+	reason := fmt.Sprintf("这张票要关，%s 能干净合并且检查是绿的。平台先合并，再关票。", label)
+	if len(through.Inherited) > 0 {
+		reason = fmt.Sprintf("这张票要关，%s 能合并，红的检查都不是它新带进来的。平台先合并，再关票。", label) + InheritedSentence(through.BaseBranch, through.Inherited)
+	}
 	return Decision{
-		Action: ReleaseMerge,
-		Reason: fmt.Sprintf("这张票要关，%s 能干净合并且检查是绿的。平台先合并，再关票。", label),
-		Record: Record{HasWakeAt: true, WakeAt: now.Add(QuietAfter), WaitCondition: "等待合并 " + label},
+		Action:     ReleaseMerge,
+		Reason:     reason,
+		Record:     Record{HasWakeAt: true, WakeAt: now.Add(QuietAfter), WaitCondition: "等待合并 " + label},
+		Inherited:  through.Inherited,
+		BaseBranch: through.BaseBranch,
 	}
 }
 
@@ -335,11 +448,36 @@ func prBlockReason(pr PRSnapshot) string {
 	}
 	switch strings.ToLower(pr.Checks) {
 	case "failure", "error", "failing":
-		return label + " 的检查是红的"
+		return label + " 的检查是红的" + redDetail(pr)
 	case "cancelled":
 		return label + " 的检查被取消了"
 	}
 	return label + " 现在合不进去"
+}
+
+// redDetail says which red checks the gate holds the PR for, and why a
+// baseline did not excuse them.
+func redDetail(pr PRSnapshot) string {
+	if len(pr.FailedChecks) == 0 {
+		return ""
+	}
+	if pr.Base == nil {
+		return "（" + strings.Join(uniqueSorted(pr.FailedChecks), "、") + "；没拿到主线基线，按新失败处理）"
+	}
+	if fresh := newFailures(pr); len(fresh) > 0 {
+		return "（新引入：" + strings.Join(fresh, "、") + "，" + baseName(pr.Base) + " 上同名检查不是红的）"
+	}
+	if pr.RunningChecks > 0 {
+		return "（和 " + baseName(pr.Base) + " 相同的失败，但还有检查没跑完）"
+	}
+	return ""
+}
+
+func baseName(b *BaseChecks) string {
+	if b == nil || b.Branch == "" {
+		return "主线"
+	}
+	return b.Branch
 }
 
 func prLabel(pr PRSnapshot) string {

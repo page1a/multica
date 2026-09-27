@@ -152,6 +152,14 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.writeTimeline(w, r, issue, false)
+}
+
+// writeTimeline is the body of ListTimeline after the issue has been loaded
+// and authorised. The cross-workspace link reader (link_read.go) shares it;
+// stripAttachmentURLs blanks every attachment URL in the entries for that
+// reader, which hands out no file access (DENE-897).
+func (h *Handler) writeTimeline(w http.ResponseWriter, r *http.Request, issue db.Issue, stripAttachmentURLs bool) {
 	ctx := r.Context()
 
 	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
@@ -215,6 +223,11 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries := h.mergeTimeline(r, comments, activities, !wantWrapped)
+	if stripAttachmentURLs {
+		for i := range entries {
+			entries[i].Attachments = redactAttachmentURLs(entries[i].Attachments)
+		}
+	}
 	// The current-member directory deliberately excludes departed members, but
 	// timeline attribution must remain readable after they leave. Hydrate only
 	// the member ids already present in this authorised issue response; lookup

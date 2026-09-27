@@ -77,6 +77,10 @@ func (s *TaskService) HandleCompletedTasks(ctx context.Context, tasks []db.Agent
 			continue
 		}
 		processedIssues[issueKey] = true
+		// Parking record first (DENE-881): the recovery run the stall
+		// signal may queue would otherwise read as "still running" and hide
+		// the stop. Every status is recorded, blocked included.
+		s.RecordParking(ctx, t.IssueID, t)
 		if s.signalCompletionStall(ctx, issueKey, t.IssueID) {
 			signalled++
 		}

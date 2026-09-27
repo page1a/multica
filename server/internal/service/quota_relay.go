@@ -811,28 +811,27 @@ func postQuotaAudit(ctx context.Context, qtx *db.Queries, issue db.Issue, conten
 	return &comment, nil
 }
 
+// notifyQuotaWait calls the accountable person through the summon entry
+// (DENE-880): inbox, subscription and a visible @ in the same transaction as
+// the block. A still-open call to the same person on this ticket dedupes.
 func notifyQuotaWait(ctx context.Context, qtx *db.Queries, issue db.Issue, task db.AgentTaskQueue, body string) error {
 	recipient, ok := quotaWaitRecipient(issue, task)
 	if !ok {
 		return nil
 	}
-	details, _ := json.Marshal(map[string]string{
-		"wait_reason": "quota_relay",
-		"issue_id":    util.UUIDToString(issue.ID),
+	_, err := SummonWith(ctx, qtx, SummonInput{
+		Issue:      issue,
+		Recipient:  recipient,
+		CallerType: "system",
+		Source:     SummonSourceQuotaRelay,
+		Reason:     body,
+		InboxType:  "quota_relay_waiting",
+		InboxTitle: "额度熔断后没有可接力的席位",
+		Details:    map[string]any{"wait_reason": "quota_relay", "issue_id": util.UUIDToString(issue.ID)},
 	})
-	_, err := qtx.CreateInboxItem(ctx, db.CreateInboxItemParams{
-		WorkspaceID:   issue.WorkspaceID,
-		RecipientType: "member",
-		RecipientID:   recipient,
-		Type:          "quota_relay_waiting",
-		Severity:      "action_required",
-		IssueID:       issue.ID,
-		Title:         "额度熔断后没有可接力的席位",
-		Body:          pgtype.Text{String: body, Valid: true},
-		ActorType:     pgtype.Text{String: "system", Valid: true},
-		Details:       details,
-		ID:            dbid.NewV7(),
-	})
+	if errors.Is(err, ErrSummonNotMember) {
+		return nil
+	}
 	return err
 }
 

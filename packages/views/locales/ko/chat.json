@@ -281,17 +281,11 @@
     "copy_role_user": "나",
     "copy_role_assistant": "어시스턴트"
   },
-  "provider_quota": {
-    "label": "할당량",
-    "unknown": "알 수 없음",
-    "exhausted": "소진",
-    "used": "{{percent}}%",
-    "resets": "{{when}} 초기화",
-    "updated": "{{when}} 업데이트"
-  },
   "sharing": {
     "title": "권한 편집",
     "follow": "프로젝트 따르기",
+    "workspace": "전체 워크스페이스",
+    "workspace_hint": "워크스페이스의 모든 멤버가 이 채팅을 보고 말할 수 있습니다",
     "follow_hint_bound": "{{projects}} 멤버는 보고 말할 수 있습니다",
     "follow_hint_unbound": "선택하려면 먼저 프로젝트를 연결하세요",
     "extra": "프로젝트 따르기 + 추가 인원",

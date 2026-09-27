@@ -637,6 +637,52 @@ func (q *Queries) ListStaleReviewIssues(ctx context.Context, arg ListStaleReview
 	return items, nil
 }
 
+const listUnassignedTodoIssues = `-- name: ListUnassignedTodoIssues :many
+SELECT i.id FROM issue i
+WHERE i.workspace_id = $1::uuid
+  AND i.status = 'todo'
+  AND COALESCE(i.assignee_type, '') <> 'member'
+  AND (i.assignee_id IS NULL OR (i.parent_issue_id IS NULL AND (i.reviewer_type IS NULL OR i.reviewer_id IS NULL)))
+  AND COALESCE(i.last_activity_at, i.updated_at) < $2::timestamptz
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue q
+      WHERE q.issue_id = i.id
+        AND q.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY COALESCE(i.last_activity_at, i.updated_at) ASC
+LIMIT $3::int
+`
+
+type ListUnassignedTodoIssuesParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Before      pgtype.Timestamptz `json:"before"`
+	Lim         int32              `json:"lim"`
+}
+
+// Quiet todo tickets with at least one empty routing seat. Human-held work is
+// excluded here as an additional guard; Route repeats that guard before any
+// write. The query deliberately does not inspect labels, due dates, or status
+// outside the concrete todo category.
+func (q *Queries) ListUnassignedTodoIssues(ctx context.Context, arg ListUnassignedTodoIssuesParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listUnassignedTodoIssues, arg.WorkspaceID, arg.Before, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reassignIssue = `-- name: ReassignIssue :one
 UPDATE issue
 SET assignee_type = $1::text,

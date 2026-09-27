@@ -255,6 +255,10 @@ type Store interface {
 	// switch can flip between this call and the pass.
 	EnabledWorkspaces(ctx context.Context) ([]string, error)
 
+	// UnassignedTodos lists quiet todo issues with at least one empty routing seat.
+	// It excludes human-held work and tickets with an active run.
+	UnassignedTodos(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error)
+
 	// StaleReviews lists issues in this workspace that sit in the in_review
 	// CATEGORY, carry no active run, and have had no activity since `before`.
 	//

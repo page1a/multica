@@ -44,6 +44,12 @@ func (h *Handler) chatAccessFor(ctx context.Context, session db.ChatSession, use
 	if uuidToString(session.CreatorID) == userID {
 		return chatAccess{see: true, speak: true, level: "owner"}, nil
 	}
+	if session.Visibility == "workspace" {
+		member, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: parseUUID(userID), WorkspaceID: session.WorkspaceID})
+		if err != nil { return chatAccess{}, err }
+		if member.Role != "guest" { return chatAccess{see: true, speak: true, level: "speak"}, nil }
+		return chatAccess{}, nil
+	}
 	if session.Visibility != "project" {
 		return chatAccess{}, nil
 	}
@@ -148,6 +154,7 @@ type chatAccessResponse struct {
 }
 
 func chatAccessMode(visibility string, shareCount int) string {
+	if visibility == "workspace" { return "workspace" }
 	if visibility != "project" {
 		return "private"
 	}
@@ -221,8 +228,8 @@ func (h *Handler) PutChatSessionAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Mode != "project" && req.Mode != "extra" && req.Mode != "private" {
-		writeError(w, http.StatusBadRequest, "mode must be project, extra, or private")
+	if req.Mode != "project" && req.Mode != "extra" && req.Mode != "workspace" && req.Mode != "private" {
+		writeError(w, http.StatusBadRequest, "mode must be workspace, project, extra, or private")
 		return
 	}
 	hasProject, err := h.Queries.ChatSessionHasProject(r.Context(), session.ID)
@@ -231,7 +238,7 @@ func (h *Handler) PutChatSessionAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bound := hasProject.Valid && hasProject.Bool
-	if req.Mode != "private" && !bound {
+	if (req.Mode == "project" || req.Mode == "extra") && !bound {
 		writeError(w, http.StatusBadRequest, "bind a project before sharing this chat")
 		return
 	}
@@ -273,8 +280,10 @@ func (h *Handler) PutChatSessionAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	visibility := "private"
-	if req.Mode != "private" {
+	if req.Mode == "project" || req.Mode == "extra" {
 		visibility = "project"
+	} else if req.Mode == "workspace" {
+		visibility = "workspace"
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {

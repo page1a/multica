@@ -1,8 +1,5 @@
 "use client";
-import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
-
-import { issueStatusCategory } from "@multica/core/issues";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { AppLink, useNavigation } from "../navigation";
@@ -19,13 +16,16 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Layers,
-  MessageSquare,
+import {
   ChevronDown,
   ChevronRight,
   LogOut,
   Plus,
   Check,
+  ArrowUpDown,
+  Pin,
+  PinOff,
+  Search,
   SquarePen,
   Sparkles,
   X,
@@ -35,7 +35,6 @@ import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@multica/ui/components/ui/collapsible";
 import { CappedNumberFlow } from "@multica/ui/components/ui/number-flow";
-import { StatusIcon } from "../issues/components/status-icon";
 import {
   openAlignIssue,
   openCreateIssueWithPreference,
@@ -64,26 +63,27 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useAuthStore } from "@multica/core/auth";
-import { issueViewDetailOptions } from "@multica/core/issue-views/queries";
-import {
-  issueViewContainerKey,
-  useActiveIssueViewStore,
-} from "@multica/core/issue-views/active-view-store";
 import { useCurrentWorkspace, useWorkspacePaths, paths } from "@multica/core/paths";
 import { workspaceListOptions, myInvitationListOptions, workspaceKeys, moduleVisibilityOptions } from "@multica/core/workspace/queries";
 import { canAccessModule, navItemModule } from "@multica/core/workspace";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import {
+  arrangeWorkspaces,
+  useWorkspaceSwitcherPreference,
+  useWorkspaceSwitcherPreferenceStore,
+} from "@multica/core/workspace/switcher-preference";
+import { isImeComposing } from "@multica/core/utils";
+import type { Workspace } from "@multica/core/types";
+import { WorkspaceOrganizeDialog } from "./workspace-organize-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { inboxUnreadSummaryOptions, useInboxUnreadCount, hasOtherWorkspaceUnread, unreadWorkspaceIds } from "@multica/core/inbox/queries";
-import { chatSessionOptions, chatSessionsOptions } from "@multica/core/chat/queries";
-import type { ChatSession } from "@multica/core/types";
+import { chatSessionsOptions } from "@multica/core/chat/queries";
 import { countUnreadChatMessages } from "@multica/core/chat/unread";
 import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
-import { CHAT_PIN_DRAG_TYPE, useCreatePin, useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
-import { issueDetailOptions } from "@multica/core/issues/queries";
+import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import type { PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
@@ -114,6 +114,8 @@ const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
 const EMPTY_INBOX_SUMMARY: Awaited<ReturnType<typeof api.getInboxUnreadSummary>> = [];
 const PINNED_PREVIEW_LIMIT = 5;
+// The switcher grows a search box once the list stops fitting at a glance.
+const WORKSPACE_SEARCH_THRESHOLD = 5;
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see AppSidebar body).
@@ -181,7 +183,7 @@ const NAV_ITEM_CLASS_NAME =
 
 /**
  * Presentational pin row. The `label` and `iconNode` are computed by the
- * parent `PinRow` from cached issue / project detail queries — keeping
+ * parent `PinRow` from the cached project detail query — keeping
  * this component dumb means the dnd-kit / navigation wiring lives in
  * one place and the data flow is explicit.
  */
@@ -192,8 +194,6 @@ function SortablePinItem({
   onUnpin,
   label,
   iconNode,
-  onNavigate,
-  isActiveOverride,
 }: {
   pin: PinnedItem;
   href: string;
@@ -201,10 +201,6 @@ function SortablePinItem({
   onUnpin: () => void;
   label: string;
   iconNode: React.ReactNode;
-  /** Runs on a real click (not a drag-release) before navigation. */
-  onNavigate?: () => void;
-  /** Overrides the plain path comparison (view pins carry extra state). */
-  isActiveOverride?: boolean;
 }) {
   const { t } = useT("layout");
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pin.id });
@@ -215,7 +211,7 @@ function SortablePinItem({
   }, [isDragging]);
 
   const style = { transform: CSS.Transform.toString(transform), transition };
-  const isActive = isActiveOverride ?? pathname === href;
+  const isActive = pathname === href;
 
   return (
     <SidebarMenuItem
@@ -233,9 +229,7 @@ function SortablePinItem({
           if (wasDragged.current) {
             wasDragged.current = false;
             event.preventDefault();
-            return;
           }
-          onNavigate?.();
         }}
         className={cn(
           "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground",
@@ -270,14 +264,10 @@ function SortablePinItem({
 }
 
 /**
- * Smart wrapper that resolves a pin's display data (label + status/icon)
- * from the issue / project detail query cache. Both queries are declared
- * unconditionally with `enabled` gates so the hook order stays stable
- * regardless of `pin.item_type`.
+ * Resolves a project pin's display data from the project detail cache.
  *
  * Loading: render a flat skeleton so the sidebar height doesn't jump.
- * Missing (deleted item / 404): render nothing — the row hides itself
- * until the user unpins manually or a server-side cascade catches up.
+ * Missing (deleted project / 404): auto-unpin; any other error hides the row.
  */
 function PinRow({
   pin,
@@ -292,144 +282,16 @@ function PinRow({
   onUnpin: () => void;
   wsId: string;
 }) {
-  const isIssue = pin.item_type === "issue";
-  const statusCatalog = useIssueStatuses(wsId);
-  const isView = pin.item_type === "view";
-  const isChat = pin.item_type === "chat";
-  const { t } = useT("layout");
-  const p = useWorkspacePaths();
-  const setActiveView = useActiveIssueViewStore((s) => s.setActive);
-  const issueQuery = useQuery({
-    ...issueDetailOptions(wsId, pin.item_id),
-    enabled: isIssue,
-  });
-  const projectQuery = useQuery({
-    ...projectDetailOptions(wsId, pin.item_id),
-    enabled: pin.item_type === "project",
-  });
-  const viewQuery = useQuery({
-    ...issueViewDetailOptions(wsId, pin.item_id),
-    enabled: isView,
-  });
-  // A chat pin reads its title from the sessions list the sidebar already
-  // holds for the Chat badge, so a rename patched onto that list by the
-  // socket shows here too. Only when the list has loaded without the chat
-  // (deleted, or access withdrawn) is the detail fetched, whose 404 unpins.
-  const chatListQuery = useQuery({
-    ...chatSessionsOptions(wsId),
-    enabled: isChat,
-  });
-  const chatFromList = isChat
-    ? chatListQuery.data?.find((s: ChatSession) => s.id === pin.item_id)
-    : undefined;
-  const chatDetailQuery = useQuery({
-    ...chatSessionOptions(wsId, pin.item_id),
-    enabled: isChat && chatListQuery.isSuccess && !chatFromList,
-  });
+  const projectQuery = useQuery(projectDetailOptions(wsId, pin.item_id));
 
   const triggeredRef = useRef(false);
   useEffect(() => {
-    // Views are exempt from 404-auto-unpin: an installed desktop client
-    // talking to an older backend without the view endpoints sees 404 for
-    // every view pin — auto-unpinning would permanently delete them all.
-    // A deleted view's row simply hides instead.
-    if (isView) return;
-    const err = isIssue ? issueQuery.error : isChat ? chatDetailQuery.error : projectQuery.error;
+    const err = projectQuery.error;
     if (err instanceof ApiError && err.status === 404 && !triggeredRef.current) {
       triggeredRef.current = true;
       onUnpin();
     }
-  }, [isChat, isIssue, isView, chatDetailQuery.error, issueQuery.error, onUnpin, projectQuery.error]);
-
-  const activeViewByContainer = useActiveIssueViewStore((s) => s.active);
-  if (isView) {
-    if (viewQuery.isPending) return <PinSkeleton />;
-    if (viewQuery.isError || !viewQuery.data) return null;
-    const view = viewQuery.data;
-    // One resolved scope drives the path AND the container key so an
-    // unrecognised scope_type from a newer backend degrades coherently.
-    const scopeType: "workspace" | "my" | "project" =
-      view.scope_type === "my"
-        ? "my"
-        : view.scope_type === "project" && view.scope_id
-          ? "project"
-          : "workspace";
-    const viewPath =
-      scopeType === "my"
-        ? p.myIssues()
-        : scopeType === "project"
-          ? p.projectDetail(view.scope_id!)
-          : p.issues();
-    const containerKey = issueViewContainerKey(wsId, {
-      scope_type: scopeType,
-      scope_id: scopeType === "project" ? view.scope_id : null,
-    });
-    return (
-      <SortablePinItem
-        pin={pin}
-        // ?view= keeps a web reload on the view for the surfaces that mount
-        // the URL-sync hook (/issues, /my-issues). Project pages don't sync
-        // yet — there the query is inert and reload falls back to the plain
-        // page; click-through activation still works everywhere.
-        href={`${viewPath}?view=${view.id}`}
-        pathname={pathname}
-        onUnpin={onUnpin}
-        label={view.name}
-        iconNode={<Layers className="!size-3.5 shrink-0" />}
-        // Active only when this exact view is open on its surface — the
-        // path alone also matches the plain tab.
-        isActiveOverride={
-          pathname === viewPath && activeViewByContainer[containerKey] === view.id
-        }
-        onNavigate={() => setActiveView(containerKey, view.id)}
-      />
-    );
-  }
-
-  if (isChat) {
-    const chat = chatFromList ?? chatDetailQuery.data;
-    if (!chat) {
-      if (chatListQuery.isPending || chatDetailQuery.isPending) return <PinSkeleton />;
-      return null;
-    }
-    return (
-      <SortablePinItem
-        pin={pin}
-        href={p.chatSession(pin.item_id)}
-        pathname={pathname}
-        onUnpin={onUnpin}
-        label={chat.title?.trim() || t(($) => $.sidebar.chat_untitled)}
-        iconNode={<MessageSquare className="!size-3.5 shrink-0" />}
-      />
-    );
-  }
-
-  if (isIssue) {
-    if (issueQuery.isPending) return <PinSkeleton />;
-    if (issueQuery.isError || !issueQuery.data) return null;
-    const issue = issueQuery.data;
-    const label = issue.title;
-    const iconNode = (
-      /* Override parent [&_svg]:size-4 — pinned items need smaller icons to match sm size */
-      <StatusIcon
-        status={issue.status}
-        color={statusCatalog.colorOf(issue.status)}
-        icon={statusCatalog.iconOf(issue.status)}
-        category={issueStatusCategory(issue) ?? undefined}
-        className="!size-3.5 shrink-0"
-      />
-    );
-    return (
-      <SortablePinItem
-        pin={pin}
-        href={href}
-        pathname={pathname}
-        onUnpin={onUnpin}
-        label={label}
-        iconNode={iconNode}
-      />
-    );
-  }
+  }, [onUnpin, projectQuery.error]);
 
   if (projectQuery.isPending) return <PinSkeleton />;
   if (projectQuery.isError || !projectQuery.data) return null;
@@ -445,31 +307,6 @@ function PinRow({
       iconNode={iconNode}
     />
   );
-}
-
-/**
- * True while a Chat list row is being dragged anywhere in the window. Native
- * drag events only reach the element under the pointer, so the document is
- * watched: `dragenter` carrying our MIME switches it on, `drop` / `dragend`
- * (which fires on the source even when released outside the window) off.
- */
-function useChatDragInFlight(): boolean {
-  const [active, setActive] = useState(false);
-  useEffect(() => {
-    const onEnter = (event: DragEvent) => {
-      if (event.dataTransfer?.types.includes(CHAT_PIN_DRAG_TYPE)) setActive(true);
-    };
-    const onEnd = () => setActive(false);
-    document.addEventListener("dragenter", onEnter);
-    document.addEventListener("drop", onEnd);
-    document.addEventListener("dragend", onEnd);
-    return () => {
-      document.removeEventListener("dragenter", onEnter);
-      document.removeEventListener("drop", onEnd);
-      document.removeEventListener("dragend", onEnd);
-    };
-  }, []);
-  return active;
 }
 
 function PinSkeleton() {
@@ -579,42 +416,12 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     const module = navItemModule(key);
     return module === null || canAccessModule(moduleAccess, module);
   };
-  const createPin = useCreatePin();
   const deletePin = useDeletePin();
   const reorderPins = useReorderPins();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  // A chat being dragged out of the Chat list (native DnD, see
-  // CHAT_PIN_DRAG_TYPE). While one is in flight the pinned group shows even
-  // when empty, so there is always somewhere to drop it.
-  const chatDragActive = useChatDragInFlight();
-  const [chatDropOver, setChatDropOver] = useState(false);
-  const pinnedGroupRef = useRef<HTMLDivElement>(null);
-  const handleChatDrop = useCallback(
-    (event: React.DragEvent) => {
-      const sessionId = event.dataTransfer.getData(CHAT_PIN_DRAG_TYPE);
-      setChatDropOver(false);
-      if (!sessionId) return;
-      event.preventDefault();
-      if (pinnedItems.some((pin) => pin.item_type === "chat" && pin.item_id === sessionId)) return;
-      createPin.mutate({ item_type: "chat", item_id: sessionId });
-    },
-    [createPin, pinnedItems],
-  );
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const sidebarFadeStyle = useScrollFade(sidebarScrollRef, 24);
-  const getPinHref = useCallback(
-    (pin: PinnedItem) =>
-      pin.item_type === "issue"
-        ? p.issueDetail(pin.item_id)
-        : pin.item_type === "project"
-          ? p.projectDetail(pin.item_id)
-          : pin.item_type === "chat"
-            ? p.chatSession(pin.item_id)
-            // Views know their target only after their detail loads — the row
-            // resolves its own href; this placeholder never renders as a link.
-            : "",
-    [p],
-  );
+  const getPinHref = useCallback((pin: PinnedItem) => p.projectDetail(pin.item_id), [p]);
 
   // Local presentational copy of pinnedItems for drop-animation stability.
   // Follows TQ at rest; frozen during a drag gesture so a mid-drag cache
@@ -632,12 +439,18 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   useEffect(() => {
     setLocalPinnedWsId(wsId ?? null);
   }, [wsId]);
-  const visiblePinned = localPinnedWsId === (wsId ?? null) ? localPinned : EMPTY_PINS;
+  // The sidebar's pinned group holds projects only (DENE-876). Issue pins
+  // still rank issues to the top of their lists and chat pins still fill the
+  // Chat list's own pinned group; they just don't surface here.
+  const visiblePinned = useMemo(
+    () =>
+      localPinnedWsId === (wsId ?? null)
+        ? localPinned.filter((pin) => pin.item_type === "project")
+        : EMPTY_PINS,
+    [localPinned, localPinnedWsId, wsId],
+  );
   const pinsExpanded = expandedPinsWorkspaceId === wsId;
   const displayedPinned = pinsExpanded ? visiblePinned : visiblePinned.slice(0, PINNED_PREVIEW_LIMIT);
-  // View pins are absent here (their href resolves async): while a view
-  // pin is active the plain nav row for its surface stays highlighted too.
-  // Accepted — suppressing it would need every view detail lifted up here.
   const isActivePinnedRoute = displayedPinned.some((pin) => pathname === getPinHref(pin));
 
   const handleDragStart = useCallback(() => {
@@ -647,18 +460,9 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     (event: DragEndEvent) => {
       isDraggingRef.current = false;
       const { active, over } = event;
-      // Dragging a chat pin clear out of the sidebar unpins it — the reverse
-      // of dropping a chat in. closestCenter always names an `over`, so the
-      // gesture is read from where the row was released instead. Only chat
-      // pins: issue / project / view pins keep their pin-button-only removal.
-      const dragged = localPinned.find((p) => p.id === active.id);
-      const released = active.rect.current.translated;
-      const group = pinnedGroupRef.current?.getBoundingClientRect();
-      if (dragged?.item_type === "chat" && released && group && released.left > group.right) {
-        deletePin.mutate({ itemType: "chat", itemId: dragged.item_id });
-        return;
-      }
       if (!over || active.id === over.id) return;
+      // Move within the full list so hidden (non-project) pins keep their
+      // positions and stay in the shared cache.
       const oldIndex = localPinned.findIndex((p) => p.id === active.id);
       const newIndex = localPinned.findIndex((p) => p.id === over.id);
       if (oldIndex === -1 || newIndex === -1) return;
@@ -666,7 +470,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
       setLocalPinned(reordered);
       reorderPins.mutate(reordered);
     },
-    [deletePin, localPinned, reorderPins],
+    [localPinned, reorderPins],
   );
 
   const queryClient = useQueryClient();
@@ -711,6 +515,74 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
 
   const createIssueShortcut = useShortcut("createIssue");
 
+  // Workspace switcher arrangement: this person's pins and order on this
+  // device, applied over the server list, then narrowed by the search box.
+  const switcherPreference = useWorkspaceSwitcherPreference(userId);
+  const toggleWorkspacePinned = useWorkspaceSwitcherPreferenceStore((s) => s.togglePinned);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [organizeOpen, setOrganizeOpen] = useState(false);
+  const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const showWorkspaceSearch = workspaces.length > WORKSPACE_SEARCH_THRESHOLD;
+  const arrangedWorkspaces = useMemo(() => {
+    const { pinned, rest } = arrangeWorkspaces(workspaces, switcherPreference);
+    const query = workspaceQuery.trim().toLowerCase();
+    const matches = (ws: Workspace) => !query || ws.name.toLowerCase().includes(query);
+    return { pinned: pinned.filter(matches), rest: rest.filter(matches) };
+  }, [workspaces, switcherPreference, workspaceQuery]);
+  const firstWorkspaceMatch = arrangedWorkspaces.pinned[0] ?? arrangedWorkspaces.rest[0];
+  const pinnedWorkspaceIds = useMemo(
+    () => new Set(switcherPreference.pinned),
+    [switcherPreference.pinned],
+  );
+
+  const renderWorkspaceItem = (ws: Workspace) => {
+    const isPinned = pinnedWorkspaceIds.has(ws.id);
+    const pinLabel = isPinned
+      ? t(($) => $.sidebar.unpin_workspace)
+      : t(($) => $.sidebar.pin_workspace);
+    return (
+      <DropdownMenuItem
+        key={ws.id}
+        className="group/ws"
+        render={
+          <AppLink href={paths.workspace(ws.slug).issues()} />
+        }
+      >
+        <WorkspaceAvatar name={ws.name} avatarUrl={ws.avatar_url} size="sm" />
+        <span className="flex-1 truncate">{ws.name}</span>
+        {/* Points at the specific workspace holding unread
+            inbox items. Sits in the same right-edge slot as the
+            active-workspace check; the active workspace is
+            excluded (its unread is the Inbox nav count), so dot
+            and check never collide on one row. */}
+        {ws.id !== workspace?.id && unreadWsIds.has(ws.id) && (
+          <span className="size-2 rounded-full bg-brand" />
+        )}
+        {ws.id === workspace?.id && (
+          <Check className="h-3.5 w-3.5 text-primary" />
+        )}
+        {userId && (
+          <span
+            role="button"
+            aria-label={pinLabel}
+            title={pinLabel}
+            aria-pressed={isPinned}
+            className="hidden size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground group-hover/ws:flex group-data-highlighted/ws:flex hover:text-foreground"
+            onClick={(event) => {
+              // Pinning is a tweak to the list, not a choice of workspace:
+              // keep the menu open and stay where we are.
+              event.preventDefault();
+              event.stopPropagation();
+              toggleWorkspacePinned(userId, workspaces.map((w) => w.id), ws.id);
+            }}
+          >
+            {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+          </span>
+        )}
+      </DropdownMenuItem>
+    );
+  };
+
   return (
       <Sidebar variant="inset">
         {topSlot}
@@ -718,7 +590,13 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         <SidebarHeader className={cn("py-3", headerClassName)} style={headerStyle}>
           <SidebarMenu>
             <SidebarMenuItem>
-              <DropdownMenu>
+              <DropdownMenu
+                open={switcherOpen}
+                onOpenChange={(open) => {
+                  setSwitcherOpen(open);
+                  if (!open) setWorkspaceQuery("");
+                }}
+              >
                 <DropdownMenuTrigger
                   render={
                     <SidebarMenuButton>
@@ -766,28 +644,56 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     <DropdownMenuLabel className="text-caption text-muted-foreground">
                       {t(($) => $.sidebar.workspaces_label)}
                     </DropdownMenuLabel>
-                    {workspaces.map((ws) => (
-                      <DropdownMenuItem
-                        key={ws.id}
-                        render={
-                          <AppLink href={paths.workspace(ws.slug).issues()} />
-                        }
-                      >
-                        <WorkspaceAvatar name={ws.name} avatarUrl={ws.avatar_url} size="sm" />
-                        <span className="flex-1 truncate">{ws.name}</span>
-                        {/* Points at the specific workspace holding unread
-                            inbox items. Sits in the same right-edge slot as the
-                            active-workspace check; the active workspace is
-                            excluded (its unread is the Inbox nav count), so dot
-                            and check never collide on one row. */}
-                        {ws.id !== workspace?.id && unreadWsIds.has(ws.id) && (
-                          <span className="size-2 rounded-full bg-brand" />
-                        )}
-                        {ws.id === workspace?.id && (
-                          <Check className="h-3.5 w-3.5 text-primary" />
-                        )}
+                    {showWorkspaceSearch && (
+                      <div className="mx-1 mb-1 flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
+                        <Search className="size-3.5 shrink-0 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={workspaceQuery}
+                          onChange={(e) => setWorkspaceQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (isImeComposing(e)) return;
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (firstWorkspaceMatch) {
+                                setSwitcherOpen(false);
+                                setWorkspaceQuery("");
+                                push(paths.workspace(firstWorkspaceMatch.slug).issues());
+                              }
+                              return;
+                            }
+                            // Arrows move into the list and Escape closes the
+                            // menu; every other key is typing, which the
+                            // menu's typeahead must not swallow.
+                            if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Escape") {
+                              e.stopPropagation();
+                            }
+                          }}
+                          placeholder={t(($) => $.sidebar.search_workspaces_placeholder)}
+                          aria-label={t(($) => $.sidebar.search_workspaces_placeholder)}
+                          className="min-w-0 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground"
+                          autoFocus
+                        />
+                      </div>
+                    )}
+                    <div className="max-h-[50vh] overflow-y-auto">
+                      {arrangedWorkspaces.pinned.map(renderWorkspaceItem)}
+                      {arrangedWorkspaces.pinned.length > 0 && arrangedWorkspaces.rest.length > 0 && (
+                        <DropdownMenuSeparator />
+                      )}
+                      {arrangedWorkspaces.rest.map(renderWorkspaceItem)}
+                      {!firstWorkspaceMatch && workspaceQuery.trim() && (
+                        <p className="px-2 py-1.5 text-caption text-muted-foreground">
+                          {t(($) => $.sidebar.no_matching_workspaces, { query: workspaceQuery.trim() })}
+                        </p>
+                      )}
+                    </div>
+                    {userId && workspaces.length > 1 && (
+                      <DropdownMenuItem onClick={() => setOrganizeOpen(true)}>
+                        <ArrowUpDown className="h-3.5 w-3.5" />
+                        {t(($) => $.sidebar.organize_workspaces)}
                       </DropdownMenuItem>
-                    ))}
+                    )}
                     {!workspaceCreationDisabled && (
                       <DropdownMenuItem
                         onClick={() => push(paths.newWorkspace())}
@@ -844,6 +750,14 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
+              {userId && (
+                <WorkspaceOrganizeDialog
+                  open={organizeOpen}
+                  onOpenChange={setOrganizeOpen}
+                  workspaces={workspaces}
+                  userId={userId}
+                />
+              )}
             </SidebarMenuItem>
           </SidebarMenu>
           <SidebarMenu>
@@ -926,27 +840,9 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             </SidebarGroupContent>
           </SidebarGroup>
 
-          {(visiblePinned.length > 0 || chatDragActive) && (
+          {visiblePinned.length > 0 && (
             <Collapsible defaultOpen>
-              <SidebarGroup
-                ref={pinnedGroupRef}
-                className={cn(
-                  "group/pinned rounded-md transition-colors",
-                  chatDragActive && "ring-1 ring-inset ring-border",
-                  chatDropOver && "bg-sidebar-accent/70 ring-brand",
-                )}
-                onDragOver={(event) => {
-                  if (!event.dataTransfer.types.includes(CHAT_PIN_DRAG_TYPE)) return;
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "copy";
-                  if (!chatDropOver) setChatDropOver(true);
-                }}
-                onDragLeave={(event) => {
-                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-                  setChatDropOver(false);
-                }}
-                onDrop={handleChatDrop}
-              >
+              <SidebarGroup className="group/pinned">
                 <SidebarGroupLabel
                   render={<CollapsibleTrigger />}
                   className="group/trigger cursor-pointer hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground"
@@ -973,14 +869,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         </SidebarMenu>
                       </SortableContext>
                     </DndContext>
-                    {chatDragActive && (
-                      <div
-                        data-testid="chat-pin-drop-hint"
-                        className="pointer-events-none mt-0.5 rounded-md border border-dashed border-border px-2 py-1.5 text-caption text-muted-foreground"
-                      >
-                        {t(($) => $.sidebar.pin_drop_hint)}
-                      </div>
-                    )}
                     {visiblePinned.length > PINNED_PREVIEW_LIMIT && (
                       <SidebarMenuButton
                         size="sm"

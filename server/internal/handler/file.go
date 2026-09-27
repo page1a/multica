@@ -870,6 +870,17 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
+	// This route resolves the workspace from the attachment row instead of
+	// the request, so the workspace-binding middleware never runs here. A
+	// mat_ task token is bound to exactly one workspace (MUL-2600); the auth
+	// middleware wrote that binding into X-Workspace-ID. Without this check
+	// the token's owner membership in a second workspace would let a running
+	// agent pull that workspace's files (DENE-896). Same 404 shape as the
+	// non-member deny so the route stays a non-oracle.
+	if r.Header.Get("X-Actor-Source") == "task_token" && r.Header.Get("X-Workspace-ID") != workspaceID {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return db.Attachment{}, false
+	}
 	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
 		return att, h.requireAttachmentIssueVisible(w, r, att)
 	}

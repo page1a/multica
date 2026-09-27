@@ -10,6 +10,7 @@ import { clearWorkspaceStorage } from "../platform/storage-cleanup";
 import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
+import { homeKeys } from "../home/queries";
 import { projectKeys } from "../projects/queries";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
@@ -961,6 +962,8 @@ export function useRealtimeSync(
         if (!wsId) return;
         qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.list(wsId) });
         qc.invalidateQueries({ queryKey: workspaceWorkingAgentsKeys.all(wsId) });
+        // A run's end writes the parking record the inbox board reads.
+        qc.invalidateQueries({ queryKey: homeKeys.all(wsId) });
         // The Table working-agent shortcut derives an assignee set from the
         // projection above. Refresh its server-owned graph alongside that set
         // so rows/groups/facets cannot remain on an old task transition while
@@ -1103,6 +1106,9 @@ export function useRealtimeSync(
         if (issue.status) {
           onInboxIssueStatusChanged(qc, wsId, issue.id, issue.status);
         }
+        if (payload.status_changed) {
+          qc.invalidateQueries({ queryKey: homeKeys.all(wsId) });
+        }
       }
     });
 
@@ -1189,6 +1195,8 @@ export function useRealtimeSync(
     const unsubInboxNew = ws.on("inbox:new", async (p) => {
       const { item } = p as InboxNewPayload;
       if (!item) return;
+      const inboxWsId = getCurrentWsId();
+      if (inboxWsId) qc.invalidateQueries({ queryKey: homeKeys.all(inboxWsId) });
       await handleInboxNew(qc, item);
     });
 
@@ -1226,6 +1234,8 @@ export function useRealtimeSync(
       // updated_at, so the other comment events below deliberately do not.
       const wsId = getCurrentWsId();
       if (wsId) {
+        // A reply closes the viewer's open call on the issue (DENE-880).
+        qc.invalidateQueries({ queryKey: homeKeys.all(wsId) });
         invalidateUpdatedAtSortedIssueLists(qc, wsId);
         invalidateLastActivitySortedIssueLists(qc, wsId);
         // A comment carries only the aggregate owner revision, not a full

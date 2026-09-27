@@ -286,17 +286,11 @@
     "copy_role_user": "Vous",
     "copy_role_assistant": "Assistant"
   },
-  "provider_quota": {
-    "label": "Quota",
-    "unknown": "inconnu",
-    "exhausted": "épuisé",
-    "used": "{{percent}} %",
-    "resets": "réinitialisation {{when}}",
-    "updated": "mis à jour {{when}}"
-  },
   "sharing": {
     "title": "Modifier l'accès",
     "follow": "Suivre le projet",
+    "workspace": "Tout l'espace de travail",
+    "workspace_hint": "Tous les membres de l'espace de travail peuvent voir et écrire dans cette discussion",
     "follow_hint_bound": "Les membres de {{projects}} peuvent voir et écrire",
     "follow_hint_unbound": "Liez un projet avant de choisir ceci",
     "extra": "Suivre le projet + personnes en plus",

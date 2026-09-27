@@ -8,20 +8,72 @@ terminal; only `done` / `cancelled` close a stage barrier.
 This reference is an excerpt of `docs/kun/scheduling-close-protocol.md`. Do not
 invent field names, write order, statuses, or wake actions.
 
-Write order — stop on the first failure:
+One call — `multica issue close` (DENE-859). It writes the evidence comment,
+the status, and every `close.*` key in one transaction, and validates the
+record under this protocol before anything lands. A close missing a piece is
+rejected naming the missing item; nothing is half-written.
 
-1. `multica issue status <id> <status>`. Moving to `blocked` must carry the
-   wait on this command: `--blocked-by`, `--wake-at`, `--wait-condition` with
-   `--wait-timeout`, or `--needs-human`. Writing `close.*` afterwards does
-   not replace that.
-2. Evidence comment (`--content-file`; keep `--parent` when this turn has a
-   trigger). Capture the comment id. Headings, in this order:
-   `## 结论` / `## 状态` / `## 证据` / `## 下一责任人` / `## 唤醒动作`
-3. If `wake_action=mention`, the body must contain a live
-   `[@Name](mention://agent|squad/<uuid>)`. `mention://member/…` and
-   `mention://issue/…` do not wake anyone.
-4. Write the eight keys with `multica issue metadata set`. `close.status` must
-   equal step 1. `close.evidence_comment_id` must equal step 2.
+```bash
+multica issue close <id> --outcome done      --evidence-file ./close.md            # delivered; an open linked PR is merged first, or the close lands as blocked and says so
+multica issue close <id> --outcome in_review --evidence-file ./close.md            # top-level, awaiting acceptance: needs a linked PR (or --no-code <reason>); empty reviewer slot is filled, then routing hands over
+multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # or --wake-at / --wait-condition + --wait-timeout / --needs-human
+multica issue close <id> --outcome done --verdict pass --evidence-file ./close.md  # acceptance seat: merge the open PR, then done
+```
+
+- `--evidence` (or `--evidence-file` / `--evidence-stdin`) is required: the PR
+  link, test conclusion, or blocker it rests on. `--summary` goes above it.
+  Keep `--parent` when this turn has a trigger; a comment-triggered run on the
+  same issue defaults to that thread. Headings inside the evidence, in this
+  order: `## 结论` / `## 状态` / `## 证据` / `## 下一责任人` / `## 唤醒动作`.
+- `--outcome blocked` must say what it waits for — the same wait DENE-850
+  requires on `issue status blocked`: `--blocked-by <issue>`, `--wake-at
+  <RFC3339>`, `--wait-condition "..." --wait-timeout <dur>`, or
+  `--needs-human <member>`. Without one the close is rejected.
+- `--outcome in_review` is top-level only; a sub-issue asking for it is
+  rejected (use `done` or `blocked`). It runs the same review gate as
+  `issue status in_review` (DENE-869): an agent's close is refused unless the
+  issue has a linked open/draft/merged PR, or `--no-code <reason>` says why
+  the ticket carries no code (docs, research). `--needs-human <member>` turns it into
+  `awaiting_human`; otherwise it is `awaiting_review` with `wake_action=route`
+  — routing hands the ticket to the acceptance seat, no executor @mention.
+- `--verdict pass` is the acceptance seat's release and only pairs with
+  `--outcome done` on an `in_review` ticket: the platform merges the open PR
+  and writes `done`; if the merge cannot happen it comes back as `blocked`
+  with the reason and `block_kind=external`. A failed acceptance is not a
+  close: `multica issue comment add <id> --verdict hold --content-file
+  ./review.md` wakes the executor.
+- The reply reports the status actually written, whether the PR merged, and
+  who is woken. Quote it; do not restate it from memory.
+
+Waking the next owner without closing is `multica issue handoff` (DENE-863),
+not a hand-written @mention. The server routes, dedupes, and replies with what
+actually landed (`target_name`, `run_created`, `duplicate`):
+
+| you want | call |
+|---|---|
+| a named agent picks it up (Reviewer `needs-work` back to Builder, a concrete sub-task) | `multica issue handoff <id> --to <agent-name>` — no second run if that agent already has one active on this issue |
+| the dispatcher decides who is next | `multica issue handoff <id> --to dispatcher` |
+| an `in_review` issue whose acceptance seat never started | `multica issue handoff <id> --to reviewer` — refused with 409 when a person holds the seat; routing never writes a person there |
+
+A close already hands over what it closes: `--outcome in_review` routes the
+seat itself, so do not follow it with `handoff --to reviewer`.
+
+Calling a person is `multica issue summon <id> --to <member> --reason "..."`
+(DENE-880, `POST /api/issues/{id}/summon`), not a hand-written @mention. One
+call writes their inbox row (`needs_you`, highest severity), subscribes them,
+leaves a visible @ on the ticket, and records an open call; a second call
+before they reply comes back as `duplicate: true`. Their reply wakes the
+executor, and if that run ends with the ticket still `blocked` the executor
+is reminded once to close again. `--needs-human <member>` on `issue close` or
+`issue status` already calls that person — do not summon them again.
+
+Legacy path, still accepted: `multica issue status <id> <status>` (with the
+wait flags when `blocked`), then the evidence comment (`--content-file`),
+then the eight keys via `multica issue metadata set` with `close.status`
+equal to the status written and `close.evidence_comment_id` equal to the
+comment id. If `wake_action=mention`, the body must contain a live
+`[@Name](mention://agent|squad/<uuid>)`; `mention://member/…` and
+`mention://issue/…` do not wake anyone.
 
 | key | allowed values |
 |---|---|
@@ -30,7 +82,7 @@ Write order — stop on the first failure:
 | `close.evidence_comment_id` | comment UUID |
 | `close.next_owner_type` | `agent` `squad` `member` `none` |
 | `close.next_owner_id` | UUID; `""` when type is `none` |
-| `close.wake_action` | `stage_done` `mention` `none` |
+| `close.wake_action` | `stage_done` `mention` `route` `none` |
 | `close.waiting_on` | identifier such as `DENE-196`, or `""`. Prefer a real parent + stage for same-family waits; server wakes the waiter on `done`/`cancelled` unless that `(issue, agent)` already has a queued or running task |
 | `close.at` | RFC3339 UTC |
 | `close.block_kind` | `decision` `permission` `external` `dependency` `capacity`; required for new blocked closes |
@@ -48,7 +100,7 @@ Staged child = has a parent and (own `stage` or any staged sibling).
 |---|---|---|---|---|
 | `delivered` | ask delivered, no acceptance, staged child | `done` | parent assignee, or `none` | `stage_done` — do **not** mention the parent assignee |
 | `delivered` | ask delivered, no acceptance, not staged | `done` | `none` unless AC names someone | `none` or `mention` |
-| `awaiting_review` | top-level parent acceptance is an agent Reviewer | `in_review` | that Reviewer | `mention` — **not** `done`; child barrier is already closed |
+| `awaiting_review` | top-level parent acceptance is an agent Reviewer | `in_review` | that Reviewer, or `none` and let routing fill the seat | `route` (what `issue close --outcome in_review` writes) or `mention` — **not** `done`; child barrier is already closed |
 | `awaiting_human` | top-level parent acceptance is a human | `in_review` | that member | `none`. Optional dispatcher: `mention` that agent and name the human in `waiting_on` or the evidence |
 | `blocked` | missing auth / human decision / external dep | `blocked` | who can unblock | `mention` if agent/squad, else `none` |
 | (no close) | this turn did not deliver this issue's ask | do not change status | — | do not write `close.*` |
@@ -58,7 +110,8 @@ Four closing scenes:
   Status `done`. Staged children use `stage_done` and leave parent wake to the
   server.
 - **in_review (agent Reviewer)** — PR / design / implementation needs
-  Reviewer. Status `in_review`. Mention the Reviewer. Do not `done`.
+  Reviewer. Status `in_review`. `issue close --outcome in_review` routes it to
+  the seat; a hand-written record wakes it with `issue handoff --to reviewer`. Do not `done`.
 - **in_review (human acceptance)** — device, balance, third-party account, or
   a named human. Status `in_review`. `wake_action=none`. Barrier stays open
   on purpose.
@@ -68,9 +121,9 @@ Role defaults:
 
 | role | default conclusion | default status | wake |
 |---|---|---|---|
-| Builder (PR / needs review) | `awaiting_review` | `in_review` | mention Reviewer. Title carries the identifier. Do not `done` while waiting. Leave `Closes` for merge |
+| Builder (PR / needs review) | `awaiting_review` | `in_review` | `issue close --outcome in_review`; routing hands it to the Reviewer. Title carries the identifier. Do not `done` while waiting. Leave `Closes` for merge |
 | Builder (no acceptance gate) | `delivered` | `done` | `stage_done`; do not mention the parent assignee |
-| Reviewer pass, owned checks green, no explicit human hold | `delivered` | `multica issue comment add <id> --verdict pass`; the platform merges the open linked PR and sets `done` | `stage_done` |
+| Reviewer pass, owned checks green, no explicit human hold | `delivered` | `multica issue close <id> --outcome done --verdict pass` (or a `multica issue comment add <id> --verdict pass` comment); the platform merges the open linked PR and sets `done` in that same call | `stage_done` |
 | Reviewer pass, but the ticket explicitly names a person and a decision only they can make | `awaiting_human` | `in_review` | `none`. The comment names that person and the decision. A routing note that says 需要人拍板 is not this row |
 | Reviewer pass, but a check this change owns is red | not a close | `in_progress`, mention Builder | `mention` |
 | Reviewer pass and already merged | `delivered` | `done` if the webhook did not | `stage_done` |
@@ -85,10 +138,22 @@ the platform merges the open linked PR and sets `done`, or sets `done` directly
 when there is no open PR. When the merge fails — no merge permission on this
 server, PR not mergeable, merge error — the platform moves the issue to
 `blocked` with a structured wait and, for missing permission, wakes the
-executor to merge. 通过 inside a sentence merges nothing. A check that is
-already red on the base branch belongs to the base branch, not to this change,
-and is not a reason to withhold the verdict. The only pass that stays in
-`in_review` is the explicit human row above.
+executor to merge. 通过 inside a sentence merges nothing. The only pass that
+stays in `in_review` is the explicit human row above.
+
+A red check that is already red on the base branch belongs to the base branch,
+not to this change (DENE-892). Both merge gates — `--outcome done` and
+`--verdict pass` — compare the PR's red checks by name with the latest CI on
+the PR's base branch (`kun`): when every red check is also red there, nothing
+is still running, and the PR has no conflict or branch rule, the platform
+merges anyway, opens or reuses the one open `<base> 基线 CI 红` fix issue, and
+the reply and the issue say `因主线原有失败放行：<checks>` with the fix issue.
+A red check that is green or absent on the base, or a base that cannot be read,
+still blocks. Do not withhold a verdict for a base-branch failure, and do not
+merge by hand to get around the gate. The comparison is per job: a new failure
+inside a job that is already red on the base passes too, so the executor's
+evidence still says the failing tests were compared with the same tests on
+`kun`.
 
 A Dispatcher advancement turn is only: `multica issue children`, read `close.*`
 on the parent and the current stage's children, then either promote the next
@@ -126,8 +191,9 @@ Checks: `close.status` equals `issue.status` and is a built-in key;
 `wake_action=stage_done` implies status in {`done`,`cancelled`} and
 `conclusion=delivered`; `wake_action=mention` implies `next_owner_type` in
 {`agent`,`squad`}, a non-empty `next_owner_id`, and the evidence body contains
-`mention://agent\|squad/<next_owner_id>`; `conclusion=awaiting_review` implies
-`in_review` and `wake_action=mention`; `conclusion=awaiting_human` implies
+`mention://agent\|squad/<next_owner_id>`; `wake_action=route` implies status `in_review`;
+`conclusion=awaiting_review` implies
+`in_review` and `wake_action` in {`mention`,`route`}; `conclusion=awaiting_human` implies
 `in_review` and `next_owner_type=member` (or a dispatcher agent with
-`wake_action=mention` and the human named in `waiting_on` or the evidence);
+`wake_action` in {`mention`,`route`} and the human named in `waiting_on` or the evidence);
 `conclusion=blocked` implies `blocked`; non-empty `waiting_on` forbids `done`.

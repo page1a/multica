@@ -186,6 +186,25 @@ SELECT id FROM workspace
 WHERE settings -> 'routing' ->> 'enabled' = 'true'
 ORDER BY id;
 
+-- name: ListUnassignedTodoIssues :many
+-- Quiet todo tickets with at least one empty routing seat. Human-held work is
+-- excluded here as an additional guard; Route repeats that guard before any
+-- write. The query deliberately does not inspect labels, due dates, or status
+-- outside the concrete todo category.
+SELECT i.id FROM issue i
+WHERE i.workspace_id = sqlc.arg('workspace_id')::uuid
+  AND i.status = 'todo'
+  AND COALESCE(i.assignee_type, '') <> 'member'
+  AND (i.assignee_id IS NULL OR (i.parent_issue_id IS NULL AND (i.reviewer_type IS NULL OR i.reviewer_id IS NULL)))
+  AND COALESCE(i.last_activity_at, i.updated_at) < sqlc.arg('before')::timestamptz
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue q
+      WHERE q.issue_id = i.id
+        AND q.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY COALESCE(i.last_activity_at, i.updated_at) ASC
+LIMIT sqlc.arg('lim')::int;
+
 -- name: ListStaleReviewIssues :many
 -- Tickets awaiting acceptance that nothing has happened to, and that no run is
 -- working on right now.

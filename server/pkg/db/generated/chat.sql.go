@@ -1870,7 +1870,8 @@ WHERE cs.workspace_id = $3
   AND (
     cs.creator_id = $1
     OR (
-      cs.visibility = 'project'
+      (cs.visibility = 'workspace' AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = cs.workspace_id AND m.user_id = $1 AND m.role <> 'guest'))
+      OR (cs.visibility = 'project'
       AND (
         EXISTS (
           SELECT 1 FROM resource_share rs
@@ -1885,7 +1886,7 @@ WHERE cs.workspace_id = $3
             AND csp.project_id = ANY($2::uuid[])
         )
         OR (cs.project_id IS NOT NULL AND cs.project_id = ANY($2::uuid[]))
-      )
+      ))
     )
   )
   AND (
@@ -2659,7 +2660,8 @@ WHERE cs.workspace_id = $3
   AND (
     cs.creator_id = $1
     OR (
-      cs.visibility = 'project'
+      (cs.visibility = 'workspace' AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = cs.workspace_id AND m.user_id = $1 AND m.role <> 'guest'))
+      OR (cs.visibility = 'project'
       AND (
         EXISTS (
           SELECT 1 FROM resource_share rs
@@ -2674,7 +2676,7 @@ WHERE cs.workspace_id = $3
             AND csp.project_id = ANY($2::uuid[])
         )
         OR (cs.project_id IS NOT NULL AND cs.project_id = ANY($2::uuid[]))
-      )
+      ))
     )
   )
   AND (
@@ -2796,7 +2798,8 @@ WHERE atq.chat_session_id IS NOT NULL
   AND (
     cs.creator_id = $2
     OR (
-      cs.visibility = 'project'
+      (cs.visibility = 'workspace' AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = cs.workspace_id AND m.user_id = $2 AND m.role <> 'guest'))
+      OR (cs.visibility = 'project'
       AND (
         EXISTS (
           SELECT 1 FROM resource_share rs
@@ -2811,7 +2814,7 @@ WHERE atq.chat_session_id IS NOT NULL
             AND csp.project_id = ANY($3::uuid[])
         )
         OR (cs.project_id IS NOT NULL AND cs.project_id = ANY($3::uuid[]))
-      )
+      ))
     )
   )
 ORDER BY atq.created_at DESC

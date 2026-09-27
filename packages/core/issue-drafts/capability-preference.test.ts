@@ -5,6 +5,7 @@ import {
   writeIssueDraftCapabilityPreference,
 } from "./capability-preference";
 import { ISSUE_DRAFT_CAPABILITIES } from "./capabilities";
+import { defaultStorage } from "../platform/storage";
 
 describe("issue draft capability preference", () => {
   beforeEach(() => localStorage.clear());
@@ -74,8 +75,11 @@ describe("issue draft capability preference", () => {
     });
   });
 
+  // Failures are injected at the adapter, not on `localStorage`: jsdom's
+  // Storage on Node 22 turns an assigned instance property into a stored
+  // item, so a spy there never intercepts.
   it("reports a storage read that throws and still returns the system default", () => {
-    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+    vi.spyOn(defaultStorage, "getItem").mockImplementation(() => {
       throw new Error("denied");
     });
     expect(readIssueDraftCapabilityPreference("user-a")).toEqual({
@@ -85,7 +89,7 @@ describe("issue draft capability preference", () => {
   });
 
   it("swallows a storage write failure", () => {
-    const setItem = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    const setItem = vi.spyOn(defaultStorage, "setItem").mockImplementation(() => {
       throw new Error("quota");
     });
     expect(() => writeIssueDraftCapabilityPreference(["grill"], "user-a")).not.toThrow();

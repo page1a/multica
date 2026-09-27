@@ -45,7 +45,12 @@ const (
 
 	WakeStageDone = "stage_done"
 	WakeMention   = "mention"
-	WakeNone      = "none"
+	// WakeRoute is the acceptance hand-off the platform performs itself: an
+	// in_review ticket is handed to its reviewer seat by routing (DENE-633),
+	// once per stay, so the executor does not @ the seat and enqueue a second
+	// run. Written by `multica issue close --outcome in_review` (DENE-859).
+	WakeRoute = "route"
+	WakeNone  = "none"
 
 	BlockDecision   = "decision"
 	BlockPermission = "permission"
@@ -199,6 +204,10 @@ func validate(meta map[string]string, issueStatus, evidenceBody string, allowLeg
 		}
 	}
 
+	if wake == WakeRoute && status != issuestatus.InReview {
+		return &Error{Rule: "route", Msg: "wake_action=route requires close.status=in_review"}
+	}
+
 	if wake == WakeMention {
 		if ownerType != OwnerAgent && ownerType != OwnerSquad {
 			return &Error{Rule: "mention", Msg: "wake_action=mention requires next_owner_type in {agent,squad}"}
@@ -216,8 +225,8 @@ func validate(meta map[string]string, issueStatus, evidenceBody string, allowLeg
 		if status != issuestatus.InReview {
 			return &Error{Rule: "awaiting_review", Msg: "conclusion=awaiting_review requires close.status=in_review"}
 		}
-		if wake != WakeMention {
-			return &Error{Rule: "awaiting_review", Msg: "conclusion=awaiting_review requires wake_action=mention"}
+		if wake != WakeMention && wake != WakeRoute {
+			return &Error{Rule: "awaiting_review", Msg: "conclusion=awaiting_review requires wake_action=mention or route"}
 		}
 	case ConclusionAwaitingHuman:
 		if status != issuestatus.InReview {
@@ -227,8 +236,8 @@ func validate(meta map[string]string, issueStatus, evidenceBody string, allowLeg
 		case OwnerMember:
 			// Human owner; member mentions do not enqueue.
 		case OwnerAgent, OwnerSquad:
-			if wake != WakeMention {
-				return &Error{Rule: "awaiting_human", Msg: "dispatcher next_owner requires wake_action=mention"}
+			if wake != WakeMention && wake != WakeRoute {
+				return &Error{Rule: "awaiting_human", Msg: "dispatcher next_owner requires wake_action=mention or route"}
 			}
 			if waitingOn == "" && !evidenceNamesHuman(evidenceBody) {
 				return &Error{Rule: "awaiting_human", Msg: "dispatcher close must name the human accepter in waiting_on or the evidence"}
@@ -278,7 +287,7 @@ func allowedOwnerType(v string) bool {
 
 func allowedWake(v string) bool {
 	switch v {
-	case WakeStageDone, WakeMention, WakeNone:
+	case WakeStageDone, WakeMention, WakeRoute, WakeNone:
 		return true
 	}
 	return false

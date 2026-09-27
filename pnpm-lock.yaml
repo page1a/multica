@@ -301,9 +301,6 @@ importers:
       lucide-react:
         specifier: 'catalog:'
         version: 1.0.1(react@19.2.3)
-      mermaid:
-        specifier: ^11.14.0
-        version: 11.14.0
       next:
         specifier: ^15.5.16
         version: 15.5.18(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

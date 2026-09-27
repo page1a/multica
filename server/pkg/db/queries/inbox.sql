@@ -271,14 +271,115 @@ FROM (
               )
         ))
       )
-    ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
+    -- An unread row an open call hangs on keeps its issue unread even under
+    -- a newer row that was read (DENE-901): MarkAllInboxRead leaves exactly
+    -- those rows, and the badge must keep counting the "等你" ticket.
+    ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id),
+             (i.read = false AND NOT NOT EXISTS (
+          SELECT 1 FROM issue_summon s
+          JOIN issue siss ON siss.id = s.issue_id
+          WHERE s.issue_id = i.issue_id
+            AND s.recipient_id = i.recipient_id
+            AND s.answered_at IS NULL
+            AND siss.status NOT IN ('done', 'cancelled')
+            AND (s.inbox_item_id = i.id
+                 OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+      )) DESC,
+             i.created_at DESC
 ) newest
 WHERE newest.read = false
 GROUP BY newest.workspace_id;
 
 -- name: MarkAllInboxRead :execrows
-UPDATE inbox_item SET read = true
-WHERE workspace_id = $1 AND recipient_type = 'member' AND recipient_id = $2 AND archived = false AND read = false;
+-- Entering the board reads everything (DENE-901) except the rows an open call
+-- hangs on: a summon the person has not answered, on a ticket that is not
+-- finished, stays unread until it is answered or closed (see
+-- MarkIssueSummonInboxRead). A row hangs on a call when the call wrote it
+-- (inbox_item_id) or when it notifies the comment carrying the call's @ — a
+-- mention summon writes no row of its own; the mention listener does. Keep the
+-- predicate in step with MarkIssueInboxRead and ListUnreadInboxIssues.
+UPDATE inbox_item i SET read = true
+WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
+  AND i.archived = false AND i.read = false
+  AND NOT EXISTS (
+      SELECT 1 FROM issue_summon s
+      JOIN issue siss ON siss.id = s.issue_id
+      WHERE s.issue_id = i.issue_id
+        AND s.recipient_id = i.recipient_id
+        AND s.answered_at IS NULL
+        AND siss.status NOT IN ('done', 'cancelled')
+        AND (s.inbox_item_id = i.id
+             OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+  );
+
+-- name: MarkIssueInboxRead :many
+-- Opening a ticket reads its notifications (DENE-901), except the rows an
+-- open call hangs on — same rule as MarkAllInboxRead.
+UPDATE inbox_item i SET read = true
+WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
+  AND i.issue_id = $3 AND i.archived = false AND i.read = false
+  AND NOT EXISTS (
+      SELECT 1 FROM issue_summon s
+      JOIN issue siss ON siss.id = s.issue_id
+      WHERE s.issue_id = i.issue_id
+        AND s.recipient_id = i.recipient_id
+        AND s.answered_at IS NULL
+        AND siss.status NOT IN ('done', 'cancelled')
+        AND (s.inbox_item_id = i.id
+             OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+  )
+RETURNING i.id;
+
+-- name: MarkIssueSummonInboxRead :many
+-- The rows a call hangs on, read once the call is answered or closed.
+UPDATE inbox_item i SET read = true
+FROM issue_summon s
+WHERE s.id = ANY(sqlc.arg('summon_ids')::uuid[])
+  AND i.workspace_id = s.workspace_id
+  AND i.recipient_type = 'member'
+  AND i.recipient_id = s.recipient_id
+  AND i.issue_id = s.issue_id
+  AND i.archived = false AND i.read = false
+  AND (i.id = s.inbox_item_id
+       OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+RETURNING i.id, i.workspace_id, i.recipient_id;
+
+-- name: ListUnreadInboxIssues :many
+-- The board's unread snapshot (DENE-901): one row per ticket with unread
+-- notifications for this person, how many, and how many of them hang on an
+-- open call (those survive MarkAllInboxRead). Issue-less rows are not on the
+-- board. Visibility is checked by the handler, like ListInboxItems.
+SELECT i.issue_id,
+       count(*)::bigint AS unread_count,
+       count(*) FILTER (WHERE NOT (NOT EXISTS (
+      SELECT 1 FROM issue_summon s
+      JOIN issue siss ON siss.id = s.issue_id
+      WHERE s.issue_id = i.issue_id
+        AND s.recipient_id = i.recipient_id
+        AND s.answered_at IS NULL
+        AND siss.status NOT IN ('done', 'cancelled')
+        AND (s.inbox_item_id = i.id
+             OR (s.comment_id IS NOT NULL AND i.details->>'comment_id' = s.comment_id::text))
+  )))::bigint AS held_count,
+       max(i.created_at)::timestamptz AS latest_at,
+       bool_and(i.type IN ('agent_access_request', 'agent_access_approved', 'agent_access_declined'))::bool AS personal_only,
+       iss.number AS issue_number,
+       iss.title AS issue_title,
+       iss.status AS issue_status,
+       iss.parent_issue_id AS issue_parent_issue_id,
+       COALESCE(iss.visibility, 'workspace')::text AS issue_visibility,
+       COALESCE(iss.creator_type, '')::text AS issue_creator_type,
+       iss.creator_id AS issue_creator_id,
+       iss.project_id AS issue_project_id,
+       COALESCE(iss.assignee_type, '')::text AS issue_assignee_type,
+       iss.assignee_id AS issue_assignee_id
+FROM inbox_item i
+JOIN issue iss ON iss.id = i.issue_id
+WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
+  AND i.read = false AND i.archived = false
+GROUP BY i.issue_id, iss.id
+ORDER BY max(i.created_at) DESC
+LIMIT 300;
 
 -- name: ArchiveAllInbox :execrows
 UPDATE inbox_item SET archived = true

@@ -43,8 +43,11 @@ add_migration() { # <repo> <number> <name>
 }
 
 commit_all() { # <repo> <message>
+  # Clones do not inherit git_init's per-repo identity, and CI runners have no
+  # global one, so every commit carries its own.
   git -C "$1" add -A
-  git -C "$1" commit -q -m "$2"
+  git -C "$1" -c user.name="migration-new test" -c user.email="migration-new@test.local" \
+    -c commit.gpgsign=false commit -q -m "$2"
 }
 
 # The clone is taken before the upstream gets 702, so the local tree stops at

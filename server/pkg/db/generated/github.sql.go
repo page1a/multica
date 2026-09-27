@@ -138,7 +138,7 @@ func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID)
 }
 
 const getGitHubPullRequest = `-- name: GetGitHubPullRequest :one
-SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at FROM github_pull_request
+SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source FROM github_pull_request
 WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4
 `
 
@@ -186,6 +186,7 @@ func (q *Queries) GetGitHubPullRequest(ctx context.Context, arg GetGitHubPullReq
 		&i.ChecksRollupState,
 		&i.SnapshotHeadSha,
 		&i.SnapshotFetchedAt,
+		&i.Source,
 	)
 	return i, err
 }
@@ -458,7 +459,7 @@ SELECT
     pr.additions, pr.deletions, pr.changed_files,
     pr.api_mergeable, pr.api_merge_state_status, pr.checks_rollup_state,
     pr.snapshot_head_sha, pr.snapshot_fetched_at,
-    pr.created_at, pr.updated_at,
+    pr.created_at, pr.updated_at, pr.source,
     COALESCE(c.total, 0)::bigint   AS checks_total,
     COALESCE(c.passed, 0)::bigint  AS checks_passed,
     COALESCE(c.failed, 0)::bigint  AS checks_failed,
@@ -500,6 +501,7 @@ type ListPullRequestsByIssueRow struct {
 	SnapshotFetchedAt   pgtype.Timestamptz `json:"snapshot_fetched_at"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	Source              string             `json:"source"`
 	ChecksTotal         int64              `json:"checks_total"`
 	ChecksPassed        int64              `json:"checks_passed"`
 	ChecksFailed        int64              `json:"checks_failed"`
@@ -556,6 +558,7 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 			&i.SnapshotFetchedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Source,
 			&i.ChecksTotal,
 			&i.ChecksPassed,
 			&i.ChecksFailed,
@@ -649,13 +652,13 @@ INSERT INTO github_pull_request (
     title, state, html_url, branch, author_login, author_avatar_url,
     merged_at, closed_at, pr_created_at, pr_updated_at,
     head_sha, mergeable_state,
-    additions, deletions, changed_files
+    additions, deletions, changed_files, source
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $15, $16, $17,
     $18, $19, $9, $10,
     $11, $20,
-    $12, $13, $14
+    $12, $13, $14, COALESCE($21::text, 'github_app')
 )
 ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     installation_id = EXCLUDED.installation_id,
@@ -670,15 +673,16 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     pr_updated_at = EXCLUDED.pr_updated_at,
     head_sha = EXCLUDED.head_sha,
     mergeable_state = CASE
-        WHEN COALESCE($21::boolean, FALSE) THEN NULL
+        WHEN COALESCE($22::boolean, FALSE) THEN NULL
         WHEN EXCLUDED.mergeable_state IS NOT NULL THEN EXCLUDED.mergeable_state
         ELSE github_pull_request.mergeable_state
     END,
     additions     = EXCLUDED.additions,
     deletions     = EXCLUDED.deletions,
     changed_files = EXCLUDED.changed_files,
+    source = EXCLUDED.source,
     updated_at = now()
-RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at
+RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source
 `
 
 type UpsertGitHubPullRequestParams struct {
@@ -702,6 +706,7 @@ type UpsertGitHubPullRequestParams struct {
 	MergedAt            pgtype.Timestamptz `json:"merged_at"`
 	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
 	MergeableState      pgtype.Text        `json:"mergeable_state"`
+	Source              pgtype.Text        `json:"source"`
 	ClearMergeableState pgtype.Bool        `json:"clear_mergeable_state"`
 }
 
@@ -740,6 +745,7 @@ func (q *Queries) UpsertGitHubPullRequest(ctx context.Context, arg UpsertGitHubP
 		arg.MergedAt,
 		arg.ClosedAt,
 		arg.MergeableState,
+		arg.Source,
 		arg.ClearMergeableState,
 	)
 	var i GithubPullRequest
@@ -772,6 +778,7 @@ func (q *Queries) UpsertGitHubPullRequest(ctx context.Context, arg UpsertGitHubP
 		&i.ChecksRollupState,
 		&i.SnapshotHeadSha,
 		&i.SnapshotFetchedAt,
+		&i.Source,
 	)
 	return i, err
 }

@@ -6524,6 +6524,11 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	// The run's transcript carries tool input/output for the issue it worked
+	// on, so it is gated by the same visibility as the issue itself.
+	if !h.requireTaskIssueVisible(w, r, task) {
+		return
+	}
 
 	var (
 		messages []db.TaskMessage

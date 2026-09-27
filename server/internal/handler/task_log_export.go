@@ -188,6 +188,9 @@ func (h *Handler) resolveExportTask(w http.ResponseWriter, r *http.Request) (db.
 		writeError(w, http.StatusNotFound, "task not found")
 		return db.AgentTaskQueue{}, "", false
 	}
+	if !h.requireTaskIssueVisible(w, r, task) {
+		return db.AgentTaskQueue{}, "", false
+	}
 	return task, taskID, true
 }
 

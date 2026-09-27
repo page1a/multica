@@ -23,8 +23,6 @@ import {
   Layers,
   MoreHorizontal,
   Pencil,
-  Pin,
-  PinOff,
   Plus,
   Settings2,
   Trash2,
@@ -34,7 +32,6 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@multica/ui/components/ui/context-menu";
 import {
@@ -65,8 +62,6 @@ import {
 import { useDeleteIssueView, useUpdateIssueView } from "@multica/core/issue-views/mutations";
 import { useAuthStore } from "@multica/core/auth";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import { pinListOptions } from "@multica/core/pins/queries";
-import { useCreatePin, useDeletePin } from "@multica/core/pins/mutations";
 import { useSingleRowFit } from "../../common/single-row-fit";
 import { ManageViewsDialog } from "./manage-views-dialog";
 import {
@@ -223,20 +218,6 @@ export function ViewBar({
     [members, currentUserId],
   );
 
-  const { data: pins = [] } = useQuery({
-    ...pinListOptions(wsId, currentUserId ?? ""),
-    enabled: !!currentUserId,
-  });
-  const pinnedViewIds = useMemo(
-    () =>
-      new Set(
-        pins.filter((p) => p.item_type === "view").map((p) => p.item_id),
-      ),
-    [pins],
-  );
-  const createPin = useCreatePin();
-  const deletePin = useDeletePin();
-
   const anchorId = builtins.length > 0 ? `builtin:${builtins[0]!.key}` : "";
 
   const items = useMemo<ViewBarItem[]>(
@@ -365,11 +346,6 @@ export function ViewBar({
     }
   };
 
-  const togglePin = (view: IssueView, pinned: boolean) =>
-    pinned
-      ? deletePin.mutate({ itemType: "view", itemId: view.id })
-      : createPin.mutate({ item_type: "view", item_id: view.id });
-
   const selectItem = (item: ViewBarItem) => {
     if (item.kind === "builtin") {
       builtinByKey.get(item.barItemId)?.onSelect();
@@ -382,7 +358,6 @@ export function ViewBar({
   const renderViewTab = (item: ViewBarItem) => {
     const view = item.view!;
     const active = activeView?.id === view.id;
-    const pinned = pinnedViewIds.has(view.id);
     return (
       <ContextMenu>
         <ContextMenuTrigger
@@ -427,13 +402,6 @@ export function ViewBar({
               {t(($) => $.view_bar.delete)}
             </ContextMenuItem>
           )}
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => togglePin(view, pinned)}>
-            {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-            {pinned
-              ? t(($) => $.view_bar.context_unpin)
-              : t(($) => $.view_bar.context_pin)}
-          </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
     );
@@ -544,7 +512,6 @@ export function ViewBar({
             items={visible}
             fitCount={fitCount}
             activeViewId={activeView?.id ?? null}
-            pinnedViewIds={pinnedViewIds}
             onMoveItem={applyMove}
             onSelectItem={selectItem}
             onEditView={(view) => {
@@ -555,7 +522,6 @@ export function ViewBar({
               setMoreOpen(false);
               setDeleting(view);
             }}
-            onTogglePin={togglePin}
             onHideItem={(barItemId) => {
               setMoreOpen(false);
               toggleHidden(barItemId, true);

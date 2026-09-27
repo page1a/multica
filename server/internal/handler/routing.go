@@ -24,6 +24,12 @@ const routeTimeout = 45 * time.Second
 
 const routingModelListTimeout = 20 * time.Second
 
+type skipIssueRoutingKey struct{}
+
+func withSkipIssueRouting(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipIssueRoutingKey{}, true)
+}
+
 // RouteIssueAsync is the hook. Both call sites — issue creation and status
 // change — call this one function; adding routing behaviour for another status
 // is a row in the routing state table, never a third hook.
@@ -38,6 +44,9 @@ const routingModelListTimeout = 20 * time.Second
 // same moment, which is exactly the race the conditional writes and the
 // one-comment-per-kind index exist to absorb.
 func (h *Handler) RouteIssueAsync(r *http.Request, workspaceID, issueID string) {
+	if r.Context().Value(skipIssueRoutingKey{}) == true {
+		return
+	}
 	h.routeIssueDetached(logger.RequestAttrs(r), workspaceID, issueID)
 }
 

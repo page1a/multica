@@ -34,6 +34,11 @@ import (
 // pass drains it over a few days instead of firing hundreds of calls at once.
 const staleSweepLimit = 25
 
+// todoSweepQuietAfter is deliberately shorter than the acceptance stall
+// threshold: legacy todo tickets have no seat yet, so a quiet half-hour is
+// enough evidence to retry the normal Route pass.
+const todoSweepQuietAfter = 30 * time.Minute
+
 // Sweep runs the stale-review row across every workspace that has routing
 // switched on. It is what the periodic caller invokes; it is never reached
 // from a request.
@@ -94,25 +99,40 @@ func (r *Router) SweepWorkspace(ctx context.Context, workspaceID string, report 
 		report.Workspaces++
 	}
 
-	before := time.Now().Add(-settings.StaleAfter())
-	ids, err := r.Store.StaleReviews(ctx, workspaceID, before, staleSweepLimit)
+	now := time.Now()
+	// The same bounded budget covers both rows. Stale reviews are listed first
+	// but may take at most half of it: a todo that Route cannot seat (no
+	// eligible seat, reviewer declined) stays empty and comes back every pass,
+	// so without a reserved share enough of them would starve the acceptance
+	// row for good. Todo tickets are still routed first — they have never been
+	// given a seat — and take whatever the reviews left. Repeated sweeps are
+	// safe because Route only fills empty slots.
+	ids, err := r.Store.StaleReviews(ctx, workspaceID, now.Add(-settings.StaleAfter()), staleSweepLimit/2)
+	if err != nil {
+		return 0, err
+	}
+	todoIDs, err := r.Store.UnassignedTodos(ctx, workspaceID, now.Add(-todoSweepQuietAfter), staleSweepLimit-len(ids))
 	if err != nil {
 		return 0, err
 	}
 	examined := 0
-	for _, issueID := range ids {
+	pass := func(issueID string, stale bool) error {
 		if err := ctx.Err(); err != nil {
-			return examined, err
+			return err
 		}
-		out, err := r.RouteStale(ctx, workspaceID, issueID)
+		var out Outcome
+		if stale {
+			out, err = r.RouteStale(ctx, workspaceID, issueID)
+		} else {
+			out, err = r.Route(ctx, workspaceID, issueID)
+		}
 		examined++
 		if err != nil {
 			if report != nil {
 				report.Failed++
 			}
-			r.log().Warn("routing: stale pass failed",
-				"workspace_id", workspaceID, "issue_id", issueID, "error", err)
-			continue
+			r.log().Warn("routing: sweep pass failed", "workspace_id", workspaceID, "issue_id", issueID, "error", err)
+			return nil
 		}
 		if report != nil {
 			switch out.Action {
@@ -121,6 +141,17 @@ func (r *Router) SweepWorkspace(ctx context.Context, workspaceID string, report 
 			case ActionCompleted:
 				report.Completed++
 			}
+		}
+		return nil
+	}
+	for _, issueID := range todoIDs {
+		if err := pass(issueID, false); err != nil {
+			return examined, err
+		}
+	}
+	for _, issueID := range ids {
+		if err := pass(issueID, true); err != nil {
+			return examined, err
 		}
 	}
 	return examined, nil

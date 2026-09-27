@@ -129,7 +129,8 @@ func ambiguousIDPrefixError(kind, input string, matches []idCandidate) error {
 	return fmt.Errorf("ambiguous %s id prefix %q; matches:\n%s\nUse more characters or run the list command with --full-id", kind, input, strings.Join(parts, "\n"))
 }
 
-// resolveIssueRef accepts only the two canonical issue references:
+// resolveIssueRef accepts the two canonical issue references, plus an issue
+// URL into this workspace (see cmd_issue_link.go):
 //
 //   - the human-facing issue key, e.g. "MUL-1852" (validated by
 //     looksLikeIssueIdentifier and resolved server-side);
@@ -149,6 +150,23 @@ func resolveIssueRef(ctx context.Context, client *cli.APIClient, input string) (
 		return resolvedID{}, fmt.Errorf("issue id is required")
 	}
 
+	if looksLikeIssueLink(trimmed) {
+		// An issue URL (DENE-897). Into this workspace it is another spelling
+		// of the key. Into another workspace it names something this token
+		// can only READ, and only through `issue get` / `issue comment list`;
+		// every other command resolves ids in order to act on them, so the
+		// link is refused here rather than half-way through a write.
+		ref, linked, err := resolveIssueReadTarget(ctx, client, trimmed)
+		if err != nil {
+			return resolvedID{}, err
+		}
+		if linked != nil {
+			return resolvedID{}, fmt.Errorf(
+				"%s belongs to another workspace (%s) and is read-only from here; use `multica issue get <url>` or `multica issue comment list <url>` to read it",
+				ref.Display, linked.Provenance.WorkspaceSlug)
+		}
+		return ref, nil
+	}
 	if looksLikeIssueIdentifier(trimmed) {
 		return fetchIssueRef(ctx, client, trimmed)
 	}

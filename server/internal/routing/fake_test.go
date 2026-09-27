@@ -30,7 +30,10 @@ type fakeStore struct {
 
 	// stale-review row
 	workspaces    []string
+	todoIDs       []string
 	staleIDs      []string
+	todoLimit     int
+	staleLimit    int
 	remarks       []string
 	statusWritten []string
 	completeLost  bool
@@ -264,8 +267,22 @@ func (f *fakeStore) EnabledWorkspaces(context.Context) ([]string, error) {
 	return f.workspaces, f.fail("enabled_workspaces")
 }
 
-func (f *fakeStore) StaleReviews(_ context.Context, _ string, _ time.Time, _ int) ([]string, error) {
-	return f.staleIDs, f.fail("stale_reviews")
+func (f *fakeStore) UnassignedTodos(_ context.Context, _ string, _ time.Time, limit int) ([]string, error) {
+	f.todoLimit = limit
+	return capIDs(f.todoIDs, limit), f.fail("unassigned_todos")
+}
+
+func (f *fakeStore) StaleReviews(_ context.Context, _ string, _ time.Time, limit int) ([]string, error) {
+	f.staleLimit = limit
+	return capIDs(f.staleIDs, limit), f.fail("stale_reviews")
+}
+
+// capIDs applies the LIMIT the SQL would, so budget tests see real truncation.
+func capIDs(ids []string, limit int) []string {
+	if len(ids) > limit {
+		return ids[:limit]
+	}
+	return ids
 }
 
 func (f *fakeStore) ReviewRemarks(_ context.Context, _, _ string, _ ReviewerRef) ([]string, error) {

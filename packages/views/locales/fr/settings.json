@@ -388,7 +388,8 @@
       "mcp": "MCP",
       "billing": "Facturation",
       "config_transfer": "Export et import",
-      "routing": "Routage"
+      "routing": "Routage",
+      "project_sharing": "Autorisations et partage"
     },
     "groups": {
       "personal": "Personnel",
@@ -1773,5 +1774,31 @@
     "quota_updated": "mis à jour {{when}}",
     "seats_title": "Sièges candidats",
     "seats_empty": "Aucun siège candidat."
+  },
+  "project_sharing": {
+    "title": "Autorisations et partage",
+    "description": "Choisissez qui peut voir vos projets, tâches et ressources connectées.",
+    "section_title": "Accès aux projets",
+    "section_description": "Réglez un projet sur Moi uniquement, Personnes choisies ou Tout l’espace de travail. Les tâches et dépôts existants suivent la portée du projet.",
+    "loading": "Chargement des projets…",
+    "empty": "Aucun projet pour l’instant.",
+    "visibility_private": "Moi uniquement",
+    "visibility_project": "Personnes choisies",
+    "visibility_workspace": "Tout l’espace de travail",
+    "members": "{{count}} membres",
+    "guests": "{{count}} invités",
+    "resources": "{{count}} ressources",
+    "no_members": "Personne n’est encore sélectionné : vous seul pouvez voir ce projet.",
+    "manage_members": "Choisir des personnes",
+    "read_only": "Les invités peuvent voir les projets partagés mais pas modifier le partage.",
+    "change_for": "Modifier le partage de {{name}}",
+    "confirm_title": "Modifier le partage de {{name}} ?",
+    "confirm_description": "{{count}} ressources passeront en {{visibility}}, dont {{privateCount}} actuellement privées.",
+    "cancel": "Annuler",
+    "confirm": "Appliquer",
+    "saving": "Application…",
+    "preview_loading": "Chargement de l’aperçu… Vous ne pourrez appliquer les modifications qu’une fois prêt.",
+    "save_failed": "Impossible de modifier la portée du partage. Réessayez.",
+    "preview_failed": "Impossible de charger l’aperçu. Réessayez avant d’appliquer les modifications."
   }
 }

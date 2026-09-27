@@ -11,9 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/parking"
 	"github.com/multica-ai/multica/server/internal/routing"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 // statusTransition is the adjustment a move into in_review or done needs
@@ -28,6 +31,15 @@ type statusTransition struct {
 	note         string
 	handoff      bool
 	refuse       string
+	noCode       string
+	// merged / prURL report a linked PR the done gate merged on the way, so
+	// `issue close` can say so instead of guessing from the note (DENE-859).
+	merged bool
+	prURL  string
+}
+
+func reviewerIsAssigned(issue db.Issue) bool {
+	return issue.ReviewerType.Valid && issue.ReviewerType.String != "" && issue.ReviewerType.String != "none" && issue.ReviewerID.Valid
 }
 
 // guardSilentStall stops three quiet stalls at the status write.
@@ -46,7 +58,46 @@ type statusTransition struct {
 // in in_review for two hours with reviewer_id NULL because this guard skipped
 // children; the seat is now filled here by the same ladder fallback the parent
 // gets, and ensureAcceptanceRunning starts it once the executor's run is gone.
-func (h *Handler) guardSilentStall(ctx context.Context, issue db.Issue, nextStatus string, actorType string, noCodeReason string, assigneeType pgtype.Text, assigneeID pgtype.UUID, reviewerType pgtype.Text, reviewerID pgtype.UUID, reviewerExplicit bool) statusTransition {
+//
+// Every refusal it returns is also kept in issue_rejection, so the parking
+// record (DENE-881) can say "送审被拒" after the run is gone.
+func (h *Handler) guardSilentStall(ctx context.Context, issue db.Issue, nextStatus string, actorType, actorID string, noCodeReason string, assigneeType pgtype.Text, assigneeID pgtype.UUID, reviewerType pgtype.Text, reviewerID pgtype.UUID, reviewerExplicit bool) statusTransition {
+	tr := h.decideSilentStall(ctx, issue, nextStatus, actorType, actorID, noCodeReason, assigneeType, assigneeID, reviewerType, reviewerID, reviewerExplicit)
+	if tr.refuse != "" {
+		h.recordRejection(ctx, issue, nextStatus, actorType, actorID, tr.refuse)
+	}
+	return tr
+}
+
+// recordRejection keeps a refused status move. Best effort: losing the row
+// only costs the parking record one reason, never the refusal itself.
+func (h *Handler) recordRejection(ctx context.Context, issue db.Issue, nextStatus, actorType, actorID, reason string) {
+	kind := parking.RejectClose
+	switch {
+	case strings.Contains(reason, "没有关联的 PR"):
+		kind = parking.RejectPRNotLinked
+	case nextStatus == issuestatus.InReview:
+		kind = parking.RejectReview
+	}
+	actor := pgtype.UUID{}
+	if id, err := util.ParseUUID(actorID); err == nil {
+		actor = id
+	}
+	if err := h.Queries.CreateIssueRejection(ctx, db.CreateIssueRejectionParams{
+		ID:          dbid.NewV7(),
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+		ActorType:   actorType,
+		ActorID:     actor,
+		Action:      "status:" + nextStatus,
+		Kind:        kind,
+		Reason:      reason,
+	}); err != nil {
+		slog.Warn("record rejection failed", "issue_id", uuidToString(issue.ID), "error", err)
+	}
+}
+
+func (h *Handler) decideSilentStall(ctx context.Context, issue db.Issue, nextStatus string, actorType, actorID string, noCodeReason string, assigneeType pgtype.Text, assigneeID pgtype.UUID, reviewerType pgtype.Text, reviewerID pgtype.UUID, reviewerExplicit bool) statusTransition {
 	var tr statusTransition
 	switch nextStatus {
 	case issuestatus.InReview:
@@ -59,6 +110,7 @@ func (h *Handler) guardSilentStall(ctx context.Context, issue db.Issue, nextStat
 				return tr
 			}
 			if reason := strings.TrimSpace(noCodeReason); reason != "" {
+				tr.noCode = reason
 				tr.note = "执行人声明这张票没有代码交付：" + reason + "。"
 			}
 		}
@@ -70,12 +122,13 @@ func (h *Handler) guardSilentStall(ctx context.Context, issue db.Issue, nextStat
 		}
 		seat := h.fillAcceptanceSeat(ctx, issue, assigneeID)
 		seat.note = tr.note + seat.note
+		seat.noCode = tr.noCode
 		return seat
 	case issuestatus.Done:
 		if issue.Status == issuestatus.Done {
 			return tr
 		}
-		return h.guardDoneWithOpenPull(ctx, issue)
+		return h.guardDoneWithOpenPull(ctx, issue, actorType, actorID, noCodeReason)
 	default:
 		return tr
 	}
@@ -103,7 +156,7 @@ func (h *Handler) refuseReviewWithoutDelivery(ctx context.Context, issue db.Issu
 		}
 	}
 	key := issueIdentifier(h.getIssuePrefix(ctx, issue.WorkspaceID), issue.Number)
-	return fmt.Sprintf("进不了待验收：%s 没有关联的 PR，验收人没有东西可看。先推分支、开 PR（标题带 %s），再送审；纯文档或调研类没有代码交付的票，用 `--no-code <原因>` 说明。", key, key)
+	return fmt.Sprintf("进不了待验收：%s 没有关联的 PR，验收人没有东西可看。没有 GitHub App 时，请用票号重跑 `multica issue close %s`，并检查 PR 标题或分支里包含 %s；纯文档或调研类没有代码交付的票，用 `--no-code <原因>` 说明。", key, key, key)
 }
 
 func reviewerChosen(reviewerType pgtype.Text, reviewerID pgtype.UUID, explicit bool) bool {
@@ -186,7 +239,7 @@ func (h *Handler) pickAcceptanceSeat(ctx context.Context, issue db.Issue, assign
 	return tr
 }
 
-func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue) statusTransition {
+func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, actorType, actorID, noCodeReason string) statusTransition {
 	var tr statusTransition
 	prs, err := h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
 	if err != nil {
@@ -197,21 +250,57 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue) sta
 		tr.note = "这张票要关，但没能核对关联的 PR。先改成阻塞，不标完成。"
 		return tr
 	}
-	snapshots := make([]blockwait.PRSnapshot, 0, len(prs))
-	for _, pr := range prs {
-		snapshots = append(snapshots, blockwait.PRSnapshot{
-			Number:    int(pr.PrNumber),
-			State:     pr.State,
-			Mergeable: pr.MergeableState.String,
-			Checks:    pr.ChecksRollupState.String,
-			URL:       pr.HtmlUrl,
-		})
+	deliveryBranchCount := 0
+	if delivery, deliveryErr := service.BuildIssueDelivery(ctx, h.Queries, issue); deliveryErr != nil {
+		slog.Warn("close gate: build delivery failed", "issue_id", uuidToString(issue.ID), "error", deliveryErr)
+		tr.status = issuestatus.Blocked
+		tr.persistBlock = true
+		tr.block = blockwait.FailureWake(time.Now(), "关单前没能核对交付线", 1)
+		tr.note = "这张票要关，但没能核对交付线。先改成阻塞，不标完成。"
+		return tr
+	} else if delivery != nil {
+		deliveryBranchCount = len(delivery.Branches)
 	}
-	decision := blockwait.DecideClose(snapshots, time.Now())
+	// An agent may not close a ticket whose acceptance seat is someone else.
+	// Without a seat the agent may close, but only through the merge gate below
+	// or, when neither a PR nor a delivery branch exists, an explicit no-code
+	// declaration.
+	if actorType == "agent" && reviewerIsAssigned(issue) && actorID != uuidToString(issue.ReviewerID) {
+		tr.refuse = "执行人不能直接关单：请用 `multica issue close --outcome in_review` 交给验收席。"
+		return tr
+	}
+	if actorType == "agent" && len(prs) == 0 && deliveryBranchCount == 0 {
+		if strings.TrimSpace(noCodeReason) == "" {
+			tr.refuse = "这张票没有 PR 或交付分支，执行人关单必须带 `--no-code <原因>`。"
+			return tr
+		}
+		tr.noCode = strings.TrimSpace(noCodeReason)
+		tr.note = "执行人声明这张票没有代码交付：" + tr.noCode + "。"
+		return tr
+	}
+	if actorType == "agent" && strings.TrimSpace(noCodeReason) != "" {
+		tr.refuse = "这张票已经有 PR 或交付分支，不能用 `--no-code` 跳过合入门禁。"
+		return tr
+	}
+	// No PR yet is something the closing agent can fix in this run. Parking it
+	// as blocked waited on an event nobody produces (DENE-899): refuse instead.
+	if actorType == "agent" && len(prs) == 0 && deliveryBranchCount > 0 {
+		tr.refuse = "这张票有交付分支，但平台查不到它的 PR。先用 `gh pr create` 开 PR（标题带票号，打向主线），再重跑这条 close；close 会用本机 gh 把 PR 报给平台。"
+		return tr
+	}
+	// Without a GitHub App the server can neither read an open PR's checks nor
+	// merge it, so any block here waits on nothing. The closing agent has gh.
+	if actorType == "agent" && hasOpenPull(prs) && !h.canMergePulls() {
+		tr.refuse = fmt.Sprintf("这台服务没有合并权限，合不了 %s。确认检查通过后用 `gh pr merge --squash` 自己合，再重跑这条 close；要别人验收就改用 `--outcome in_review`。", mergeTarget(prs))
+		return tr
+	}
+	decision := blockwait.DecideClose(h.gatePRSnapshots(ctx, prs), time.Now())
 	switch decision.Action {
 	case blockwait.ReleaseDone:
 		return tr
 	case blockwait.ReleaseMerge:
+		actor, _ := util.ParseUUID(actorID)
+		h.trackBaselineFix(ctx, issue, &decision, actorType, actor)
 		if err := h.mergeOpenPulls(ctx, prs); err != nil {
 			rec := decision.Record
 			if !rec.Structured() {
@@ -229,6 +318,13 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue) sta
 		tr.note = decision.Reason
 		if !strings.Contains(tr.note, "已合并") {
 			tr.note += " PR 已合并。"
+		}
+		tr.merged = true
+		for _, pr := range prs {
+			if strings.EqualFold(pr.State, "open") && pr.HtmlUrl != "" {
+				tr.prURL = pr.HtmlUrl
+				break
+			}
 		}
 		return tr
 	default:
@@ -258,14 +354,26 @@ func (h *Handler) mergeOpenPulls(ctx context.Context, prs []db.ListPullRequestsB
 	return nil
 }
 
-func mergeFailureCondition(err error, prs []db.ListPullRequestsByIssueRow) string {
-	label := "关联 PR"
+func hasOpenPull(prs []db.ListPullRequestsByIssueRow) bool {
 	for _, pr := range prs {
-		if strings.EqualFold(pr.State, "open") && pr.HtmlUrl != "" {
-			label = pr.HtmlUrl
-			break
+		if strings.EqualFold(pr.State, "open") {
+			return true
 		}
 	}
+	return false
+}
+
+func mergeTarget(prs []db.ListPullRequestsByIssueRow) string {
+	for _, pr := range prs {
+		if strings.EqualFold(pr.State, "open") && pr.HtmlUrl != "" {
+			return pr.HtmlUrl
+		}
+	}
+	return "关联 PR"
+}
+
+func mergeFailureCondition(err error, prs []db.ListPullRequestsByIssueRow) string {
+	label := mergeTarget(prs)
 	switch {
 	case errors.Is(err, errPullMergeUnavailable):
 		return label + " 这台服务没有合并权限"

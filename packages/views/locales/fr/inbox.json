@@ -99,7 +99,8 @@
     "autopilot_quota_exceeded": "Limite d'exécutions d'automatisation atteinte",
     "agent_access_request": "Demande d'accès à un agent",
     "agent_access_approved": "Accès à l'agent approuvé",
-    "agent_access_declined": "Accès à l'agent refusé"
+    "agent_access_declined": "Accès à l'agent refusé",
+    "parking_unexplained": "Arrêt sans explication"
   },
   "labels": {
     "set_status_to": "Statut défini sur",
@@ -145,5 +146,101 @@
     "access_request_not_pending": "Cette demande a déjà été traitée ou a expiré",
     "access_request_failed": "Impossible de traiter la demande",
     "access_pass_expiry_invalid": "Choisissez une échéance dans le futur"
+  },
+  "board": {
+    "title": "Inbox",
+    "lede": "One row per issue: running or stopped, why it stopped, what happened before, who moves next. Open the issue for details.",
+    "activity_link": "All activity",
+    "back_to_board": "One row per issue",
+    "lanes": {
+      "waiting": {
+        "title": "Waiting on you",
+        "hint": "Issues that asked for you. Reply and the row goes away; the agent picks up again",
+        "empty": "Nothing is waiting on you"
+      },
+      "stalled": {
+        "title": "Stopped · unexplained",
+        "hint": "No agent is running and the issue was never closed out. The server traced why",
+        "empty": "Nothing stopped without an explanation"
+      },
+      "running": {
+        "title": "Running",
+        "hint": "Just a marker, no noise",
+        "empty": "No agent is running right now"
+      },
+      "fresh": {
+        "title": "Du nouveau",
+        "hint": "Non lu depuis votre dernière visite et absent des colonnes ci-dessus. Affiché pour cette visite seulement",
+        "empty": "Rien de nouveau"
+      },
+      "done": {
+        "title": "Done today",
+        "hint": "Shown once, folded after you have seen it",
+        "empty": "Nothing finished today yet"
+      }
+    },
+    "tag": {
+      "needs_human": "Your call",
+      "manual": "Your turn",
+      "mention": "Asked for you",
+      "routing": "Nobody picked up",
+      "patrol": "No reviewer",
+      "time_limit": "Timed out",
+      "quota_relay": "Out of quota",
+      "waiting_person": "Your call",
+      "waiting_default": "Waiting",
+      "stalled_delivery": "Delivery stuck",
+      "stalled_unclosed": "Done, not closed",
+      "stalled_reply_unclosed": "Replied, not closed",
+      "running": "Running",
+      "fresh": "Nouveau",
+      "done": "Done"
+    },
+    "stuck": {
+      "branch_refused": "The platform refused to record the delivery branch",
+      "pr_not_linked": "No linked PR, so the move to review was refused",
+      "review_refused": "The move to review was refused",
+      "close_refused": "Closing was refused",
+      "run_failed": "The run ended in failure",
+      "no_wait_record": "Blocked, but nothing says what it waits on",
+      "woken_no_close": "Replied after being woken, but did not close out again",
+      "no_close": "The run ended and the issue was not closed out",
+      "default": "Stopped without an explanation"
+    },
+    "event": {
+      "run_started": "Run started",
+      "run_completed": "Run finished",
+      "run_failed": "Run failed",
+      "run_cancelled": "Run cancelled",
+      "pr_linked": "PR linked",
+      "pr_merged": "PR merged",
+      "rejected": "Refused by the platform",
+      "closed": "Closed out",
+      "after": "No run and no close since"
+    },
+    "server_mark": "Server verdict",
+    "unread_one": "{{count}} nouveau",
+    "unread_other": "{{count}} nouveaux",
+    "before": "Before: {{text}}",
+    "next": "Next: {{name}}",
+    "next_none": "Next: nobody",
+    "next_issue": "Waiting on {{id}}",
+    "from_to_you": "{{name}} → you",
+    "you": "you",
+    "running_for": "running {{time}}",
+    "children_one": "{{count}} sub-issue",
+    "children_other": "{{count}} sub-issues",
+    "expand": "Why",
+    "collapse": "Hide",
+    "reply_placeholder": "Reply here; it posts on the issue and wakes {{name}}",
+    "reply_placeholder_default": "Reply here; it posts on the issue",
+    "reply": "Reply",
+    "reply_sent": "Replied; the agent will pick it up",
+    "reply_failed": "The reply was not sent",
+    "open_issue": "Open issue",
+    "seen_one": "{{count}} already seen",
+    "seen_other": "{{count}} already seen",
+    "hide_seen": "Hide seen",
+    "load_error": "Some of this did not load; it will retry shortly"
   }
 }

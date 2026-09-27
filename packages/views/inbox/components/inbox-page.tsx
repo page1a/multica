@@ -89,7 +89,12 @@ import { useTimeAgo } from "./inbox-list-item";
 import { InboxList } from "./inbox-list";
 import { InboxFilterMenu } from "./inbox-filter-menu";
 import { InboxContextMenuProvider } from "./inbox-context-menu";
-import { ARCHIVED_VIEW_PARAM, type InboxView } from "./inbox-view";
+import {
+  ACTIVITY_LAYER_PARAM,
+  ARCHIVED_VIEW_PARAM,
+  LAYER_PARAM,
+  type InboxView,
+} from "./inbox-view";
 import { useTypeLabels } from "./inbox-detail-label";
 import {
   getInboxDisplayTitle,
@@ -106,13 +111,14 @@ const INBOX_LIST_DEFAULT_SIZE = 260;
 const INBOX_LIST_MIN_SIZE = 240;
 const INBOX_LIST_MAX_SIZE = 400;
 
-export function InboxPage() {
+/** The inbox's second layer: every notification, as before DENE-882. */
+export function InboxActivityPage() {
   const { t } = useT("inbox");
   const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
   const showAutopilotQuotaRecoveryPrompt = useIssueLimitUpgradePrompt(
     "autopilot_quota",
   );
-  const { searchParams, replace } = useNavigation();
+  const { searchParams, replace, push } = useNavigation();
   const urlIssue = searchParams.get("issue") ?? "";
   const urlView: InboxView =
     searchParams.get("view") === ARCHIVED_VIEW_PARAM ? "archived" : "inbox";
@@ -202,11 +208,10 @@ export function InboxPage() {
   const buildInboxUrl = useCallback(
     (nextView: InboxView, key: string) => {
       const params = new URLSearchParams();
+      params.set(LAYER_PARAM, ACTIVITY_LAYER_PARAM);
       if (nextView === "archived") params.set("view", ARCHIVED_VIEW_PARAM);
       if (key) params.set("issue", key);
-      const query = params.toString();
-      const inboxPath = wsPaths.inbox();
-      return query ? `${inboxPath}?${query}` : inboxPath;
+      return `${wsPaths.inbox()}?${params.toString()}`;
     },
     [wsPaths],
   );
@@ -500,6 +505,16 @@ export function InboxPage() {
   const listHeader = (
     <PageHeader>
       <div className="flex flex-1 items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground"
+          aria-label={t(($) => $.board.back_to_board)}
+          title={t(($) => $.board.back_to_board)}
+          onClick={() => push(wsPaths.inbox())}
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
         <h1 className="text-body font-semibold">{t(($) => $.page.title)}</h1>
         {unreadCount > 0 && (
           <NumberFlow

@@ -33,6 +33,7 @@ func TestGuestRouteCoverage(t *testing.T) {
 		"/api/cloud-billing/",
 		"/api/cloud-subscriptions/",
 		"/api/workspaces/",
+		"/api/links/", // DENE-897: link reads are GET-only; the write methods are registered solely to answer 405 link_write_forbidden
 	}
 
 	isNamed := func(fn func(http.Handler) http.Handler, name string) bool {

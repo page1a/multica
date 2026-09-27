@@ -80,7 +80,6 @@ import { ChatAccessDialog } from "./chat-access-dialog";
 import { ChatVisibilityNotice } from "./chat-visibility-notice";
 import { ChatProjectNudge } from "./chat-project-nudge";
 import { ChatInput } from "./chat-input";
-import { ProviderQuotaStrip } from "./provider-quota-strip";
 import { ChatQueue } from "./chat-queue";
 import { EmptyState } from "./chat-empty-state";
 import { SessionRenameInput } from "./session-rename-input";
@@ -1112,7 +1111,6 @@ export function ChatWindow() {
         contextItems={contextItems}
         focusRequest={focusRequest}
       />
-      <ProviderQuotaStrip />
       <ChatVisibilityNotice />
     </motion.div>
   );

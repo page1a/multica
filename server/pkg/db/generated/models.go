@@ -830,6 +830,7 @@ type GithubPullRequest struct {
 	ChecksRollupState   pgtype.Text        `json:"checks_rollup_state"`
 	SnapshotHeadSha     string             `json:"snapshot_head_sha"`
 	SnapshotFetchedAt   pgtype.Timestamptz `json:"snapshot_fetched_at"`
+	Source              string             `json:"source"`
 }
 
 type GithubPullRequestCheckRun struct {
@@ -968,6 +969,23 @@ type IssueLabel struct {
 	Description  string             `json:"description"`
 }
 
+type IssueParkingRecord struct {
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	State         string             `json:"state"`
+	Category      string             `json:"category"`
+	StuckKind     string             `json:"stuck_kind"`
+	Unexplained   bool               `json:"unexplained"`
+	Summary       string             `json:"summary"`
+	SummarySource string             `json:"summary_source"`
+	NextOwnerType string             `json:"next_owner_type"`
+	NextOwnerID   string             `json:"next_owner_id"`
+	IssueStatus   string             `json:"issue_status"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	Timeline      []byte             `json:"timeline"`
+	EvaluatedAt   pgtype.Timestamptz `json:"evaluated_at"`
+}
+
 type IssueProperty struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -998,6 +1016,18 @@ type IssueReaction struct {
 	ActorType   string             `json:"actor_type"`
 	ActorID     pgtype.UUID        `json:"actor_id"`
 	Emoji       string             `json:"emoji"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type IssueRejection struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	ActorType   string             `json:"actor_type"`
+	ActorID     pgtype.UUID        `json:"actor_id"`
+	Action      string             `json:"action"`
+	Kind        string             `json:"kind"`
+	Reason      string             `json:"reason"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -1055,6 +1085,23 @@ type IssueSubscriber struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UnsubscribedAt pgtype.Timestamptz `json:"unsubscribed_at"`
 	OptOutScope    pgtype.Text        `json:"opt_out_scope"`
+}
+
+type IssueSummon struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	RecipientID     pgtype.UUID        `json:"recipient_id"`
+	CallerType      string             `json:"caller_type"`
+	CallerID        pgtype.UUID        `json:"caller_id"`
+	Source          string             `json:"source"`
+	Reason          string             `json:"reason"`
+	CommentID       pgtype.UUID        `json:"comment_id"`
+	InboxItemID     pgtype.UUID        `json:"inbox_item_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	AnsweredAt      pgtype.Timestamptz `json:"answered_at"`
+	AnswerCommentID pgtype.UUID        `json:"answer_comment_id"`
+	RemindedAt      pgtype.Timestamptz `json:"reminded_at"`
 }
 
 type IssueToLabel struct {

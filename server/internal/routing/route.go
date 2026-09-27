@@ -91,6 +91,11 @@ func (r *Router) log() *slog.Logger {
 // change, and it is the only entry point: adding behaviour for a status is a
 // row in the table below, not another hook.
 //
+// Routing follows three gates before it may fill a slot: a downstream consumer
+// must read the value, the value must be deterministic or verifiable (otherwise
+// it stays empty), and the existing fill-only/conditional-write/one-comment
+// rules remain in force.
+//
 // Route never writes status, stage, description, labels, or children, never
 // merges and never closes. The four things it may touch are the assignee, the
 // reviewer property, its own comments, and the subscriber list — and the last

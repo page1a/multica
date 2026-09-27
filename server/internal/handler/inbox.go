@@ -550,3 +550,99 @@ func (h *Handler) ArchiveCompletedInbox(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
+
+// UnreadInboxIssueResponse is one ticket in GET /api/inbox/unread-issues: how
+// many unread notifications it carries for the viewer, and how many of them
+// hang on an open call (those survive the board's mark-all).
+type UnreadInboxIssueResponse struct {
+	IssueID       string  `json:"issue_id"`
+	Identifier    string  `json:"identifier"`
+	Title         string  `json:"title"`
+	Status        string  `json:"status"`
+	ParentIssueID *string `json:"parent_issue_id"`
+	UnreadCount   int64   `json:"unread_count"`
+	HeldCount     int64   `json:"held_count"`
+	LatestAt      string  `json:"latest_at"`
+}
+
+// ListUnreadInboxIssues is the board's unread snapshot (DENE-901): one entry
+// per ticket with unread notifications, newest first. The board reads it on
+// arrival, then marks everything read, and shows the snapshot until the next
+// visit. Visibility follows ListInbox.
+func (h *Handler) ListUnreadInboxIssues(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	wsUUID, ok := parseUUIDOrBadRequest(w, ctxWorkspaceID(r.Context()), "workspace id")
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListUnreadInboxIssues(r.Context(), db.ListUnreadInboxIssuesParams{
+		WorkspaceID: wsUUID,
+		RecipientID: parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list unread inbox issues")
+		return
+	}
+	viewer, viewerErr := h.visibilityViewerFor(r, wsUUID)
+	if viewerErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve viewer")
+		return
+	}
+	prefix := h.getIssuePrefix(r.Context(), wsUUID)
+	resp := make([]UnreadInboxIssueResponse, 0, len(rows))
+	for _, row := range rows {
+		if !row.PersonalOnly && !viewer.canSeeIssueFields(row.IssueID, row.IssueVisibility, row.IssueCreatorType,
+			row.IssueCreatorID, row.IssueProjectID, row.IssueAssigneeType, row.IssueAssigneeID) {
+			continue
+		}
+		resp = append(resp, UnreadInboxIssueResponse{
+			IssueID:       uuidToString(row.IssueID),
+			Identifier:    issueIdentifier(prefix, row.IssueNumber),
+			Title:         row.IssueTitle,
+			Status:        row.IssueStatus,
+			ParentIssueID: uuidToPtr(row.IssueParentIssueID),
+			UnreadCount:   row.UnreadCount,
+			HeldCount:     row.HeldCount,
+			LatestAt:      timestampToString(row.LatestAt),
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// MarkIssueInboxRead reads the viewer's notifications on one ticket, the
+// moment they open it (DENE-901). Rows an open call hangs on stay unread
+// until the call is answered or closed.
+func (h *Handler) MarkIssueInboxRead(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	issueUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "issueId"), "issue id")
+	if !ok {
+		return
+	}
+	ids, err := h.Queries.MarkIssueInboxRead(r.Context(), db.MarkIssueInboxReadParams{
+		WorkspaceID: wsUUID,
+		RecipientID: parseUUID(userID),
+		IssueID:     issueUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark issue inbox read")
+		return
+	}
+	if len(ids) > 0 {
+		h.publish(protocol.EventInboxBatchRead, workspaceID, "member", userID, map[string]any{
+			"recipient_id": userID,
+			"count":        len(ids),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(ids)})
+}

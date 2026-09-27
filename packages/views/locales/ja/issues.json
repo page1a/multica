@@ -974,8 +974,6 @@
     "delete_description": "「{{name}}」は閲覧できる全メンバーから削除されます",
     "toast_deleted": "ビューを削除しました",
     "context_edit": "ビューを編集",
-    "context_pin": "サイドバーに固定",
-    "context_unpin": "サイドバーから固定解除",
     "row_menu": "その他の操作",
     "row_hide": "バーから隠す",
     "row_show": "バーに表示",

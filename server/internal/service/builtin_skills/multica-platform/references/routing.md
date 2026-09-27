@@ -24,7 +24,8 @@ What it may do, and only when the slot is still **empty**:
   acceptance needs a human call, the slot still gets a seat and the decision
   comment tells that seat to @ the person instead.
 - **`in_review` (top-level only)** — hand the issue to the seat in 验收席
-  (which starts its run).
+  (which starts its run). To wake that seat by hand, use `multica issue
+  handoff <id> --to reviewer` — never a hand-written @验收席.
   「不需要验收」 is left alone. A 验收席 a person filled with a **person** is
   notified with an @ and a subscription, and the issue is **not** reassigned —
   whoever is holding it keeps it, so its status can still be moved.
@@ -51,6 +52,20 @@ threshold (Settings → Routing, default 24 hours):
   slot filled now and is handed on — this is the same row as `in_review` above,
   and it runs even when the assignee is a person.
 - With routing switched off, the sweep does not run.
+
+The same sweep also backfills quiet legacy `todo` issues whose executor or
+reviewer slot is empty. It only considers `todo`, skips backlog, blocked, and
+human-held issues, and shares a 25-issue per-workspace budget with the
+stale-review row. Re-running it is safe because `Route` only fills empty slots.
+
+Routing-owned fields follow three gates: a downstream consumer must read the
+field; the value must be deterministic or verifiable (otherwise it stays
+empty); and the existing fill-only, conditional-write, one-comment rules
+remain in force. Projects are inherited from a parent issue, or from the one
+project attached to the source issue/chat of an agent run; multi-project chats
+remain empty. A child with priority `none` inherits its parent's priority.
+Labels and due dates are not routed, and status remains governed by server
+gates.
 
 验收席 is a native **top-level issue** field, not a workspace property:
 `reviewer_type` + `reviewer_id` on the issue, shaped exactly like `assignee_type` +

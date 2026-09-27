@@ -74,6 +74,9 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["squads", ":id"],
   ["inbox"],
   ["chat"],
+  // A copied chat link: `:sessionId` is the session's id, templated like any
+  // other resource id.
+  ["chat", ":sessionId"],
   ["my-issues"],
   ["usage"],
   ["billing"],

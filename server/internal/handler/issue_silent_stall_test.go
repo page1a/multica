@@ -232,6 +232,16 @@ func TestAgentReviewWithoutPullIsRefused(t *testing.T) {
 	if got := readIssueStatus(t, issue.ID); got != "in_progress" {
 		t.Fatalf("status = %q, want the issue left in in_progress", got)
 	}
+	// DENE-881: the refusal outlives the run that met it.
+	var action, kind, reason string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT action, kind, reason FROM issue_rejection WHERE issue_id = $1`, issue.ID,
+	).Scan(&action, &kind, &reason); err != nil {
+		t.Fatalf("rejection not recorded: %v", err)
+	}
+	if action != "status:in_review" || kind != "pr_not_linked" || !strings.Contains(reason, issue.Identifier) {
+		t.Fatalf("rejection = %s/%s/%s", action, kind, reason)
+	}
 
 	t.Run("a declared no-code reason is the exit", func(t *testing.T) {
 		docs := createIssueHTTP(t, "review gate docs", "in_progress")
@@ -344,5 +354,52 @@ func TestChildInReviewFillsAcceptanceSeat(t *testing.T) {
 	}
 	if got := countPendingTasksForAgent(t, child.ID, reviewerID); got != 1 {
 		t.Fatalf("acceptance tasks on the child = %d, want 1", got)
+	}
+}
+
+// TestListIssueParkingRecords is the stage-2 read (DENE-881): the latest
+// record per issue, flat, with the parent id to nest by.
+func TestListIssueParkingRecords(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	parent := createIssueHTTP(t, "parking parent", "in_progress")
+	child := createIssueHTTP(t, "parking child", "in_progress")
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET parent_issue_id = $1 WHERE id = $2`, parent.ID, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO issue_parking_record
+		(issue_id, workspace_id, state, category, stuck_kind, unexplained, summary, summary_source, next_owner_type, next_owner_id, issue_status, timeline)
+		SELECT id, workspace_id, 'parked', 'stalled_unclosed', 'no_close', true, '运行已结束：票没有收口', 'template', 'agent', 'a1', status, '[{"kind":"run_started"}]'
+		FROM issue WHERE id = $1`, child.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	testHandler.ListIssueParkingRecords(w, newRequest("GET", "/api/issues/parking?unexplained_only=true", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Records []ParkingRecordResponse `json:"records"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	var got *ParkingRecordResponse
+	for i := range resp.Records {
+		if resp.Records[i].IssueID == child.ID {
+			got = &resp.Records[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("child record missing: %s", w.Body.String())
+	}
+	if got.ParentIssueID == nil || *got.ParentIssueID != parent.ID || got.Identifier != child.Identifier {
+		t.Errorf("parent/identifier = %v/%s", got.ParentIssueID, got.Identifier)
+	}
+	if !got.Unexplained || got.NextOwner.Type != "agent" || string(got.Timeline) != `[{"kind": "run_started"}]` && string(got.Timeline) != `[{"kind":"run_started"}]` {
+		t.Errorf("record = %+v timeline=%s", got, got.Timeline)
 	}
 }

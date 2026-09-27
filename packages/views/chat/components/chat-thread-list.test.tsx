@@ -288,14 +288,10 @@ describe("ChatThreadList compact row menu", () => {
     expect(screen.queryByRole("button", { name: "Chat s1" })).not.toBeInTheDocument();
   });
 
-  it("marks active rows draggable with the chat-pin payload", () => {
+  it("no longer offers rows as a drag source for the sidebar", () => {
     renderList(null);
 
-    const row = screen.getByText("Chat s1").closest("[draggable]");
-    expect(row).toHaveAttribute("draggable", "true");
-    const setData = vi.fn();
-    fireEvent.dragStart(row!, { dataTransfer: { setData, effectAllowed: "none" } });
-    expect(setData).toHaveBeenCalledWith("application/x-multica-chat-session", "s1");
+    expect(screen.getByText("Chat s1").closest("[draggable]")).toBeNull();
   });
 
   it("does not select the row when the menu opens", () => {
