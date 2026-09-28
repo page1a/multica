@@ -361,3 +361,54 @@ describe("ChatThreadList row keyboard semantics", () => {
     expect(onSelectSession).not.toHaveBeenCalled();
   });
 });
+
+describe("ChatThreadList search results", () => {
+  it("lists archived matches last with a tag and shows the content snippet", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={[
+            makeSession({ id: "old", title: "Old release", status: "archived", updated_at: "2026-07-09T00:00:00Z" }),
+            makeSession({
+              id: "live",
+              title: "Weekly sync",
+              updated_at: "2026-07-01T00:00:00Z",
+              last_message: { content: "latest words", role: "assistant", created_at: "2026-07-01T00:00:00Z" } as ChatSession["last_message"],
+            }),
+          ]}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+          search={{ query: "release", snippets: new Map([["live", "…the release plan was approved…"]]) }}
+        />
+      </I18nProvider>,
+    );
+
+    const rows = document.querySelectorAll("[tabindex='0'][class*='group/row']");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("Weekly sync");
+    expect(rows[0]!.textContent).toContain("…the release plan was approved…");
+    expect(rows[0]!.textContent).not.toContain("latest words");
+    expect(rows[1]!.textContent).toContain(enChat.list.archived_title);
+    // The archived view's footer entry is not part of a result list.
+    expect(screen.queryByRole("button", { name: new RegExp(enChat.list.archived_title) })).toBeNull();
+  });
+
+  it("shows the empty label when nothing matches", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={[]}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+          emptyLabel={enChat.page.search_empty}
+          search={{ query: "zzz", snippets: new Map() }}
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByText(enChat.page.search_empty)).toBeTruthy();
+  });
+});

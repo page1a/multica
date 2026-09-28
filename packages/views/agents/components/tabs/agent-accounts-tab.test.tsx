@@ -557,7 +557,7 @@ describe("AgentAccountsTab drawer", () => {
     // the one a switchable-but-manual group gets, so "cannot add" and "cannot
     // switch" are no longer rendered as the same thing (DENE-678).
     expect(
-      screen.getByText(/builds a separate Codex directory for every task/i),
+      screen.getByText(/gets its own Codex directory/i),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /add codex account/i }),
@@ -890,7 +890,7 @@ describe("AgentAccountsTab slots of a family that does not rotate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add DSH account 2" }));
     // The slot has no directory on disk yet, so the row is synthesized — and
     // the drawer says out loud that nothing here rotates on its own.
-    expect(screen.getByText(/no automatic rotation here/i)).toBeInTheDocument();
+    expect(screen.getByText(/no automatic switching/i)).toBeInTheDocument();
 
     fireEvent.click(
       within(screen.getByRole("radiogroup", { name: "DSH accounts" })).getByRole(
@@ -955,9 +955,9 @@ describe("AgentAccountsTab slots of a family that does not rotate", () => {
     });
 
     await openDrawer();
-    expect(screen.getByText(/moves to the next signed-in account/i)).toBeInTheDocument();
-    expect(screen.getByText(/no automatic rotation here/i)).toBeInTheDocument();
-    expect(screen.getByText(/separate Codex directory for every task/i)).toBeInTheDocument();
+    expect(screen.getByText(/switches to the next signed-in account/i)).toBeInTheDocument();
+    expect(screen.getByText(/no automatic switching/i)).toBeInTheDocument();
+    expect(screen.getByText(/gets its own Codex directory/i)).toBeInTheDocument();
   });
 });
 

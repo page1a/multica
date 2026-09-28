@@ -340,7 +340,7 @@ describe("InstructionsTab inheritance", () => {
     const block = screen.getByTestId("agent-inherited-prompt");
     expect(block).toHaveTextContent("Base role prompt");
     expect(block).toHaveTextContent(
-      /edited on "Base Reviewer", and shared by every specialization/i,
+      /edit it on "Base Reviewer" to update every specialization/i,
     );
     // The editable field is the ADDITIONAL half, not the whole prompt.
     expect(screen.getByLabelText(/Additional instructions/i)).toHaveValue(

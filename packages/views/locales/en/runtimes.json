@@ -34,7 +34,7 @@
     "failed": "Couldn't start Mika",
     "dialog_title": "Where should Mika run?",
     "cancel": "Cancel",
-    "dialog_description": "Pick the runtime Mika will use. You can change it later in settings."
+    "dialog_description": "Pick the runtime Mika will use."
   },
   "machine": {
     "search_placeholder": "Search machines…",
@@ -259,7 +259,7 @@
       "instance_type_required": "Instance type is required",
       "disk_size_invalid": "Disk size must be a positive integer"
     },
-    "create_hint": "Choose a name, instance type, and disk size. Fleet applies the rest."
+    "create_hint": "Choose a name, instance type, and disk size; Fleet applies the rest."
   },
   "update": {
     "cli_version_label": "CLI Version:",
@@ -341,7 +341,7 @@
     "title": "Plan limits",
     "observed": "Updated {{when}}",
     "unavailable": "Plan limits unavailable",
-    "unavailable_hint": "No quota snapshot has been reported. Codex reports one after a CLI session; older daemons and unsupported CLIs remain unavailable.",
+    "unavailable_hint": "No quota reported yet. Run one Codex CLI session to see it.",
     "unavailable_hint_claude": "Claude Code currently reports plan limits only after it reaches a session limit.",
     "limit_reached": "Limit reached",
     "used": "{{percent}}% used",

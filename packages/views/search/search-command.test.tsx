@@ -81,6 +81,7 @@ const {
   mockPathname,
   mockGetShareableUrl,
   mockMembers,
+  mockChatSessions,
   mockAgents,
   mockSquads,
   mockOpenModal,
@@ -113,6 +114,7 @@ const {
       avatar_url: string | null;
     }>,
   },
+  mockChatSessions: { current: [] as Array<Record<string, unknown>> },
   mockAgents: {
     current: [] as Array<{
       id: string;
@@ -228,6 +230,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     agentDetail: (id: string) => `/ws-test/agents/${id}`,
     squadDetail: (id: string) => `/ws-test/squads/${id}`,
     projectDetail: (id: string) => `/ws-test/projects/${id}`,
+    chatSession: (id: string) => `/ws-test/chat/${id}`,
   }),
 }));
 
@@ -244,6 +247,13 @@ vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["workspaces", "ws-test", "members"] }),
   agentListOptions: () => ({ queryKey: ["workspaces", "ws-test", "agents"] }),
   squadListOptions: () => ({ queryKey: ["workspaces", "ws-test", "squads"] }),
+}));
+
+// Only the list's shape matters here; sortChatSessions stays real so the
+// palette orders chats exactly like the chat list does.
+vi.mock("@multica/core/chat/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/chat/queries")>()),
+  chatSessionsOptions: () => ({ queryKey: ["chat", "ws-test", "sessions"] }),
 }));
 
 vi.mock("@multica/core/modals", () => ({
@@ -274,6 +284,9 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: mockSquads.current };
     }
     if (opts.enabled === false) return { data: undefined };
+    if (key[0] === "chat" && key[2] === "sessions") {
+      return { data: mockChatSessions.current };
+    }
     return { data: resolveIssue(key) };
   },
   useQueries: (opts: { queries: Array<{ queryKey: readonly unknown[] }> }) =>
@@ -323,6 +336,7 @@ describe("SearchCommand", () => {
     mockPathname.current = "/ws-test/issues";
     mockGetShareableUrl.mockReset().mockImplementation((p: string) => `https://app.multica/${p}`);
     mockMembers.current = [];
+    mockChatSessions.current = [];
     mockOpenModal.mockReset();
     mockToastSuccess.mockReset();
     mockClipboardWrite.mockReset().mockResolvedValue(undefined);
@@ -562,6 +576,96 @@ describe("SearchCommand", () => {
 
     expect(mockPush).toHaveBeenCalledWith("/ws-test/members/user-1");
     expect(useSearchStore.getState().open).toBe(false);
+  });
+
+  describe("chats", () => {
+    const chat = (
+      id: string,
+      title: string,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      id,
+      workspace_id: "ws-test",
+      agent_id: "agent-1",
+      creator_id: "user-1",
+      title,
+      status: "active",
+      has_unread: false,
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+      ...extra,
+    });
+    const chatRow = (title: string) =>
+      screen.queryByText(
+        (_, el) =>
+          el?.textContent === title &&
+          el?.tagName === "SPAN" &&
+          !!el.closest("[cmdk-item]"),
+      );
+
+    it("lists recent chats before anything is typed", () => {
+      mockChatSessions.current = [
+        chat("c-1", "Deploy plan", { updated_at: "2026-09-02T00:00:00Z" }),
+        chat("c-2", "Old notes", { status: "archived" }),
+      ];
+      renderSearch();
+
+      expect(screen.getByText("Chats")).toBeInTheDocument();
+      expect(chatRow("Deploy plan")).toBeInTheDocument();
+      // Archived chats stay out of the empty state.
+      expect(chatRow("Old notes")).not.toBeInTheDocument();
+    });
+
+    it("matches chat titles, including archived ones, and opens the session", async () => {
+      const user = userEvent.setup();
+      mockChatSessions.current = [
+        chat("c-1", "Deploy plan"),
+        chat("c-2", "Deploy retro", { status: "archived" }),
+        chat("c-3", "Lunch"),
+      ];
+      renderSearch();
+
+      await user.type(
+        screen.getByPlaceholderText("Type a command or search..."),
+        "deploy",
+      );
+
+      expect(chatRow("Deploy plan")).toBeInTheDocument();
+      expect(chatRow("Deploy retro")).toBeInTheDocument();
+      expect(screen.getByText("Archived")).toBeInTheDocument();
+      expect(chatRow("Lunch")).not.toBeInTheDocument();
+
+      await user.click(chatRow("Deploy plan")!);
+      expect(mockPush).toHaveBeenCalledWith("/ws-test/chat/c-1");
+      expect(useSearchStore.getState().open).toBe(false);
+    });
+
+    it("lists chats when the query names the Chat page", async () => {
+      const user = userEvent.setup();
+      mockChatSessions.current = [chat("c-1", "Deploy plan"), chat("c-2", "")];
+      renderSearch();
+
+      await user.type(
+        screen.getByPlaceholderText("Type a command or search..."),
+        "chat",
+      );
+
+      expect(chatRow("Deploy plan")).toBeInTheDocument();
+      expect(chatRow("Untitled chat")).toBeInTheDocument();
+    });
+
+    it("does not flood the palette with chats on a single letter", async () => {
+      const user = userEvent.setup();
+      mockChatSessions.current = [chat("c-1", "Deploy plan")];
+      renderSearch();
+
+      await user.type(
+        screen.getByPlaceholderText("Type a command or search..."),
+        "c",
+      );
+
+      expect(chatRow("Deploy plan")).not.toBeInTheDocument();
+    });
   });
 
   it("renders recent issues from query cache joined with store visit records", () => {

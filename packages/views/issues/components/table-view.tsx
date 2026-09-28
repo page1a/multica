@@ -48,8 +48,6 @@ import {
   Loader2,
   Pencil,
   Plus,
-  Search,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@multica/ui/components/ui/data-table";
@@ -161,8 +159,6 @@ const ADD_COLUMN_ID = "__add";
 type TableViewProps = {
   serverQuery: IssueTableQuerySpec;
   childProgressMap: Map<string, ChildProgress>;
-  search: string;
-  onSearchChange: (query: string) => void;
   onLoadedIssuesChange: (issues: Issue[]) => void;
   onCreateIssue: (defaults: IssueCreateDefaults) => void;
   exportIssues: () => Promise<Issue[]>;
@@ -577,49 +573,6 @@ export function TableColumnPicker({
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-export function TableIssueSearch({
-  value,
-  onChange,
-  placeholder,
-  clearLabel,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  clearLabel: string;
-}) {
-  return (
-    <div className="relative w-56 shrink-0">
-      <Search
-        aria-hidden
-        className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-      />
-      <Input
-        type="text"
-        role="searchbox"
-        inputMode="search"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        aria-label={placeholder}
-        placeholder={placeholder}
-        className="h-7 pl-7 pr-7 text-caption"
-      />
-      {value && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={clearLabel}
-          onClick={() => onChange("")}
-          className="absolute right-0.5 top-0.5 text-muted-foreground"
-        >
-          <X className="size-3" />
-        </Button>
-      )}
-    </div>
   );
 }
 
@@ -1283,8 +1236,6 @@ function IssueTableBodyCell({
 export function TableView({
   serverQuery,
   childProgressMap,
-  search,
-  onSearchChange,
   onLoadedIssuesChange,
   onCreateIssue,
   exportIssues,
@@ -2423,12 +2374,6 @@ export function TableView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
-        <TableIssueSearch
-          value={search}
-          onChange={onSearchChange}
-          placeholder={t(($) => $.table.search_placeholder)}
-          clearLabel={t(($) => $.table.search_clear)}
-        />
         <span className="mr-auto" />
         <DropdownMenu>
           <DropdownMenuTrigger

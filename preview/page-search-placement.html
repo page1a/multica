@@ -1,0 +1,50 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>页内搜索框位置提案</title>
+<style>
+:root{--bg:#fff;--muted:#6b7280;--line:#e5e7eb;--soft:#f5f5f5;--acc:#2563eb}
+body{font:14px/1.5 -apple-system,"PingFang SC",sans-serif;margin:0;background:#fafafa;color:#111}
+h2{font-size:16px;margin:28px 24px 6px}.note{margin:0 24px 10px;color:var(--muted);font-size:13px}
+.frame{margin:0 24px 8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden;display:flex;height:400px}
+.nav{width:150px;border-right:1px solid var(--line);background:var(--soft);padding:10px;font-size:13px;color:var(--muted)}
+.nav div{padding:4px 6px;border-radius:5px}.nav .on{background:#e8e8e8;color:#111}
+.hdr{height:44px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);font-weight:600}
+.new{margin-left:auto;font-weight:400;border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:12px}
+.search{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:13px;background:#fff}
+.hl{outline:2px solid var(--acc);outline-offset:2px;position:relative}
+.tag{position:absolute;right:-6px;top:-22px;background:var(--acc);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.list{width:290px;border-right:1px solid var(--line);display:flex;flex-direction:column}
+.chips{display:flex;gap:6px;padding:6px 12px;font-size:12px}.chips span{border:1px solid var(--line);border-radius:10px;padding:0 8px}.chips .on{background:#111;color:#fff;border-color:#111}
+.row{display:flex;gap:8px;padding:8px 12px;font-size:13px}.av{width:26px;height:26px;border-radius:50%;background:#dbeafe;flex:none}
+.row b{font-weight:500}.row small{display:block;color:var(--muted)}.row.act{background:#f1f5f9}
+mark{background:#fde68a;border-radius:2px}
+.main{flex:1;display:flex;flex-direction:column}.pane{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.bar{display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:13px}
+.bar .t{padding:2px 8px;border-radius:5px;color:var(--muted)}.bar .t.on{background:var(--soft);color:#111}
+.btn{border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--muted);font-size:12px}
+.board{display:flex;gap:10px;padding:12px 14px}.col{width:170px;font-size:12px;color:var(--muted)}
+.card{background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:6px;color:#111}
+.kbd{margin-left:auto;font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+</style></head><body>
+<h2>① 聊天页：搜索框放在聊天列表顶部（标题下、项目筛选条上）</h2>
+<p class="note">只搜左边这一列聊天，边打边筛；和上面的项目筛选叠加生效。打字时已归档的也会一起出来（排后面、标「已归档」）。</p>
+<div class="frame"><div class="nav"><div>收件箱</div><div>任务</div><div class="on">聊天</div><div>项目</div></div>
+<div class="list"><div class="hdr">聊天<span class="new">+ 新聊天</span></div>
+<div style="padding:8px 12px 2px"><div class="search hl"><span class="tag">新增</span>🔍 发版<span class="kbd">/</span></div></div>
+<div class="chips"><span class="on">全部</span><span>Multica 魔改</span><span>AI100</span><span>更多</span></div>
+<div class="row act"><div class="av"></div><div><b>Desktop <mark>发版</mark>测试通道</b><small>孙悟空 · 已打 v0.4.60-test.2</small></div></div>
+<div class="row"><div class="av"></div><div><b>正式<mark>发版</mark>流程确认</b><small>布尔玛 · 等 owner 通知</small></div></div>
+<div class="row" style="opacity:.6"><div class="av"></div><div><b>上次<mark>发版</mark>回滚记录</b><small>已归档</small></div></div>
+</div><div class="main"><div class="hdr">Desktop 发版测试通道</div><div class="pane">（当前会话内容）</div></div></div>
+
+<h2>② 任务页：搜索框放在工具栏右侧，筛选/显示按钮左边</h2>
+<p class="note">搜索当前视图里的任务：看板、列表、表格、泳道都生效，按标题或任务编号（如 DENE-899）搜；和已选的筛选、视图叠加。表格视图里原来那个独立搜索框合并到这里，不再出现两个。</p>
+<div class="frame"><div class="nav"><div>收件箱</div><div class="on">任务</div><div>聊天</div><div>项目</div></div>
+<div class="main"><div class="hdr">任务</div>
+<div class="bar"><span class="t on">全部</span><span class="t">我的</span><span class="t">智能体</span><span class="t">+ 视图</span>
+<span style="margin-left:auto"></span><div class="search hl" style="width:200px"><span class="tag">新增</span>🔍 搜索标题或任务编号…<span class="kbd">/</span></div>
+<span class="btn">⚡ 运行中</span><span class="btn">筛选</span><span class="btn">显示</span></div>
+<div class="board"><div class="col">待办 · 3<div class="card">DENE-901 设置页搜索</div><div class="card">DENE-902 聊天页搜索</div></div>
+<div class="col">进行中 · 1<div class="card">DENE-899 聊天共享广播</div></div><div class="col">待验收 · 0</div></div></div></div>
+
+<h2>快捷键分工</h2>
+<p class="note">⌘K：全局搜索（任务、聊天、项目、成员都能搜，任何页面可用）· <b>/</b>：在当前页聚焦页内搜索框 · Esc：清空并退出搜索</p>
+</body></html>

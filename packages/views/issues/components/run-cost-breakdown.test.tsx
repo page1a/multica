@@ -126,7 +126,7 @@ describe("RunCostBreakdown", () => {
     );
 
     expect(
-      screen.getByText(/Tokens are not attributed to the runtime brief/),
+      screen.getByText(/Tokens are not split by prompt segment/),
     ).toBeInTheDocument();
   });
 

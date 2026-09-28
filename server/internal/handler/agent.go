@@ -185,6 +185,9 @@ type AgentResponse struct {
 	// `model`, because the same model at another thinking_level is another
 	// rung.
 	RoutingTier string `json:"routing_tier"`
+	// RoutingUsage is the headroom a person tagged this seat with (DENE-922):
+	// tight / normal / ample. Routing prefers ample inside a rung.
+	RoutingUsage string `json:"routing_usage"`
 	// ComposioToolkitAllowlist is the subset of Composio toolkit slugs this
 	// agent is allowed to mount as MCP at task dispatch — for ANY run that
 	// passes the agent's invocation permission, using the agent OWNER's
@@ -320,6 +323,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		ThinkingLevel:            a.ThinkingLevel.String,
 		ServiceTier:              a.ServiceTier.String,
 		RoutingTier:              a.RoutingTier.String,
+		RoutingUsage:             a.RoutingUsage,
 		ComposioToolkitAllowlist: composioAllowlist,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
@@ -2194,6 +2198,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		// ladder the moment tags become how rungs are decided.
 		createdRoutingTier = parentAgent.RoutingTier
 	}
+	// Usage is the account's headroom, and a specialisation runs on its base
+	// role's account, so it starts with the same tag (DENE-922).
+	var createdRoutingUsage pgtype.Text
+	if parentAgent.ID.Valid {
+		createdRoutingUsage = pgtype.Text{String: parentAgent.RoutingUsage, Valid: true}
+	}
 	if inheritRuntime {
 		createdRuntimeMode = parentAgent.RuntimeMode
 		createdRuntimeID = parentAgent.RuntimeID
@@ -2236,6 +2246,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ThinkingLevel:            createdThinkingLevel,
 		ServiceTier:              createdServiceTier,
 		RoutingTier:              createdRoutingTier,
+		RoutingUsage:             createdRoutingUsage,
 		ConversationStarters:     sp,
 		ComposioToolkitAllowlist: allowlist,
 		ParentAgentID:            parentAgentUUID,
@@ -2373,6 +2384,9 @@ type UpdateAgentRequest struct {
 	// empty takes the seat off the routing ladder, and a tier key or its
 	// Chinese label sets the rung (DENE-633).
 	RoutingTier *string `json:"routing_tier"`
+	// RoutingUsage is omitted-preserves / present-sets. There is no clear:
+	// every seat has a usage, and 常规 is the neutral one (DENE-922).
+	RoutingUsage *string `json:"routing_usage"`
 	// ComposioToolkitAllowlist is a tri-state, same pattern as
 	// thinking_level, mcp_config:
 	//   - field omitted → no change (column preserved as-is)
@@ -3006,6 +3020,16 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			}
 			params.RoutingTier = pgtype.Text{String: key, Valid: true}
 		}
+	}
+	if req.RoutingUsage != nil {
+		key, ok := routing.NormalizeUsage(*req.RoutingUsage)
+		if !ok {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"routing_usage %q is not a known value; expected one of %s",
+				*req.RoutingUsage, strings.Join(routing.UsageKeys(), ", ")))
+			return
+		}
+		params.RoutingUsage = pgtype.Text{String: key, Valid: true}
 	}
 
 	shouldClearServiceTier := false

@@ -81,7 +81,7 @@ describe("NothingSharedEmpty", () => {
       "Nothing has been shared with you yet",
     );
     expect(screen.getByTestId("nothing-shared-empty")).toHaveTextContent(
-      "adds you to a project",
+      "once you're added to a project",
     );
     expect(screen.queryByRole("button")).toBeNull();
   });

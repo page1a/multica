@@ -2999,7 +2999,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         <div
           ref={attachScrollContainer}
           data-tab-scroll-root={scrollContainerKey}
-          className="relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
+          className="@container relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
         >
         {/* Gutters: 32px is a comfortable reading margin on a desktop column
             but eats 16% of a 393px phone, so below `md` they drop to 12px.
@@ -3617,13 +3617,23 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               fade above (exactly the mt-4 gap, so at rest it sits over the
               page background and is invisible), and pb-4 so the card floats
               off the viewport edge — with -mb-4 giving the padding back to
-              the column's py-8 so the at-rest layout doesn't shift. */}
+              the column's py-8 so the at-rest layout doesn't shift.
+
+              With the properties sidebar closed the scroll container runs to
+              the viewport's right edge, where the chat launcher floats. Once
+              it is too narrow to leave a margin beside the max-w-4xl column,
+              the pinned composer's send button would sit under the launcher;
+              pe-chat-launcher-overlap (against the scroller's `@container`)
+              pads only that shortfall, so wide layouts keep the composer
+              flush with the timeline. With the sidebar open the launcher
+              lands on the sidebar, not here. */}
           <div
             ref={composerRef}
             className={cn(
               "mt-4",
               stickyComposer &&
                 "sticky bottom-0 z-10 -mb-4 bg-background pb-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-4 before:bg-gradient-to-t before:from-background before:to-transparent",
+              stickyComposer && !sidebarOpen && "pe-chat-launcher-overlap",
             )}
           >
             {/* key={id}: web's /issues/[id] route doesn't remount on

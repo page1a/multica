@@ -386,7 +386,6 @@ export function HomePage() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl space-y-6 px-6 py-6">
           <div className="space-y-3">
-            <p className="text-caption text-muted-foreground">{copy.t(($) => $.board.lede)}</p>
             <div className="flex flex-wrap gap-2">
               {lanes.map((lane) => (
                 <span

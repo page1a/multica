@@ -75,6 +75,7 @@ const { openInNewTabMock, getShareableUrlMock, navState, slugState } =
   }));
 
 vi.mock("../navigation", () => ({
+  useBackToDismiss: () => {},
   useNavigation: () => ({
     push: vi.fn(),
     replace: vi.fn(),

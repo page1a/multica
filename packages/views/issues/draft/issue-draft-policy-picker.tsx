@@ -102,7 +102,6 @@ export function IssueDraftPolicyPicker({
       <DropdownMenuSeparator />
       <span
         className="block max-w-full truncate px-1.5 py-1 text-caption text-muted-foreground"
-        title={t(($) => $.alignment.policy_version_hint)}
       >
         {t(($) => $.alignment.policy_version, {
           version: `${policy.key}@${policy.version}`,

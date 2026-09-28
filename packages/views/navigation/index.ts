@@ -14,3 +14,4 @@ export { useRowLink, rowLinkInteractiveProps } from "./use-row-link";
 export { useIntentNavigate } from "./use-intent-navigate";
 export { useBackOrReplace } from "./use-back-or-replace";
 export type { NavigationAdapter } from "./types";
+export { useBackToDismiss } from "./use-back-to-dismiss";

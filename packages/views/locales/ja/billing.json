@@ -120,8 +120,7 @@
       "syncing_description": "支払いが完了しました。Stripe によるプラン変更の確認を待っています。",
       "timeout_description": "支払いは受領済みですが、サブスクリプションは同期中です。しばらくしてからページを更新してください。",
       "active_title": "Pro が有効になりました",
-      "active_description": "このワークスペースで Pro を利用できます。",
-      "portal_description": "最新のサブスクリプション情報を下に表示しています。"
+      "active_description": "このワークスペースで Pro を利用できます。"
     },
     "past_due": {
       "title": "お支払い方法の確認が必要です",
@@ -140,8 +139,7 @@
       "paused_description": "請求管理を開き、一時停止と再開方法を確認してください。",
       "unpaid_title": "サブスクリプションは未払いです",
       "unpaid_description": "請求管理を開き、未払い残高を解消してください。",
-      "canceled_title": "サブスクリプションはキャンセル済みです",
-      "canceled_description": "上のプランバッジは、このワークスペースに現在適用されているプランを示します。"
+      "canceled_title": "サブスクリプションはキャンセル済みです"
     },
     "current": {
       "title": "現在のプラン",
@@ -150,10 +148,7 @@
       "members_description": "エージェントと保留中の招待は席数に含まれません。",
       "member_count_other": "{{count}}名",
       "billing_interval": "請求期間",
-      "period_end": "現在の期間終了日",
-      "plan_description": "このワークスペースに現在適用されている entitlement です。",
-      "billing_interval_description": "有効なサブスクリプションに保存されている請求期間です。",
-      "period_end_description": "現在のサブスクリプション情報で報告された日付です。"
+      "period_end": "現在の期間終了日"
     },
     "upgrade": {
       "title": "Pro にアップグレード",
@@ -170,8 +165,7 @@
       "title": "サブスクリプション管理",
       "description": "支払い方法、請求書、解約。",
       "portal": "Stripe Billing Portal",
-      "portal_unavailable": "このワークスペースで利用できる Stripe Billing Portal はありません。",
-      "portal_description": "Stripe でこのワークスペースのサブスクリプションを管理します。"
+      "portal_unavailable": "このワークスペースで利用できる Stripe Billing Portal はありません。"
     },
     "limits": {
       "title": "使用量と上限",
@@ -186,10 +180,7 @@
       "usage_total": "{{total}} / {{limit}}",
       "usage_breakdown": "完了 {{used}} · 実行中 {{reserved}}",
       "resets_at": "{{date}} にリセット",
-      "usage_unavailable": "使用量は一時的に利用できません",
-      "description": "上限と使用量は、サーバーの現在の entitlement とクォータ集計に基づきます。",
-      "issues_description": "現在のタスク使用量とサーバーから返された有効な上限です。",
-      "autopilots_description": "現在の自動化使用量とサーバーから返されたリセット時刻です。"
+      "usage_unavailable": "使用量は一時的に利用できません"
     },
     "seats": {
       "title": "席数",
@@ -214,9 +205,7 @@
       "members_over_capacity_description": "このワークスペースには {{actual}} 人のメンバーがいますが、購入済みの席は {{purchased}} 席です。さらに招待する前に席を追加するか、メンバーを削除してください。",
       "occupancy_over_capacity_description": "このワークスペースは購入済み {{purchased}} 席に対して {{occupied}} 席を占有しています（メンバー {{members}} 人、保留中の招待 {{reserved}} 件）。さらに招待する前に席を追加する、メンバーを削除する、または保留中の招待を取り消してください。",
       "updated": "席数の購入を送信しました",
-      "available_help": "利用可能なシート数の計算方法",
-      "human_members_description": "購入済みの容量を使用している確認済みユーザーメンバーです。メンバー変更後に更新できます。",
-      "billed_description": "Stripe で現在購入済みの席数です。"
+      "available_help": "利用可能なシート数の計算方法"
     },
     "seat_purchase": {
       "title": "席を追加",

@@ -66,13 +66,14 @@ import type { Attachment } from "@multica/core/types";
 import { attachmentIdFromDownloadURL } from "@multica/core/types/attachment-url";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { cn } from "@multica/ui/lib/utils";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import {
   UI_EASE_OUT,
   UI_MOTION_DURATION,
 } from "@multica/ui/lib/motion";
 import { useT } from "../i18n";
-import { useNavigation } from "../navigation";
+import { useBackToDismiss, useNavigation } from "../navigation";
 import { openExternal } from "../platform";
 import { ReadonlyContent } from "./readonly-content";
 import {
@@ -366,6 +367,11 @@ export function AttachmentPreviewModal({
   const onPrev = sequence?.onPrev;
   const onNext = sequence?.onNext;
 
+  // On a phone the preview covers the whole screen, so the back gesture should
+  // close it rather than navigate the page underneath.
+  const isMobile = useIsMobile();
+  useBackToDismiss(isMobile && open, onClose);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -461,7 +467,7 @@ export function AttachmentPreviewModal({
               minus the surrounding p-4 (1rem each side) so it never overflows
               the screen on small displays / split panes. */}
           <motion.div
-            className="flex h-[min(90vh,calc(100vh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-background shadow-xl"
+            className="flex h-[min(90dvh,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-background shadow-xl"
             onClick={(e) => e.stopPropagation()}
             initial={{
               opacity: 0,

@@ -841,7 +841,7 @@ describe("IssueDraftPage group", () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          "“后端接口” could not be assigned, so it was created unassigned.",
+          '"后端接口" could not be assigned, so it was created unassigned.',
         ),
       ).toBeTruthy(),
     );
@@ -877,7 +877,7 @@ describe("IssueDraftPage group", () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          "“前端页面” could not be assigned, so it was created unassigned.",
+          '"前端页面" could not be assigned, so it was created unassigned.',
         ),
       ).toBeTruthy(),
     );
@@ -1318,7 +1318,7 @@ describe("IssueDraftPage carried files", () => {
     expect(await screen.findByText("Reference files")).toBeTruthy();
     expect(
       screen.getByText(
-        "After you confirm, these 2 files belong to the parent task. Sub-issues link them instead of uploading a copy.",
+        "After you confirm, these 2 files are attached to the parent issue.",
       ),
     ).toBeTruthy();
     expect(screen.getByText("prototype.png")).toBeTruthy();

@@ -5,9 +5,9 @@ import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 
-// The tier tag is the only field on this page routing reads, so what matters
-// here is the wiring: it is mounted, it shows the saved rung, and picking one
-// sends the KEY. The vocabulary itself (order, unknown rungs) is covered in
+// Tier and usage are the two fields on this page routing reads, so what
+// matters here is the wiring: they are mounted, they show the saved values,
+// and a click sends the KEY. The vocabulary itself (order, unknown rungs) is covered in
 // packages/core/agents/routing-tier.test.ts.
 
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
@@ -62,27 +62,38 @@ function renderInspector(agent: Agent, onUpdate = vi.fn(async () => {})) {
   return onUpdate;
 }
 
-describe("AgentDetailInspector dispatch tier", () => {
+describe("AgentDetailInspector routing section", () => {
   afterEach(() => {
     cleanup();
   });
 
-  it("shows the saved rung", () => {
-    renderInspector(agentFixture({ routing_tier: "strong" }));
-    expect(screen.getByLabelText(/Dispatch tier · Strong/)).toBeTruthy();
+  it("shows the saved rung and usage", () => {
+    renderInspector(
+      agentFixture({ routing_tier: "strong", routing_usage: "ample" }),
+    );
+    expect(
+      screen.getByRole("radio", { name: "Strong" }).getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("radio", { name: "Ample" }).getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
-  it("shows a seat with no tier as off the ladder", () => {
+  it("shows an untagged seat as off the ladder with normal usage", () => {
     renderInspector(agentFixture());
-    expect(screen.getByLabelText(/Dispatch tier · Off the ladder/)).toBeTruthy();
+    expect(
+      screen.getByRole("radio", { name: "Off" }).getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("radio", { name: "Normal" }).getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
-  it("sends the tier key when a rung is picked", async () => {
+  it("sends the tier key on click", async () => {
     const user = userEvent.setup();
     const onUpdate = renderInspector(agentFixture({ routing_tier: "weak" }));
 
-    await user.click(screen.getByLabelText(/Dispatch tier · Light/));
-    await user.click(screen.getByText("Strongest"));
+    await user.click(screen.getByRole("radio", { name: "Strongest" }));
 
     expect(onUpdate).toHaveBeenCalledWith("agent-1", {
       routing_tier: "strongest",
@@ -93,11 +104,26 @@ describe("AgentDetailInspector dispatch tier", () => {
     const user = userEvent.setup();
     const onUpdate = renderInspector(agentFixture({ routing_tier: "medium" }));
 
-    await user.click(screen.getByLabelText(/Dispatch tier · Medium/));
-    await user.click(
-      screen.getByTitle(/Routing never picks this seat automatically/),
-    );
+    await user.click(screen.getByRole("radio", { name: "Off" }));
 
     expect(onUpdate).toHaveBeenCalledWith("agent-1", { routing_tier: "" });
+  });
+
+  it("sends the usage key on click", async () => {
+    const user = userEvent.setup();
+    const onUpdate = renderInspector(agentFixture({ routing_usage: "normal" }));
+
+    await user.click(screen.getByRole("radio", { name: "Tight" }));
+
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", { routing_usage: "tight" });
+  });
+
+  it("does not write when the current value is clicked", async () => {
+    const user = userEvent.setup();
+    const onUpdate = renderInspector(agentFixture({ routing_usage: "ample" }));
+
+    await user.click(screen.getByRole("radio", { name: "Ample" }));
+
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 });

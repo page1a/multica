@@ -555,23 +555,24 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// a TypeSafe System One endpoint (Jev) is answered by the judge that
 	// speaks that wire format; everything else — including the deployment
 	// gateway — stays on the OpenAI-compatible path it was born on.
+	// A workspace that supplies its own endpoint and key gets its own client.
+	// The retry budget is the deployment's, because it is a property of how
+	// long this server is willing to hold a goroutine, not of whose endpoint
+	// is on the other end.
+	dialRouting := func(baseURL, apiKey string) routing.TextGenerator {
+		return llm.New(llm.Config{
+			APIKey:     apiKey,
+			BaseURL:    baseURL,
+			MaxRetries: cfg.LLMMaxRetries,
+		})
+	}
 	h.Routing = routing.New(h.RoutingStore(), routing.ProviderJudge{
 		SystemOne: routing.SystemOneJudge{},
-		Chat: routing.LLMJudge{
-			Gen: llmClient,
-			// A workspace that supplies its own endpoint and key gets its own
-			// client. The retry budget is the deployment's, because it is a
-			// property of how long this server is willing to hold a goroutine,
-			// not of whose endpoint is on the other end.
-			Dial: func(baseURL, apiKey string) routing.TextGenerator {
-				return llm.New(llm.Config{
-					APIKey:     apiKey,
-					BaseURL:    baseURL,
-					MaxRetries: cfg.LLMMaxRetries,
-				})
-			},
-		},
+		Chat:      routing.LLMJudge{Gen: llmClient, Dial: dialRouting},
 	})
+	// The analysis role reads the whole ticket and reduces it to facts
+	// (DENE-923). It is always a general chat model.
+	h.Routing.Analyst = routing.LLMAnalyst{Gen: llmClient, Dial: dialRouting}
 	// The parking record's one sentence comes from the same routing model,
 	// under the same switch and breaker (DENE-881).
 	taskSvc.ParkingSummarizer = h.Routing

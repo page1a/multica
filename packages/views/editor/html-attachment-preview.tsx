@@ -28,11 +28,13 @@
 
 import { Download, ExternalLink, Maximize2, Trash2 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
 import { useAttachmentHtmlText } from "./hooks/use-attachment-html-text";
 import { HtmlPreviewBody } from "./html-preview-body";
+import { PREVIEW_POSTER_HEIGHT, PreviewPoster } from "./preview-poster";
 
 const PREVIEW_HEIGHT = "h-[480px]";
 const ERROR_PLACEHOLDER_HEIGHT = "h-20";
@@ -64,6 +66,10 @@ export function HtmlAttachmentPreview({
   // workspace route.
   const slug = useWorkspaceSlug();
   const navigation = useNavigation();
+  // Phones get a short, non-scrollable thumbnail that opens the full-screen
+  // preview on tap — see PreviewPoster for why.
+  const isMobile = useIsMobile();
+  const bodyHeight = isMobile ? PREVIEW_POSTER_HEIGHT : PREVIEW_HEIGHT;
 
   // Only enable the new-tab button when the workspace slug is resolvable —
   // outside a workspace context the path is meaningless. Prefer desktop's
@@ -90,16 +96,19 @@ export function HtmlAttachmentPreview({
       <HtmlPreviewBody
         source={{ kind: "attachment", attachmentId }}
         title={filename}
-        className={PREVIEW_HEIGHT}
-        placeholderClassName={isError ? ERROR_PLACEHOLDER_HEIGHT : PREVIEW_HEIGHT}
+        className={bodyHeight}
+        iframeClassName={isMobile ? "pointer-events-none" : undefined}
+        placeholderClassName={isError ? ERROR_PLACEHOLDER_HEIGHT : bodyHeight}
         errorTestId="html-attachment-preview-error"
       />
+      {isMobile && !isError && <PreviewPoster onOpen={onPreview} />}
       <div
         className={cn(
           "absolute right-2 top-2 flex items-center gap-0.5 rounded-md border border-border bg-background/95 p-0.5 shadow-sm transition-opacity",
           // Error state pins the toolbar open — Preview / Download are the
           // only user-reachable escape hatches when inline render fails.
-          isError
+          // Phones have no hover, so the toolbar is always shown there.
+          isError || isMobile
             ? "opacity-100"
             : "opacity-0 group-hover/html-preview:opacity-100",
         )}

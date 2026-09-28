@@ -12,6 +12,7 @@ const updateWorkspace = vi.hoisted(() => vi.fn());
 const getRoutingHealth = vi.hoisted(() => vi.fn());
 const checkRoutingHealth = vi.hoisted(() => vi.fn());
 const listRoutingModels = vi.hoisted(() => vi.fn());
+const listAgents = vi.hoisted(() => vi.fn());
 const member = vi.hoisted(() => ({ role: "owner" as "owner" | "admin" | "member" }));
 const workspace = vi.hoisted(() => ({
   current: {
@@ -31,6 +32,7 @@ vi.mock("@multica/core/api", async (importOriginal) => {
       getRoutingHealth,
       checkRoutingHealth,
       listRoutingModels,
+      listAgents,
     },
   };
 });
@@ -101,6 +103,8 @@ beforeEach(() => {
   checkRoutingHealth.mockResolvedValue(HEALTHY);
   listRoutingModels.mockReset();
   listRoutingModels.mockResolvedValue({ models: [] });
+  listAgents.mockReset();
+  listAgents.mockResolvedValue([]);
   updateWorkspace.mockImplementation(async (_id: string, body: { settings?: unknown }) => ({
     ...workspace.current,
     settings: body.settings,
@@ -108,6 +112,16 @@ beforeEach(() => {
   member.role = "owner";
   workspace.current = { id: "ws-1", name: "Acme", slug: "acme", settings: {} };
 });
+
+// Exact names: each role card has its own model, URL and key fields, and a
+// loose pattern would match the analysis card's too.
+const JUDGE_MODEL = /^(judge model|判断模型)$/i;
+const ANALYSIS_MODEL = /^(analysis model|分析模型)$/i;
+const JUDGE_KEY = /^api key$/i;
+
+function masterSwitch() {
+  return screen.getByRole("switch", { name: /enable automatic dispatch|启用自动选派/i });
+}
 
 function chip() {
   return document.querySelector("[data-state]") as HTMLElement | null;
@@ -150,7 +164,7 @@ describe("RoutingTab", () => {
     render();
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/routing model|路由模型/i)).toHaveValue(
+      expect(screen.getByLabelText(JUDGE_MODEL)).toHaveValue(
         "gateway-model",
       ),
     );
@@ -182,11 +196,12 @@ describe("RoutingTab", () => {
     const { qc } = render();
     await healthSettled(qc);
 
-    // Matched on the clause that only the protocol line carries: the endpoint
-    // field's own help text names TypeSafe too, and asserting on the product
-    // name alone would pass on a page that never reported the protocol.
+    // The System One explanation paragraph was dropped from the copy; the page
+    // still names the workspace's own endpoint as the one receiving the call.
     expect(
-      screen.getByText(/measured rather than self-reported/i),
+      screen.getByText(
+        "The model id is sent to this workspace's own endpoint: api.typesafe.ai.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -207,7 +222,8 @@ describe("RoutingTab", () => {
     workspace.current.settings = { theme: "dark" };
     render();
 
-    const model = screen.getByLabelText(/routing model|路由模型/i);
+    // A never-configured workspace starts on the analysis model alone.
+    const model = screen.getByLabelText(ANALYSIS_MODEL);
     await userEvent.type(model, "gpt-5.6-luna");
 
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
@@ -221,17 +237,57 @@ describe("RoutingTab", () => {
     // stored key every time anybody edited the model.
     expect(body.settings.routing).toEqual({
       enabled: false,
-      model: "gpt-5.6-luna",
+      model: "",
       confidence_threshold: 0.6,
       stale_review_hours: 24,
       base_url: "",
       policy_prompt: "",
+      usage_priority: true,
+      allow_upshift: false,
+      judge_enabled: false,
+      analysis: { enabled: true, model: "gpt-5.6-luna", base_url: "" },
     });
+  });
+
+  it("switches each model role on and off on its own", async () => {
+    render();
+    // The judge model box is greyed out until its role is on.
+    expect(screen.getByLabelText(JUDGE_MODEL)).toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("switch", { name: /use the judge model|启用判断模型/i }),
+    );
+    expect(screen.getByLabelText(JUDGE_MODEL)).not.toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("switch", { name: /use the analysis model|启用分析模型/i }),
+    );
+    expect(document.querySelector("[data-mode]")?.getAttribute("data-mode")).toBe("judge");
+
+    await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
+    const [, body] = updateWorkspace.mock.calls.at(-1) as [
+      string,
+      { settings: { routing: { judge_enabled: boolean; analysis: { enabled: boolean } } } },
+    ];
+    expect(body.settings.routing.judge_enabled).toBe(true);
+    expect(body.settings.routing.analysis.enabled).toBe(false);
+  });
+
+  it("saves the analysis key into the analysis block only", async () => {
+    render();
+    await userEvent.type(screen.getByLabelText(/^analysis api key$/i), "sk-analysis");
+    const saves = screen.getAllByRole("button", { name: /save key|保存 key/i });
+    await userEvent.click(saves[0]!);
+    await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
+    const [, body] = updateWorkspace.mock.calls.at(-1) as [
+      string,
+      { settings: { routing: Record<string, unknown> & { analysis: Record<string, unknown> } } },
+    ];
+    expect(body.settings.routing.analysis.api_key).toBe("sk-analysis");
+    expect("api_key" in body.settings.routing).toBe(false);
   });
 
   it("switching routing on writes enabled without inventing a model", async () => {
     render();
-    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(masterSwitch());
 
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
     const [, body] = updateWorkspace.mock.calls.at(-1) as [
@@ -249,7 +305,7 @@ describe("RoutingTab", () => {
     getRoutingHealth.mockResolvedValue({ ...HEALTHY, gateway_key_set: true });
     const { qc } = render();
     await healthSettled(qc);
-    const key = screen.getByLabelText(/api key|api 密钥|api key/i) as HTMLInputElement;
+    const key = screen.getByLabelText(JUDGE_KEY) as HTMLInputElement;
     expect(key.value).toBe("");
     expect(key.type).toBe("password");
     // Not even a mask. The placeholder says a key exists; it does not stand
@@ -259,12 +315,13 @@ describe("RoutingTab", () => {
 
   it("sends the typed key only when the save button is pressed", async () => {
     render();
-    const key = screen.getByLabelText(/api key|api 密钥/i);
+    const key = screen.getByLabelText(JUDGE_KEY);
     await userEvent.type(key, "sk-live-abc");
     // Typing alone must not write: auto-save would store half-typed keys.
     expect(updateWorkspace).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: /save key|保存 key/i }));
+    // The judge card's button is the second: the analysis card comes first.
+    await userEvent.click(screen.getAllByRole("button", { name: /save key|保存 key/i })[1]!);
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
     const [, body] = updateWorkspace.mock.calls.at(-1) as [
       string,
@@ -278,7 +335,7 @@ describe("RoutingTab", () => {
   it("saves the endpoint url with the ordinary fields", async () => {
     render();
     await userEvent.type(
-      screen.getByLabelText(/endpoint url|端点 url/i),
+      screen.getByLabelText(/^(endpoint url|端点 url)$/i),
       "https://gw.example/v1",
     );
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
@@ -298,7 +355,7 @@ describe("RoutingTab", () => {
     const { qc } = render();
     await healthSettled(qc);
     await waitFor(() =>
-      expect(screen.getByLabelText(/api key|api 密钥/i)).toBeDisabled(),
+      expect(screen.getByLabelText(JUDGE_KEY)).toBeDisabled(),
     );
   });
 
@@ -308,10 +365,10 @@ describe("RoutingTab", () => {
     // Base UI's switch marks the disabled state with data-disabled rather
     // than the native attribute, so assert the behaviour too: a member who
     // clicks it must not produce a write.
-    expect(screen.getByRole("switch")).toHaveAttribute("data-disabled");
-    expect(screen.getByLabelText(/routing model|路由模型/i)).toBeDisabled();
+    expect(masterSwitch()).toHaveAttribute("data-disabled");
+    expect(screen.getByLabelText(JUDGE_MODEL)).toBeDisabled();
 
-    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(masterSwitch());
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(updateWorkspace).not.toHaveBeenCalled();
   });
@@ -381,7 +438,8 @@ describe("RoutingTab", () => {
     });
     const { qc } = render();
     await healthSettled(qc);
-    expect(await screen.findByText(/MULTICA_LLM_BASE_URL/)).toBeTruthy();
+    expect(await screen.findByText(/No endpoint is available/)).toBeTruthy();
+    expect(screen.queryByText(/MULTICA_LLM_BASE_URL/)).toBeNull();
   });
 
   it("re-checks on demand and adopts the fresh report", async () => {
@@ -426,9 +484,9 @@ describe("RoutingTab", () => {
     const { qc } = render();
     await healthSettled(qc);
 
-    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(masterSwitch());
     await userEvent.type(
-      screen.getByLabelText(/routing model|路由模型/i),
+      screen.getByLabelText(ANALYSIS_MODEL),
       "gpt-5.6-luna",
     );
 
@@ -440,7 +498,7 @@ describe("RoutingTab", () => {
     render();
     await waitFor(() => expect(getRoutingHealth).toHaveBeenCalledTimes(1));
 
-    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(masterSwitch());
 
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
     // Without the invalidation the settings the server derives health from
@@ -481,7 +539,7 @@ describe("RoutingTab", () => {
     render();
     await waitFor(() => expect(chip()?.getAttribute("data-state")).toBe("ineffective"));
 
-    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(masterSwitch());
     expect(chip()?.getAttribute("data-state")).toBe("off");
   });
 
@@ -512,5 +570,42 @@ describe("RoutingTab", () => {
     fireEvent.change(box, { target: { value: "Keep this draft." } });
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(box).toHaveValue("Keep this draft.");
+  });
+});
+
+describe("RoutingTab seat order switches", () => {
+  it("writes usage priority and upshift into the routing block", async () => {
+    workspace.current.settings = {
+      routing: { enabled: true, model: "gpt-5.6-luna" },
+    };
+    render();
+    const usage = screen.getByRole("switch", { name: "Prefer ample usage" });
+    const upshift = screen.getByRole("switch", { name: "Allow one tier up" });
+    expect(usage).toHaveAttribute("data-checked");
+    expect(upshift).not.toHaveAttribute("data-checked");
+
+    await userEvent.click(upshift);
+    await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
+    const [, body] = updateWorkspace.mock.calls.at(-1) as [
+      string,
+      { settings: { routing: Record<string, unknown> } },
+    ];
+    expect(body.settings.routing.usage_priority).toBe(true);
+    expect(body.settings.routing.allow_upshift).toBe(true);
+  });
+
+  it("greys out upshift while usage priority is off", () => {
+    workspace.current.settings = {
+      routing: {
+        enabled: true,
+        model: "gpt-5.6-luna",
+        usage_priority: false,
+        allow_upshift: true,
+      },
+    };
+    render();
+    const upshift = screen.getByRole("switch", { name: "Allow one tier up" });
+    expect(upshift).toHaveAttribute("data-disabled");
+    expect(upshift).not.toHaveAttribute("data-checked");
   });
 });

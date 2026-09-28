@@ -1,11 +1,12 @@
 {
   "title": "検索",
-  "description": "ページ、タスク、プロジェクト、メンバーを検索します",
+  "description": "ページ、タスク、プロジェクト、チャット、メンバーを検索します",
   "placeholder": "コマンドを入力するか検索...",
   "groups": {
     "pages": "ページ",
     "commands": "コマンド",
     "members": "メンバー",
+    "chats": "チャット",
     "projects": "プロジェクト",
     "issues": "タスク",
     "cancelled": "キャンセル済み",
@@ -23,13 +24,17 @@
     "switch_to_dark": "ダークテーマに切り替え",
     "use_system_theme": "システムテーマを使用"
   },
+  "chat": {
+    "archived": "アーカイブ済み",
+    "untitled": "無題のチャット"
+  },
   "toast": {
     "link_copied": "リンクをコピーしました",
     "copied_identifier": "{{identifier}}をコピーしました"
   },
   "empty": {
     "no_results": "結果が見つかりませんでした。",
-    "type_to_search": "タスクやプロジェクトを検索するには入力してください"
+    "type_to_search": "タスク、プロジェクト、チャットを検索するには入力してください"
   },
   "trigger": {
     "label": "検索..."

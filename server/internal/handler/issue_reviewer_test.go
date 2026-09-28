@@ -114,6 +114,35 @@ func TestUpdateIssue_AcceptsEveryReviewerForm(t *testing.T) {
 	}
 }
 
+func TestUpdateIssue_ClearsReviewerForSubIssue(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	parentID := dbfx.Issue(t, "reviewer parent", testutil.Cols{})
+	childID := dbfx.Issue(t, "reviewer child", testutil.Cols{
+		"parent_issue_id": parentID,
+		"reviewer_type":   "member",
+		"reviewer_id":     testUserID,
+	})
+
+	// A legacy child may already carry the parent's seat. Any update must
+	// repair that row, and an explicit reviewer in the same request must not
+	// reintroduce a child-local acceptance seat.
+	testutil.Call(t, testHandler.UpdateIssue, testutil.WithURLParams(
+		newRequest(http.MethodPut, "/api/issues/"+childID, map[string]any{
+			"title":         "still execution-only",
+			"reviewer_type": "member",
+			"reviewer_id":   testUserID,
+		}), "id", childID,
+	)).Want(http.StatusOK)
+
+	gotType, gotID := readIssueReviewer(t, childID)
+	if gotType != "" || gotID != "" {
+		t.Fatalf("sub-issue reviewer = (%q, %q), want both empty", gotType, gotID)
+	}
+}
+
 func TestUpdateIssue_RejectsAReviewerItCannotResolve(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

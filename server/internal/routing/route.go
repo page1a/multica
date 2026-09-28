@@ -67,8 +67,11 @@ type Outcome struct {
 // small endpoint. There is no second implementation and no subprocess: routing
 // a ticket must not cost a process start.
 type Router struct {
-	Store   Store
-	Judge   Judge
+	Store Store
+	Judge Judge
+	// Analyst is the analysis role. Nil means this build cannot run it, and a
+	// workspace that switched it on gets the unavailable path.
+	Analyst Analyst
 	Breaker *Breaker
 	Ladder  Ladder
 	Log     *slog.Logger
@@ -261,7 +264,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "no empty slot"}, nil
 	}
 
-	ladder := r.Ladder.WithProjects(settings.Projects)
+	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
 	match := ladder.ResolveDirection(issue.ProjectName)
 	direction := match.Direction
 	roster, err := r.Store.Roster(ctx, workspaceID)
@@ -293,13 +296,16 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	executorFromLabel := needExecutor && labelSeatOK
 
 	var verdict Verdict
+	dec := decision{Mode: settings.Mode(), Decider: DeciderNone}
 	if needReviewer || !executorFromLabel {
-		v, err := r.Judge.Assign(ctx, settings.Target(), state)
+		d, err := r.decide(ctx, workspaceID, settings, issue, state)
 		if err != nil {
 			return r.reportUnavailable(ctx, workspaceID, issue, err)
 		}
-		r.Breaker.Succeed(workspaceID)
-		verdict = v
+		if d.Decider != DeciderNone {
+			r.Breaker.Succeed(workspaceID)
+		}
+		dec, verdict = d, d.Verdict
 	}
 
 	threshold := settings.Threshold()
@@ -365,6 +371,8 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		switch {
 		case !ok && humanSignoff:
 			why = "judge asked for a person, and the reviewer slot never names one"
+		case !ok && dec.Decider == DeciderNone:
+			why = "no model was asked"
 		case !ok:
 			why = "judge named tier \"" + verdict.ReviewerTier + "\", which has no seat here"
 		case verdict.ReviewerConfidence < threshold:
@@ -421,8 +429,11 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	notify := stillUnassigned && mode != fillParked
 	body := r.assignmentComment(issue, match, candidates, verdict, threshold,
 		executor, executorSource, reviewer, reviewerFallback, fallbackWhy, humanSignoff,
-		needExecutor, needReviewer, notify, mode)
+		needExecutor, needReviewer, notify, mode, dec, settings)
 	if note := DemotionFootnote(ladder, roster, executor); note != "" {
+		body += "\n\n" + note
+	}
+	if note := UpshiftFootnote(executor); note != "" {
 		body += "\n\n" + note
 	}
 
@@ -450,6 +461,8 @@ func (r *Router) pickExecutor(candidates []Seat, labelSeat Seat, labelled bool, 
 	switch {
 	case ok && v.ExecutorConfidence >= threshold:
 		return seat, pickJudge, ""
+	case v.ExecutorTier == "":
+		why = "no model was asked"
 	case ok:
 		why = "confidence " + pct(v.ExecutorConfidence) + " < threshold " + pct(threshold)
 	default:
@@ -481,7 +494,7 @@ func (r *Router) PickAcceptanceSeat(ctx context.Context, workspaceID string, iss
 	if len(ladder.Tiers) == 0 {
 		ladder = DefaultLadder
 	}
-	ladder = ladder.WithProjects(settings.Projects)
+	ladder = ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
 	direction := ladder.Direction(issue.ProjectName)
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {
@@ -632,7 +645,9 @@ func (r *Router) decideReviewer(v Verdict, ladder Ladder, direction string, rost
 		if collides {
 			if alt, ok := ladder.SameTierAlternate(seat, direction, roster); ok {
 				seat = alt
-			} else if other, ok := stepDown(candidates, seat.TierKey); ok {
+			} else if other, ok := stepDown(candidates, seat.TierKey); ok && other.ID != seat.ID {
+				// With 「允许上调一档」 the rung below can be served by the very
+				// seat above it, so the step down has to be checked again.
 				seat = other
 			} else {
 				return ReviewerRef{}, false
@@ -817,7 +832,7 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 // work. The slot already names them, so they stay the designated reviewer:
 // recovery may give the ticket back only before the cover has started.
 func (r *Router) handOffToSubstitute(ctx context.Context, workspaceID string, settings Settings, issue Issue, roster map[string]Agent, disabled Agent, out Outcome) (Outcome, error) {
-	ladder := r.Ladder.WithProjects(settings.Projects)
+	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
 	direction := ladder.Direction(issue.ProjectName)
 	holder := seatFromRoster(ladder, map[string]Agent{disabled.Name: disabled}, disabled.ID)
 	if holder.Name == "" {
@@ -905,7 +920,7 @@ func (r *Router) decideReviewerNow(ctx context.Context, workspaceID string, sett
 	noop := func(reason string) Outcome {
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: reason}
 	}
-	ladder := r.Ladder.WithProjects(settings.Projects)
+	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
 	direction := ladder.Direction(issue.ProjectName)
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {
@@ -923,12 +938,15 @@ func (r *Router) decideReviewerNow(ctx context.Context, workspaceID string, sett
 		return ReviewerRef{}, noop("no eligible seat"), nil
 	}
 
-	verdict, err := r.Judge.Assign(ctx, settings.Target(), state)
+	dec, err := r.decide(ctx, workspaceID, settings, issue, state)
 	if err != nil {
 		out, err := r.reportUnavailable(ctx, workspaceID, issue, err)
 		return ReviewerRef{}, out, err
 	}
-	r.Breaker.Succeed(workspaceID)
+	if dec.Decider != DeciderNone {
+		r.Breaker.Succeed(workspaceID)
+	}
+	verdict := dec.Verdict
 
 	fresh, err := r.eligibleNow(ctx, workspaceID, settings, candidates)
 	if err != nil {
@@ -988,7 +1006,7 @@ func (r *Router) routeBlocked(ctx context.Context, workspaceID string, settings 
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "already advised"}, nil
 	}
 
-	ladder := r.Ladder.WithProjects(settings.Projects)
+	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
 	direction := ladder.Direction(issue.ProjectName)
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {
@@ -999,9 +1017,12 @@ func (r *Router) routeBlocked(ctx context.Context, workspaceID string, settings 
 	if err != nil {
 		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "routing context incomplete"}, err
 	}
-	advice, err := r.Judge.Unblock(ctx, settings.Target(), state)
+	advice, asked, err := r.advise(ctx, workspaceID, settings, issue, state)
 	if err != nil {
 		return r.reportUnavailable(ctx, workspaceID, issue, err)
+	}
+	if !asked {
+		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "no model is switched on to advise"}, nil
 	}
 	r.Breaker.Succeed(workspaceID)
 
@@ -1221,6 +1242,10 @@ var ErrNotEnabled = errors.New("routing: not enabled for this workspace")
 type HealthReport struct {
 	// State is the same four-way classification the settings section shows.
 	State State
+	// Mode is which roles are on. Model, BaseURL and the key fields below
+	// describe the primary one: the judge when it is on, else the analysis
+	// model.
+	Mode Mode
 	// Usable is false exactly when State is not enabled. The client gates the
 	// ineffective chip on this rather than re-deriving it.
 	Usable bool
@@ -1251,6 +1276,25 @@ type HealthReport struct {
 	// endpoint rather than the deployment's. Derived from the pair, so a
 	// half-filled pair reports false and the section can say why.
 	UsesWorkspaceGateway bool
+	// Roles describes each role on its own — analysis first, then judge —
+	// because the two can sit on different endpoints with different keys.
+	Roles []RoleHealth
+}
+
+// Role names, for RoleHealth.
+const (
+	RoleAnalysis = "analysis"
+	RoleJudge    = "judge"
+)
+
+// RoleHealth is one role's switch and endpoint, for the settings section.
+type RoleHealth struct {
+	Role                 string
+	Enabled              bool
+	Model                string
+	BaseURL              string
+	KeySet               bool
+	UsesWorkspaceGateway bool
 }
 
 // Health answers "is routing actually working for this workspace right now".
@@ -1263,14 +1307,32 @@ func (r *Router) Health(ctx context.Context, workspaceID string) (HealthReport, 
 	if err != nil {
 		return HealthReport{}, err
 	}
-	target := settings.Target()
+	target, called := settings.PrimaryTarget()
 	out := HealthReport{
 		State:                settings.State(),
-		Model:                settings.Model,
+		Mode:                 settings.Mode(),
+		Model:                target.Model,
 		Threshold:            settings.Threshold(),
 		BaseURL:              target.BaseURL,
 		KeySet:               target.APIKey != "",
 		UsesWorkspaceGateway: target.Override(),
+	}
+	for _, role := range []struct {
+		name string
+		on   bool
+		t    Target
+	}{
+		{RoleAnalysis, settings.AnalysisOn(), settings.AnalysisTarget()},
+		{RoleJudge, settings.JudgeOn(), settings.Target()},
+	} {
+		out.Roles = append(out.Roles, RoleHealth{
+			Role:                 role.name,
+			Enabled:              role.on,
+			Model:                role.t.Model,
+			BaseURL:              role.t.BaseURL,
+			KeySet:               role.t.APIKey != "",
+			UsesWorkspaceGateway: role.t.Override(),
+		})
 	}
 	h := r.Breaker.Health(workspaceID)
 	if !h.LastSuccess.IsZero() {
@@ -1282,7 +1344,7 @@ func (r *Router) Health(ctx context.Context, workspaceID string) (HealthReport, 
 	// Checked before the breaker: a deployment with no internal LLM at all is
 	// answerable on the spot, and making the reader wait for a ticket to fail
 	// first would leave the settings section green while nothing can work.
-	if a, ok := r.Judge.(Availability); ok && out.State == StateEnabled && !a.Available(target) {
+	if a, ok := r.Judge.(Availability); ok && called && out.State == StateEnabled && !a.Available(target) {
 		out.State = StateIneffective
 		out.Reason = NotConfiguredReason
 		out.Usable = false
@@ -1312,12 +1374,13 @@ func (r *Router) Probe(ctx context.Context, workspaceID string) (HealthReport, e
 	if err != nil {
 		return HealthReport{}, err
 	}
-	if settings.State() != StateEnabled {
+	target, called := settings.PrimaryTarget()
+	if settings.State() != StateEnabled || !called {
 		// Nothing to dial, and dialling anyway would be the one case where
 		// a disabled workspace makes an outbound request.
 		return r.Health(ctx, workspaceID)
 	}
-	_, err = r.Judge.Assign(ctx, settings.Target(), JudgeState{
+	_, err = r.Judge.Assign(ctx, target, JudgeState{
 		Title:              "Routing self-check",
 		DescriptionSummary: "Connectivity probe issued from the routing settings section. Answer with any tier.",
 		Status:             "todo",

@@ -34,3 +34,24 @@ export function routingTierKeyOf(value: string | undefined | null): RoutingTierK
   const raw = (value ?? "").trim();
   return isRoutingTierKey(raw) ? raw : "";
 }
+
+/**
+ * How much account headroom a person says a seat has (DENE-922). Routing
+ * reads it only to order seats inside one rung — ample first — and never
+ * shows it to the judge. Every seat has one; the server default is `normal`.
+ *
+ * Order is tightest first, which is the order the options are rendered in.
+ */
+export const ROUTING_USAGE_KEYS = ["tight", "normal", "ample"] as const;
+
+export type RoutingUsageKey = (typeof ROUTING_USAGE_KEYS)[number];
+
+export const DEFAULT_ROUTING_USAGE: RoutingUsageKey = "normal";
+
+/** Resolves what the server sent; unknown or missing reads as the default. */
+export function routingUsageKeyOf(value: string | undefined | null): RoutingUsageKey {
+  const raw = (value ?? "").trim();
+  return (ROUTING_USAGE_KEYS as readonly string[]).includes(raw)
+    ? (raw as RoutingUsageKey)
+    : DEFAULT_ROUTING_USAGE;
+}

@@ -511,3 +511,76 @@ func TestCloseDoneWithUnmergeablePullIsRewrittenToBlocked(t *testing.T) {
 		t.Fatalf("block.wait_condition should carry the merge failure")
 	}
 }
+
+// DENE-928/931: a child with an acceptance seat could neither enter in_review
+// (children do not) nor close done (the seat was someone else). The child's
+// executor now closes done and the parent's seat accepts the tree.
+func TestCloseChildWithSeatDoneByExecutor(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	parent := createIssueHTTP(t, "seat parent", "in_progress")
+	child := createIssueHTTP(t, "seat child", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, child.ID, "running")
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET parent_issue_id = $2, reviewer_type = 'member', reviewer_id = $3 WHERE id = $1`, child.ID, parent.ID, testUserID); err != nil {
+		t.Fatalf("attach child + seat: %v", err)
+	}
+	w := closeIssueHTTP(t, child.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "文档已更新。", "no_code_reason": "纯文档"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("child done by executor: %d: %s", w.Code, w.Body.String())
+	}
+	if got := issueStatusDirect(t, child.ID); got != "done" {
+		t.Fatalf("db status = %s, want done", got)
+	}
+
+	// A top-level ticket with a seat still goes through the seat.
+	top := createIssueHTTP(t, "seat top", "in_progress")
+	topTask := insertIssueTaskWithStatus(t, agentID, top.ID, "running")
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET reviewer_type = 'member', reviewer_id = $2 WHERE id = $1`, top.ID, testUserID); err != nil {
+		t.Fatalf("set seat: %v", err)
+	}
+	w = closeIssueHTTP(t, top.ID, agentID, topTask, map[string]any{"outcome": "done", "evidence": "做完了", "no_code_reason": "纯文档"})
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "in_review") {
+		t.Fatalf("top-level self-close: %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// DENE-943: code merged through an intranet GitLab MR leaves a delivery branch
+// the platform can never match to a PR. --no-code with the MR link is the exit;
+// once a PR is linked, --no-code still cannot skip the merge gate.
+func TestCloseDoneWithBranchButNoVisiblePull(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	issue := createIssueHTTP(t, "external MR", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO issue_delivery_branch (issue_id, workspace_id, branch_name, role, agent_id)
+		VALUES ($1, $2, 'dene-943-fg109', 'canonical', $3)`, issue.ID, testWorkspaceID, agentID); err != nil {
+		t.Fatalf("seed delivery branch: %v", err)
+	}
+
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "MR 已合"})
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "--no-code") {
+		t.Fatalf("no reason: %d: %s", w.Code, w.Body.String())
+	}
+	w = closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "MR 已合", "no_code_reason": "GitLab MR !200 已合 dev"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("with MR reason: %d: %s", w.Code, w.Body.String())
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "done" {
+		t.Fatalf("db status = %s, want done", got)
+	}
+
+	linked := createIssueHTTP(t, "linked PR", "in_progress")
+	linkedTask := insertIssueTaskWithStatus(t, agentID, linked.ID, "running")
+	seedOpenPullForIssue(t, linked.ID, 999943)
+	w = closeIssueHTTP(t, linked.ID, agentID, linkedTask, map[string]any{"outcome": "done", "evidence": "x", "no_code_reason": "想跳过"})
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "--no-code") {
+		t.Fatalf("no-code over a linked PR: %d: %s", w.Code, w.Body.String())
+	}
+}

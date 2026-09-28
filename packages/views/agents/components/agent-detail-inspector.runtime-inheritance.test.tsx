@@ -98,7 +98,7 @@ describe("AgentDetailInspector runtime inheritance", () => {
 
     expect(screen.getByRole("switch", { name: SWITCH_NAME })).toBeChecked();
     expect(
-      screen.getByText(/update with it/),
+      screen.getByText(/speed follow the base role/),
     ).toBeInTheDocument();
   });
 
@@ -109,7 +109,7 @@ describe("AgentDetailInspector runtime inheritance", () => {
 
     expect(screen.getByRole("switch", { name: SWITCH_NAME })).not.toBeChecked();
     expect(
-      screen.getByText(/uses its own runtime, model, thinking level/),
+      screen.getByText(/own runtime settings/),
     ).toBeInTheDocument();
   });
 

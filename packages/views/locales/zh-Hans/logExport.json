@@ -32,16 +32,13 @@
   },
   "state": {
     "idle_title": "还没有导出",
-    "idle_body": "选一个范围，然后点「{{action}}」。日志包由服务端一次成型生成：结构化日志、运行元信息，以及一段可直接贴给 AI 的摘要。",
     "section": "导出结果",
     "collecting_title": "正在收集日志",
-    "collecting_body": "正在读取结构化日志、运行元信息和脱敏摘要。",
     "collected": "已收集 {{n}} 条",
     "received": "已接收 {{received}} / {{total}}",
     "empty_title": "这段时间没有日志",
-    "empty_body": "没有找到符合「{{range}}」的记录。",
+    "empty_body": "没有找到符合 \"{{range}}\" 的记录。",
     "failed_title": "导出没有完成",
-    "partial_note": "日志包由服务端一次成型生成，失败时没有半份产物可以外发；上一次成功导出的那份还在这里。",
     "restored": "这是上一次成功导出的日志包。"
   },
   "card": {
@@ -55,7 +52,7 @@
     "no_summary": "（没有摘要文本）"
   },
   "report": {
-    "hint": "优先推送到工作区日志仓库，评论只留链接；仓库不可用时自动回退为评论附件。",
+    "hint": "日志包会上传到工作区日志仓库或评论附件。",
     "running": "正在上报…",
     "success_git": "已上报到 {{issue}}，日志包已推送到 {{repo}}。",
     "success_attachment": "已上报到 {{issue}}，日志包已作为评论附件。",
@@ -67,6 +64,6 @@
   "error": {
     "export_failed": "导出失败",
     "report_failed": "上报失败",
-    "no_issue": "这次运行没有关联 issue，无法上报。"
+    "no_issue": "这次运行没有关联任务，无法上报。"
   }
 }

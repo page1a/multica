@@ -165,7 +165,7 @@ describe("WorkspaceMigrationCard", () => {
     const source = screen.getByTestId("workspace-migration-export-source");
     expect(source).toHaveTextContent("Will export from Acme on api.multica.ai.");
     expect(source).toHaveTextContent(
-      "Export here first, then switch servers. After you switch to a self-hosted instance, the export source becomes that instance.",
+      "Export here before switching servers.",
     );
   });
 
@@ -268,7 +268,7 @@ describe("WorkspaceMigrationCard", () => {
     expect(note).toHaveTextContent(
       "The task group needs a target workspace that has no tasks at all.",
     );
-    expect(note).toHaveTextContent("Create an empty workspace and import into that one.");
+    expect(note).toHaveTextContent("Create an empty workspace and import into it.");
 
     await user.click(screen.getByRole("button", { name: "Export to zip" }));
 
@@ -302,10 +302,9 @@ describe("WorkspaceMigrationCard", () => {
 
     const alert = await screen.findByTestId("workspace-migration-error");
     expect(alert).toHaveTextContent(
-      "This workspace already has tasks, so the task group was refused",
+      "This workspace already has issues, so they were not imported.",
     );
     expect(alert).toHaveTextContent("Create an empty workspace and import there.");
-    expect(alert).toHaveTextContent("--renumber");
     expect(alert).not.toHaveTextContent("API error: 400");
   });
 
@@ -604,7 +603,7 @@ describe("WorkspaceMigrationCard", () => {
 
     const line = await screen.findByTestId("workspace-migration-autopilots");
     expect(line).toHaveTextContent("Automations: 2 imported, 2 of them paused.");
-    expect(line).toHaveTextContent("start these straight away");
+    expect(line).toHaveTextContent("apply again to start them");
 
     // Turning activation back on is the way out, and the line follows it.
     await user.click(
@@ -815,8 +814,8 @@ describe("WorkspaceMigrationCard", () => {
     await user.click(screen.getByRole("button", { name: "Import from zip" }));
 
     const section = await screen.findByTestId("workspace-migration-runtimes");
-    expect(section).toHaveTextContent("provider=claude");
-    expect(section).toHaveTextContent("Connect this machine's daemon");
+    expect(section).toHaveTextContent("No matching runtime on the target instance");
+    expect(section).toHaveTextContent("connect a daemon or pick one manually");
   });
 
   it("stays quiet when the report carries no automation summary", async () => {

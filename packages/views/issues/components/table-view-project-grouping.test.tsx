@@ -259,8 +259,6 @@ describe("Table grouped by project", () => {
             <TableView
               serverQuery={serverQuery}
               childProgressMap={new Map()}
-              search=""
-              onSearchChange={() => {}}
               onLoadedIssuesChange={() => {}}
               onCreateIssue={() => {}}
               exportIssues={() => Promise.resolve([])}

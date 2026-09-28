@@ -61,6 +61,7 @@ type Agent struct {
 	WorkEnabled           bool        `json:"work_enabled"`
 	PlanLimits            []byte      `json:"plan_limits"`
 	DoorbellEnabled       bool        `json:"doorbell_enabled"`
+	RoutingUsage          string      `json:"routing_usage"`
 }
 
 type AgentAccessPass struct {

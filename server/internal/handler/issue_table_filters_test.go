@@ -144,6 +144,21 @@ func TestListIssues_TableFacetsAreServerSide(t *testing.T) {
 	assertList("&top_level_only=true", issueA, issueB)
 	assertList("&q="+url.QueryEscape("progress "+token), issueB)
 	assertList("&q="+url.QueryEscape("progress")+"&statuses=in_progress", issueB)
+	// Quick search reaches past the title: into the description and comments,
+	// with words allowed to spread across them.
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET description = 'Mentions Zebrafish here' WHERE id = $1`, issueA); err != nil {
+		t.Fatalf("set description: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'member', $3, 'the Okapi sighting')
+	`, testWorkspaceID, issueC, testUserID); err != nil {
+		t.Fatalf("insert comment: %v", err)
+	}
+	assertList("&q="+url.QueryEscape("zebrafish"), issueA)
+	assertList("&q="+url.QueryEscape("okapi"), issueC)
+	assertList("&q="+url.QueryEscape("okapi child"), issueC)
+	assertList("&q=" + url.QueryEscape("okapi zebrafish"))
 	var issueBNumber int
 	if err := testPool.QueryRow(ctx, `SELECT number FROM issue WHERE id = $1`, issueB).Scan(&issueBNumber); err != nil {
 		t.Fatalf("read issue number: %v", err)

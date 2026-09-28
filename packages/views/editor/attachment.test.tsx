@@ -72,6 +72,7 @@ vi.mock("../i18n", () => ({
 }));
 
 vi.mock("../navigation", () => ({
+  useBackToDismiss: () => {},
   useNavigation: () => ({
     push: vi.fn(),
     replace: vi.fn(),

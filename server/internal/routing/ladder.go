@@ -42,6 +42,9 @@ type Ladder struct {
 	// dispatches, so "the judge was not sure" has to resolve to a seat; this
 	// is that seat, chosen once as data rather than per call.
 	Fallback string `json:"fallback_tier"`
+	// order is how seats on one rung are ordered; see WithSeatOrder. It is
+	// per-workspace state, not ladder data, so it never comes from JSON.
+	order SeatOrder
 }
 
 // DefaultLadder is the shipped ladder. Parsed once at init; a malformed
@@ -186,6 +189,10 @@ type Seat struct {
 	TierKey   string
 	TierLabel string
 	Direction string
+	// Upshifted is set when every seat on this rung was tight and the rung is
+	// served by an ample seat from the rung above (「允许上调一档」). TierKey
+	// still names the rung that was asked for.
+	Upshifted bool
 }
 
 // SeatName is the naming convention that links a tier to its
@@ -210,7 +217,14 @@ func SeatName(base, direction string) string {
 func (l Ladder) Candidates(direction string, roster map[string]Agent) []Seat {
 	tagged := l.taggedByTier(roster)
 	seats := make([]Seat, 0, len(l.Tiers))
-	for _, t := range l.Tiers {
+	for i, t := range l.Tiers {
+		if i > 0 {
+			if up, ok := l.upshift(tagged[t.Key], tagged[l.Tiers[i-1].Key], direction); ok {
+				seats = append(seats, Seat{ID: up.ID, Name: up.Name, TierKey: t.Key, TierLabel: t.Label,
+					Direction: l.seatDirection(up.Name), Upshifted: true})
+				continue
+			}
+		}
 		if a, dir, ok := l.pickTagged(tagged[t.Key], direction); ok {
 			seats = append(seats, Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label, Direction: dir})
 			continue
@@ -220,6 +234,26 @@ func (l Ladder) Candidates(direction string, roster map[string]Agent) []Seat {
 		}
 	}
 	return seats
+}
+
+// upshift is 「允许上调一档」: a rung whose every seat that can take work is
+// tight is served by an ample seat from the rung above, when there is one.
+// Seats out of quota are left out on both rungs first — the same order as
+// every other pick. Off unless the workspace turned it on, and never while
+// usage itself is switched off.
+func (l Ladder) upshift(rung, above []Agent, direction string) (Agent, bool) {
+	if !l.order.AllowUpshift || l.order.IgnoreUsage {
+		return Agent{}, false
+	}
+	if resting := withoutDemoted(rung); len(resting) > 0 {
+		rung = resting
+	}
+	if !allTight(rung) {
+		return Agent{}, false
+	}
+	pool := ampleOnly(withoutDemoted(above))
+	a, _, ok := l.pickTagged(pool, direction)
+	return a, ok
 }
 
 // taggedByTier groups the roster by the tier key each seat was tagged with.
@@ -235,14 +269,16 @@ func (l Ladder) taggedByTier(roster map[string]Agent) map[string][]Agent {
 		out[key] = append(out[key], a)
 	}
 	for key := range out {
-		sort.Slice(out[key], func(i, j int) bool { return out[key][i].Name < out[key][j].Name })
+		l.byUsage(out[key])
 	}
 	return out
 }
 
 // pickTagged chooses one seat out of the tagged seats on a rung: the one
 // specialised for this direction when there is one, otherwise the undirected
-// seat, otherwise the first by name so the choice is stable across calls.
+// seat, otherwise the first. Seats arrive sorted by byUsage, so inside each
+// of those groups an ample seat goes before a tight one and the name breaks
+// ties (DENE-922).
 func (l Ladder) pickTagged(seats []Agent, direction string) (Agent, string, bool) {
 	if len(seats) == 0 {
 		return Agent{}, "", false
@@ -337,6 +373,9 @@ type Agent struct {
 	// day and has not finished a task since. Routing still uses it when the
 	// rung has nobody else.
 	Demoted bool
+	// Usage is the headroom a person tagged this seat with: tight, normal or
+	// ample. Empty reads as normal.
+	Usage string
 }
 
 // SeatByTier finds the candidate on a named rung.
@@ -527,6 +566,7 @@ func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[stri
 	}
 	holderProvider, _ := l.ProviderOf(holder.Name)
 	pool := make([]Seat, 0, len(roster))
+	agents := make(map[string]Agent, len(roster))
 	seen := map[string]bool{}
 	if holder.ID != "" {
 		seen[holder.ID] = true
@@ -549,6 +589,7 @@ func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[stri
 			continue
 		}
 		seen[agent.ID] = true
+		agents[agent.ID] = agent
 		pool = append(pool, Seat{
 			ID:        agent.ID,
 			Name:      agent.Name,
@@ -570,6 +611,13 @@ func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[stri
 		jGeneric := pool[j].Direction == ""
 		if iGeneric != jGeneric {
 			return iGeneric
+		}
+		ai, aj := agents[pool[i].ID], agents[pool[j].ID]
+		if ai.Demoted != aj.Demoted {
+			return !ai.Demoted
+		}
+		if ri, rj := l.usageRank(ai), l.usageRank(aj); ri != rj {
+			return ri < rj
 		}
 		if pool[i].Name != pool[j].Name {
 			return pool[i].Name < pool[j].Name

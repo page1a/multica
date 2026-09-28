@@ -1,11 +1,12 @@
 {
   "title": "검색",
-  "description": "페이지, 태스크, 프로젝트, 멤버를 검색합니다",
+  "description": "페이지, 태스크, 프로젝트, 채팅, 멤버를 검색합니다",
   "placeholder": "명령어를 입력하거나 검색하세요...",
   "groups": {
     "pages": "페이지",
     "commands": "명령어",
     "members": "멤버",
+    "chats": "채팅",
     "projects": "프로젝트",
     "issues": "태스크",
     "cancelled": "취소됨",
@@ -23,13 +24,17 @@
     "switch_to_dark": "다크 테마로 전환",
     "use_system_theme": "시스템 테마 사용"
   },
+  "chat": {
+    "archived": "보관됨",
+    "untitled": "제목 없는 채팅"
+  },
   "toast": {
     "link_copied": "링크를 복사했습니다",
     "copied_identifier": "{{identifier}}를 복사했습니다"
   },
   "empty": {
     "no_results": "검색 결과가 없습니다.",
-    "type_to_search": "태스크와 프로젝트를 검색해 보세요"
+    "type_to_search": "태스크, 프로젝트, 채팅을 검색해 보세요"
   },
   "trigger": {
     "label": "검색..."

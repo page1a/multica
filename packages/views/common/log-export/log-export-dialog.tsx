@@ -349,7 +349,7 @@ export function LogExportDialog({
                 )}
               </>
             ) : (
-              <IdlePanel actionLabel={t(($) => $.action.export)} />
+              <IdlePanel />
             )}
           </div>
         </section>
@@ -444,15 +444,10 @@ function RangeOption({ title, hint }: { title: string; hint: string }) {
 
 // ─── States ────────────────────────────────────────────────────────────────
 
-function IdlePanel({ actionLabel }: { actionLabel: string }) {
+function IdlePanel() {
   const { t } = useT("logExport");
   return (
-    <div className="space-y-1">
-      <p className="text-caption font-medium">{t(($) => $.state.idle_title)}</p>
-      <p className="text-caption text-muted-foreground">
-        {t(($) => $.state.idle_body, { action: actionLabel })}
-      </p>
-    </div>
+    <p className="text-caption font-medium">{t(($) => $.state.idle_title)}</p>
   );
 }
 
@@ -477,9 +472,6 @@ function CollectingPanel({ progress }: { progress: TaskLogExportProgress | null 
           {t(($) => $.state.collecting_title)}
         </p>
       </div>
-      <p className="text-caption text-muted-foreground">
-        {t(($) => $.state.collecting_body)}
-      </p>
       <Progress value={known ? percent : null} aria-label={t(($) => $.state.collecting_title)} />
       <div className="flex items-center justify-between text-micro tabular-nums text-muted-foreground">
         <span>{t(($) => $.state.collected, { n: progress?.entries ?? 0 })}</span>
@@ -547,11 +539,6 @@ function FailedPanel({
       <p className="text-caption break-words text-muted-foreground">
         {isNetworkFailure(reason) ? t(($) => $.error.export_failed) : reason}
       </p>
-      {!canRestore && (
-        <p className="text-micro text-faint-foreground">
-          {t(($) => $.state.partial_note)}
-        </p>
-      )}
       <div className="flex flex-wrap gap-2">
         <Button variant="brand" size="sm" onClick={onRetry}>
           {t(($) => $.action.retry)}

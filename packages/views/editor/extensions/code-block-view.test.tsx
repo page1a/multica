@@ -33,9 +33,16 @@ vi.mock("../../i18n", () => ({
           copy_code: "Copy code",
           show_preview: "Show preview",
           show_source: "Show source",
+          fullscreen: "Fullscreen",
         },
+        attachment: { tap_to_view: "Tap to view full screen" },
       }),
   }),
+}));
+
+const { mobile } = vi.hoisted(() => ({ mobile: { value: false } }));
+vi.mock("@multica/ui/hooks/use-mobile", () => ({
+  useIsMobile: () => mobile.value,
 }));
 
 import { CodeBlockView } from "./code-block-view";
@@ -57,6 +64,7 @@ describe("CodeBlockView — html language toggle", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    mobile.value = false;
   });
 
   it("defaults to preview view: renders an iframe with sandbox='allow-scripts' and keeps the <pre> mounted (hidden)", () => {
@@ -96,5 +104,18 @@ describe("CodeBlockView — html language toggle", () => {
     expect(screen.queryByTitle("Show source")).toBeNull();
     expect(screen.queryByTitle("Show preview")).toBeNull();
     expect(document.querySelector("iframe")).toBeNull();
+  });
+
+  it("on a phone shows a short non-scrollable thumbnail that opens the full-screen preview", () => {
+    mobile.value = true;
+    render(<CodeBlockView {...makeProps("html", "<p>hello</p>")} />);
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    const frame = document.querySelector("iframe")!;
+    expect(frame.className).toContain("h-[200px]");
+    expect(frame.className).toContain("pointer-events-none");
+    fireEvent.click(screen.getByRole("button", { name: "Tap to view full screen" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });

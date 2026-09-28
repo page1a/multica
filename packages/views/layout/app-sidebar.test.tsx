@@ -688,6 +688,6 @@ describe("workspace switcher arrangement", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces…" }), {
       target: { value: "nope" },
     });
-    expect(screen.getByText("No workspaces match “nope”")).toBeTruthy();
+    expect(screen.getByText('No workspaces match "nope"')).toBeTruthy();
   });
 });

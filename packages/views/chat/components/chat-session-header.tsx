@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Archive,
@@ -54,11 +54,15 @@ import { conversationToMarkdown } from "../lib/copy-text";
  * menu item navigates to the full agent page.
  */
 export function ChatSessionHeader({
+  leading,
   session,
   agent,
   onArchive,
   loadAllMessages,
 }: {
+  // Host-supplied control before the avatar — the compact Chat page's way back,
+  // so a phone gets one header bar instead of a back bar stacked on this one.
+  leading?: ReactNode;
   session: ChatSession;
   agent: Agent | null;
   // Archiving the open conversation must move the pane off it (advance to the
@@ -181,6 +185,7 @@ export function ChatSessionHeader({
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+      {leading}
       {agent ? (
         <ActorAvatar actorType="agent" actorId={agent.id} size="lg" enableHoverCard showStatusDot />
       ) : (

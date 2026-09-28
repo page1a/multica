@@ -157,7 +157,7 @@ describe("LocalDirectoryModeDialog", () => {
 
     const option = sharedOption();
     expect(option.hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText(/too old to honour shared workspace mode/i)).toBeTruthy();
+    expect(screen.getByText(/does not support shared workspace mode/i)).toBeTruthy();
 
     fireEvent.click(option);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -181,7 +181,7 @@ describe("LocalDirectoryModeDialog", () => {
     );
 
     expect(sharedOption().hasAttribute("disabled")).toBe(false);
-    expect(screen.getByText(/does not store shared mode/i)).toBeTruthy();
+    expect(screen.getByText(/does not support shared mode/i)).toBeTruthy();
 
     fireEvent.click(sharedOption());
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

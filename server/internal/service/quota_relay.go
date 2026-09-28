@@ -708,6 +708,12 @@ func quotaRoster(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, f
 	for _, id := range open {
 		broken[util.UUIDToString(id)] = true
 	}
+	// The replacement is ordered the way routing orders a rung (DENE-922):
+	// ample before tight unless the workspace switched 「用量优先」 off.
+	order := routing.SeatOrder{}
+	if ws, err := qtx.GetWorkspace(ctx, workspaceID); err == nil {
+		order = routing.ParseSettings(ws.Settings).SeatOrder()
+	}
 	roster := make([]quotarelay.Seat, 0, len(agents))
 	var failedSeat quotarelay.Seat
 	failedID := util.UUIDToString(failed.ID)
@@ -722,6 +728,9 @@ func quotaRoster(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, f
 			Direction: quotaSeatDirection(agent.Name),
 			Provider:  provider,
 			Eligible:  agent.WorkEnabled && agent.RuntimeID.Valid && !agent.ArchivedAt.Valid && tier != "" && !broken[id],
+		}
+		if !order.IgnoreUsage {
+			seat.UsageRank = routing.UsageRank(agent.RoutingUsage)
 		}
 		if id == failedID {
 			failedSeat = seat

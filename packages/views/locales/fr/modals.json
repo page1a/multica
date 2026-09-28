@@ -246,8 +246,8 @@
       "sub_issue_of": "Sous-tâche de {{identifier}}"
     },
     "switch_to_align": "Aligner d'abord",
-    "switch_to_align_tooltip": "Discutez la demande avant toute création — la même description et les mêmes pièces jointes sont reprises",
+    "switch_to_align_tooltip": "Discutez avant de créer ; la description et les pièces jointes sont reprises",
     "switch_from_align": "Passer à Nouvelle tâche",
-    "switch_from_align_tooltip": "Revenir à la création d'une tâche — remplissez vous-même les champs"
+    "switch_from_align_tooltip": "Revenir à la création de la tâche et remplir les champs vous-même"
   }
 }

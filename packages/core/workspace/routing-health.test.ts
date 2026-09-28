@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeRoutingState,
   parseRoutingHealth,
+  roleHealth,
   UNKNOWN_ROUTING_HEALTH,
 } from "./routing-health";
 
@@ -43,7 +44,28 @@ describe("parseRoutingHealth", () => {
       policy_prompt: "",
       provider_quotas: [],
       seats: [],
+      // A backend that predates the role split only had the judge.
+      mode: "judge",
+      roles: [],
     });
+  });
+
+  it("reads each role's endpoint and falls back to the top level for the judge", () => {
+    const health = parseRoutingHealth({
+      state: "enabled",
+      mode: "analysis_judge",
+      gateway_host: "api.typesafe.ai",
+      roles: [
+        { role: "analysis", enabled: true, model: "gpt-a", gateway_host: "a.example", gateway_scope: "workspace", gateway_key_set: true, gateway_protocol: "openai" },
+        { role: "mystery", enabled: true },
+      ],
+    });
+    expect(health.mode).toBe("analysis_judge");
+    expect(health.roles).toHaveLength(1);
+    expect(roleHealth(health, "analysis")?.gateway_key_set).toBe(true);
+    // No judge entry: an older backend's top-level fields describe it.
+    expect(roleHealth(health, "judge")?.gateway_host).toBe("api.typesafe.ai");
+    expect(parseRoutingHealth({ state: "enabled", mode: "sideways" }).mode).toBe("judge");
   });
 
   it("narrows an unrecognised gateway protocol to openai", () => {

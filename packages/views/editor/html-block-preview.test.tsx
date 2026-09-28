@@ -12,6 +12,7 @@ vi.mock("../i18n", () => ({
           show_source: "Show source",
           fullscreen: "Fullscreen",
         },
+        attachment: { tap_to_view: "Tap to view" },
       }),
   }),
 }));
@@ -25,9 +26,17 @@ vi.mock("./code-block-static", () => ({
   ),
 }));
 
+const { mobile } = vi.hoisted(() => ({ mobile: { value: false } }));
+vi.mock("@multica/ui/hooks/use-mobile", () => ({
+  useIsMobile: () => mobile.value,
+}));
+
 import { HtmlBlockPreview } from "./html-block-preview";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  mobile.value = false;
+});
 
 describe("HtmlBlockPreview — preview / source toggle", () => {
   it("renders the iframe with sandbox and the fragment-nav shim in srcdoc", () => {
@@ -87,5 +96,26 @@ describe("HtmlBlockPreview — Maximize → Dialog", () => {
       expect(srcdoc).toContain("scrollIntoView");
       expect(f.getAttribute("sandbox")).toBe("allow-scripts");
     }
+  });
+});
+
+describe("HtmlBlockPreview — phone width", () => {
+  it("shows a non-interactive thumbnail that opens the fullscreen preview on tap", () => {
+    mobile.value = true;
+    render(<HtmlBlockPreview html="<p>hi</p>" />);
+    const inline = document.querySelector("iframe")!;
+    // The iframe must not take touches, or it scrolls instead of the list.
+    expect(inline.className).toContain("pointer-events-none");
+    expect(inline.className).toContain("h-[200px]");
+    fireEvent.click(screen.getByRole("button", { name: "Tap to view" }));
+    expect(document.querySelectorAll("iframe").length).toBe(2);
+  });
+
+  it("keeps the interactive 480px preview on desktop", () => {
+    render(<HtmlBlockPreview html="<p>hi</p>" />);
+    expect(screen.queryByRole("button", { name: "Tap to view" })).toBeNull();
+    const inline = document.querySelector("iframe")!;
+    expect(inline.className).not.toContain("pointer-events-none");
+    expect(inline.className).toContain("h-[480px]");
   });
 });

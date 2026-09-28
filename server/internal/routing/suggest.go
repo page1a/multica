@@ -54,7 +54,7 @@ func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, r
 		return fill(NotConfiguredReason), nil
 	}
 
-	ladder := r.Ladder.WithProjects(settings.Projects)
+	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
 	direction := ladder.ResolveDirection(projectName).Direction
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {

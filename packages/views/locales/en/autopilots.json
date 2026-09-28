@@ -302,7 +302,7 @@
     "no_project": "No project",
     "no_project_confirm": {
       "title": "This plan has no project",
-      "description": "A project decides the context and local directory this plan runs in. Continue only if you mean to save it without one.",
+      "description": "Without a project, its issues get no project context or local directory.",
       "cancel": "Choose a project",
       "confirm": "Continue without a project"
     },
@@ -347,7 +347,7 @@
         "description": "Silent run, no issue created"
       }
     },
-    "schedule_disabled_reason": "This autopilot has multiple schedules — edit them in the detail page."
+    "schedule_disabled_reason": "This autopilot has multiple schedules; edit them on the detail page."
   },
   "schedule_editor": {
     "time_label": "Time",

@@ -119,6 +119,108 @@ type Settings struct {
 	// request. Empty means DefaultWatchedProviders (claude, codex, grok).
 	// Replacing one key does not change the request shape.
 	WatchedProviders []string `json:"watched_providers,omitempty"`
+	// UsagePriority is 「用量优先」: inside a rung, a seat tagged ample goes
+	// before a tight one. A pointer because the default is ON and a workspace
+	// saved before the field existed must read as on (DENE-922).
+	UsagePriority *bool `json:"usage_priority,omitempty"`
+	// AllowUpshift is 「允许上调一档」: when every seat on the judged rung is
+	// tight, the rung above's ample seat takes the work. Off by default.
+	AllowUpshift bool `json:"allow_upshift,omitempty"`
+
+	// JudgeEnabled switches the judge role — Model, BaseURL and the key above
+	// are that role's fields, because the judge is the only model routing had
+	// before the roles were split (DENE-923). Nil is a block written before
+	// the split: see Mode for how it reads.
+	JudgeEnabled *bool `json:"judge_enabled,omitempty"`
+	// Analysis is the second role: a general model that reads the whole
+	// ticket and reduces it to a handful of facts. Nil and a switched-off
+	// block mean the same thing.
+	Analysis *AnalysisSettings `json:"analysis,omitempty"`
+}
+
+// AnalysisSettings is the analysis role's own endpoint and model. It has the
+// same shape as the judge's fields for the same reasons: an empty endpoint
+// means the deployment gateway, and the key is sealed at rest and never sent
+// back to a client.
+type AnalysisSettings struct {
+	Enabled   bool   `json:"enabled"`
+	Model     string `json:"model"`
+	BaseURL   string `json:"base_url"`
+	APIKeyEnc string `json:"api_key_enc,omitempty"`
+	APIKey    string `json:"-"`
+}
+
+// Mode is which of the two roles are switched on. It decides who picks the
+// tier:
+//
+//   - ModeNone      — no model is called; every slot takes the ladder's
+//     fallback rung.
+//   - ModeAnalysis  — the analysis model reads the ticket and picks the tier
+//     itself; the threshold gates the confidence it reports.
+//   - ModeBoth      — the analysis model reduces the ticket to facts and the
+//     judge picks the tier from the facts alone.
+//   - ModeJudge     — the judge reads the trimmed ticket, as before the split.
+type Mode string
+
+const (
+	ModeNone     Mode = "none"
+	ModeAnalysis Mode = "analysis"
+	ModeBoth     Mode = "analysis_judge"
+	ModeJudge    Mode = "judge"
+)
+
+// AnalysisOn reports whether the analysis role is switched on.
+func (s Settings) AnalysisOn() bool { return s.Analysis != nil && s.Analysis.Enabled }
+
+// JudgeOn reports whether the judge role is switched on.
+//
+// An unset switch is a block written before the roles existed. Those blocks
+// had only the judge, so they keep it — unless the same block already turns
+// the analysis role on, which only a writer that knows about roles can do,
+// and such a writer states the judge switch explicitly anyway.
+func (s Settings) JudgeOn() bool {
+	if s.JudgeEnabled != nil {
+		return *s.JudgeEnabled
+	}
+	return !s.AnalysisOn()
+}
+
+// Mode derives the combination from the two switches.
+func (s Settings) Mode() Mode {
+	switch a, j := s.AnalysisOn(), s.JudgeOn(); {
+	case a && j:
+		return ModeBoth
+	case a:
+		return ModeAnalysis
+	case j:
+		return ModeJudge
+	}
+	return ModeNone
+}
+
+// AnalysisTarget resolves where this workspace's analysis calls go.
+func (s Settings) AnalysisTarget() Target {
+	if s.Analysis == nil {
+		return Target{}
+	}
+	return Target{
+		Model:   s.Analysis.Model,
+		BaseURL: strings.TrimSpace(s.Analysis.BaseURL),
+		APIKey:  strings.TrimSpace(s.Analysis.APIKey),
+	}
+}
+
+// PrimaryTarget is the call the settings section reports on and the probe
+// dials: the judge when it is on, since it has the last word, otherwise the
+// analysis model. ok is false in ModeNone — there is nothing to call.
+func (s Settings) PrimaryTarget() (Target, bool) {
+	switch {
+	case s.JudgeOn():
+		return s.Target(), true
+	case s.AnalysisOn():
+		return s.AnalysisTarget(), true
+	}
+	return Target{}, false
 }
 
 // Target is where one judge call is sent: which model, on whose endpoint,
@@ -161,8 +263,10 @@ const (
 	// StateOff — the switch is off. This is the default for every workspace
 	// that has never touched the section.
 	StateOff State = "off"
-	// StateIncomplete — the switch is on but no model was chosen. Behaves
-	// exactly like StateOff; it exists so the UI can say why nothing happens.
+	// StateIncomplete — the switch is on and a role is switched on without a
+	// model. Behaves exactly like StateOff; it exists so the UI can say why
+	// nothing happens. Both roles off is NOT incomplete: that is ModeNone,
+	// which routes on the fallback rung without calling anything.
 	StateIncomplete State = "incomplete"
 	// StateEnabled — switch on, model chosen. Routing does its work.
 	StateEnabled State = "enabled"
@@ -201,7 +305,10 @@ func (s Settings) State() State {
 	if !s.Enabled {
 		return StateOff
 	}
-	if s.Model == "" {
+	if s.JudgeOn() && strings.TrimSpace(s.Model) == "" {
+		return StateIncomplete
+	}
+	if s.AnalysisOn() && strings.TrimSpace(s.Analysis.Model) == "" {
 		return StateIncomplete
 	}
 	return StateEnabled

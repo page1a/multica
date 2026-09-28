@@ -230,6 +230,23 @@ type routingHealthResponse struct {
 	PolicyPrompt        string                  `json:"policy_prompt"`
 	ProviderQuotas      []routing.ProviderQuota `json:"provider_quotas"`
 	Seats               []routing.SeatSnapshot  `json:"seats"`
+	// Mode is which model roles are on: "none", "analysis",
+	// "analysis_judge" or "judge" (DENE-923). The gateway fields above
+	// describe the primary role; Roles describes each one.
+	Mode  string              `json:"mode"`
+	Roles []routingRoleHealth `json:"roles"`
+}
+
+// routingRoleHealth is one model role's endpoint, reduced the same way the
+// top-level gateway fields are: a host, never a URL, and never the key.
+type routingRoleHealth struct {
+	Role         string `json:"role"`
+	Enabled      bool   `json:"enabled"`
+	Model        string `json:"model"`
+	GatewayHost  string `json:"gateway_host"`
+	GatewayScope string `json:"gateway_scope"`
+	KeySet       bool   `json:"gateway_key_set"`
+	Protocol     string `json:"gateway_protocol"`
 }
 
 // Gateway scope values. Named because the client switches on them.
@@ -255,6 +272,25 @@ func (h *Handler) routingHealthPayload(ctx context.Context, workspaceID string, 
 		GatewayDefaultModel:  h.cfg.LLMDefaultModel,
 		GatewayKeySet:        rep.KeySet,
 		WorkspaceKeyStorable: h.RoutingSecrets != nil,
+		Mode:                 string(rep.Mode),
+		Roles:                []routingRoleHealth{},
+	}
+	for _, role := range rep.Roles {
+		out := routingRoleHealth{
+			Role:         role.Role,
+			Enabled:      role.Enabled,
+			Model:        role.Model,
+			KeySet:       role.KeySet,
+			GatewayHost:  gatewayHost(h.cfg.LLMBaseURL),
+			GatewayScope: gatewayScopeDeployment,
+			Protocol:     gatewayProtocolOpenAI,
+		}
+		if role.UsesWorkspaceGateway {
+			out.GatewayHost = gatewayHost(role.BaseURL)
+			out.GatewayScope = gatewayScopeWorkspace
+			out.Protocol = gatewayProtocol(role.BaseURL)
+		}
+		resp.Roles = append(resp.Roles, out)
 	}
 	if rep.UsesWorkspaceGateway {
 		resp.GatewayHost = gatewayHost(rep.BaseURL)
@@ -298,7 +334,7 @@ func (h *Handler) attachRoutingContext(ctx context.Context, workspaceID string, 
 		resp.ProviderQuotas = routing.EnsureProviderQuotas(nil, keys)
 		return
 	}
-	seats := h.Routing.Ladder.WithProjects(settings.Projects).Candidates("", roster)
+	seats := h.Routing.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder()).Candidates("", roster)
 	ids := make([]string, 0, len(seats))
 	for _, seat := range seats {
 		ids = append(ids, seat.ID)

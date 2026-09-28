@@ -658,7 +658,7 @@ export function ManualCreatePanel({
       // reset + close/keep-open happens in onAccepted once we report success.
       {
         toast.custom((toastId) => (
-          <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px]">
+          <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px] max-w-full">
             <div className="flex items-center gap-2 mb-2">
               <div className="flex items-center justify-center size-5 rounded-full bg-emerald-500/15 text-emerald-500">
                 <Check className="size-3" />
@@ -731,7 +731,7 @@ export function ManualCreatePanel({
         if (dup) {
           toast.custom(
             (toastId) => (
-              <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px]">
+              <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px] max-w-full">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="flex items-center justify-center size-5 rounded-full bg-amber-500/15 text-amber-500">
                     <AlertTriangle className="size-3" />

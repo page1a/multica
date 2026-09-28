@@ -47,7 +47,7 @@
       "card5_timestamp": "刚刚"
     },
     "lede_desktop": "走完这几步，就会有真实的智能体来回复你的第一个任务。",
-    "illustration_caption": "每个任务、每条对话、每个决策——团队和智能体共享同一份上下文。"
+    "illustration_caption": "团队和智能体共享同一份上下文。"
   },
   "common": {
     "back": "返回",
@@ -197,7 +197,7 @@
     "creation_disabled_eyebrow_resume": "你的工作区",
     "creation_disabled_headline_resume": "继续使用 {{name}}。",
     "creation_disabled_lede_resume": "该实例已禁用创建工作区，继续进入你已有的工作区即可。",
-    "create_new_subtitle": "另起一个——把另一类工作放进单独的空间。"
+    "create_new_subtitle": "把另一类工作放进单独的空间。"
   },
   "step_runtime": {
     "scanning_headline": "正在连接这台电脑...",
@@ -226,7 +226,7 @@
     "hint_pick": "在上方选择一个智能体运行时，就可以开始使用 Mika。",
     "hint_waiting": "等待第一个结果...",
     "continue": "开始使用 Mika",
-    "found_lede": "以下是在这台电脑上找到的智能体运行时。之后可以随时切换，或添加更多。",
+    "found_lede": "在这台电脑上找到的智能体运行时。",
     "hint_skip_or_refresh": "装好后点刷新，或跳过进入工作区。"
   },
   "step_platform": {
@@ -257,7 +257,7 @@
     "stage_stalled_prefix": "目前还没有收到连接。如果你不太习惯终端，",
     "stage_stalled_term": "桌面端",
     "stage_stalled_suffix": " 更顺手——一键搞定，这台电脑就连接好了。关闭这个对话框选择桌面端，或点跳过继续。",
-    "cli_dialog_description": "和桌面端相同的连接，通过终端配置。适用于服务器、远程开发机或任意无头电脑。"
+    "cli_dialog_description": "通过终端连接，适用于服务器、远程开发机等无头电脑。"
   },
   "errors": {
     "skip_failed": "完成上手引导失败",

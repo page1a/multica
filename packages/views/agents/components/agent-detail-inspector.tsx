@@ -40,7 +40,10 @@ import {
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
-import { RoutingTierSettingField } from "./inspector/routing-tier-setting-field";
+import {
+  RoutingTierSegmented,
+  RoutingUsageSegmented,
+} from "./inspector/routing-seat-fields";
 import {
   canEditRuntimeProfile,
   runtimeInheritanceState,
@@ -361,13 +364,6 @@ export function AgentDetailInspector({
             canEdit={canEditRuntime}
             onChange={(serviceTier) => update({ service_tier: serviceTier })}
           />
-          <RoutingTierSettingField
-            label={t(($) => $.inspector.prop_routing_tier)}
-            description={t(($) => $.inspector.prop_routing_tier_hint)}
-            value={agent.routing_tier ?? ""}
-            canEdit={canEdit}
-            onChange={(routingTier) => update({ routing_tier: routingTier })}
-          />
           <SettingsRow
             label={t(($) => $.inspector.prop_concurrency)}
             size="select-wide"
@@ -408,6 +404,33 @@ export function AgentDetailInspector({
                 void update({ auto_retry_enabled: checked });
               }}
               aria-label={t(($) => $.inspector.prop_auto_retry)}
+            />
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title={t(($) => $.inspector.section_routing)}>
+        <SettingsCard>
+          <SettingsRow
+            label={t(($) => $.inspector.prop_routing_tier)}
+            description={t(($) => $.inspector.prop_routing_tier_hint)}
+            size="none"
+          >
+            <RoutingTierSegmented
+              value={agent.routing_tier}
+              canEdit={canEdit}
+              onChange={(routingTier) => update({ routing_tier: routingTier })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.inspector.prop_routing_usage)}
+            description={t(($) => $.inspector.prop_routing_usage_hint)}
+            size="none"
+          >
+            <RoutingUsageSegmented
+              value={agent.routing_usage}
+              canEdit={canEdit}
+              onChange={(routingUsage) => update({ routing_usage: routingUsage })}
             />
           </SettingsRow>
         </SettingsCard>

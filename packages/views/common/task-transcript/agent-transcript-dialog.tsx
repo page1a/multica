@@ -876,7 +876,7 @@ export function AgentTranscriptDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!max-w-5xl !w-[calc(100vw-4rem)] !max-h-[calc(100vh-4rem)] !h-[calc(100vh-4rem)] flex flex-col !p-0 !gap-0 overflow-hidden"
+        className="!max-w-5xl !w-[calc(100vw-2rem)] sm:!w-[calc(100vw-4rem)] !max-h-[calc(100dvh-2rem)] !h-[calc(100dvh-2rem)] sm:!max-h-[calc(100dvh-4rem)] sm:!h-[calc(100dvh-4rem)] flex flex-col !p-0 !gap-0 overflow-hidden"
         showCloseButton={false}
         finalFocus={finalFocus}
       >

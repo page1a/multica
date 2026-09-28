@@ -458,9 +458,9 @@ function childTitleInput(n: number): HTMLInputElement {
  * in fact sit in Backlog forever.
  */
 const PARENT_COORDINATES =
-  "The parent coordinates this group, so it starts no work of its own at confirm.";
+  "The parent only coordinates and does not start running on confirm.";
 const PARENT_UNWOKEN =
-  "The parent coordinates this group, but no agent or squad holds it: when a stage closes, nobody is woken to promote the next one — it stays in Backlog until a person promotes it.";
+  "No agent or squad owns the parent, so later stages must be promoted by hand.";
 const PARENT_UNASSIGNED_NOTICE =
   "Unassigned — you can still confirm and assign it later.";
 
@@ -605,7 +605,7 @@ describe("IssueDraftPreviewPanel group", () => {
     expect(confirm).toBeDisabled();
     expect(
       screen.getByText(
-        "Save your edits first — confirming creates the saved draft, not what is on screen.",
+        "Save your edits first; confirming creates only the saved draft.",
       ),
     ).toBeTruthy();
 
@@ -670,7 +670,7 @@ describe("IssueDraftPreviewPanel group", () => {
     });
     expect(
       screen.getByText(
-        "“Child” could not be assigned, so it was created unassigned.",
+        '"Child" could not be assigned, so it was created unassigned.',
       ),
     ).toBeTruthy();
   });
@@ -967,11 +967,11 @@ describe("IssueDraftPreviewPanel continuation round", () => {
     });
     expect(
       screen.getByText(
-        "Confirming creates nothing new: every sub-issue here already exists.",
+        "Every sub-issue here already exists, so confirming creates nothing.",
       ),
     ).toBeTruthy();
     expect(
-      screen.getByText("Nothing new yet — keep talking and the added work appears here."),
+      screen.getByText("Nothing new yet. Keep talking and new work appears here."),
     ).toBeTruthy();
   });
 
@@ -997,7 +997,7 @@ describe("IssueDraftPreviewPanel carried files", () => {
     expect(screen.getByText("Reference files")).toBeTruthy();
     expect(
       screen.getByText(
-        "After you confirm, these 2 files belong to the parent task. Sub-issues link them instead of uploading a copy.",
+        "After you confirm, these 2 files are attached to the parent issue.",
       ),
     ).toBeTruthy();
     expect(
@@ -1015,7 +1015,7 @@ describe("IssueDraftPreviewPanel carried files", () => {
     renderPanel({ attachments: [PROTOTYPE] });
     expect(
       screen.getByText(
-        "After you confirm, this file belongs to the parent task. Sub-issues link it instead of uploading a copy.",
+        "After you confirm, this file is attached to the parent issue.",
       ),
     ).toBeTruthy();
   });

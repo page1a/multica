@@ -132,7 +132,7 @@ describe("SolidifyUnbindDialog", () => {
     expect(dialog).toHaveTextContent("Nightly Variant");
     expect(dialog).toHaveTextContent("Weekly Variant");
     expect(dialog).toHaveTextContent(
-      /writes the base role's current prompt into each specialization/i,
+      /solidify its current prompt into each specialization/i,
     );
   });
 

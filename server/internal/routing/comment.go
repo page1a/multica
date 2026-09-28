@@ -51,6 +51,8 @@ func (r *Router) assignmentComment(
 	needExecutor, needReviewer bool,
 	stillUnassigned bool,
 	mode fillMode,
+	dec decision,
+	settings Settings,
 ) string {
 	var b strings.Builder
 	b.WriteString("## 自动选派\n\n")
@@ -71,6 +73,9 @@ func (r *Router) assignmentComment(
 	case executor != nil && executorSource == pickLabel:
 		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，按票上的「%s」标签选的，没问模型）→ %s\n",
 			executor.Name, executor.TierLabel, executor.TierLabel, next))
+	case executor != nil && executorSource == pickFallback && dec.Decider == DeciderNone:
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，**兜底档**——没有启用模型）→ %s。觉得档位不对直接改，改了路由不会再碰\n",
+			executor.Name, executor.TierLabel, next))
 	case executor != nil && executorSource == pickFallback:
 		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，**兜底档**——裁决置信度 %s 低于阈值 %s，或它点的档位这里没有席位）→ 仍然%s。觉得档位不对直接改，改了路由不会再碰\n",
 			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold), next))
@@ -88,6 +93,8 @@ func (r *Router) assignmentComment(
 	case reviewerFallback && humanSignoff && !reviewer.Empty():
 		b.WriteString(fmt.Sprintf("- **验收席**：%s（模型判为这次验收需要人拍板，置信度 %s。验收席不填人——填了人这张票后面就没人能推动了；%s）\n",
 			reviewer.Label(), pct(v.ReviewerConfidence), fallbackWhy))
+	case reviewerFallback && !reviewer.Empty() && dec.Decider == DeciderNone:
+		b.WriteString(fmt.Sprintf("- **验收席**：%s（**兜底**——没有启用模型，%s）\n", reviewer.Label(), fallbackWhy))
 	case reviewerFallback && !reviewer.Empty():
 		b.WriteString(fmt.Sprintf("- **验收席**：%s（**兜底**——裁决置信度 %s 低于阈值 %s，%s）\n",
 			reviewer.Label(), pct(v.ReviewerConfidence), pct(threshold), fallbackWhy))
@@ -103,6 +110,11 @@ func (r *Router) assignmentComment(
 	b.WriteString(directionLine(issue, match))
 	b.WriteString("\n")
 	b.WriteString("- **候选**：" + seatNames(candidates) + "\n")
+	// A label that answered the only open slot means no model took part and
+	// there is nothing to say about who decided.
+	if executorSource != pickLabel || needReviewer {
+		b.WriteString(decisionSourceLine(dec, settings))
+	}
 	if strings.TrimSpace(v.Reason) != "" {
 		b.WriteString("- **判断**：" + strings.TrimSpace(v.Reason) + "\n")
 	}
@@ -151,6 +163,15 @@ func DemotionFootnote(ladder Ladder, roster map[string]Agent, chosen *Seat) stri
 		return chosen.Name + " 24 小时内熔断了至少两次。这档没有别的席位可派，所以仍由它接。做成一单之后才会重新优先。"
 	}
 	return ""
+}
+
+// UpshiftFootnote says the executor came from the rung above because every
+// seat on the judged rung was tagged tight. Empty otherwise.
+func UpshiftFootnote(chosen *Seat) string {
+	if chosen == nil || !chosen.Upshifted {
+		return ""
+	}
+	return fmt.Sprintf("%s档的席位用量都紧张，按「允许上调一档」改派上一档用量充足的 %s。", chosen.TierLabel, chosen.Name)
 }
 
 func agentTierKey(ladder Ladder, agent Agent) string {
@@ -247,6 +268,9 @@ func (r *Router) adviceComment(issue Issue, a Advice, candidates []Seat) string 
 		b.WriteString("判断：这个卡点需要人来拍板。\n\n")
 	default:
 		b.WriteString("判断：卡点不像档位问题，也不像单纯等人。\n\n")
+	}
+	if strings.TrimSpace(a.Stuck) != "" {
+		b.WriteString("卡在哪：" + strings.TrimSpace(a.Stuck) + "\n")
 	}
 	if strings.TrimSpace(a.Reason) != "" {
 		b.WriteString("\n" + strings.TrimSpace(a.Reason) + "\n")

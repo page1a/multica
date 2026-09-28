@@ -1,0 +1,61 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>页内搜索框位置提案</title>
+<style>
+:root{--bg:#fff;--muted:#6b7280;--line:#e5e7eb;--soft:#f5f5f5;--acc:#2563eb}
+body{font:14px/1.5 -apple-system,"PingFang SC",sans-serif;margin:0;background:#fafafa;color:#111}
+h2{font-size:16px;margin:28px 24px 6px}.note{margin:0 24px 10px;color:var(--muted);font-size:13px}
+.frame{margin:0 24px 8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden;display:flex;height:400px}
+.nav{width:150px;border-right:1px solid var(--line);background:var(--soft);padding:10px;font-size:13px;color:var(--muted)}
+.nav div{padding:4px 6px;border-radius:5px}.nav .on{background:#e8e8e8;color:#111}
+.hdr{height:44px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);font-weight:600}
+.new{margin-left:auto;font-weight:400;border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:12px}
+.search{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:13px;background:#fff}
+.hl{outline:2px solid var(--acc);outline-offset:2px;position:relative}
+.tag{position:absolute;right:-6px;top:-22px;background:var(--acc);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.list{width:290px;border-right:1px solid var(--line);display:flex;flex-direction:column}
+.chips{display:flex;gap:6px;padding:6px 12px;font-size:12px}.chips span{border:1px solid var(--line);border-radius:10px;padding:0 8px}.chips .on{background:#111;color:#fff;border-color:#111}
+.row{display:flex;gap:8px;padding:8px 12px;font-size:13px}.av{width:26px;height:26px;border-radius:50%;background:#dbeafe;flex:none}
+.row b{font-weight:500}.row small{display:block;color:var(--muted)}.row.act{background:#f1f5f9}
+mark{background:#fde68a;border-radius:2px}
+.main{flex:1;display:flex;flex-direction:column}.pane{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.bar{display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:13px}
+.bar .t{padding:2px 8px;border-radius:5px;color:var(--muted)}.bar .t.on{background:var(--soft);color:#111}
+.btn{border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--muted);font-size:12px}
+.board{display:flex;gap:10px;padding:12px 14px}.col{width:170px;font-size:12px;color:var(--muted)}
+.card{background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:6px;color:#111}
+.kbd{margin-left:auto;font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.snip{color:#374151}.arch{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-left:4px;color:var(--muted)}
+.set{margin:0 24px 8px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:6px 16px;max-width:640px}
+.srow{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}.srow:last-child{border:0}
+.srow small{display:block;color:var(--muted);font-size:12px}.srow .k{margin-left:auto;display:flex;gap:6px;align-items:center}
+.cap{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 7px;font-size:12px;background:#fafafa}
+</style></head><body>
+<h2>① 聊天页：标题和聊天内容都能搜</h2>
+<p class="note">搜「DeepSeek 额度」：标题命中的直接高亮；标题没提到、但某条消息里提到的，也会出来，并用那条消息的片段代替原来的最新消息预览。已归档的排最后，标「已归档」。</p>
+<div class="frame"><div class="nav"><div>收件箱</div><div>任务</div><div class="on">聊天</div><div>项目</div></div>
+<div class="list"><div class="hdr">聊天<span class="new">+ 新聊天</span></div>
+<div style="padding:8px 12px 2px"><div class="search hl"><span class="tag">新增</span>🔍 DeepSeek 额度<span style="margin-left:auto">✕</span></div></div>
+<div class="chips"><span class="on">全部</span><span>Multica 魔改</span><span>AI100</span></div>
+<div class="row act"><div class="av"></div><div><b><mark>DeepSeek</mark> <mark>额度</mark>告警</b><small>孙悟空 · 今天 11:02</small></div></div>
+<div class="row"><div class="av"></div><div><b>Builder 槽位调整</b><small class="snip">…换成 claude-opus-5 之后，<mark>DeepSeek</mark> 的<mark>额度</mark>就不再是瓶颈了…</small></div></div>
+<div class="row" style="opacity:.65"><div class="av"></div><div><b>九月模型账单<span class="arch">已归档</span></b><small class="snip">…<mark>DeepSeek</mark> 本月<mark>额度</mark>用了 82%…</small></div></div>
+</div><div class="main"><div class="hdr">DeepSeek 额度告警</div><div class="pane">（当前会话内容）</div></div></div>
+
+<h2>② 任务页：标题、描述、评论都能搜</h2>
+<p class="note">所有视图（看板/列表/表格/泳道）都生效。搜「okapi 回滚」：DENE-915 标题里有「回滚」、评论里提到「okapi」，照样算命中；任务编号直接搜也行。表格视图原来的独立搜索框已合并到这里。</p>
+<div class="frame" style="height:300px"><div class="nav"><div>收件箱</div><div class="on">任务</div><div>聊天</div><div>项目</div></div>
+<div class="main"><div class="hdr">任务</div>
+<div class="bar"><span class="t on">全部</span><span class="t">我的</span><span class="t">智能体</span>
+<span style="margin-left:auto"></span><div class="search hl" style="width:220px"><span class="tag">新增</span>🔍 okapi 回滚<span style="margin-left:auto">✕</span></div>
+<span class="btn">⚡ 运行中</span><span class="btn">筛选</span><span class="btn">显示</span></div>
+<div class="board"><div class="col">进行中 · 1<div class="card">DENE-915 发版失败<mark>回滚</mark><br><small style="color:var(--muted)">评论：「okapi 节点先下线」</small></div></div>
+<div class="col">待办 · 0</div><div class="col">待验收 · 0</div></div></div></div>
+
+<h2>③ 快捷键可以改：设置 → 键盘快捷键</h2>
+<p class="note">新加的「聚焦页内搜索」和其它快捷键在同一个列表里，点「修改」按下新组合即可；页面没有搜索框时，这个键不会被占用。</p>
+<div class="set">
+<div class="srow"><div>打开搜索<small>全局搜索任务、聊天、项目</small></div><div class="k"><span class="cap">⌘</span><span class="cap">K</span><span class="btn">修改</span></div></div>
+<div class="srow hl" style="position:relative"><span class="tag">新增</span><div>聚焦页内搜索<small>跳到聊天页或任务页的搜索框。</small></div><div class="k"><span class="cap">/</span><span class="btn">修改</span></div></div>
+<div class="srow"><div>新建任务<small>打开新建任务弹窗</small></div><div class="k"><span class="cap">C</span><span class="btn">修改</span></div></div>
+</div>
+<p class="note">在搜索框里按 Esc：清空并退出搜索。意图搜索（按意思找）暂不做：现在没有语义检索底座，要改的逻辑太多。</p>
+</body></html>

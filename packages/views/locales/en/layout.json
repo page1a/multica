@@ -47,12 +47,12 @@
     "workspaces_label": "Workspaces",
     "create_workspace": "Create workspace",
     "search_workspaces_placeholder": "Search workspaces…",
-    "no_matching_workspaces": "No workspaces match “{{query}}”",
+    "no_matching_workspaces": "No workspaces match \"{{query}}\"",
     "pin_workspace": "Pin to top",
     "unpin_workspace": "Unpin",
     "organize_workspaces": "Organize workspaces…",
     "organize_title": "Organize workspaces",
-    "organize_description": "Drag to reorder; drag into Pinned to pin. Only changes the order you see, not anyone else’s.",
+    "organize_description": "Drag to reorder; only your own view changes.",
     "organize_drag": "Drag {{name}}",
     "organize_rest_label": "Other workspaces",
     "organize_pin_hint": "Drag here to pin",
@@ -82,7 +82,7 @@
     "badge": "You're a guest — view only",
     "no_edit": "Guests can't edit",
     "nothing_shared_title": "Nothing has been shared with you yet",
-    "nothing_shared_description": "Once someone in this workspace adds you to a project, what you can see will show up here.",
+    "nothing_shared_description": "Content appears here once you're added to a project.",
     "not_found_title": "Page not found",
     "not_found_description": "It may have been deleted, or it hasn't been shared with you."
   }

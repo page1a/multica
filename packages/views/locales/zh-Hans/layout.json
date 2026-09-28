@@ -47,12 +47,12 @@
     "workspaces_label": "工作区",
     "create_workspace": "创建工作区",
     "search_workspaces_placeholder": "搜索工作区…",
-    "no_matching_workspaces": "没有匹配「{{query}}」的工作区",
+    "no_matching_workspaces": "没有匹配 \"{{query}}\" 的工作区",
     "pin_workspace": "置顶",
     "unpin_workspace": "取消置顶",
     "organize_workspaces": "整理工作区…",
     "organize_title": "整理工作区",
-    "organize_description": "拖动调整顺序，拖进「置顶」就是置顶。只影响你自己看到的顺序，不影响其他成员。",
+    "organize_description": "拖动调整顺序，只影响你自己看到的顺序。",
     "organize_drag": "拖动 {{name}}",
     "organize_rest_label": "其他工作区",
     "organize_pin_hint": "拖到这里置顶",
@@ -82,7 +82,7 @@
     "badge": "你是访客，只能看不能改",
     "no_edit": "访客没有编辑权限",
     "nothing_shared_title": "还没有内容共享给你",
-    "nothing_shared_description": "等工作区里的人把你加进项目，这里就会出现你能看的内容。",
+    "nothing_shared_description": "被加入项目后，这里会显示你能查看的内容。",
     "not_found_title": "找不到这个页面",
     "not_found_description": "它可能已经被删掉了，或者没有共享给你。"
   }

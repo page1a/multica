@@ -47,12 +47,12 @@
     "workspaces_label": "ワークスペース",
     "create_workspace": "ワークスペースを作成",
     "search_workspaces_placeholder": "ワークスペースを検索…",
-    "no_matching_workspaces": "「{{query}}」に一致するワークスペースはありません",
+    "no_matching_workspaces": "\"{{query}}\" に一致するワークスペースはありません",
     "pin_workspace": "上部に固定",
     "unpin_workspace": "固定を解除",
     "organize_workspaces": "ワークスペースを整理…",
     "organize_title": "ワークスペースを整理",
-    "organize_description": "ドラッグで並べ替え、「固定」にドラッグすると固定されます。あなたに見える順序だけが変わり、他のメンバーには影響しません。",
+    "organize_description": "ドラッグで並べ替えます。変わるのはあなたの表示順だけです。",
     "organize_drag": "{{name}} をドラッグ",
     "organize_rest_label": "その他のワークスペース",
     "organize_pin_hint": "ここにドラッグして固定",
@@ -82,7 +82,7 @@
     "badge": "ゲストです。閲覧のみできます",
     "no_edit": "ゲストは編集できません",
     "nothing_shared_title": "まだ共有された内容はありません",
-    "nothing_shared_description": "ワークスペースの誰かがあなたをプロジェクトに追加すると、ここで見られるようになります。",
+    "nothing_shared_description": "プロジェクトに追加されると、ここに内容が表示されます。",
     "not_found_title": "このページは見つかりません",
     "not_found_description": "削除されたか、あなたには共有されていない可能性があります。"
   }

@@ -262,30 +262,36 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, act
 		deliveryBranchCount = len(delivery.Branches)
 	}
 	// An agent may not close a ticket whose acceptance seat is someone else.
+	// A child is the exception: it cannot enter in_review (the close refuses
+	// it), so its seat accepts it through the parent's tree review. Refusing
+	// done too left child executors with no exit at all (DENE-928/931).
 	// Without a seat the agent may close, but only through the merge gate below
-	// or, when neither a PR nor a delivery branch exists, an explicit no-code
-	// declaration.
-	if actorType == "agent" && reviewerIsAssigned(issue) && actorID != uuidToString(issue.ReviewerID) {
+	// or, when no PR is linked, an explicit no-code declaration.
+	if actorType == "agent" && !issue.ParentIssueID.Valid && reviewerIsAssigned(issue) && actorID != uuidToString(issue.ReviewerID) {
 		tr.refuse = "执行人不能直接关单：请用 `multica issue close --outcome in_review` 交给验收席。"
 		return tr
 	}
-	if actorType == "agent" && len(prs) == 0 && deliveryBranchCount == 0 {
-		if strings.TrimSpace(noCodeReason) == "" {
-			tr.refuse = "这张票没有 PR 或交付分支，执行人关单必须带 `--no-code <原因>`。"
+	// The gate only guards what the platform can see: a linked PR. Code that
+	// lives where the platform cannot look (an intranet GitLab MR) is declared
+	// through --no-code with the link as the reason, same as docs-only work;
+	// the evidence comment and the acceptance seat carry the proof (DENE-943).
+	if actorType == "agent" && len(prs) == 0 {
+		if reason := strings.TrimSpace(noCodeReason); reason != "" {
+			tr.noCode = reason
+			tr.note = "执行人声明这张票没有平台可见的 PR：" + reason + "。"
 			return tr
 		}
-		tr.noCode = strings.TrimSpace(noCodeReason)
-		tr.note = "执行人声明这张票没有代码交付：" + tr.noCode + "。"
+		// No PR yet is something the closing agent can fix in this run.
+		// Parking it as blocked waited on an event nobody produces (DENE-899).
+		if deliveryBranchCount > 0 {
+			tr.refuse = "这张票有交付分支，但平台查不到它的 PR。先用 `gh pr create` 开 PR（标题带票号，打向主线），再重跑这条 close；close 会用本机 gh 把 PR 报给平台。代码不在 GitHub（比如内网 GitLab MR）就用 `--no-code <MR 链接和合入状态>` 说明。"
+			return tr
+		}
+		tr.refuse = "这张票没有 PR 或交付分支，执行人关单必须带 `--no-code <原因>`。"
 		return tr
 	}
 	if actorType == "agent" && strings.TrimSpace(noCodeReason) != "" {
-		tr.refuse = "这张票已经有 PR 或交付分支，不能用 `--no-code` 跳过合入门禁。"
-		return tr
-	}
-	// No PR yet is something the closing agent can fix in this run. Parking it
-	// as blocked waited on an event nobody produces (DENE-899): refuse instead.
-	if actorType == "agent" && len(prs) == 0 && deliveryBranchCount > 0 {
-		tr.refuse = "这张票有交付分支，但平台查不到它的 PR。先用 `gh pr create` 开 PR（标题带票号，打向主线），再重跑这条 close；close 会用本机 gh 把 PR 报给平台。"
+		tr.refuse = "这张票已经关联了 PR，不能用 `--no-code` 跳过合入门禁。"
 		return tr
 	}
 	// Without a GitHub App the server can neither read an open PR's checks nor

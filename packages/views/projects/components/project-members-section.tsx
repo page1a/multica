@@ -113,7 +113,7 @@ export function ProjectMembersSection({
                     <button
                       type="button"
                       onClick={() => handleRemove(member.member_id)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+                      className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent"
                       title={t(($) => $.members.remove_tooltip)}
                     >
                       <Trash2 className="size-3 text-muted-foreground" />

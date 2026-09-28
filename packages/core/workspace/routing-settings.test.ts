@@ -15,7 +15,30 @@ import {
   routingIsActive,
   routingState,
   withRoutingSettings,
+  routingMode,
+  type RoutingSettings,
 } from "./routing-settings";
+
+// The pre-split shape: the judge on, the analysis role off, and the usage
+// switches at their defaults.
+const JUDGE_ONLY: Pick<
+  RoutingSettings,
+  "judge_enabled" | "analysis" | "usage_priority" | "allow_upshift"
+> = {
+  judge_enabled: true,
+  analysis: { enabled: false, model: "", base_url: "" },
+  usage_priority: true,
+  allow_upshift: false,
+};
+
+const BASE: RoutingSettings = {
+  enabled: true,
+  model: "",
+  confidence_threshold: 0.7,
+  stale_review_hours: 24,
+  base_url: "",
+  ...JUDGE_ONLY,
+};
 
 describe("parseRoutingSettings", () => {
   it("reads a complete block", () => {
@@ -36,7 +59,30 @@ describe("parseRoutingSettings", () => {
       stale_review_hours: 8,
       base_url: "",
       policy_prompt: "",
+      // A block saved before the split keeps the judge it had.
+      judge_enabled: true,
+      analysis: { enabled: false, model: "", base_url: "" },
+      usage_priority: true,
+      allow_upshift: false,
     });
+  });
+
+  // DENE-922: usage priority defaults on, so a block saved before the field
+  // existed reads as on; upshift defaults off.
+  it("reads the seat-order switches with their defaults", () => {
+    expect(parseRoutingSettings({ routing: { enabled: true } })).toMatchObject({
+      usage_priority: true,
+      allow_upshift: false,
+    });
+    expect(
+      parseRoutingSettings({
+        routing: { usage_priority: false, allow_upshift: true },
+      }),
+    ).toMatchObject({ usage_priority: false, allow_upshift: true });
+    // Only an explicit false turns usage priority off.
+    expect(
+      parseRoutingSettings({ routing: { usage_priority: "no" } }).usage_priority,
+    ).toBe(true);
   });
 
   // Every one of these must read as switched off: a payload the client cannot
@@ -110,7 +156,7 @@ describe("normalizeThreshold", () => {
 describe("routingState", () => {
   it("is off while the switch is off, whatever else is set", () => {
     expect(
-      routingState({ enabled: false, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
+      routingState({ enabled: false, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY }),
     ).toBe("off");
   });
 
@@ -118,21 +164,21 @@ describe("routingState", () => {
     // The state that exists because the product must not look enabled when it
     // is doing nothing.
     expect(
-      routingState({ enabled: true, model: "", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
+      routingState({ enabled: true, model: "", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY }),
     ).toBe("incomplete");
     expect(
-      routingState({ enabled: true, model: "   ", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
+      routingState({ enabled: true, model: "   ", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY }),
     ).toBe("incomplete");
   });
 
   it("is enabled when the switch is on and a model is chosen", () => {
     expect(
-      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }),
+      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY }),
     ).toBe("enabled");
   });
 
   it("is ineffective only when the server says ineffective in so many words", () => {
-    const configured = { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" };
+    const configured = { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY };
     expect(routingState(configured, { state: "ineffective" })).toBe("ineffective");
     expect(routingState(configured, { state: "enabled" })).toBe("enabled");
     expect(routingState(configured, null)).toBe("enabled");
@@ -148,7 +194,7 @@ describe("routingState", () => {
     ["the fallback used when the response cannot be read", "off"],
   ])("does not report a fault for %s", (_label, state) => {
     expect(
-      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" }, { state }),
+      routingState({ enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY }, { state }),
     ).toBe("enabled");
   });
 
@@ -157,7 +203,7 @@ describe("routingState", () => {
     // light the red chip on a guess.
     expect(
       routingState(
-        { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
+        { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY },
         { state: "degraded" },
       ),
     ).toBe("enabled");
@@ -176,12 +222,23 @@ describe("withRoutingSettings", () => {
     expect(
       withRoutingSettings(
         { theme: "dark", other: { a: 1 } },
-        { enabled: true, model: " m ", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "" },
+        { enabled: true, model: " m ", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY },
       ),
     ).toEqual({
       theme: "dark",
       other: { a: 1 },
-      routing: { enabled: true, model: "m", confidence_threshold: 0.9, stale_review_hours: 24, base_url: "", policy_prompt: "" },
+      routing: {
+        enabled: true,
+        model: "m",
+        confidence_threshold: 0.9,
+        stale_review_hours: 24,
+        base_url: "",
+        policy_prompt: "",
+        judge_enabled: true,
+        analysis: { enabled: false, model: "", base_url: "" },
+        usage_priority: true,
+        allow_upshift: false,
+      },
     });
   });
 
@@ -190,7 +247,7 @@ describe("withRoutingSettings", () => {
   it("carries routing fields this form does not own through a save", () => {
     const out = withRoutingSettings(
       { routing: { enabled: false, model: "old", projects: { tarot: "出海" }, future: 1 } },
-      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
+      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY },
     );
     expect(out.routing).toEqual({
       enabled: true,
@@ -199,6 +256,10 @@ describe("withRoutingSettings", () => {
       stale_review_hours: 24,
       base_url: "",
       policy_prompt: "",
+      judge_enabled: true,
+      analysis: { enabled: false, model: "", base_url: "" },
+      usage_priority: true,
+      allow_upshift: false,
       projects: { tarot: "出海" },
       future: 1,
     });
@@ -213,6 +274,7 @@ describe("withRoutingSettings", () => {
       confidence_threshold: 0.7,
       stale_review_hours: 24,
       base_url: "https://gw.example/v1",
+      ...JUDGE_ONLY,
     });
     expect("api_key" in (out.routing as Record<string, unknown>)).toBe(false);
   });
@@ -220,13 +282,13 @@ describe("withRoutingSettings", () => {
   it("sends an empty key only when one was explicitly passed", () => {
     const cleared = withRoutingSettings(
       null,
-      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
+      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY },
       "",
     );
     expect((cleared.routing as Record<string, unknown>).api_key).toBe("");
     const set = withRoutingSettings(
       null,
-      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "" },
+      { enabled: true, model: "m", confidence_threshold: 0.7, stale_review_hours: 24, base_url: "", ...JUDGE_ONLY },
       "  sk-live  ",
     );
     expect((set.routing as Record<string, unknown>).api_key).toBe("sk-live");
@@ -239,6 +301,7 @@ describe("withRoutingSettings", () => {
       confidence_threshold: 9,
       stale_review_hours: 0,
       base_url: "",
+      ...JUDGE_ONLY,
     });
     expect((out.routing as { confidence_threshold: number }).confidence_threshold).toBe(
       DEFAULT_CONFIDENCE_THRESHOLD,
@@ -260,7 +323,56 @@ describe("withRoutingSettings", () => {
   });
 
   it("round-trips through parse", () => {
-    const next = { enabled: true, model: "m", confidence_threshold: 0.42, stale_review_hours: 24, base_url: "", policy_prompt: "" };
+    const next = { enabled: true, model: "m", confidence_threshold: 0.42, stale_review_hours: 24, base_url: "", policy_prompt: "", ...JUDGE_ONLY };
     expect(parseRoutingSettings(withRoutingSettings({}, next))).toEqual(next);
+  });
+});
+
+describe("model roles (DENE-923)", () => {
+  it("starts a never-configured workspace on the analysis model alone", () => {
+    const parsed = parseRoutingSettings({});
+    expect(parsed.analysis.enabled).toBe(true);
+    expect(parsed.judge_enabled).toBe(false);
+    expect(routingMode(parsed)).toBe("analysis");
+  });
+
+  it("reads an explicit judge switch and the nested analysis block", () => {
+    const parsed = parseRoutingSettings({
+      routing: {
+        enabled: true,
+        model: "jev",
+        judge_enabled: true,
+        analysis: { enabled: true, model: "gpt-a", base_url: "https://a.example/v1" },
+      },
+    });
+    expect(parsed.analysis).toEqual({ enabled: true, model: "gpt-a", base_url: "https://a.example/v1" });
+    expect(routingMode(parsed)).toBe("analysis_judge");
+  });
+
+  it.each([
+    [false, false, "none"],
+    [true, false, "analysis"],
+    [true, true, "analysis_judge"],
+    [false, true, "judge"],
+  ] as const)("analysis=%s judge=%s is %s", (analysis, judge, mode) => {
+    expect(
+      routingMode({ ...BASE, judge_enabled: judge, analysis: { ...BASE.analysis, enabled: analysis } }),
+    ).toBe(mode);
+  });
+
+  it("is incomplete when a role that is on has no model, and enabled with both off", () => {
+    const analysisOn = { ...BASE, judge_enabled: false, analysis: { enabled: true, model: "", base_url: "" } };
+    expect(routingState(analysisOn)).toBe("incomplete");
+    expect(routingState({ ...analysisOn, analysis: { ...analysisOn.analysis, model: "gpt-a" } })).toBe("enabled");
+    expect(routingState({ ...BASE, judge_enabled: false })).toBe("enabled");
+  });
+
+  it("writes the analysis block and its key only when one was typed", () => {
+    const next = { ...BASE, analysis: { enabled: true, model: " gpt-a ", base_url: "" } };
+    const plain = withRoutingSettings({}, next).routing as Record<string, unknown>;
+    expect(plain.analysis).toEqual({ enabled: true, model: "gpt-a", base_url: "" });
+    const keyed = withRoutingSettings({}, next, undefined, " sk-a ").routing as Record<string, Record<string, unknown>>;
+    expect(keyed.analysis?.api_key).toBe("sk-a");
+    expect("api_key" in keyed).toBe(false);
   });
 });

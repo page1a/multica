@@ -795,6 +795,11 @@ export interface Agent {
    */
   routing_tier?: string;
   /**
+   * Account headroom tag (DENE-922): `tight`, `normal` or `ample`. Orders
+   * seats inside one rung; older backends omit it, which reads as `normal`.
+   */
+  routing_usage?: string;
+  /**
    * Platform auto-retry switch (DENE-217). When `false`, FailTask /
    * MaybeRetryFailedTask never spawn a retry child. Older backends omit
    * the field; treat `undefined` as enabled. Only `=== false` is off.
@@ -986,6 +991,21 @@ export interface AgentBuilderRuntimeSwitch {
   runtime_id: string;
 }
 
+/**
+ * One batch edit from the routing seats table (DENE-922): every listed seat
+ * gets the same change, all or nothing. Omit a field to leave it alone;
+ * `routing_tier: ""` takes the seats off the ladder.
+ */
+export interface BulkUpdateAgentRoutingRequest {
+  agent_ids: string[];
+  routing_tier?: string;
+  routing_usage?: string;
+}
+
+export interface BulkUpdateAgentRoutingResponse {
+  agents: Agent[];
+}
+
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;
@@ -1059,6 +1079,8 @@ export interface UpdateAgentRequest {
    * `""` takes the seat off the ladder, and a tier key sets the rung.
    */
   routing_tier?: string;
+  /** Account headroom tag. Omitted preserves the saved value. */
+  routing_usage?: string;
   /**
    * Platform auto-retry switch. Omitted preserves the saved value; `false`
    * turns platform auto-retry off without affecting manual rerun.

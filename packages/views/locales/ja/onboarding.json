@@ -47,7 +47,7 @@
       "card5_timestamp": "たった今"
     },
     "lede_desktop": "完了するころには、実際のエージェントがあなたの最初のタスクに返信しています。",
-    "illustration_caption": "すべてのタスク、すべてのスレッド、すべての判断を、チームとエージェントで共有。"
+    "illustration_caption": "チームとエージェントが同じコンテキストを共有します。"
   },
   "common": {
     "back": "戻る",
@@ -197,7 +197,7 @@
     "creation_disabled_eyebrow_resume": "あなたのワークスペース",
     "creation_disabled_headline_resume": "{{name}} で続けましょう。",
     "creation_disabled_lede_resume": "このインスタンスではワークスペースの作成が無効になっているため、既存のワークスペースへ続けて移動します。",
-    "create_new_subtitle": "新しく始めましょう — 別の業務領域のための独立した場所です。"
+    "create_new_subtitle": "別の業務領域のための独立した場所です。"
   },
   "step_runtime": {
     "scanning_headline": "このコンピュータを接続中…",
@@ -226,7 +226,7 @@
     "hint_pick": "Mika と始めるには、上でエージェントランタイムを選んでください。",
     "hint_waiting": "最初の結果を待っています…",
     "continue": "Mika と始める",
-    "found_lede": "このコンピュータで見つかったエージェントランタイムです。あとで切り替えたり追加したりできます。",
+    "found_lede": "このコンピュータで見つかったエージェントランタイムです。",
     "hint_skip_or_refresh": "インストール後に更新するか、スキップしてワークスペースに入ってください。"
   },
   "step_platform": {
@@ -257,7 +257,7 @@
     "stage_stalled_prefix": "まだ何も届いていません。ターミナルに不慣れな場合は、",
     "stage_stalled_term": "デスクトップ",
     "stage_stalled_suffix": "のほうがスムーズです — ワンクリックでこのコンピュータが接続されます。このダイアログを閉じてデスクトップを選ぶか、スキップを押して続けてください。",
-    "cli_dialog_description": "デスクトップと同じ接続を、ターミナルからセットアップします。サーバー、リモート開発環境、ヘッドレスなコンピュータに使ってください。"
+    "cli_dialog_description": "ターミナルから接続します。サーバーやリモート開発環境などのヘッドレスなコンピュータ向けです。"
   },
   "errors": {
     "skip_failed": "オンボーディングを完了できませんでした",

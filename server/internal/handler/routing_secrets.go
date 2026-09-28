@@ -109,15 +109,17 @@ func redactRoutingSettings(settings any) any {
 	if !ok {
 		return settings
 	}
-	if _, present := block[routingSecretSealedKey]; !present {
+	analysis, hasAnalysis := block[routingAnalysisKey].(map[string]any)
+	_, topSealed := block[routingSecretSealedKey]
+	_, analysisSealed := analysis[routingSecretSealedKey]
+	if !topSealed && !analysisSealed {
 		return settings
 	}
-	cleanBlock := make(map[string]any, len(block))
-	for k, v := range block {
-		if k == routingSecretSealedKey || k == routingSecretPlainKey {
-			continue
-		}
-		cleanBlock[k] = v
+	cleanBlock := withoutKeyFields(block)
+	if hasAnalysis {
+		// The analysis role carries its own key (DENE-923), under the same
+		// two field names and the same three rules.
+		cleanBlock[routingAnalysisKey] = withoutKeyFields(analysis)
 	}
 	cleanRoot := make(map[string]any, len(root))
 	for k, v := range root {
@@ -125,6 +127,22 @@ func redactRoutingSettings(settings any) any {
 	}
 	cleanRoot[routing.SettingsKey] = cleanBlock
 	return cleanRoot
+}
+
+// routingAnalysisKey is the nested block the analysis role's settings live
+// in. It matches the `analysis` tag on routing.Settings.
+const routingAnalysisKey = "analysis"
+
+// withoutKeyFields copies a block minus both key fields.
+func withoutKeyFields(block map[string]any) map[string]any {
+	clean := make(map[string]any, len(block))
+	for k, v := range block {
+		if k == routingSecretSealedKey || k == routingSecretPlainKey {
+			continue
+		}
+		clean[k] = v
+	}
+	return clean
 }
 
 // applyRoutingSecret resolves the routing key for an incoming settings write,
@@ -155,14 +173,32 @@ func (h *Handler) applyRoutingSecret(incoming any, stored []byte) (any, bool) {
 		return incoming, true
 	}
 
-	next := make(map[string]any, len(block)+1)
-	for k, v := range block {
-		if k == routingSecretPlainKey || k == routingSecretSealedKey {
-			continue
+	stored0, storedAnalysis := storedRoutingSealedKeys(stored)
+	next, ok := h.resolveKeyFields(block, stored0)
+	if !ok {
+		return nil, false
+	}
+	if analysis, isBlock := block[routingAnalysisKey].(map[string]any); isBlock {
+		nested, ok := h.resolveKeyFields(analysis, storedAnalysis)
+		if !ok {
+			return nil, false
 		}
-		next[k] = v
+		next[routingAnalysisKey] = nested
 	}
 
+	out := make(map[string]any, len(root))
+	for k, v := range root {
+		out[k] = v
+	}
+	out[routing.SettingsKey] = next
+	return out, true
+}
+
+// resolveKeyFields applies the three cases to one block — the routing block
+// itself, or the analysis block nested in it — given the ciphertext stored
+// for that block.
+func (h *Handler) resolveKeyFields(block map[string]any, storedSealed string) (map[string]any, bool) {
+	next := withoutKeyFields(block)
 	plain, typed := block[routingSecretPlainKey].(string)
 	switch {
 	case typed && strings.TrimSpace(plain) != "":
@@ -174,33 +210,38 @@ func (h *Handler) applyRoutingSecret(incoming any, stored []byte) (any, bool) {
 	case typed:
 		// Explicit clear: leave both fields absent.
 	default:
-		if carried := storedRoutingSealedKey(stored); carried != "" {
-			next[routingSecretSealedKey] = carried
+		if storedSealed != "" {
+			next[routingSecretSealedKey] = storedSealed
 		}
 	}
-
-	out := make(map[string]any, len(root))
-	for k, v := range root {
-		out[k] = v
-	}
-	out[routing.SettingsKey] = next
-	return out, true
+	return next, true
 }
 
-// storedRoutingSealedKey reads the sealed key out of a stored settings column.
-// Anything unreadable yields the empty string: a settings blob this code
-// cannot parse must not be able to smuggle a value into the next write.
+// storedRoutingSealedKey reads the judge's sealed key out of a stored
+// settings column.
 func storedRoutingSealedKey(stored []byte) string {
+	judge, _ := storedRoutingSealedKeys(stored)
+	return judge
+}
+
+// storedRoutingSealedKeys reads both sealed keys — the judge's, then the
+// analysis role's — out of a stored settings column. Anything unreadable
+// yields the empty string: a settings blob this code cannot parse must not
+// be able to smuggle a value into the next write.
+func storedRoutingSealedKeys(stored []byte) (string, string) {
 	if len(stored) == 0 {
-		return ""
+		return "", ""
 	}
 	var envelope struct {
 		Routing struct {
 			APIKeyEnc string `json:"api_key_enc"`
+			Analysis  struct {
+				APIKeyEnc string `json:"api_key_enc"`
+			} `json:"analysis"`
 		} `json:"routing"`
 	}
 	if err := json.Unmarshal(stored, &envelope); err != nil {
-		return ""
+		return "", ""
 	}
-	return envelope.Routing.APIKeyEnc
+	return envelope.Routing.APIKeyEnc, envelope.Routing.Analysis.APIKeyEnc
 }

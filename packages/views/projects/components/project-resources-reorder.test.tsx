@@ -206,8 +206,10 @@ describe("ProjectResourcesSection — choosing which directory tasks write in", 
       .find((b) => b.hasAttribute("disabled"));
     expect(disabled).toBeDefined();
     const className = disabled!.className;
-    expect(className).toContain("disabled:opacity-0");
+    expect(className).toContain("[@media(hover:hover)]:disabled:opacity-0");
     expect(className).toContain("group-hover:disabled:opacity-30");
+    // Touch screens cannot hover, so the arrows stay visible there.
+    expect(className).toContain("[@media(hover:none)]:disabled:opacity-30");
   });
 
   // Where tasks run is the server's sentence, shown as it arrived. The list

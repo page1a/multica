@@ -718,9 +718,9 @@ describe("useIssueSurfaceController", () => {
 
     listIssues.mockClear();
 
-    act(() => result.current.setTableSearch("  Release train  "));
+    act(() => result.current.setPageSearch("  Release train  "));
 
-    expect(result.current.tableSearch).toBe("  Release train  ");
+    expect(result.current.pageSearch).toBe("  Release train  ");
     expect(result.current.tableQuerySpec.search).toBeUndefined();
     await waitFor(() =>
       expect(result.current.tableQuerySpec.search).toBe("Release train"),

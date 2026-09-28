@@ -47,7 +47,7 @@
       "card5_timestamp": "à l'instant"
     },
     "lede_desktop": "À la fin, un véritable agent répondra à votre première tâche.",
-    "illustration_caption": "Chaque tâche, chaque fil, chaque décision — partagés par votre équipe et vos agents."
+    "illustration_caption": "Votre équipe et vos agents partagent le même contexte."
   },
   "common": {
     "back": "Retour",
@@ -197,7 +197,7 @@
     "creation_disabled_eyebrow_resume": "Votre espace de travail",
     "creation_disabled_headline_resume": "Continuez avec {{name}}.",
     "creation_disabled_lede_resume": "La création d'espaces de travail est désactivée sur cette instance : vous continuerez donc dans votre espace existant.",
-    "create_new_subtitle": "Repartez de zéro — un espace à part pour un autre volet de votre travail."
+    "create_new_subtitle": "Un espace à part pour un autre volet de votre travail."
   },
   "step_runtime": {
     "scanning_headline": "Connexion de cet ordinateur…",
@@ -227,7 +227,7 @@
     "hint_pick": "Choisissez un runtime d'agent ci-dessus pour commencer avec Mika.",
     "hint_waiting": "En attente du premier résultat…",
     "continue": "Commencer avec Mika",
-    "found_lede": "Voici les runtimes d'agent que nous avons trouvés sur cet ordinateur. Vous pourrez en changer ou en ajouter d'autres plus tard.",
+    "found_lede": "Runtimes d'agent trouvés sur cet ordinateur.",
     "hint_skip_or_refresh": "Actualisez après en avoir installé un, ou passez cette étape pour accéder à votre espace de travail."
   },
   "step_platform": {
@@ -259,7 +259,7 @@
     "stage_stalled_prefix": "Rien ne remonte pour l'instant. Si le terminal ne vous met pas à l'aise, ",
     "stage_stalled_term": "l'application de bureau",
     "stage_stalled_suffix": " est la voie la plus simple — un clic et cet ordinateur est connecté. Fermez cette fenêtre et choisissez l'application de bureau, ou cliquez sur Ignorer pour continuer.",
-    "cli_dialog_description": "La même connexion que l'application de bureau, configurée depuis le terminal. Utilisez-la pour les serveurs, les machines de développement distantes ou tout ordinateur sans interface graphique."
+    "cli_dialog_description": "Connectez-vous depuis le terminal, pour les serveurs, machines de développement distantes ou autres ordinateurs sans interface."
   },
   "errors": {
     "skip_failed": "Échec de la finalisation de la prise en main",

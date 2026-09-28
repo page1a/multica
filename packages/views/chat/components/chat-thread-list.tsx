@@ -41,6 +41,7 @@ import { resolveClickIntent, useOptionalNavigation } from "../../navigation";
 import { createLogger } from "@multica/core/logger";
 import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import { useLocale, useT } from "../../i18n";
+import { HighlightText } from "../../search/highlight-text";
 
 const apiLogger = createLogger("chat.api");
 
@@ -89,6 +90,7 @@ export function ChatThreadList({
   onSelectSession,
   onArchive,
   emptyLabel,
+  search,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
@@ -101,6 +103,10 @@ export function ChatThreadList({
   /** Replaces the default "no chats" line. The project bar uses this when a
    *  filter matches nothing. */
   emptyLabel?: string;
+  /** Set while the page search is active: `sessions` is already the result
+   *  set (archived included, listed last and tagged), rows highlight the
+   *  query, and a content hit's snippet replaces the last-message preview. */
+  search?: { query: string; snippets: ReadonlyMap<string, string> };
 }) {
   const { t } = useT("chat");
   const locale = useLocale();
@@ -237,9 +243,16 @@ export function ChatThreadList({
       ? formatChatTime(last.created_at, locale)
       : formatChatTime(session.updated_at, locale);
 
-    // The second line: typing/waiting → failed → preview.
+    // The second line: search snippet → typing/waiting → failed → preview.
+    const snippet = search?.snippets.get(session.id);
     let previewNode: React.ReactNode;
-    if (isRunning && agentOffline) {
+    if (search && snippet) {
+      previewNode = (
+        <span className="block truncate text-muted-foreground">
+          <HighlightText text={snippet} query={search.query} />
+        </span>
+      );
+    } else if (isRunning && agentOffline) {
       // Task is queued but the agent is offline — it will run once the agent
       // is back. Show a static "waiting", not an animated "typing".
       previewNode = (
@@ -301,7 +314,7 @@ export function ChatThreadList({
       onSelect: () => setPinned.mutate({ sessionId: session.id, pinned: !session.pinned }),
     };
     const rowActions: RowActionItem[] =
-      view === "archived"
+      session.status === "archived"
         ? canManage
           ? [
               {
@@ -420,8 +433,13 @@ export function ChatThreadList({
               />
             )}
             <span className={cn("min-w-0 flex-1 truncate text-body", unread > 0 ? "font-semibold text-foreground" : "font-medium")}>
-              {titleText}
+              {search ? <HighlightText text={titleText} query={search.query} /> : titleText}
             </span>
+            {search && session.status === "archived" && (
+              <span className="inline-flex shrink-0 items-center rounded-xs bg-muted px-1 text-micro font-medium text-muted-foreground">
+                {t(($) => $.list.archived_title)}
+              </span>
+            )}
             {session.visibility === "private" && session.access === "owner" && (
               <span className="inline-flex shrink-0 items-center rounded-xs bg-destructive/10 px-1 text-micro font-medium text-destructive">
                 {t(($) => $.list.private_tag)}
@@ -523,6 +541,36 @@ export function ChatThreadList({
       </div>
     );
   };
+
+  const dialogs = (
+    <>
+      <ChatAccessDialog
+        session={accessSession}
+        open={accessSession != null}
+        onOpenChange={(next) => {
+          if (!next) setAccessSession(null);
+        }}
+      />
+      <ChatVisibilityNotice />
+    </>
+  );
+
+  // Search results: one flat list, active matches first, then archived ones.
+  if (search) {
+    const results = [...historySessions, ...archivedSessions];
+    return (
+      <>
+        {results.length === 0 ? (
+          <div className="px-2 py-1.5 text-caption text-muted-foreground">
+            {emptyLabel ?? t(($) => $.window.no_previous)}
+          </div>
+        ) : (
+          results.map(renderRow)
+        )}
+        {dialogs}
+      </>
+    );
+  }
 
   // Archived view: a back header, then the archived rows. Delete lives only
   // here (via each row's hover actions).

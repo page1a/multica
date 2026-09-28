@@ -25,6 +25,7 @@ import {
   Maximize2,
 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { copyText } from "@multica/ui/lib/clipboard";
 import {
   Dialog,
@@ -33,6 +34,8 @@ import {
 import { useT } from "../i18n";
 import { CodeBlockStatic } from "./code-block-static";
 import { HtmlPreviewBody } from "./html-preview-body";
+import { PREVIEW_POSTER_HEIGHT, PreviewPoster } from "./preview-poster";
+import { useBackToDismiss } from "../navigation";
 
 const CODE_BLOCK_IFRAME_HEIGHT = "h-[480px]";
 
@@ -58,6 +61,10 @@ export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
   const [view, setView] = useState<"preview" | "source">("preview");
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Phones get a short, non-scrollable thumbnail that opens the full-screen
+  // preview on tap (see PreviewPoster); the back gesture closes it again.
+  const isMobile = useIsMobile();
+  useBackToDismiss(isMobile && fullscreen, () => setFullscreen(false));
 
   const handleCopy = async () => {
     if (!html) return;
@@ -73,7 +80,13 @@ export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
   return (
     <div className={cn("code-block-wrapper group/code relative my-3", className)}>
       <div
-        className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100"
+        className={cn(
+          "absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 transition-opacity",
+          // Phones have no hover, so the toolbar is always shown there.
+          isMobile
+            ? "rounded-bl-md bg-background/95"
+            : "opacity-0 group-hover/code:opacity-100 focus-within:opacity-100",
+        )}
       >
         <span className="text-caption text-muted-foreground select-none">{HTML_LANGUAGE_LABEL}</span>
         <button
@@ -123,17 +136,21 @@ export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
         </button>
       </div>
       {view === "preview" ? (
-        <HtmlPreviewBody
-          source={{ kind: "inline", html }}
-          title={t(($) => $.code_block.html_preview)}
-          className={CODE_BLOCK_IFRAME_HEIGHT}
-        />
+        <div className="relative">
+          <HtmlPreviewBody
+            source={{ kind: "inline", html }}
+            title={t(($) => $.code_block.html_preview)}
+            className={isMobile ? PREVIEW_POSTER_HEIGHT : CODE_BLOCK_IFRAME_HEIGHT}
+            iframeClassName={isMobile ? "pointer-events-none" : undefined}
+          />
+          {isMobile && <PreviewPoster onOpen={() => setFullscreen(true)} />}
+        </div>
       ) : (
         <CodeBlockStatic language="xml" body={html} />
       )}
       <Dialog open={fullscreen} onOpenChange={setFullscreen}>
         <DialogContent
-          className="!max-w-6xl !h-[min(90vh,calc(100vh-2rem))] w-full p-0 gap-0 overflow-hidden"
+          className="!max-w-6xl !h-[min(90dvh,calc(100dvh-2rem))] w-full p-0 gap-0 overflow-hidden"
           aria-label={t(($) => $.code_block.fullscreen)}
         >
           <HtmlPreviewBody

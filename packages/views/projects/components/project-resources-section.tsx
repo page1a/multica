@@ -1054,7 +1054,7 @@ function ResourceRow({
         <button
           type="button"
           onClick={onRemove}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+          className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent"
           title={t(($) => $.resources.remove_tooltip)}
         >
           <Trash2 className="size-3 text-muted-foreground" />
@@ -1104,8 +1104,9 @@ function ResourceRow({
 // explicit states because `disabled:opacity-30` alone is MORE specific than
 // `group-hover:opacity-100`: a disabled arrow stayed visible without hovering
 // the row, while the one the user could actually click was the hidden one.
+// Touch screens have no hover, so there the arrows are always shown.
 const MOVE_ARROW_CLASS =
-  "opacity-0 disabled:opacity-0 group-hover:opacity-100 group-hover:disabled:opacity-30 transition-opacity rounded-sm p-0.5 hover:bg-accent disabled:hover:bg-transparent";
+  "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:disabled:opacity-0 [@media(hover:none)]:disabled:opacity-30 group-hover:opacity-100 group-hover:disabled:opacity-30 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent disabled:hover:bg-transparent";
 
 interface LocalDirectoryRowProps {
   resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef };
@@ -1307,7 +1308,7 @@ function LocalDirectoryRow({
         <button
           type="button"
           onClick={() => onEditMode(resource)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+          className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent"
           title={t(($) => $.resources.mode_edit_tooltip)}
         >
           <GitBranch className="size-3 text-muted-foreground" />
@@ -1317,7 +1318,7 @@ function LocalDirectoryRow({
         <button
           type="button"
           onClick={startEdit}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+          className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent"
           title={t(($) => $.resources.local_rename_tooltip)}
         >
           <Pencil className="size-3 text-muted-foreground" />
@@ -1326,7 +1327,7 @@ function LocalDirectoryRow({
       <button
         type="button"
         onClick={onRemove}
-        className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+        className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent"
         title={t(($) => $.resources.remove_tooltip)}
       >
         <Trash2 className="size-3 text-muted-foreground" />

@@ -42,6 +42,9 @@ func (s routingStore) Settings(ctx context.Context, workspaceID string) (routing
 	// unopenable value yields the empty string, which means "no workspace
 	// key" and sends the call to the deployment gateway instead.
 	settings.APIKey = s.h.openRoutingKey(settings.APIKeyEnc)
+	if settings.Analysis != nil {
+		settings.Analysis.APIKey = s.h.openRoutingKey(settings.Analysis.APIKeyEnc)
+	}
 	return settings, nil
 }
 
@@ -65,6 +68,10 @@ func (s routingStore) Issue(ctx context.Context, workspaceID, issueID string) (r
 // enough to tell a one-liner from a project; it does not need the body.
 const descriptionSummaryLimit = 800
 
+// analysisDescriptionLimit bounds what the analysis model reads. It reads the
+// body, unlike the judge, but a ticket that pastes a log is still clipped.
+const analysisDescriptionLimit = 6000
+
 func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issue, error) {
 	out := routing.Issue{
 		ID:                 util.UUIDToString(row.ID),
@@ -77,6 +84,11 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 		AssigneeType: row.AssigneeType.String,
 		CreatorType:  row.CreatorType,
 		CreatorID:    util.UUIDToString(row.CreatorID),
+		Description:  clipRunes(row.Description.String, analysisDescriptionLimit),
+		ContentHash:  routing.ContentHash(row.Title, row.Description.String),
+	}
+	if rec, ok := analysisRecordFromMetadata(row.Metadata); ok {
+		out.Analysis = &rec
 	}
 	if row.ParentIssueID.Valid {
 		out.ParentIssueID = util.UUIDToString(row.ParentIssueID)
@@ -196,6 +208,7 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 			Name:    a.Name,
 			Tier:    a.RoutingTier.String,
 			Demoted: demoted[id],
+			Usage:   a.RoutingUsage,
 		}
 	}
 	return out, nil
@@ -305,7 +318,7 @@ func (s routingStore) OffRosterSeat(ctx context.Context, workspaceID, agentID st
 	if agent.RoutingTier.Valid {
 		tier = agent.RoutingTier.String
 	}
-	return routing.Agent{ID: agentID, Name: agent.Name, Tier: tier}, true, nil
+	return routing.Agent{ID: agentID, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage}, true, nil
 }
 
 func (s routingStore) ReplaceReviewer(ctx context.Context, workspaceID, issueID, currentID string, ref routing.ReviewerRef) (bool, error) {
@@ -1038,4 +1051,97 @@ func clipRunes(s string, limit int) string {
 		return s
 	}
 	return string(r[:limit]) + "…"
+}
+
+// analysisRecordFromMetadata reads the cached analysis off the metadata
+// column. Anything missing or unreadable is simply absent: the next route
+// recomputes it.
+func analysisRecordFromMetadata(raw []byte) (routing.AnalysisRecord, bool) {
+	if len(raw) == 0 {
+		return routing.AnalysisRecord{}, false
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return routing.AnalysisRecord{}, false
+	}
+	value, _ := meta[routing.AnalysisMetadataKey].(string)
+	return routing.ParseAnalysisRecord(value)
+}
+
+// analysisTextLimit keeps a chatty model's prose from pushing the record
+// past the metadata column's size check.
+const analysisTextLimit = 400
+
+// SaveAnalysis caches the record on the issue. It writes the metadata column
+// directly instead of going through SetIssueMetadataKey on purpose: that
+// query bumps the revision and last_activity_at, and the stale sweep reads
+// last_activity_at — a cache write must not look like somebody worked on the
+// ticket.
+func (s routingStore) SaveAnalysis(ctx context.Context, workspaceID, issueID string, rec routing.AnalysisRecord) error {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return err
+	}
+	return s.h.writeAnalysisRecord(ctx, wsID, id, rec)
+}
+
+func (h *Handler) writeAnalysisRecord(ctx context.Context, wsID, issueID pgtype.UUID, rec routing.AnalysisRecord) error {
+	rec.Facts.Summary = clipRunes(rec.Facts.Summary, analysisTextLimit)
+	if rec.Verdict != nil {
+		v := *rec.Verdict
+		v.Reason = clipRunes(v.Reason, analysisTextLimit)
+		rec.Verdict = &v
+	}
+	_, err := h.DB.Exec(ctx, `
+		UPDATE issue
+		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$3::text], to_jsonb($4::text), true)
+		WHERE id = $1 AND workspace_id = $2`,
+		issueID, wsID, routing.AnalysisMetadataKey, rec.Encode())
+	return err
+}
+
+// discussionLimit and discussionCommentLimit bound what the analysis model
+// reads for the blocked row: the last few comments, each clipped.
+const (
+	discussionLimit        = 10
+	discussionCommentLimit = 600
+)
+
+// Discussion returns the recent human and agent comments, oldest first.
+// Routing's own comments are left out: the model would only be reading its
+// earlier answers back.
+func (s routingStore) Discussion(ctx context.Context, workspaceID, issueID string) ([]string, error) {
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.h.DB.Query(ctx, `
+		SELECT author_type, content FROM (
+			SELECT author_type, content, created_at FROM comment
+			WHERE issue_id = $1 AND workspace_id = $2
+			  AND deleted_at IS NULL AND routing_kind IS NULL AND author_type <> 'system'
+			ORDER BY created_at DESC
+			LIMIT $3
+		) recent ORDER BY created_at ASC`, id, wsID, discussionLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var author, content string
+		if err := rows.Scan(&author, &content); err != nil {
+			return nil, err
+		}
+		out = append(out, author+": "+clipRunes(strings.TrimSpace(content), discussionCommentLimit))
+	}
+	return out, rows.Err()
 }

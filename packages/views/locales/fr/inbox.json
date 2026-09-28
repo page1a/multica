@@ -62,7 +62,7 @@
     "unarchive": "Désarchiver",
     "access_request_mention_title": "{{requester}} a mentionné {{agent}} et attend votre approbation",
     "access_request_assign_title": "{{requester}} a assigné {{agent}} et attend votre approbation",
-    "access_request_local_env_note": "Cet agent s'exécute sur votre machine. Une fois approuvée, la tâche peut utiliser votre environnement local : clés, sessions et fichiers.",
+    "access_request_local_env_note": "Une fois approuvée, la tâche peut accéder aux clés, connexions et fichiers de votre machine.",
     "access_pass_prompt": "Autoriser aussi pour un moment :",
     "access_pass_2h": "2 heures",
     "access_pass_today": "Jusqu'à ce soir",
@@ -149,18 +149,17 @@
   },
   "board": {
     "title": "Inbox",
-    "lede": "One row per issue: running or stopped, why it stopped, what happened before, who moves next. Open the issue for details.",
     "activity_link": "All activity",
     "back_to_board": "One row per issue",
     "lanes": {
       "waiting": {
         "title": "Waiting on you",
-        "hint": "Issues that asked for you. Reply and the row goes away; the agent picks up again",
+        "hint": "Tâches qui vous attendent ; dès votre réponse, l'agent reprend.",
         "empty": "Nothing is waiting on you"
       },
       "stalled": {
         "title": "Stopped · unexplained",
-        "hint": "No agent is running and the issue was never closed out. The server traced why",
+        "hint": "Tâches sans agent en cours et jamais clôturées.",
         "empty": "Nothing stopped without an explanation"
       },
       "running": {
@@ -170,7 +169,7 @@
       },
       "fresh": {
         "title": "Du nouveau",
-        "hint": "Non lu depuis votre dernière visite et absent des colonnes ci-dessus. Affiché pour cette visite seulement",
+        "hint": "Autres tâches avec du nouveau depuis votre dernière visite, affichées pour cette visite uniquement.",
         "empty": "Rien de nouveau"
       },
       "done": {

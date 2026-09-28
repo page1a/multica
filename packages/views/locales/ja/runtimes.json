@@ -34,7 +34,7 @@
     "failed": "Mika を開始できませんでした",
     "dialog_title": "Mika をどこで実行しますか？",
     "cancel": "キャンセル",
-    "dialog_description": "Mika が使うランタイムを選んでください。後から設定で変更できます。"
+    "dialog_description": "Mika が使うランタイムを選んでください。"
   },
   "machine": {
     "search_placeholder": "マシンを検索…",
@@ -247,7 +247,7 @@
       "instance_type_required": "インスタンスタイプは必須です",
       "disk_size_invalid": "ディスクサイズは正の整数である必要があります"
     },
-    "create_hint": "名前、インスタンスタイプ、ディスクサイズを選んでください。残りは Fleet が適用します。"
+    "create_hint": "名前、インスタンスタイプ、ディスクサイズを選ぶと、残りは Fleet が設定します。"
   },
   "update": {
     "cli_version_label": "CLI バージョン:",
@@ -328,7 +328,7 @@
     "title": "プラン上限",
     "observed": "{{when}}に更新",
     "unavailable": "上限データは利用できません",
-    "unavailable_hint": "上限スナップショットはまだ報告されていません。Codex は CLI セッション後に報告しますが、古いデーモンと未対応の CLI では利用できません。",
+    "unavailable_hint": "上限はまだ報告されていません。Codex CLI セッションを 1 回実行すると表示されます。",
     "unavailable_hint_claude": "Claude Code は現在、セッション上限に達した場合にのみプラン上限を報告します。",
     "limit_reached": "上限に達しました",
     "used": "{{percent}}% 使用済み",

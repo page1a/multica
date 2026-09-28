@@ -56,9 +56,19 @@ func (r *Router) Summarize(ctx context.Context, workspaceID string, f SummaryFac
 	if !ok {
 		return "", ErrJudgeUnavailable
 	}
+	// The sentence is prose, which is the analysis role's job: a System One
+	// judge answers choices and cannot write it. With analysis off the judge's
+	// endpoint is used as before; with neither role on there is nobody to ask.
+	target := settings.Target()
+	switch {
+	case settings.AnalysisOn():
+		target = settings.AnalysisTarget()
+	case !settings.JudgeOn():
+		return "", ErrJudgeUnavailable
+	}
 	ctx, cancel := context.WithTimeout(ctx, summaryTimeout)
 	defer cancel()
-	return s.Summarize(ctx, settings.Target(), f)
+	return s.Summarize(ctx, target, f)
 }
 
 // Summarize dispatches to the judge that speaks the target's protocol.

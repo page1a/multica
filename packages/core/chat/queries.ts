@@ -34,6 +34,8 @@ export const chatKeys = {
   all: (wsId: string) => ["chat", wsId] as const,
   /** Full sessions list (active + archived); the dropdown splits locally. */
   sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
+  messageSearch: (wsId: string, q: string) =>
+    [...chatKeys.all(wsId), "message-search", q] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
   messagesAll: () => ["chat", "messages"] as const,
   messages: (sessionId: string) => [...chatKeys.messagesAll(), sessionId] as const,
@@ -79,6 +81,19 @@ export function chatSessionsOptions(wsId: string) {
     queryKey: chatKeys.sessions(wsId),
     queryFn: () => api.listChatSessions({ status: "all" }),
     staleTime: Infinity,
+  });
+}
+
+/**
+ * The chat page's content search: chats whose messages contain `q`. Titles are
+ * matched locally against the sessions cache; this only adds what was said.
+ */
+export function chatMessageSearchOptions(wsId: string, q: string) {
+  return queryOptions({
+    queryKey: chatKeys.messageSearch(wsId, q),
+    queryFn: ({ signal }) => api.searchChatMessages(q, signal),
+    enabled: q.trim().length > 0,
+    staleTime: 30_000,
   });
 }
 

@@ -32,16 +32,13 @@
   },
   "state": {
     "idle_title": "Rien n'a encore été exporté",
-    "idle_body": "Choisissez une plage, puis « {{action}} ». Le serveur construit le paquet d'un seul tenant : logs structurés, métadonnées d'exécution et un résumé à coller directement dans un chat d'IA.",
     "section": "Résultat",
     "collecting_title": "Collecte des logs",
-    "collecting_body": "Lecture des logs structurés, des métadonnées d'exécution et du résumé masqué.",
     "collected": "{{n}} collectées",
     "received": "{{received}} sur {{total}} reçus",
     "empty_title": "Aucun log sur cette plage",
     "empty_body": "Rien ne correspond à « {{range}} ».",
     "failed_title": "L'export ne s'est pas terminé",
-    "partial_note": "Le serveur construit le paquet d'un seul tenant : un export en échec ne laisse aucun document partiel à transmettre. Le dernier paquet abouti est toujours ici.",
     "restored": "Ceci est le dernier paquet abouti."
   },
   "card": {
@@ -55,7 +52,7 @@
     "no_summary": "(aucun texte de résumé)"
   },
   "report": {
-    "hint": "Pousse d'abord vers le dépôt de logs de l'espace de travail et ne laisse qu'un lien dans le commentaire ; en cas d'indisponibilité, bascule sur une pièce jointe.",
+    "hint": "Le paquet est envoyé vers le dépôt de logs de l'espace de travail ou en pièce jointe du commentaire.",
     "running": "Signalement…",
     "success_git": "Signalé sur {{issue}} — le paquet a été poussé vers {{repo}}.",
     "success_attachment": "Signalé sur {{issue}} — le paquet est une pièce jointe du commentaire.",
@@ -67,6 +64,6 @@
   "error": {
     "export_failed": "Échec de l'export",
     "report_failed": "Échec du signalement",
-    "no_issue": "Cette exécution n'est liée à aucun ticket, elle ne peut pas être signalée."
+    "no_issue": "Cette exécution n'est liée à aucune tâche, elle ne peut pas être signalée."
   }
 }

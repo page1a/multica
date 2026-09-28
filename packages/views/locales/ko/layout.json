@@ -47,12 +47,12 @@
     "workspaces_label": "워크스페이스",
     "create_workspace": "워크스페이스 만들기",
     "search_workspaces_placeholder": "워크스페이스 검색…",
-    "no_matching_workspaces": "“{{query}}”와 일치하는 워크스페이스가 없습니다",
+    "no_matching_workspaces": "\"{{query}}\"와 일치하는 워크스페이스가 없습니다",
     "pin_workspace": "상단에 고정",
     "unpin_workspace": "고정 해제",
     "organize_workspaces": "워크스페이스 정리…",
     "organize_title": "워크스페이스 정리",
-    "organize_description": "드래그해서 순서를 바꾸고, 고정 영역으로 끌어오면 고정됩니다. 내가 보는 순서만 바뀌며 다른 멤버에게는 영향이 없습니다.",
+    "organize_description": "드래그해서 순서를 바꿉니다. 내가 보는 순서만 바뀝니다.",
     "organize_drag": "{{name}} 드래그",
     "organize_rest_label": "다른 워크스페이스",
     "organize_pin_hint": "여기로 드래그해서 고정",
@@ -82,7 +82,7 @@
     "badge": "게스트입니다. 보기만 할 수 있어요",
     "no_edit": "게스트는 편집할 수 없습니다",
     "nothing_shared_title": "아직 공유된 내용이 없습니다",
-    "nothing_shared_description": "워크스페이스 구성원이 나를 프로젝트에 추가하면 여기에서 볼 수 있습니다.",
+    "nothing_shared_description": "프로젝트에 추가되면 여기에 볼 수 있는 내용이 표시됩니다.",
     "not_found_title": "이 페이지를 찾을 수 없습니다",
     "not_found_description": "삭제되었거나, 나에게 공유되지 않았을 수 있습니다."
   }

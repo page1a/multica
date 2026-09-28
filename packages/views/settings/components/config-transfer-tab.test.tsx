@@ -203,7 +203,7 @@ describe("ConfigTransferTab", () => {
     expect(screen.getByText("1")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Refill these secrets after import. The copy is not complete until you do.",
+        "Refill these secrets after import.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "agent · Builder · custom_env" })).toHaveAttribute(
@@ -296,10 +296,10 @@ describe("ConfigTransferTab", () => {
 
     const hint = await screen.findByTestId("config-transfer-unsupported");
     expect(hint).toHaveTextContent(
-      "This server does not support configuration export/import. You need a kun self-hosted instance.",
+      "This server does not support configuration export/import; a kun self-hosted instance is required.",
     );
     expect(hint).toHaveTextContent(
-      "To migrate from official cloud, use “Migrate across environments (including chats)” above.",
+      'To migrate from official cloud, use "Migrate across environments (including chats)" above.',
     );
     expect(screen.queryByText(/API error: 404/)).not.toBeInTheDocument();
     expect(
@@ -325,7 +325,7 @@ describe("ConfigTransferTab", () => {
     expect(
       await screen.findByTestId("config-transfer-unsupported"),
     ).toHaveTextContent(
-      "This server does not support configuration export/import. You need a kun self-hosted instance.",
+      "This server does not support configuration export/import; a kun self-hosted instance is required.",
     );
     expect(screen.queryByText(/API error: 404/)).not.toBeInTheDocument();
     expect(

@@ -280,7 +280,7 @@ describe("the write-only key", () => {
     expect(keyInput.value).toBe("");
     expect(keyInput.type).toBe("password");
     // The mask still has to be readable somewhere, just not as an input value.
-    expect(screen.getByText(/A key is stored \(sk-…0000\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Key stored \(sk-…0000\)/)).toBeInTheDocument();
   });
 
   it("submits no api_key at all when the box was left untouched", async () => {
@@ -428,7 +428,7 @@ describe("the model selector", () => {
     // Nothing is asked of the machine until a credential exists to ask with.
     expect(screen.getByRole("button", { name: "Fetch models" })).toBeDisabled();
     expect(
-      screen.getByText(/Enter an API endpoint and key first/),
+      screen.getByText(/Enter the endpoint and key first/),
     ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("API key"), {
@@ -549,7 +549,7 @@ describe("verifying a save", () => {
 
     expect(await screen.findByTestId("preset-verify-failure")).toBeInTheDocument();
     expect(screen.getByTestId("preset-verify-failure-message")).toHaveTextContent(
-      /quota is used up/,
+      /Quota used up/,
     );
     expect(screen.getByText(/2026-09-21 08:00/)).toBeInTheDocument();
     const link = screen.getByRole("link", {
@@ -670,7 +670,7 @@ describe("syncing a preset to other machines", () => {
 
     expect(
       await screen.findByText(
-        "One of the selected machines has no key for this provider. Type the key to sync it.",
+        "A selected machine has no key for this provider. Enter one to sync.",
       ),
     ).toBeInTheDocument();
     expect(syncProviderPresetToRuntimes).not.toHaveBeenCalled();

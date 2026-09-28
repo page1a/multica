@@ -38,6 +38,8 @@ import type {
   AgentBuilderSessionSummary,
   StoredAgentDraft,
   UpdateAgentRequest,
+  BulkUpdateAgentRoutingRequest,
+  BulkUpdateAgentRoutingResponse,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
@@ -301,6 +303,9 @@ import {
   ChatMessagesPageSchema,
   ChatPendingTaskSchema,
   ChatSessionListSchema,
+  ChatMessageSearchHitListSchema,
+  EMPTY_CHAT_MESSAGE_SEARCH_HITS,
+  type ChatMessageSearchHit,
   ChatSessionSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
@@ -2210,6 +2215,16 @@ export class ApiClient {
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
     assertAgentConversationStartersWriteSupported(data);
     return this.fetch(`/api/agents/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  /** Tier and/or usage on several seats in one all-or-nothing write. */
+  async bulkUpdateAgentRouting(
+    data: BulkUpdateAgentRoutingRequest,
+  ): Promise<BulkUpdateAgentRoutingResponse> {
+    return this.fetch("/api/agents/routing", {
       method: "PUT",
       body: JSON.stringify(data),
     });
@@ -4415,6 +4430,17 @@ export class ApiClient {
     });
     return parseWithFallback(raw, ChatSessionListSchema, EMPTY_CHAT_SESSION_LIST, {
       endpoint: "GET /api/chat/sessions",
+    });
+  }
+
+  /** Chats (active and archived) whose message content contains every word of `q`. */
+  async searchChatMessages(q: string, signal?: AbortSignal): Promise<ChatMessageSearchHit[]> {
+    const raw: unknown = await this.fetch(
+      `/api/chat/sessions/search?${new URLSearchParams({ q })}`,
+      signal ? { signal } : undefined,
+    );
+    return parseWithFallback(raw, ChatMessageSearchHitListSchema, EMPTY_CHAT_MESSAGE_SEARCH_HITS, {
+      endpoint: "GET /api/chat/sessions/search",
     });
   }
 

@@ -211,3 +211,33 @@ func TestAgentNoteCarriesThreadReviewerAndIssue(t *testing.T) {
 		t.Fatalf("wait audit = %s", wait)
 	}
 }
+
+// DENE-922: inside a tier the handoff goes to the seat with the most usage
+// headroom, but a demoted seat still loses however ample it is tagged.
+func TestPickPrefersUsageHeadroomAfterDemotion(t *testing.T) {
+	ladder := []string{"strongest", "strong", "medium", "weak"}
+	failed := Seat{ID: "a", Name: "孙悟空", Tier: "strong"}
+	roster := []Seat{
+		failed,
+		{ID: "b", Name: "克林", Tier: "strong", Eligible: true, UsageRank: 2},
+		{ID: "c", Name: "孙悟天", Tier: "strong", Eligible: true, UsageRank: 0},
+	}
+	got, ok := Pick(failed, roster, ladder)
+	if !ok || got.Seat.ID != "c" {
+		t.Fatalf("pick = %+v ok=%v, want the ample seat c", got, ok)
+	}
+
+	roster[2].Demoted = true
+	got, ok = Pick(failed, roster, ladder)
+	if !ok || got.Seat.ID != "b" {
+		t.Fatalf("pick = %+v ok=%v, want b — c is demoted", got, ok)
+	}
+
+	// Equal usage falls back to the name.
+	roster[2].Demoted = false
+	roster[2].UsageRank = 2
+	got, _ = Pick(failed, roster, ladder)
+	if got.Seat.ID != "b" {
+		t.Fatalf("pick = %+v, want b by name", got)
+	}
+}

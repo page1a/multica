@@ -282,6 +282,8 @@ function IssueSurfaceContent({
             }
             tableFacetCounts={controller.tableFacetCounts}
             onTableFacetChange={controller.setActiveTableFacet}
+            search={controller.pageSearch}
+            onSearchChange={controller.setPageSearch}
             saveViewScope={
               scope.type === "project"
                 ? { kind: "project", projectId: scope.projectId }
@@ -369,8 +371,6 @@ function IssueSurfaceContent({
               <TableView
                 serverQuery={controller.tableQuerySpec}
                 childProgressMap={controller.childProgressMap}
-                search={controller.tableSearch}
-                onSearchChange={controller.setTableSearch}
                 onLoadedIssuesChange={handleTableLoadedIssuesChange}
                 onCreateIssue={openCreateIssue}
                 exportIssues={controller.exportTableIssues}

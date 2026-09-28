@@ -1,11 +1,12 @@
 {
   "title": "Search",
-  "description": "Search pages, issues, projects, and members",
+  "description": "Search pages, issues, projects, chats, and members",
   "placeholder": "Type a command or search...",
   "groups": {
     "pages": "Pages",
     "commands": "Commands",
     "members": "Members",
+    "chats": "Chats",
     "projects": "Projects",
     "issues": "Issues",
     "cancelled": "Cancelled",
@@ -23,13 +24,17 @@
     "switch_to_dark": "Switch to Dark Theme",
     "use_system_theme": "Use System Theme"
   },
+  "chat": {
+    "archived": "Archived",
+    "untitled": "Untitled chat"
+  },
   "toast": {
     "link_copied": "Link copied",
     "copied_identifier": "Copied {{identifier}}"
   },
   "empty": {
     "no_results": "No results found.",
-    "type_to_search": "Type to search issues and projects"
+    "type_to_search": "Type to search issues, projects, and chats"
   },
   "trigger": {
     "label": "Search..."

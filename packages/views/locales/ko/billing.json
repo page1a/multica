@@ -120,8 +120,7 @@
       "syncing_description": "결제가 완료되었습니다. Stripe의 요금제 변경 확인을 기다리고 있습니다.",
       "timeout_description": "결제는 접수되었지만 구독이 아직 동기화 중입니다. 잠시 후 페이지를 새로고침하세요.",
       "active_title": "Pro 활성화됨",
-      "active_description": "이 워크스페이스에서 이제 Pro를 사용할 수 있습니다.",
-      "portal_description": "아래에 최신 구독 정보를 표시합니다."
+      "active_description": "이 워크스페이스에서 이제 Pro를 사용할 수 있습니다."
     },
     "past_due": {
       "title": "결제 정보를 확인해야 합니다",
@@ -140,8 +139,7 @@
       "paused_description": "결제 관리를 열어 일시 중지 상태와 복구 방법을 확인하세요.",
       "unpaid_title": "구독이 미결제 상태입니다",
       "unpaid_description": "결제 관리를 열어 미결제 잔액을 해결하세요.",
-      "canceled_title": "구독이 취소되었습니다",
-      "canceled_description": "위 요금제 배지는 이 워크스페이스에 현재 적용되는 요금제를 보여 줍니다."
+      "canceled_title": "구독이 취소되었습니다"
     },
     "current": {
       "title": "현재 요금제",
@@ -150,10 +148,7 @@
       "members_description": "에이전트와 대기 중인 초대는 좌석에 포함되지 않습니다.",
       "member_count_other": "멤버 {{count}}명",
       "billing_interval": "결제 주기",
-      "period_end": "현재 결제 기간 종료일",
-      "plan_description": "이 워크스페이스에 현재 적용되는 entitlement입니다.",
-      "billing_interval_description": "활성 구독에 저장된 결제 주기입니다.",
-      "period_end_description": "현재 구독 정보에 보고된 날짜입니다."
+      "period_end": "현재 결제 기간 종료일"
     },
     "upgrade": {
       "title": "Pro로 업그레이드",
@@ -170,8 +165,7 @@
       "title": "구독 관리",
       "description": "결제 수단, 청구서, 구독 취소.",
       "portal": "Stripe Billing Portal",
-      "portal_unavailable": "이 워크스페이스에서 사용할 수 있는 Stripe Billing Portal이 없습니다.",
-      "portal_description": "Stripe에서 이 워크스페이스의 구독을 관리합니다."
+      "portal_unavailable": "이 워크스페이스에서 사용할 수 있는 Stripe Billing Portal이 없습니다."
     },
     "limits": {
       "title": "사용량 및 한도",
@@ -186,10 +180,7 @@
       "usage_total": "{{total}} / {{limit}}",
       "usage_breakdown": "완료 {{used}} · 진행 중 {{reserved}}",
       "resets_at": "{{date}}에 초기화",
-      "usage_unavailable": "사용량을 일시적으로 불러올 수 없습니다",
-      "description": "한도와 사용량은 서버의 현재 entitlement와 쿼터 집계에서 가져옵니다.",
-      "issues_description": "현재 태스크 사용량과 서버에서 반환한 유효 한도입니다.",
-      "autopilots_description": "현재 자동화 사용량과 서버에서 반환한 초기화 시각입니다."
+      "usage_unavailable": "사용량을 일시적으로 불러올 수 없습니다"
     },
     "seats": {
       "title": "좌석",
@@ -214,9 +205,7 @@
       "members_over_capacity_description": "이 워크스페이스에는 멤버가 {{actual}}명이지만 구매한 좌석은 {{purchased}}개입니다. 더 초대하기 전에 좌석을 추가하거나 멤버를 제거하세요.",
       "occupancy_over_capacity_description": "이 워크스페이스는 구매한 좌석 {{purchased}}개에 대해 {{occupied}}개를 점유하고 있습니다(멤버 {{members}}명, 대기 중인 초대 {{reserved}}건). 더 초대하기 전에 좌석을 추가하거나 멤버를 제거하거나 대기 중인 초대를 취소하세요.",
       "updated": "좌석 구매를 제출했습니다",
-      "available_help": "사용 가능한 좌석 계산 방법",
-      "human_members_description": "구매한 용량을 사용 중인 확인된 사용자 멤버입니다. 멤버 변경 후 새로고침할 수 있습니다.",
-      "billed_description": "현재 Stripe를 통해 구매한 좌석 수입니다."
+      "available_help": "사용 가능한 좌석 계산 방법"
     },
     "seat_purchase": {
       "title": "좌석 추가",

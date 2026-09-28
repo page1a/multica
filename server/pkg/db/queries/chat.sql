@@ -1925,3 +1925,16 @@ WHERE chat_session_id = $1
   AND message_kind <> 'onboarding_kickoff'
 ORDER BY created_at ASC, id ASC
 LIMIT 1;
+
+-- name: SearchChatMessagesInSessions :many
+-- Chat-page content search: for each candidate session, the newest message
+-- whose content contains every pattern (already lowered and LIKE-escaped).
+-- The caller passes only sessions it has already proven visible to the viewer,
+-- so access is decided once, by the list query, not re-derived here.
+SELECT DISTINCT ON (m.chat_session_id)
+       m.chat_session_id, m.id, m.content, m.role, m.created_at
+FROM chat_message m
+WHERE m.chat_session_id = ANY(sqlc.arg(session_ids)::uuid[])
+  AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+  AND LOWER(m.content) LIKE ALL(sqlc.arg(patterns)::text[])
+ORDER BY m.chat_session_id, m.created_at DESC;

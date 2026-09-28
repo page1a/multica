@@ -138,7 +138,7 @@ describe("BaseRoleField", () => {
 
     expect(screen.queryByRole("combobox", { name: "Base role" })).toBeNull();
     expect(
-      screen.getByText(/inheritance is two levels only/i),
+      screen.getByText(/can't attach to a base role/i),
     ).toBeTruthy();
   });
 

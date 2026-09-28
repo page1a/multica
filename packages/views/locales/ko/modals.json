@@ -189,7 +189,7 @@
     "switch_to_manual": "직접 만들기로 전환",
     "switch_to_manual_tooltip": "직접 만들기로 전환합니다. 필드를 직접 채웁니다.",
     "switch_to_align": "먼저 요구사항 정렬",
-    "switch_to_align_tooltip": "만들기 전에 먼저 대화로 정렬합니다. 본문과 첨부 파일도 함께 넘어갑니다.",
+    "switch_to_align_tooltip": "만들기 전에 먼저 대화로 정리합니다. 본문과 첨부 파일도 함께 넘어갑니다.",
     "switch_from_align": "새 태스크로 전환",
     "switch_from_align_tooltip": "태스크 만들기로 돌아갑니다. 필드를 직접 채웁니다.",
     "create_another": "하나 더 만들기",

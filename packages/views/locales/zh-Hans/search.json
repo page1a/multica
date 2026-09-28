@@ -1,11 +1,12 @@
 {
   "title": "搜索",
-  "description": "搜索页面、任务、项目和成员",
+  "description": "搜索页面、任务、项目、聊天和成员",
   "placeholder": "输入命令或关键词搜索...",
   "groups": {
     "pages": "页面",
     "commands": "命令",
     "members": "成员",
+    "chats": "聊天",
     "projects": "项目",
     "issues": "任务",
     "cancelled": "已取消",
@@ -23,13 +24,17 @@
     "switch_to_dark": "切换到深色主题",
     "use_system_theme": "跟随系统主题"
   },
+  "chat": {
+    "archived": "已归档",
+    "untitled": "未命名聊天"
+  },
   "toast": {
     "link_copied": "已复制链接",
     "copied_identifier": "已复制 {{identifier}}"
   },
   "empty": {
     "no_results": "未找到结果。",
-    "type_to_search": "输入关键词搜索任务和项目"
+    "type_to_search": "输入关键词搜索任务、项目和聊天"
   },
   "trigger": {
     "label": "搜索..."

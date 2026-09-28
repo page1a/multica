@@ -29,6 +29,7 @@ vi.mock("./use-download-attachment", () => ({
 }));
 
 vi.mock("../navigation", () => ({
+  useBackToDismiss: () => {},
   useNavigation: () => ({
     push: vi.fn(),
     replace: vi.fn(),

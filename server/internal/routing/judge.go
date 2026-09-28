@@ -63,6 +63,9 @@ type Advice struct {
 	SuggestedTier string `json:"suggested_tier"`
 	// Reason is one sentence of judgement and one of suggestion.
 	Reason string `json:"reason"`
+	// Stuck is the analysis model's "where is it stuck" summary. Empty when
+	// the analysis role is off: the judge does not read the conversation.
+	Stuck string `json:"stuck,omitempty"`
 }
 
 // State is the trimmed, structured view of an issue the judge is given.
@@ -94,6 +97,13 @@ type JudgeState struct {
 	// ProviderQuotas is the subscribed provider rollup. It is not a seat's
 	// liveness: a missing provider row is unknown and does not remove seats.
 	ProviderQuotas []ProviderQuota `json:"provider_quotas,omitempty"`
+	// Facts is the analysis role's reading of the ticket. When it is present
+	// the description summary is dropped: the judge decides from the facts,
+	// which is the whole point of putting a reader in front of it.
+	Facts *Facts `json:"facts,omitempty"`
+	// Stuck is the analysis model's summary of where a blocked ticket is
+	// stuck. Blocked row only.
+	Stuck string `json:"stuck,omitempty"`
 }
 
 // Judge answers the two questions Route cannot answer deterministically.
@@ -193,7 +203,7 @@ Answer three things and nothing else:
 2. reviewer: whether this ticket needs a separate acceptance pass — "seat" (an agent checks it), "human" (acceptance needs a conversation with a person, e.g. product judgement, money, irreversible or outward-facing effects), or "none" (small, self-evident work).
 3. reviewer_tier: when reviewer is "seat", which tier checks it. Choose from candidate_tiers exactly.
 
-Large or vague tickets default to needing review. Report calibrated confidence in [0,1] separately for the executor choice and the reviewer choice; below-threshold answers are discarded rather than used, so do not inflate them.
+Large or vague tickets default to needing review. When the payload carries facts, decide from them: they are a reading of the whole ticket. Report calibrated confidence in [0,1] separately for the executor choice and the reviewer choice; below-threshold answers are discarded rather than used, so do not inflate them.
 
 Respond with a JSON object with keys: executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. reason is one short sentence for a human reader.
 

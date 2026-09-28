@@ -263,8 +263,6 @@ function Harness({ surfaceKey }: { surfaceKey: string }) {
           <TableView
             serverQuery={serverQuery}
             childProgressMap={EMPTY_PROGRESS}
-            search=""
-            onSearchChange={noop}
             onLoadedIssuesChange={noop}
             onCreateIssue={noop}
             exportIssues={exportIssues}

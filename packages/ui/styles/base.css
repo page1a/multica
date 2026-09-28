@@ -10,6 +10,7 @@
  *
  * Which one to reach for depends on how the site approaches the corner:
  *  - a full-width bar arrives from the left     -> pe-chat-launcher
+ *  - a centred column may run into it           -> pe-chat-launcher-overlap
  *  - scrollable content ends there              -> pb-chat-launcher
  *  - a centred overlay grows into it            -> above-chat-launcher
  *
@@ -20,6 +21,19 @@
  * usually applied under a `max-md:` variant. */
 @utility pe-chat-launcher {
   padding-inline-end: var(--chat-launcher-clearance);
+}
+
+/* A width-capped, centred column inside an `@container` only reaches the
+ * corner once the container is too narrow to leave a margin beside it. This
+ * pads by the part of the clearance that margin doesn't already cover —
+ * (100cqw - 100%) / 2 is the gap from the element's containing block to the
+ * container's end edge — so it is 0 on a wide container and grows as the
+ * column meets the edge, instead of narrowing the element at every width. */
+@utility pe-chat-launcher-overlap {
+  padding-inline-end: max(
+    0px,
+    calc(var(--chat-launcher-clearance) - (100cqw - 100%) / 2)
+  );
 }
 
 @utility pb-chat-launcher {

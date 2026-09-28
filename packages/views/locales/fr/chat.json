@@ -2,7 +2,11 @@
   "page": {
     "title": "Discussion",
     "select_prompt": "Choisissez une conversation, ou démarrez-en une nouvelle avec +",
-    "agent_link_no_access": "Vous n'avez pas accès à la discussion avec cet agent."
+    "agent_link_no_access": "Vous n'avez pas accès à la discussion avec cet agent.",
+    "search_placeholder": "Rechercher un titre ou un contenu de discussion…",
+    "search_clear": "Effacer la recherche",
+    "search_empty": "Aucune discussion ne correspond",
+    "back": "Retour"
   },
   "project_bar": {
     "all": "Tout",
@@ -97,9 +101,9 @@
       "runtime_missing_executable": "Le CLI de l'agent n'a pas pu être exécuté sur cette machine. Vérifiez qu'il est correctement installé et présent dans le PATH, puis réessayez.",
       "runtime_version_unsupported": "Le CLI de l'agent est trop ancien pour ce runtime. Mettez-le à jour, puis réessayez.",
       "fallback": "Une erreur est survenue et l'agent n'a pas pu terminer sa réponse. Veuillez réessayer.",
-      "antigravity_session_token_expired": "Cette exécution Antigravity a duré plus longtemps que le jeton de connexion du CLI, si bien que le modèle a cessé de l'accepter. Votre connexion est toujours valide — la prochaine exécution démarrera une nouvelle session et le rechargera, il vous suffit donc de renvoyer votre message.",
-      "antigravity_not_logged_in": "Le CLI Antigravity indique qu'il n'est pas connecté sur la machine qui exécute l'agent. Lancez `agy -p ping` sur cette machine : s'il répond, renvoyez simplement votre message — la prochaine exécution démarrera une nouvelle session ; s'il échoue immédiatement, reconnectez-vous à Antigravity.",
-      "provider_server_error": "Le fournisseur du modèle a renvoyé une erreur de son côté — son API ou son service d'authentification — alors même que le compte de l'agent est valide. Se reconnecter n'y changera rien. Veuillez réessayer dans un instant."
+      "antigravity_session_token_expired": "Le jeton de connexion Antigravity a expiré pendant cette exécution. Votre connexion est valide ; renvoyez votre message.",
+      "antigravity_not_logged_in": "Antigravity n'est pas connecté sur la machine qui exécute l'agent. Lancez `agy -p ping` sur cette machine et renvoyez votre message s'il répond, sinon reconnectez-vous.",
+      "provider_server_error": "Le fournisseur du modèle a renvoyé une erreur. Votre compte est valide ; réessayez dans un instant."
     },
     "tools_one": "{{count}} outil",
     "tools_other": "{{count}} outils",
@@ -296,14 +300,14 @@
     "extra": "Suivre le projet + personnes en plus",
     "extra_hint": "Les membres du projet, plus les personnes ci-dessous",
     "private": "Privé",
-    "private_hint": "Vous seul pouvez le voir. Il disparaît des autres listes",
+    "private_hint": "Vous seul pouvez le voir",
     "view": "Lecture seule",
     "speak": "Peut écrire",
     "add": "Ajouter une personne…",
     "remove": "Retirer",
     "save": "Enregistrer",
     "cancel": "Annuler",
-    "note_bound": "Le passer en privé le retire tout de suite des autres listes. Vous pouvez revenir en arrière.",
+    "note_bound": "Une fois privé, il disparaît des listes des autres.",
     "note_unbound": "Une discussion sans projet reste privée.",
     "view_only": "Vous pouvez lire cette discussion, pas y écrire.",
     "header_private": "Vous seul",

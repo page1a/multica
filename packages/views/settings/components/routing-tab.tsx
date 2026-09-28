@@ -15,15 +15,21 @@ import {
   workspaceKeys,
   workspaceListOptions,
 } from "@multica/core/workspace/queries";
-import type { RoutingHealth } from "@multica/core/workspace/routing-health";
+import {
+  roleHealth,
+  type RoutingHealth,
+  type RoutingRoleHealth,
+} from "@multica/core/workspace/routing-health";
 import { DEFAULT_ROUTING_POLICY_PROMPT } from "@multica/core/workspace/routing-policy-prompt";
 import {
   normalizeStaleReviewHours,
   normalizeThreshold,
   parseRoutingSettings,
   routingGatewayIsComplete,
+  routingMode,
   routingState,
   withRoutingSettings,
+  type RoutingRole,
   type RoutingSettings,
   type RoutingState,
 } from "@multica/core/workspace/routing-settings";
@@ -37,6 +43,7 @@ import {
   SettingsTab,
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
+import { RoutingSeatsTable } from "./routing-seats-table";
 
 /**
  * The routing section — the ONLY screen this feature adds.
@@ -68,6 +75,11 @@ import { useAutoSave } from "./use-auto-save";
  * The key is the one field here that is write-only. It is sealed server-side
  * and stripped from every response, so there is nothing to render back — the
  * box shows whether a key is stored, never which.
+ *
+ * Two model roles, each with its own switch, endpoint and key (DENE-923): the
+ * analysis model reads the whole ticket and reduces it to facts; the judge
+ * picks the tier. Either, both or neither can be on, and the section says
+ * which combination is in effect.
  */
 export function RoutingTab() {
   const { t } = useT("settings");
@@ -85,10 +97,16 @@ export function RoutingTab() {
 
   const [enabled, setEnabled] = useState(saved.enabled);
   const [model, setModel] = useState(saved.model);
+  const [judgeEnabled, setJudgeEnabled] = useState(saved.judge_enabled);
+  const [analysisEnabled, setAnalysisEnabled] = useState(saved.analysis.enabled);
+  const [analysisModel, setAnalysisModel] = useState(saved.analysis.model);
+  const [analysisBaseUrl, setAnalysisBaseUrl] = useState(saved.analysis.base_url);
   const [threshold, setThreshold] = useState(String(saved.confidence_threshold));
   const [staleHours, setStaleHours] = useState(String(saved.stale_review_hours));
   const [baseUrl, setBaseUrl] = useState(saved.base_url);
   const [policyPrompt, setPolicyPrompt] = useState(saved.policy_prompt ?? "");
+  const [usagePriority, setUsagePriority] = useState(saved.usage_priority);
+  const [allowUpshift, setAllowUpshift] = useState(saved.allow_upshift);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const autoDiscoverKey = useRef("");
   const autoFilledModel = useRef("");
@@ -97,6 +115,7 @@ export function RoutingTab() {
   // is both useless and a real key sitting in a row nobody will think to
   // clear. The key is committed by an explicit button instead.
   const [keyInput, setKeyInput] = useState("");
+  const [analysisKeyInput, setAnalysisKeyInput] = useState("");
 
   // Reset only when the workspace changes, not on every cached-object
   // replacement — an unrelated mutation must not wipe an unsaved edit.
@@ -104,11 +123,18 @@ export function RoutingTab() {
     const next = parseRoutingSettings(workspace?.settings);
     setEnabled(next.enabled);
     setModel(next.model);
+    setJudgeEnabled(next.judge_enabled);
+    setAnalysisEnabled(next.analysis.enabled);
+    setAnalysisModel(next.analysis.model);
+    setAnalysisBaseUrl(next.analysis.base_url);
     setThreshold(String(next.confidence_threshold));
     setStaleHours(String(next.stale_review_hours));
     setBaseUrl(next.base_url);
     setPolicyPrompt(next.policy_prompt ?? "");
+    setUsagePriority(next.usage_priority);
+    setAllowUpshift(next.allow_upshift);
     setKeyInput("");
+    setAnalysisKeyInput("");
     setAvailableModels([]);
     autoDiscoverKey.current = "";
     autoFilledModel.current = "";
@@ -119,12 +145,33 @@ export function RoutingTab() {
     () => ({
       enabled,
       model,
+      judge_enabled: judgeEnabled,
+      analysis: {
+        enabled: analysisEnabled,
+        model: analysisModel,
+        base_url: analysisBaseUrl,
+      },
       confidence_threshold: normalizeThreshold(Number(threshold)),
       stale_review_hours: normalizeStaleReviewHours(Number(staleHours)),
       base_url: baseUrl,
       policy_prompt: policyPrompt,
+      usage_priority: usagePriority,
+      allow_upshift: allowUpshift,
     }),
-    [enabled, model, threshold, staleHours, baseUrl, policyPrompt],
+    [
+      enabled,
+      model,
+      judgeEnabled,
+      analysisEnabled,
+      analysisModel,
+      analysisBaseUrl,
+      threshold,
+      staleHours,
+      baseUrl,
+      policyPrompt,
+      usagePriority,
+      allowUpshift,
+    ],
   );
 
   const discoverModels = useMutation({
@@ -175,10 +222,16 @@ export function RoutingTab() {
     isEqual: (a, b) =>
       a.enabled === b.enabled &&
       a.model.trim() === b.model.trim() &&
+      a.judge_enabled === b.judge_enabled &&
+      a.analysis.enabled === b.analysis.enabled &&
+      a.analysis.model.trim() === b.analysis.model.trim() &&
+      a.analysis.base_url.trim() === b.analysis.base_url.trim() &&
       a.confidence_threshold === b.confidence_threshold &&
       a.stale_review_hours === b.stale_review_hours &&
       a.base_url.trim() === b.base_url.trim() &&
-      (a.policy_prompt ?? "").trim() === (b.policy_prompt ?? "").trim(),
+      (a.policy_prompt ?? "").trim() === (b.policy_prompt ?? "").trim() &&
+      a.usage_priority === b.usage_priority &&
+      a.allow_upshift === b.allow_upshift,
   });
 
   // Live health from the server. Without it the fourth state is unreachable:
@@ -194,13 +247,18 @@ export function RoutingTab() {
   // A workspace that already has URL + key saved should not need to touch the
   // form again after an app restart. Discover once for the current target;
   // manual re-entry remains available after a provider that has no /models.
+  const judgeHealth = roleHealth(health.data, "judge");
+  const analysisHealth = roleHealth(health.data, "analysis");
   useEffect(() => {
-    const healthData = health.data;
+    // The catalog is the judge endpoint's: that is the endpoint the model
+    // box above it is sent to.
+    const healthData = judgeHealth;
     if (
       !workspace ||
       !canManage ||
       !enabled ||
-      !healthData?.gateway_configured ||
+      !judgeEnabled ||
+      !healthData?.gateway_host ||
       (saved.base_url.trim() !== "" && !healthData.gateway_key_set) ||
       discoverModels.isPending
     ) {
@@ -225,7 +283,8 @@ export function RoutingTab() {
     canManage,
     discoverModels,
     enabled,
-    health.data,
+    judgeEnabled,
+    judgeHealth,
     model,
     saved.base_url,
     workspace,
@@ -243,10 +302,13 @@ export function RoutingTab() {
   // settings column — sending the key alone would revert an unsaved model or
   // endpoint edit made in the same sitting.
   const saveKey = useMutation({
-    mutationFn: async (nextKey: string) => {
+    mutationFn: async ({ role, key }: { role: RoutingRole; key: string }) => {
       if (!workspace) return;
       const updated = await api.updateWorkspace(workspace.id, {
-        settings: withRoutingSettings(workspace.settings, draft, nextKey),
+        settings:
+          role === "judge"
+            ? withRoutingSettings(workspace.settings, draft, key)
+            : withRoutingSettings(workspace.settings, draft, undefined, key),
       });
       qc.setQueryData(
         workspaceListOptions().queryKey,
@@ -260,7 +322,8 @@ export function RoutingTab() {
     // Cleared whichever way it went: on success the key is stored and there
     // is nothing to show, and on failure leaving a credential in a text box
     // behind a red message is not something to do to somebody.
-    onSettled: () => setKeyInput(""),
+    onSettled: (_data, _err, { role }) =>
+      role === "judge" ? setKeyInput("") : setAnalysisKeyInput(""),
   });
 
   // The draft wins over the server report while an edit is in flight: a person
@@ -304,41 +367,6 @@ export function RoutingTab() {
           </SettingsRow>
 
           <SettingsRow
-            label={t(($) => $.routing.model_label)}
-            description={t(($) => $.routing.model_description)}
-            size="text"
-          >
-            <Input
-              list="routing-model-options"
-              value={model}
-              disabled={!canManage}
-              placeholder={t(($) => $.routing.model_placeholder)}
-              onChange={(e) => setModel(e.target.value)}
-              aria-label={t(($) => $.routing.model_label)}
-            />
-            {availableModels.length > 0 ? (
-              <datalist id="routing-model-options">
-                {availableModels.map((availableModel) => (
-                  <option key={availableModel} value={availableModel} />
-                ))}
-              </datalist>
-            ) : null}
-            <p className="text-micro text-muted-foreground">
-              {discoverModels.isPending
-                ? t(($) => $.routing.model_discovering)
-                : discoverModels.isError
-                  ? t(($) => $.routing.model_discover_failed)
-                  : discoverModels.isSuccess && availableModels.length === 0
-                    ? t(($) => $.routing.model_discover_empty)
-                    : availableModels.length > 0
-                      ? t(($) => $.routing.model_discover_loaded, {
-                          count: availableModels.length,
-                        })
-                      : null}
-            </p>
-          </SettingsRow>
-
-          <SettingsRow
             label={t(($) => $.routing.threshold_label)}
             description={t(($) => $.routing.threshold_description)}
             size="code"
@@ -375,91 +403,161 @@ export function RoutingTab() {
               aria-label={t(($) => $.routing.stale_hours_label)}
             />
           </SettingsRow>
-        </SettingsCard>
-        <GatewayNote health={health.data} />
-      </SettingsSection>
 
-      <SettingsSection title={t(($) => $.routing.gateway_title)}>
-        <SettingsCard>
           <SettingsRow
-            label={t(($) => $.routing.gateway_url_label)}
-            description={t(($) => $.routing.gateway_url_description)}
-            size="text"
+            label={t(($) => $.routing.usage_priority_label)}
+            description={t(($) => $.routing.usage_priority_description)}
           >
-            <Input
-              value={baseUrl}
-              disabled={!canManage}
-              placeholder={t(($) => $.routing.gateway_url_placeholder)}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              aria-label={t(($) => $.routing.gateway_url_label)}
+            <Switch
+              checked={usagePriority}
+              disabled={!canManage || !enabled}
+              onCheckedChange={setUsagePriority}
+              aria-label={t(($) => $.routing.usage_priority_label)}
             />
           </SettingsRow>
 
           <SettingsRow
-            label={t(($) => $.routing.gateway_key_label)}
-            description={
-              health.data?.workspace_key_storable === false
-                ? t(($) => $.routing.gateway_key_unstorable)
-                : t(($) => $.routing.gateway_key_description)
-            }
-            size="text"
+            label={t(($) => $.routing.allow_upshift_label)}
+            description={t(($) => $.routing.allow_upshift_description)}
           >
-            <div className="flex w-full items-center gap-2">
-              <Input
-                type="password"
-                value={keyInput}
-                autoComplete="off"
-                disabled={
-                  !canManage ||
-                  health.data?.workspace_key_storable === false ||
-                  saveKey.isPending
-                }
-                // The placeholder is the whole readback: the stored key never
-                // leaves the server, so "a key is saved" is the most this box
-                // can honestly say.
-                placeholder={
-                  health.data?.gateway_key_set
-                    ? t(($) => $.routing.gateway_key_stored)
-                    : t(($) => $.routing.gateway_key_placeholder)
-                }
-                onChange={(e) => setKeyInput(e.target.value)}
-                aria-label={t(($) => $.routing.gateway_key_label)}
-              />
-              <Button
-                type="button"
-                size="sm"
-                disabled={
-                  !canManage || keyInput.trim() === "" || saveKey.isPending
-                }
-                onClick={() => saveKey.mutate(keyInput)}
-                className="shrink-0"
-              >
-                {t(($) => $.routing.gateway_key_save)}
-              </Button>
-              {health.data?.gateway_key_set && canManage ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={saveKey.isPending}
-                  onClick={() => saveKey.mutate("")}
-                  className="shrink-0"
-                >
-                  {t(($) => $.routing.gateway_key_clear)}
-                </Button>
-              ) : null}
-            </div>
+            <Switch
+              // Upshift picks by usage, so it has nothing to go on while
+              // usage priority is off.
+              checked={allowUpshift && usagePriority}
+              disabled={!canManage || !enabled || !usagePriority}
+              onCheckedChange={setAllowUpshift}
+              aria-label={t(($) => $.routing.allow_upshift_label)}
+            />
           </SettingsRow>
         </SettingsCard>
+        <p
+          className="px-0.5 text-caption leading-5 text-muted-foreground"
+          data-mode={routingMode(draft)}
+        >
+          {t(($) => $.routing.modes[routingMode(draft)])}
+        </p>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t(($) => $.routing.analysis_title)}
+        description={t(($) => $.routing.analysis_description)}
+      >
+        <SettingsCard>
+          <SettingsRow label={t(($) => $.routing.analysis_enabled_label)}>
+            <Switch
+              checked={analysisEnabled}
+              disabled={!canManage}
+              onCheckedChange={setAnalysisEnabled}
+              aria-label={t(($) => $.routing.analysis_enabled_label)}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.routing.analysis_model_label)}
+            description={t(($) => $.routing.analysis_model_description)}
+            size="text"
+          >
+            <Input
+              value={analysisModel}
+              disabled={!canManage || !analysisEnabled}
+              placeholder={t(($) => $.routing.model_placeholder)}
+              onChange={(e) => setAnalysisModel(e.target.value)}
+              aria-label={t(($) => $.routing.analysis_model_label)}
+            />
+          </SettingsRow>
+          <EndpointRows
+            urlLabel={t(($) => $.routing.analysis_url_label)}
+            keyLabel={t(($) => $.routing.analysis_key_label)}
+            baseUrl={analysisBaseUrl}
+            onBaseUrl={setAnalysisBaseUrl}
+            keyInput={analysisKeyInput}
+            onKeyInput={setAnalysisKeyInput}
+            endpoint={analysisHealth}
+            health={health.data}
+            canManage={canManage}
+            saving={saveKey.isPending}
+            onSaveKey={(key) => saveKey.mutate({ role: "analysis", key })}
+          />
+        </SettingsCard>
+        <RoleEndpointNote health={health.data} role={analysisHealth} />
+        <GatewayPairNote
+          baseUrl={analysisBaseUrl}
+          keyStored={analysisHealth?.gateway_key_set === true}
+        />
+      </SettingsSection>
+
+      <SettingsSection
+        title={t(($) => $.routing.judge_title)}
+        description={t(($) => $.routing.judge_description)}
+      >
+        <SettingsCard>
+          <SettingsRow label={t(($) => $.routing.judge_enabled_label)}>
+            <Switch
+              checked={judgeEnabled}
+              disabled={!canManage}
+              onCheckedChange={setJudgeEnabled}
+              aria-label={t(($) => $.routing.judge_enabled_label)}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            label={t(($) => $.routing.model_label)}
+            description={t(($) => $.routing.model_description)}
+            size="text"
+          >
+            <Input
+              list="routing-model-options"
+              value={model}
+              disabled={!canManage || !judgeEnabled}
+              placeholder={t(($) => $.routing.model_placeholder)}
+              onChange={(e) => setModel(e.target.value)}
+              aria-label={t(($) => $.routing.model_label)}
+            />
+            {availableModels.length > 0 ? (
+              <datalist id="routing-model-options">
+                {availableModels.map((availableModel) => (
+                  <option key={availableModel} value={availableModel} />
+                ))}
+              </datalist>
+            ) : null}
+            <p className="text-micro text-muted-foreground">
+              {discoverModels.isPending
+                ? t(($) => $.routing.model_discovering)
+                : discoverModels.isError
+                  ? t(($) => $.routing.model_discover_failed)
+                  : discoverModels.isSuccess && availableModels.length === 0
+                    ? t(($) => $.routing.model_discover_empty)
+                    : availableModels.length > 0
+                      ? t(($) => $.routing.model_discover_loaded, {
+                          count: availableModels.length,
+                        })
+                      : null}
+            </p>
+          </SettingsRow>
+
+          <EndpointRows
+            urlLabel={t(($) => $.routing.gateway_url_label)}
+            urlDescription={t(($) => $.routing.gateway_url_description)}
+            keyLabel={t(($) => $.routing.gateway_key_label)}
+            baseUrl={baseUrl}
+            onBaseUrl={setBaseUrl}
+            keyInput={keyInput}
+            onKeyInput={setKeyInput}
+            endpoint={judgeHealth}
+            health={health.data}
+            canManage={canManage}
+            saving={saveKey.isPending}
+            onSaveKey={(key) => saveKey.mutate({ role: "judge", key })}
+          />
+        </SettingsCard>
+        <GatewayNote health={health.data} role={judgeHealth} />
         <GatewayPairNote
           baseUrl={baseUrl}
-          keyStored={health.data?.gateway_key_set === true}
+          keyStored={judgeHealth?.gateway_key_set === true}
         />
       </SettingsSection>
 
       <SettingsSection
         title={t(($) => $.routing.policy_label)}
-        description={t(($) => $.routing.policy_description)}
         action={
           <div className="flex items-center gap-2">
             <SettingsSaveState
@@ -535,22 +633,132 @@ export function RoutingTab() {
         description={t(($) => $.routing.filters_placeholder)}
       >
         <SettingsCard>
-          {(health.data?.seats ?? []).length === 0 ? (
-            <p className="px-4 py-3 text-caption text-muted-foreground">
-              {t(($) => $.routing.seats_empty)}
-            </p>
-          ) : (
-            (health.data?.seats ?? []).map((seat) => (
-              <SettingsRow key={seat.agent_id} label={seat.tier}>
-                <span className="font-mono text-caption text-muted-foreground">
-                  {seat.availability}
-                </span>
-              </SettingsRow>
-            ))
-          )}
+          <RoutingSeatsTable wsId={workspace?.id ?? ""} canManage={canManage} />
         </SettingsCard>
       </SettingsSection>
     </SettingsTab>
+  );
+}
+
+/**
+ * One role's endpoint pair: URL with the ordinary fields, key behind its own
+ * button. Shared by both roles so the two cards cannot drift apart.
+ */
+function EndpointRows({
+  urlLabel,
+  urlDescription,
+  keyLabel,
+  baseUrl,
+  onBaseUrl,
+  keyInput,
+  onKeyInput,
+  endpoint,
+  health,
+  canManage,
+  saving,
+  onSaveKey,
+}: {
+  urlLabel: string;
+  urlDescription?: string;
+  keyLabel: string;
+  baseUrl: string;
+  onBaseUrl: (v: string) => void;
+  keyInput: string;
+  onKeyInput: (v: string) => void;
+  endpoint?: RoutingRoleHealth;
+  health?: RoutingHealth;
+  canManage: boolean;
+  saving: boolean;
+  onSaveKey: (key: string) => void;
+}) {
+  const { t } = useT("settings");
+  const keySet = endpoint?.gateway_key_set === true;
+  const unstorable = health?.workspace_key_storable === false;
+  return (
+    <>
+      <SettingsRow
+        label={urlLabel}
+        description={urlDescription ?? t(($) => $.routing.analysis_url_description)}
+        size="text"
+      >
+        <Input
+          value={baseUrl}
+          disabled={!canManage}
+          placeholder={t(($) => $.routing.gateway_url_placeholder)}
+          onChange={(e) => onBaseUrl(e.target.value)}
+          aria-label={urlLabel}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label={keyLabel}
+        description={
+          unstorable
+            ? t(($) => $.routing.gateway_key_unstorable)
+            : t(($) => $.routing.gateway_key_description)
+        }
+        size="text"
+      >
+        <div className="flex w-full items-center gap-2">
+          <Input
+            type="password"
+            value={keyInput}
+            autoComplete="off"
+            disabled={!canManage || unstorable || saving}
+            // The placeholder is the whole readback: the stored key never
+            // leaves the server, so "a key is saved" is the most this box
+            // can honestly say.
+            placeholder={
+              keySet
+                ? t(($) => $.routing.gateway_key_stored)
+                : t(($) => $.routing.gateway_key_placeholder)
+            }
+            onChange={(e) => onKeyInput(e.target.value)}
+            aria-label={keyLabel}
+          />
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canManage || keyInput.trim() === "" || saving}
+            onClick={() => onSaveKey(keyInput)}
+            className="shrink-0"
+          >
+            {t(($) => $.routing.gateway_key_save)}
+          </Button>
+          {keySet && canManage ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={saving}
+              onClick={() => onSaveKey("")}
+              className="shrink-0"
+            >
+              {t(($) => $.routing.gateway_key_clear)}
+            </Button>
+          ) : null}
+        </div>
+      </SettingsRow>
+    </>
+  );
+}
+
+/** Where the analysis model's calls go. */
+function RoleEndpointNote({
+  health,
+  role,
+}: {
+  health?: RoutingHealth;
+  role?: RoutingRoleHealth;
+}) {
+  const { t } = useT("settings");
+  if (!health || !role?.gateway_host) return null;
+  return (
+    <p className="px-0.5 text-caption leading-5 text-muted-foreground">
+      {role.gateway_scope === "workspace"
+        ? t(($) => $.routing.gateway_endpoint_workspace, { host: role.gateway_host })
+        : t(($) => $.routing.gateway_endpoint_deployment, { host: role.gateway_host })}
+    </p>
   );
 }
 
@@ -581,32 +789,30 @@ function providerLabel(provider: string): string {
  * important one — it is the most common reason routing silently does nothing —
  * and it now has a fix on this very screen, so it points at it.
  */
-function GatewayNote({ health }: { health?: RoutingHealth }) {
+function GatewayNote({
+  health,
+  role,
+}: {
+  health?: RoutingHealth;
+  role?: RoutingRoleHealth;
+}) {
   const { t } = useT("settings");
-  if (health && health.gateway_configured === false) {
+  if (health && health.gateway_configured === false && !role?.gateway_host) {
     return (
       <p className="px-0.5 text-caption leading-5 text-destructive">
         {t(($) => $.routing.gateway_unset)}
       </p>
     );
   }
+  const host = role?.gateway_host ?? "";
   const scoped =
-    health?.gateway_scope === "workspace"
-      ? t(($) => $.routing.gateway_endpoint_workspace, {
-          host: health?.gateway_host ?? "",
-        })
-      : t(($) => $.routing.gateway_endpoint_deployment, {
-          host: health?.gateway_host ?? "",
-        });
+    role?.gateway_scope === "workspace"
+      ? t(($) => $.routing.gateway_endpoint_workspace, { host })
+      : t(($) => $.routing.gateway_endpoint_deployment, { host });
   return (
     <div className="flex flex-col gap-1 px-0.5">
-      {health?.gateway_host ? (
+      {host ? (
         <p className="text-caption leading-5 text-muted-foreground">{scoped}</p>
-      ) : null}
-      {health?.gateway_protocol === "systemone" ? (
-        <p className="text-caption leading-5 text-muted-foreground">
-          {t(($) => $.routing.gateway_protocol_systemone)}
-        </p>
       ) : null}
       {health?.gateway_default_model ? (
         <p className="text-caption leading-5 text-muted-foreground">

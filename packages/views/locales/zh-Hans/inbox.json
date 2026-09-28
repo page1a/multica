@@ -59,7 +59,7 @@
     "unarchive": "取消归档",
     "access_request_mention_title": "{{requester}} @ 了 {{agent}}，需要你批准",
     "access_request_assign_title": "{{requester}} 把任务指派给 {{agent}}，需要你批准",
-    "access_request_local_env_note": "这个智能体跑在你的电脑上。批准后该任务可访问本机环境：密钥、登录状态和文件。",
+    "access_request_local_env_note": "批准后，该任务可访问你电脑上的密钥、登录状态和文件。",
     "access_pass_prompt": "顺便放行一段时间：",
     "access_pass_2h": "2 小时",
     "access_pass_today": "今天内",
@@ -146,18 +146,17 @@
   },
   "board": {
     "title": "收件箱",
-    "lede": "每张票一行：在跑还是停了、为什么停、停之前做了什么、下一棒是谁。细节点进任务看。",
     "activity_link": "全部动态",
     "back_to_board": "一票一行",
     "lanes": {
       "waiting": {
         "title": "等你",
-        "hint": "点名要你对齐或动手的。你回复后这一行消失，执行的智能体接着干",
+        "hint": "需要你回复或处理的任务，回复后智能体会继续。",
         "empty": "没有在等你的票"
       },
       "stalled": {
         "title": "停了 · 没交代",
-        "hint": "没有智能体在跑，票却没有收口。前因后果由服务端查清",
+        "hint": "没有智能体在运行、也还没收口的任务。",
         "empty": "没有停了没交代的票"
       },
       "running": {
@@ -167,7 +166,7 @@
       },
       "fresh": {
         "title": "有新动态",
-        "hint": "上次来过之后有新消息、又不在上面几栏的票。只在这次显示",
+        "hint": "上次访问后有新消息的其他任务，仅本次显示。",
         "empty": "没有新动态"
       },
       "done": {

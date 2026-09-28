@@ -218,8 +218,6 @@ function Harness({
         <TableView
           serverQuery={serverQuery}
           childProgressMap={childProgressMap}
-          search=""
-          onSearchChange={() => {}}
           onLoadedIssuesChange={() => {}}
           onCreateIssue={onCreateIssue}
           exportIssues={() => Promise.resolve(serverIssues)}

@@ -34,7 +34,7 @@
     "failed": "Mika를 시작하지 못했습니다",
     "dialog_title": "Mika를 어디에서 실행할까요?",
     "cancel": "취소",
-    "dialog_description": "Mika가 사용할 런타임을 선택하세요. 나중에 설정에서 변경할 수 있습니다."
+    "dialog_description": "Mika가 사용할 런타임을 선택하세요."
   },
   "machine": {
     "search_placeholder": "기기 검색...",
@@ -247,7 +247,7 @@
       "instance_type_required": "인스턴스 유형은 필수입니다",
       "disk_size_invalid": "디스크 크기는 양의 정수여야 합니다"
     },
-    "create_hint": "이름, 인스턴스 유형, 디스크 크기를 선택하세요. 나머지는 Fleet이 적용합니다."
+    "create_hint": "이름, 인스턴스 유형, 디스크 크기를 정하면 나머지는 Fleet이 설정합니다."
   },
   "update": {
     "cli_version_label": "CLI 버전:",
@@ -328,7 +328,7 @@
     "title": "플랜 한도",
     "observed": "{{when}} 업데이트",
     "unavailable": "한도 데이터 없음",
-    "unavailable_hint": "한도 스냅샷이 아직 보고되지 않았습니다. Codex는 CLI 세션 후 보고하며, 이전 데몬과 지원되지 않는 CLI에서는 사용할 수 없습니다.",
+    "unavailable_hint": "아직 한도가 보고되지 않았습니다. Codex CLI 세션을 한 번 실행하면 표시됩니다.",
     "unavailable_hint_claude": "Claude Code는 현재 세션 한도에 도달한 경우에만 플랜 한도를 보고합니다.",
     "limit_reached": "한도 도달",
     "used": "{{percent}}% 사용",

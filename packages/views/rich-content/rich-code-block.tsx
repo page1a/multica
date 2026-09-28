@@ -27,6 +27,7 @@ import { toHtml } from "hast-util-to-html";
 import { Check, Copy } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useT } from "../i18n";
 import {
   MermaidDiagram,
@@ -37,6 +38,7 @@ import {
   HtmlBlockPreview,
   HTML_BLOCK_PREVIEW_HEIGHT_PX,
 } from "../editor/html-block-preview";
+import { PREVIEW_POSTER_HEIGHT_PX } from "../editor/preview-poster";
 import { highlightCode } from "../editor/syntax-highlight";
 import { LazyRichBlock } from "./lazy-rich-block";
 
@@ -135,7 +137,7 @@ export function CodeBlockShell({
 
   return (
     <div className="code-block-wrapper group/code relative my-3">
-      <div className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
+      <div className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:none)]:rounded-bl-md [@media(hover:none)]:bg-muted">
         {language && (
           <span className="text-caption text-muted-foreground select-none">
             {language}
@@ -214,10 +216,15 @@ function MermaidFenceBlock({ chart }: { chart: string }) {
 }
 
 function HtmlFenceBlock({ html }: { html: string }) {
-  // The preview iframe is a fixed height, so this needs no cache and is already
-  // identical on server and client.
+  // The preview iframe is a fixed height, so this needs no cache. Phones show
+  // the shorter thumbnail; the breakpoint settles in an effect, so the first
+  // frame is still identical on server and client.
+  const isMobile = useIsMobile();
   return (
-    <LazyRichBlock reservedHeightPx={HTML_BLOCK_PREVIEW_HEIGHT_PX} sourceKey={html}>
+    <LazyRichBlock
+      reservedHeightPx={isMobile ? PREVIEW_POSTER_HEIGHT_PX : HTML_BLOCK_PREVIEW_HEIGHT_PX}
+      sourceKey={html}
+    >
       <MemoHtmlBlockPreview html={html} />
     </LazyRichBlock>
   );

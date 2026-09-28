@@ -47,7 +47,7 @@
       "card5_timestamp": "방금 전"
     },
     "lede_desktop": "끝나면 실제 에이전트가 첫 태스크에 답하고 있을 겁니다.",
-    "illustration_caption": "모든 태스크, 모든 스레드, 모든 결정이 팀과 에이전트에게 공유됩니다."
+    "illustration_caption": "팀과 에이전트가 같은 맥락을 공유합니다."
   },
   "common": {
     "back": "뒤로",
@@ -197,7 +197,7 @@
     "creation_disabled_eyebrow_resume": "내 워크스페이스",
     "creation_disabled_headline_resume": "{{name}}에서 계속하세요.",
     "creation_disabled_lede_resume": "이 instance에서는 워크스페이스 생성이 비활성화되어 있으므로 기존 워크스페이스로 계속 이동합니다.",
-    "create_new_subtitle": "새로 시작합니다. 다른 업무 영역을 위한 별도 공간입니다."
+    "create_new_subtitle": "다른 업무 영역을 위한 별도 공간입니다."
   },
   "step_runtime": {
     "scanning_headline": "이 컴퓨터 연결 중...",
@@ -226,7 +226,7 @@
     "hint_pick": "Mika와 시작하려면 위에서 에이전트 런타임을 선택하세요.",
     "hint_waiting": "첫 결과를 기다리는 중...",
     "continue": "Mika와 시작",
-    "found_lede": "이 컴퓨터에서 찾은 에이전트 런타임입니다. 나중에 바꾸거나 더 추가할 수 있습니다.",
+    "found_lede": "이 컴퓨터에서 찾은 에이전트 런타임입니다.",
     "hint_skip_or_refresh": "설치 후 새로고침하거나 건너뛰고 워크스페이스로 들어가세요."
   },
   "step_platform": {
@@ -257,7 +257,7 @@
     "stage_stalled_prefix": "아직 아무 것도 들어오지 않습니다. 터미널이 익숙하지 않다면 ",
     "stage_stalled_term": "데스크톱",
     "stage_stalled_suffix": "이 더 부드러운 경로입니다. 한 번 클릭하면 이 컴퓨터가 연결됩니다. 이 대화상자를 닫고 데스크톱을 선택하거나, 건너뛰기를 눌러 계속하세요.",
-    "cli_dialog_description": "데스크톱과 같은 연결을 터미널에서 설정합니다. 서버, 원격 개발 환경, headless 컴퓨터에 사용하세요."
+    "cli_dialog_description": "터미널에서 연결합니다. 서버, 원격 개발 환경 같은 headless 컴퓨터용입니다."
   },
   "errors": {
     "skip_failed": "온보딩을 마치지 못했습니다",

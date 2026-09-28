@@ -638,6 +638,7 @@ func init() {
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
+	issueCreateCmd.Flags().String("routing-facts", "", `Routing facts as JSON, so routing skips the analysis call: {"scope":"small|module|cross_module","clarity":"clear|vague","risk":"low|medium|high","needs_human":false,"summary":"..."}`)
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
@@ -660,7 +661,7 @@ func init() {
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
-	issueUpdateCmd.Flags().String("no-code", "", "Why this issue carries no code delivery (docs, research). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
+	issueUpdateCmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue status
@@ -674,7 +675,7 @@ func init() {
 	issueStatusCmd.Flags().String("needs-human", "", "Member UUID a blocked issue is waiting on")
 	registerIssueCloseFlags(issueCloseCmd)
 	registerIssueHandoffFlags(issueHandoffCmd)
-	issueStatusCmd.Flags().String("no-code", "", "Why this issue carries no code delivery (docs, research). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
+	issueStatusCmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
 
 	// issue reorder
 	registerIssueReorderFlags(issueReorderCmd)
@@ -1494,6 +1495,14 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetBool("allow-duplicate"); v {
 		body["allow_duplicate"] = true
 	}
+	if v, _ := cmd.Flags().GetString("routing-facts"); strings.TrimSpace(v) != "" {
+		var facts map[string]any
+		if err := json.Unmarshal([]byte(v), &facts); err != nil {
+			return fmt.Errorf("--routing-facts must be a JSON object: %w", err)
+		}
+		// The server validates the values; the CLI only checks the shape.
+		body["routing_facts"] = facts
+	}
 	aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 	if resolveErr != nil {
 		return fmt.Errorf("resolve assignee: %w", resolveErr)
@@ -1892,7 +1901,7 @@ func registerIssueCloseFlags(cmd *cobra.Command) {
 	cmd.Flags().String("wait-probe", "", "How to check the wait condition")
 	cmd.Flags().String("wait-timeout", "", "RFC3339 deadline for the wait condition")
 	cmd.Flags().String("needs-human", "", "Member UUID whose decision or acceptance the issue waits on")
-	cmd.Flags().String("no-code", "", "Why this issue carries no code delivery (docs, research). An agent's --outcome in_review without a linked open/merged PR is refused unless this is given")
+	cmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent's --outcome in_review without a linked open/merged PR is refused unless this is given")
 	cmd.Flags().String("verdict", "", "Acceptance verdict, reviewer only: pass (merges and closes)")
 	cmd.Flags().String("output", "json", "Output format: table or json")
 }

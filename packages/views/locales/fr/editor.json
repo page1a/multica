@@ -61,7 +61,8 @@
     "preview_unsupported": "Ce type de fichier ne peut pas être prévisualisé.",
     "close": "Fermer",
     "open_in_new_tab": "Ouvrir dans un nouvel onglet",
-    "remove": "Supprimer la pièce jointe"
+    "remove": "Supprimer la pièce jointe",
+    "tap_to_view": "Touchez pour afficher en plein écran"
   },
   "link_hover": {
     "copy_link": "Copier le lien",

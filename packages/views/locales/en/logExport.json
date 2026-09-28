@@ -32,16 +32,13 @@
   },
   "state": {
     "idle_title": "Nothing exported yet",
-    "idle_body": "Pick a range, then choose \"{{action}}\". The server builds the bundle in one piece: structured logs, run metadata, and a summary you can paste into an AI chat.",
     "section": "Result",
     "collecting_title": "Collecting logs",
-    "collecting_body": "Reading the structured transcript, run metadata, and the redacted summary.",
     "collected": "{{n}} collected so far",
     "received": "{{received}} of {{total}} received",
     "empty_title": "No logs in this range",
     "empty_body": "Nothing matched \"{{range}}\".",
     "failed_title": "The export did not finish",
-    "partial_note": "The server builds the bundle in one piece, so a failed export leaves no half-document to hand over. The last bundle that did finish is still here.",
     "restored": "This is the last bundle that finished."
   },
   "card": {
@@ -55,7 +52,7 @@
     "no_summary": "(no summary text)"
   },
   "report": {
-    "hint": "Pushes to the workspace log repository first, leaving only a link in the comment; falls back to a comment attachment when the repository is unavailable.",
+    "hint": "The bundle is uploaded to the workspace log repository or as a comment attachment.",
     "running": "Reporting…",
     "success_git": "Reported on {{issue}} — the bundle was pushed to {{repo}}.",
     "success_attachment": "Reported on {{issue}} — the bundle is a comment attachment.",

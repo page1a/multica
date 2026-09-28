@@ -52,7 +52,7 @@
     "unpin_workspace": "Désépingler",
     "organize_workspaces": "Organiser les espaces de travail…",
     "organize_title": "Organiser les espaces de travail",
-    "organize_description": "Faites glisser pour réordonner ; glissez dans Épinglés pour épingler. Ne change que l’ordre que vous voyez, pas celui des autres membres.",
+    "organize_description": "Faites glisser pour réordonner ; seul votre affichage change.",
     "organize_drag": "Faire glisser {{name}}",
     "organize_rest_label": "Autres espaces de travail",
     "organize_pin_hint": "Glissez ici pour épingler",
@@ -82,7 +82,7 @@
     "badge": "Vous êtes invité — lecture seule",
     "no_edit": "Les invités ne peuvent pas modifier",
     "nothing_shared_title": "Rien n'a encore été partagé avec vous",
-    "nothing_shared_description": "Dès qu'une personne de cet espace de travail vous ajoute à un projet, ce que vous pouvez voir apparaîtra ici.",
+    "nothing_shared_description": "Le contenu apparaîtra ici dès que vous serez ajouté à un projet.",
     "not_found_title": "Page introuvable",
     "not_found_description": "Elle a peut-être été supprimée, ou elle n'a pas été partagée avec vous."
   }

@@ -114,7 +114,8 @@ export interface IssueSurfaceController {
     projectMap: Map<string, Project>;
     childProgressMap: Map<string, ChildProgress>;
   }>;
-  tableSearch: string;
+  /** The page toolbar's search text (title, description, comments, number). */
+  pageSearch: string;
   /** Canonical server-owned Table membership. */
   tableQuerySpec: IssueTableQuerySpec;
   /** Exact disjunctive counts for the active server-backed filter submenu. */
@@ -123,7 +124,7 @@ export interface IssueSurfaceController {
   facetCountsExact: boolean;
   /** Load one server facet when its filter submenu is opened. */
   setActiveTableFacet: (facet: IssueTableFacetSpec | null) => void;
-  setTableSearch: (query: string) => void;
+  setPageSearch: (query: string) => void;
   exportTableIssues: () => Promise<Issue[]>;
   isLoading: boolean;
   /** See IssueSurfaceData.isRefreshing — placeholder-backed revalidation. */
@@ -164,7 +165,7 @@ function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
   };
 }
 
-function useDebouncedTableSearch(value: string, delayMs = 250) {
+function useDebouncedSearch(value: string, delayMs = 250) {
   const [debouncedValue, setDebouncedValue] = useState(value.trim());
 
   useEffect(() => {
@@ -250,7 +251,7 @@ export function useIssueSurfaceController({
   const listCollapsedStatuses = useViewStore((s) => s.listCollapsedStatuses);
   const hiddenStatusKeys = useViewStore((s) => s.hiddenStatuses);
   const catalog = useIssueStatuses(wsId);
-  const [tableSearch, setTableSearch] = useState("");
+  const [pageSearch, setPageSearch] = useState("");
 
   // Pinned-first is opt-in on the wire. `pinned_first` is a field an older
   // server rejects with a 400 for the WHOLE page (its decoder uses
@@ -358,8 +359,10 @@ export function useIssueSurfaceController({
   const parentAwareLayout =
     (usesTable && tableHierarchy) ||
     (effectiveViewMode === "swimlane" && swimlaneGrouping === "parent");
-  const activeSearch = usesTable ? tableSearch : search;
-  const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
+  // A caller-owned search (the actor panel's own box) wins; otherwise the
+  // page toolbar's search box drives every mode, not just the Table.
+  const activeSearch = search || pageSearch;
+  const debouncedActiveSearch = useDebouncedSearch(activeSearch);
   const usesServerStatusSurface =
     effectiveViewMode === "list" ||
     (effectiveViewMode === "board" && effectiveGrouping === "status");
@@ -906,14 +909,14 @@ export function useIssueSurfaceController({
     groupBranches: usesServerGroupSurface
       ? serverGroupBranches
       : undefined,
-    // Keep TableView mounted for an empty search result so its local search
-    // control remains available to refine or clear the query. Include the
+    // An empty search result keeps the view mounted (empty columns/rows), not
+    // the "no issues yet" state, which would offer to create one. Include the
     // debounced value as well to avoid a brief empty-screen flash while a
     // cleared query is waiting to re-fetch the unsearched window.
     isEmpty:
       data.isEmpty &&
       !data.isRefreshing &&
-      !(usesTable && (tableSearch.trim() || debouncedActiveSearch)),
+      !(activeSearch.trim() || debouncedActiveSearch),
     isStatusCatalogError: data.isStatusCatalogError,
     // Either catalog can be the one that failed, and the error state offers a
     // single retry — refresh both rather than guess which.
@@ -924,7 +927,7 @@ export function useIssueSurfaceController({
     sort,
     actions,
     selection,
-    tableSearch,
+    pageSearch,
     tableQuerySpec,
     tableFacetCounts:
       usesServerStatusSurface ||
@@ -934,7 +937,7 @@ export function useIssueSurfaceController({
     facetCountsExact:
       !usesTable && !usesServerStatusSurface && !usesServerGroupSurface,
     setActiveTableFacet: requestActiveTableFacet,
-    setTableSearch,
+    setPageSearch,
     openCreateIssue,
     moveIssue,
     exportTableIssues,

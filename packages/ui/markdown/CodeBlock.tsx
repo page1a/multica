@@ -193,7 +193,7 @@ export function CodeBlock({
                 variant="ghost"
                 size="icon-xs"
                 onClick={handleCopy}
-                className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
                 aria-label={t(($) => $.copy_code)}
               >
                 {copied ? (

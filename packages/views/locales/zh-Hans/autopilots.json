@@ -302,7 +302,7 @@
     "no_project": "不关联项目",
     "no_project_confirm": {
       "title": "当前计划没有绑定项目",
-      "description": "项目决定任务落在哪个上下文和本地目录。只有你确认不需要项目时，才继续保存。",
+      "description": "不绑定项目，任务将没有项目上下文和本地目录。",
       "cancel": "返回选择项目",
       "confirm": "无需安排项目"
     },
@@ -347,7 +347,7 @@
         "description": "静默运行，不创建任务"
       }
     },
-    "schedule_disabled_reason": "该自动化有多个时间表——请到详情页编辑。"
+    "schedule_disabled_reason": "该自动化有多个时间表，请到详情页编辑。"
   },
   "schedule_editor": {
     "time_label": "时间",

@@ -142,3 +142,39 @@ describe("chat toggle shortcut", () => {
     expect(h.chat.toggle).not.toHaveBeenCalled();
   });
 });
+
+describe("page search shortcut", () => {
+  function pressSlash(target: EventTarget = document): boolean {
+    const event = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+
+  it("focuses the page's search box", () => {
+    render(<GlobalShortcuts />);
+    const box = document.createElement("input");
+    box.setAttribute("data-page-search", "");
+    document.body.appendChild(box);
+
+    expect(pressSlash()).toBe(true);
+    expect(document.activeElement).toBe(box);
+
+    box.remove();
+  });
+
+  it("leaves the key alone on pages without a search box and while typing", () => {
+    render(<GlobalShortcuts />);
+    expect(pressSlash()).toBe(false);
+
+    const box = document.createElement("input");
+    box.setAttribute("data-page-search", "");
+    const other = document.createElement("input");
+    document.body.append(box, other);
+    other.focus();
+    expect(pressSlash(other)).toBe(false);
+    expect(document.activeElement).toBe(other);
+
+    box.remove();
+    other.remove();
+  });
+});

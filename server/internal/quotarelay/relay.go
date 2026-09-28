@@ -302,6 +302,12 @@ type Seat struct {
 	// Exclude lists seat ids that must not be picked for this handoff, such
 	// as the issue's own acceptance seat.
 	Exclude []string
+	// Demoted marks a seat that keeps running out of quota; UsageRank is the
+	// headroom a person tagged it with, 0 = ample, 2 = tight, all zero when
+	// the workspace switched 「用量优先」 off. Both only order seats that
+	// already qualify — the same order routing uses inside a rung (DENE-922).
+	Demoted   bool
+	UsageRank int
 }
 
 // Choice is the replacement seat. SteppedDown is true when the same tier
@@ -418,6 +424,12 @@ func betterSeat(seat, best, failed Seat) bool {
 		if seatDir != bestDir {
 			return seatDir
 		}
+	}
+	if seat.Demoted != best.Demoted {
+		return !seat.Demoted
+	}
+	if seat.UsageRank != best.UsageRank {
+		return seat.UsageRank < best.UsageRank
 	}
 	return seat.Name < best.Name || (seat.Name == best.Name && seat.ID < best.ID)
 }

@@ -61,7 +61,8 @@
     "preview_unsupported": "이 파일 형식은 미리보기를 지원하지 않습니다.",
     "close": "닫기",
     "open_in_new_tab": "새 탭에서 열기",
-    "remove": "첨부 파일 제거"
+    "remove": "첨부 파일 제거",
+    "tap_to_view": "탭하여 전체 화면으로 보기"
   },
   "link_hover": {
     "copy_link": "링크 복사",

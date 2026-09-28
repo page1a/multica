@@ -152,7 +152,7 @@ describe("IssueUsageDialog", () => {
     expect(
       screen.getByText(/No run on this issue has recorded token usage/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/recorded by the daemon when a run finishes/)).toBeInTheDocument();
+    expect(screen.getByText(/Rerun on an updated daemon to record usage/)).toBeInTheDocument();
   });
 
   // ─── Run selection (DENE-670) ────────────────────────────────────────────

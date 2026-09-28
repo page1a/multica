@@ -6,10 +6,14 @@ import type { NodeViewProps } from "@tiptap/react";
 import { Code as CodeIcon, Copy, Check, Eye } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
+import { Dialog, DialogContent } from "@multica/ui/components/ui/dialog";
 import { useDebouncedValue } from "../../common/use-debounced-value";
 import { useT } from "../../i18n";
 import { MermaidDiagram } from "../mermaid-diagram";
 import { CodeBlockIframe } from "../code-block-iframe";
+import { PREVIEW_POSTER_HEIGHT, PreviewPoster } from "../preview-poster";
+import { useBackToDismiss } from "../../navigation";
 
 // Coalesces fast keystrokes before re-rendering live previews.
 // `mermaid.initialize()` mutates a process-global config, so back-to-back
@@ -30,6 +34,11 @@ function CodeBlockView({ node }: NodeViewProps) {
   // (just hidden) so ProseMirror keeps its NodeView bindings — unmounting
   // it would break editing.
   const [view, setView] = useState<"preview" | "source">("preview");
+  // Phones get a short, non-scrollable thumbnail that opens the full-screen
+  // preview on tap (see PreviewPoster); the back gesture closes it again.
+  const isMobile = useIsMobile();
+  const [fullscreen, setFullscreen] = useState(false);
+  useBackToDismiss(isMobile && fullscreen, () => setFullscreen(false));
   const language = node.attrs.language || "";
   const isMermaid = language === "mermaid";
   const isHtml = language === "html";
@@ -70,17 +79,32 @@ function CodeBlockView({ node }: NodeViewProps) {
         // CSS-hidden when toggled off so the `<pre>` below stays mounted —
         // unmounting either side would either lose ProseMirror bindings
         // (source) or thrash iframe.srcDoc (preview).
-        <div contentEditable={false} className="mb-1">
+        <div contentEditable={false} className="relative mb-1">
           <CodeBlockIframe
             html={debouncedHtml}
             title={t(($) => $.code_block.html_preview)}
-            heightClassName={HTML_PREVIEW_HEIGHT}
+            heightClassName={isMobile ? PREVIEW_POSTER_HEIGHT : HTML_PREVIEW_HEIGHT}
+            className={isMobile ? "pointer-events-none" : undefined}
           />
+          {isMobile && <PreviewPoster onOpen={() => setFullscreen(true)} />}
+          <Dialog open={fullscreen} onOpenChange={setFullscreen}>
+            <DialogContent
+              className="!max-w-6xl !h-[min(90dvh,calc(100dvh-2rem))] w-full p-0 gap-0 overflow-hidden"
+              aria-label={t(($) => $.code_block.fullscreen)}
+            >
+              <CodeBlockIframe
+                html={debouncedHtml}
+                title={t(($) => $.code_block.html_preview)}
+                heightClassName="h-full"
+                className="rounded-none border-0"
+              />
+            </DialogContent>
+          </Dialog>
         </div>
       )}
       <div
         contentEditable={false}
-        className="code-block-header absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100"
+        className="code-block-header absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:none)]:rounded-bl-md [@media(hover:none)]:bg-muted"
       >
         {language && (
           <span className="text-caption text-muted-foreground select-none">

@@ -3787,6 +3787,59 @@ func (q *Queries) RepointChatSessionPrimaryAfterProjectDelete(ctx context.Contex
 	return err
 }
 
+const searchChatMessagesInSessions = `-- name: SearchChatMessagesInSessions :many
+SELECT DISTINCT ON (m.chat_session_id)
+       m.chat_session_id, m.id, m.content, m.role, m.created_at
+FROM chat_message m
+WHERE m.chat_session_id = ANY($1::uuid[])
+  AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+  AND LOWER(m.content) LIKE ALL($2::text[])
+ORDER BY m.chat_session_id, m.created_at DESC
+`
+
+type SearchChatMessagesInSessionsParams struct {
+	SessionIds []pgtype.UUID `json:"session_ids"`
+	Patterns   []string      `json:"patterns"`
+}
+
+type SearchChatMessagesInSessionsRow struct {
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	ID            pgtype.UUID        `json:"id"`
+	Content       string             `json:"content"`
+	Role          string             `json:"role"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+// Chat-page content search: for each candidate session, the newest message
+// whose content contains every pattern (already lowered and LIKE-escaped).
+// The caller passes only sessions it has already proven visible to the viewer,
+// so access is decided once, by the list query, not re-derived here.
+func (q *Queries) SearchChatMessagesInSessions(ctx context.Context, arg SearchChatMessagesInSessionsParams) ([]SearchChatMessagesInSessionsRow, error) {
+	rows, err := q.db.Query(ctx, searchChatMessagesInSessions, arg.SessionIds, arg.Patterns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchChatMessagesInSessionsRow{}
+	for rows.Next() {
+		var i SearchChatMessagesInSessionsRow
+		if err := rows.Scan(
+			&i.ChatSessionID,
+			&i.ID,
+			&i.Content,
+			&i.Role,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setChatMessageChannelOutboundProvenanceByTask = `-- name: SetChatMessageChannelOutboundProvenanceByTask :execrows
 UPDATE chat_message
 SET channel_outbound_type = $1,

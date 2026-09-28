@@ -518,7 +518,7 @@ describe("AgentOverviewPane execution config inherited from the base role", () =
       agent: follower,
       agents: [baseRole, follower],
     });
-    expect(screen.getByText(/follows the base role “Goku”/)).toBeTruthy();
+    expect(screen.getByText(/Follows the base role "Goku"/)).toBeTruthy();
     expect(screen.getByText(editor).closest("fieldset")?.disabled).toBe(true);
   });
 

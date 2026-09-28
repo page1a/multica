@@ -31,13 +31,38 @@ export const DEFAULT_STALE_REVIEW_HOURS = 24;
  */
 export const MAX_STALE_REVIEW_HOURS = 24 * 365;
 
+/**
+ * Which model roles are on (DENE-923). Mirrors `Mode` in settings.go.
+ *
+ * - `none`            no model is called; every ticket takes the fallback rung
+ * - `analysis`        the analysis model reads the ticket and picks the tier
+ * - `analysis_judge`  the analysis model writes the facts, the judge picks
+ * - `judge`           the judge reads the ticket and picks (the original path)
+ */
+export type RoutingMode = "none" | "analysis" | "analysis_judge" | "judge";
+
+export type RoutingRole = "analysis" | "judge";
+
+/**
+ * The analysis role: a general chat model that reads the whole ticket and
+ * reduces it to a few facts. Its own endpoint and key, like the judge's.
+ */
+export interface RoutingAnalysisSettings {
+  enabled: boolean;
+  model: string;
+  base_url: string;
+}
+
 export interface RoutingSettings {
   enabled: boolean;
   /**
-   * Model identifier for the routing judge. Empty while `enabled` is true is
+   * Model identifier for the routing judge. Empty while the judge is on is
    * the "incomplete" state — somebody flipped the switch and stopped.
    */
   model: string;
+  /** Whether the judge role is on. */
+  judge_enabled: boolean;
+  analysis: RoutingAnalysisSettings;
   /** Confidence floor in (0, 1]. */
   confidence_threshold: number;
   /**
@@ -63,6 +88,17 @@ export interface RoutingSettings {
    * "let the model decide from habit".
    */
   policy_prompt?: string;
+  /**
+   * 「用量优先」: inside a rung, seats tagged ample go before tight ones.
+   * Default ON; the server reads a missing key as on, so this client does too.
+   */
+  usage_priority: boolean;
+  /**
+   * 「允许上调一档」: when every seat on the judged rung is tight, the rung
+   * above's ample seat takes the work. Default off, and meaningless while
+   * `usage_priority` is off.
+   */
+  allow_upshift: boolean;
 }
 
 /**
@@ -83,6 +119,9 @@ export interface RoutingSettings {
  */
 export const ROUTING_API_KEY_FIELD = "api_key";
 
+/** The block the analysis role's settings live in, inside the routing block. */
+export const ROUTING_ANALYSIS_KEY = "analysis";
+
 /**
  * What the section shows. Derived, never stored — a stored copy would drift
  * from the three fields above.
@@ -98,13 +137,22 @@ export const ROUTING_API_KEY_FIELD = "api_key";
  */
 export type RoutingState = "off" | "incomplete" | "enabled" | "ineffective";
 
+/**
+ * A workspace that has never configured routing starts on the analysis
+ * model alone: one general model is the cheapest thing that works, and the
+ * judge is an opt-in second step.
+ */
 export const DEFAULT_ROUTING_SETTINGS: RoutingSettings = {
   enabled: false,
   model: "",
+  judge_enabled: false,
+  analysis: { enabled: true, model: "", base_url: "" },
   confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
   stale_review_hours: DEFAULT_STALE_REVIEW_HOURS,
   base_url: "",
   policy_prompt: "",
+  usage_priority: true,
+  allow_upshift: false,
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -122,14 +170,34 @@ export function parseRoutingSettings(
   settings: Record<string, unknown> | null | undefined,
 ): RoutingSettings {
   const block = settings?.[ROUTING_SETTINGS_KEY];
-  if (!isRecord(block)) return { ...DEFAULT_ROUTING_SETTINGS };
+  if (!isRecord(block)) {
+    return {
+      ...DEFAULT_ROUTING_SETTINGS,
+      analysis: { ...DEFAULT_ROUTING_SETTINGS.analysis },
+    };
+  }
+  const analysisBlock = block[ROUTING_ANALYSIS_KEY];
+  const analysis: RoutingAnalysisSettings = isRecord(analysisBlock)
+    ? {
+        enabled: analysisBlock.enabled === true,
+        model: typeof analysisBlock.model === "string" ? analysisBlock.model : "",
+        base_url: typeof analysisBlock.base_url === "string" ? analysisBlock.base_url : "",
+      }
+    : { enabled: false, model: "", base_url: "" };
   return {
     enabled: block.enabled === true,
     model: typeof block.model === "string" ? block.model : "",
+    // A block saved before the split has no switch: it only had the judge,
+    // and it keeps it. Same reading as JudgeOn on the server.
+    judge_enabled:
+      typeof block.judge_enabled === "boolean" ? block.judge_enabled : !analysis.enabled,
+    analysis,
     confidence_threshold: normalizeThreshold(block.confidence_threshold),
     stale_review_hours: normalizeStaleReviewHours(block.stale_review_hours),
     base_url: typeof block.base_url === "string" ? block.base_url : "",
     policy_prompt: typeof block.policy_prompt === "string" ? block.policy_prompt : "",
+    usage_priority: block.usage_priority !== false,
+    allow_upshift: block.allow_upshift === true,
   };
 }
 
@@ -186,9 +254,18 @@ export function routingState(
   health?: { state?: string } | null,
 ): RoutingState {
   if (!settings.enabled) return "off";
-  if (settings.model.trim() === "") return "incomplete";
+  // A role that is on with no model is incomplete, whichever role it is.
+  // Both off is not: it is the deliberate "no model" mode.
+  if (settings.analysis.enabled && settings.analysis.model.trim() === "") return "incomplete";
+  if (settings.judge_enabled && settings.model.trim() === "") return "incomplete";
   if (health?.state === "ineffective") return "ineffective";
   return "enabled";
+}
+
+/** Which roles are on. Mirrors `Settings.Mode` on the server. */
+export function routingMode(settings: RoutingSettings): RoutingMode {
+  if (settings.analysis.enabled) return settings.judge_enabled ? "analysis_judge" : "analysis";
+  return settings.judge_enabled ? "judge" : "none";
 }
 
 /** Only `enabled` routes issues. The other three are the pre-routing product. */
@@ -210,12 +287,24 @@ export function withRoutingSettings(
    * deleted.
    */
   apiKey?: string,
+  /** The same, for the analysis role's key. */
+  analysisApiKey?: string,
 ): Record<string, unknown> {
   // Fields this form does not own — the project -> direction table the CLI
   // writes (`projects`), and anything a newer server adds — are carried
   // through. Rebuilding the block from the four form fields alone would erase
   // them on every unrelated save.
   const stored = settings?.[ROUTING_SETTINGS_KEY];
+  const storedAnalysis = isRecord(stored) ? stored[ROUTING_ANALYSIS_KEY] : undefined;
+  const analysis: Record<string, unknown> = {
+    ...(isRecord(storedAnalysis) ? storedAnalysis : {}),
+    enabled: next.analysis.enabled,
+    model: next.analysis.model.trim(),
+    base_url: next.analysis.base_url.trim(),
+  };
+  if (analysisApiKey !== undefined) {
+    analysis[ROUTING_API_KEY_FIELD] = analysisApiKey.trim();
+  }
   const block: Record<string, unknown> = {
     ...(isRecord(stored) ? stored : {}),
     enabled: next.enabled,
@@ -224,6 +313,10 @@ export function withRoutingSettings(
     stale_review_hours: normalizeStaleReviewHours(next.stale_review_hours),
     base_url: next.base_url.trim(),
     policy_prompt: (next.policy_prompt ?? "").trim(),
+    usage_priority: next.usage_priority,
+    allow_upshift: next.allow_upshift,
+    judge_enabled: next.judge_enabled,
+    [ROUTING_ANALYSIS_KEY]: analysis,
   };
   if (apiKey !== undefined) {
     block[ROUTING_API_KEY_FIELD] = apiKey.trim();

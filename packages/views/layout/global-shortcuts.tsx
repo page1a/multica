@@ -22,6 +22,7 @@ import { canAccessModule, navItemModule } from "@multica/core/workspace";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigation } from "../navigation";
 import { useSearchStore } from "../search/search-store";
+import { PAGE_SEARCH_ATTRIBUTE } from "../common/page-search-input";
 import { useDenyGuestWrite } from "./guest-readonly";
 
 const GLOBAL_ACTIONS: readonly ShortcutActionId[] = [
@@ -29,6 +30,7 @@ const GLOBAL_ACTIONS: readonly ShortcutActionId[] = [
   "createIssue",
   "toggleSidebar",
   "toggleChat",
+  "focusPageSearch",
   "goBack",
   "goForward",
   "goInbox",
@@ -44,6 +46,18 @@ const GLOBAL_ACTIONS: readonly ShortcutActionId[] = [
   "goSkills",
   "goSettings",
 ];
+
+/**
+ * The current page's search box, if it has one. Desktop keeps background tabs
+ * mounted, so skip boxes that are not rendered on screen.
+ */
+function findPageSearchInput(): HTMLInputElement | null {
+  const candidates = document.querySelectorAll<HTMLInputElement>(`[${PAGE_SEARCH_ATTRIBUTE}]`);
+  for (const input of candidates) {
+    if (input.checkVisibility?.() ?? true) return input;
+  }
+  return null;
+}
 
 export function shouldIgnoreGlobalShortcutEvent(event: KeyboardEvent): boolean {
   return event.defaultPrevented || event.repeat || isImeComposing(event);
@@ -103,6 +117,8 @@ export function GlobalShortcuts() {
           return false;
         }
         if (candidate === "toggleChat" && !canToggleFloatingChat()) return false;
+        // No search box on this page: leave the key its ordinary meaning.
+        if (candidate === "focusPageSearch" && !findPageSearchInput()) return false;
         return shortcutMatchesEvent(getShortcut(candidate), event);
       });
       if (!actionId) return;
@@ -110,6 +126,12 @@ export function GlobalShortcuts() {
       event.preventDefault();
       if (actionId === "openSearch") {
         useSearchStore.getState().toggle();
+        return;
+      }
+      if (actionId === "focusPageSearch") {
+        const input = findPageSearchInput();
+        input?.focus();
+        input?.select();
         return;
       }
       if (actionId === "toggleChat") {

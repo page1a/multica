@@ -101,6 +101,7 @@ import {
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { FilterChipsBar } from "./filter-chips-bar";
+import { PageSearchInput } from "../../common/page-search-input";
 import { SaveViewDialog, type SaveViewScope } from "./save-view-dialog";
 import { ViewBar } from "./view-bar";
 import { toast } from "sonner";
@@ -1332,6 +1333,8 @@ export function IssuesHeader({
   facetCountsExact = true,
   tableFacetCounts,
   onTableFacetChange,
+  search,
+  onSearchChange,
   saveViewScope = { kind: "workspace" },
 }: {
   scopedIssues: Issue[];
@@ -1347,6 +1350,9 @@ export function IssuesHeader({
   facetCountsExact?: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
+  /** The page's in-page search box; omitted when the caller owns search. */
+  search?: string;
+  onSearchChange?: (query: string) => void;
   /** Where "save as view" files the view. /issues keeps the workspace
    *  default; the project-detail fallback passes its project scope; `null`
    *  hides the save affordance entirely. */
@@ -1505,6 +1511,15 @@ export function IssuesHeader({
         </DropdownMenu>
 
         <div className="flex shrink-0 items-center gap-1">
+          {onSearchChange && (
+            <PageSearchInput
+              value={search ?? ""}
+              onChange={onSearchChange}
+              placeholder={t(($) => $.table.search_placeholder)}
+              clearLabel={t(($) => $.table.search_clear)}
+              className="mr-1 w-48 lg:w-56"
+            />
+          )}
           {agentRunningFilter && (
             <span className="mr-1 hidden text-caption text-muted-foreground md:inline">
               {t(($) => $.agent_activity.filter_active_label)}

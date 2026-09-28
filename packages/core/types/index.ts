@@ -49,6 +49,8 @@ export type {
   AgentPermissionScope,
   StoredAgentDraft,
   UpdateAgentRequest,
+  BulkUpdateAgentRoutingRequest,
+  BulkUpdateAgentRoutingResponse,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   Skill,

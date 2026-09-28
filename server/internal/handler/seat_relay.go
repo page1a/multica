@@ -71,14 +71,18 @@ func (h *Handler) substituteAgent(ctx context.Context, workspaceID pgtype.UUID, 
 		if agent.RoutingTier.Valid {
 			tier = agent.RoutingTier.String
 		}
-		roster[agent.Name] = routing.Agent{ID: id, Name: agent.Name, Tier: tier}
+		roster[agent.Name] = routing.Agent{ID: id, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage}
 		byID[id] = agent
 	}
 	holder := routing.Seat{ID: uuidToString(failed.ID), Name: failed.Name}
 	if failed.RoutingTier.Valid {
 		holder.TierKey = failed.RoutingTier.String
 	}
-	seat, _, ok := routing.SubstituteSeat(routing.DefaultLadder, holder, roster, avoid, direction)
+	ladder := routing.DefaultLadder
+	if ws, err := h.Queries.GetWorkspace(ctx, workspaceID); err == nil {
+		ladder = ladder.WithSeatOrder(routing.ParseSettings(ws.Settings).SeatOrder())
+	}
+	seat, _, ok := routing.SubstituteSeat(ladder, holder, roster, avoid, direction)
 	if !ok {
 		return db.Agent{}, routing.Seat{}, false
 	}

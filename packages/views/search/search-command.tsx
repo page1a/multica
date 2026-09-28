@@ -23,6 +23,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
+  ChatSession,
   MemberWithUser,
   SearchIssueResult,
   SearchProjectResult,
@@ -44,6 +45,7 @@ import type { WorkspacePageKey, WorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
 import { createShortcutChord } from "@multica/core/shortcuts";
 import { memberListOptions } from "@multica/core/workspace/queries";
+import { chatSessionsOptions, sortChatSessions } from "@multica/core/chat/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { StatusIcon } from "../issues/components";
 import { resolvedThreadRootIds, rootCommentIds } from "../issues/components/thread-utils";
@@ -150,6 +152,24 @@ function matchesMember(member: MemberWithUser, query: string) {
     member.email.toLowerCase().includes(query) ||
     (query.length >= 3 && member.role.startsWith(query)) ||
     matchesPinyin(member.name, query)
+  );
+}
+
+// Chat sessions are searched locally: the list is the same cache the sidebar
+// and chat page already hold, and titles are short, so there is no server
+// round trip and the rows land on the keystroke.
+//
+// Typing the Chat page's own name ("chat", "聊天", "liaotian") lists recent
+// chats instead of only offering the page, the way "members" lists members.
+// The two-character floor keeps "c" from flooding the palette with every chat.
+const MAX_EMPTY_QUERY_CHATS = 5;
+const MAX_CHAT_RESULTS = 8;
+
+function matchesChat(session: ChatSession, query: string) {
+  const title = session.title?.trim() ?? "";
+  return (
+    title !== "" &&
+    (title.toLowerCase().includes(query) || matchesPinyin(title, query))
   );
 }
 
@@ -561,8 +581,34 @@ export function SearchCommand() {
       .slice(0, 10);
   }, [members, query]);
 
+  const chatPageLabel = useMemo(
+    () => navPages.find((page) => page.key === "chat")?.label ?? "",
+    [navPages],
+  );
+  // Gated on `open` like Recent: the sidebar usually has this cached already,
+  // but a closed palette has no reason to be the one that fetches it.
+  const { data: chatSessions } = useQuery({
+    ...chatSessionsOptions(wsId),
+    enabled: open,
+  });
+  const filteredChats = useMemo(() => {
+    const sessions = sortChatSessions(chatSessions ?? []);
+    const active = sessions.filter((s) => s.status !== "archived");
+    const q = query.trim().toLowerCase();
+    if (!q) return active.slice(0, MAX_EMPTY_QUERY_CHATS);
+    if (q.length >= 2 && matchesRow(chatPageLabel, PAGE_KEYWORDS.chat, q)) {
+      return active.slice(0, MAX_CHAT_RESULTS);
+    }
+    // Archived chats are still findable by title, after every live one.
+    const archived = sessions.filter((s) => s.status === "archived");
+    return [...active, ...archived]
+      .filter((s) => matchesChat(s, q))
+      .slice(0, MAX_CHAT_RESULTS);
+  }, [chatSessions, chatPageLabel, query]);
+
   const hasResults =
     results.issues.length > 0 ||
+    filteredChats.length > 0 ||
     results.projects.length > 0 ||
     filteredMembers.length > 0;
 
@@ -692,6 +738,14 @@ export function SearchCommand() {
     (key: WorkspacePageKey) => {
       setOpen(false);
       intentNavigate(p[key](), consumeIntent());
+    },
+    [intentNavigate, consumeIntent, setOpen, p],
+  );
+
+  const handleChatSelect = useCallback(
+    (sessionId: string) => {
+      setOpen(false);
+      intentNavigate(p.chatSession(sessionId), consumeIntent());
     },
     [intentNavigate, consumeIntent, setOpen, p],
   );
@@ -836,6 +890,79 @@ export function SearchCommand() {
               </CommandPrimitive.Group>
             )}
 
+            {!query.trim() && recentIssues.length > 0 && (
+              <CommandPrimitive.Group
+                heading={
+                  <>
+                    <Clock className="size-3" />
+                    <span>{t(($) => $.groups.recent)}</span>
+                  </>
+                }
+                className={`${GROUP_CLASS} [&_[cmdk-group-heading]]:flex [&_[cmdk-group-heading]]:items-center [&_[cmdk-group-heading]]:gap-2`}
+              >
+                {recentIssues.map((item) => (
+                  <CommandPrimitive.Item
+                    key={item.id}
+                    value={item.id}
+                    onSelect={handleSelect}
+                    className="flex cursor-default select-none items-center gap-2.5 rounded-lg px-3 py-2.5 text-body outline-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-accent"
+                  >
+                    <StatusIcon
+                      status={item.status}
+                      color={colorOf(item.status)}
+                      icon={iconOf(item.status)}
+                      category={issueStatusCategory(item) ?? undefined}
+                      className="size-4 shrink-0"
+                    />
+                    <span className="text-caption text-muted-foreground shrink-0">
+                      {item.identifier}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                    <IssueAssigneeAvatar
+                      assigneeType={item.assignee_type}
+                      assigneeId={item.assignee_id}
+                    />
+                  </CommandPrimitive.Item>
+                ))}
+              </CommandPrimitive.Group>
+            )}
+
+            {filteredChats.length > 0 && (
+              <CommandPrimitive.Group
+                heading={t(($) => $.groups.chats)}
+                className={GROUP_CLASS}
+              >
+                {filteredChats.map((session) => (
+                  <CommandPrimitive.Item
+                    key={session.id}
+                    value={`chat:${session.id}`}
+                    onSelect={() => handleChatSelect(session.id)}
+                    className="flex cursor-default select-none items-center gap-2.5 rounded-lg px-3 py-2.5 text-body outline-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-accent"
+                  >
+                    <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">
+                      <HighlightText
+                        text={session.title?.trim() || t(($) => $.chat.untitled)}
+                        query={query}
+                      />
+                    </span>
+                    {session.status === "archived" && (
+                      <span className="shrink-0 text-caption text-muted-foreground">
+                        {t(($) => $.chat.archived)}
+                      </span>
+                    )}
+                    <ActorAvatar
+                      actorType="agent"
+                      actorId={session.agent_id}
+                      size="sm"
+                      profileLink={false}
+                      className="shrink-0"
+                    />
+                  </CommandPrimitive.Item>
+                ))}
+              </CommandPrimitive.Group>
+            )}
+
             {/*
               Spinner only while there is nothing to look at. isLoading flips
               on the keystroke, before the 300ms debounce even fires, so
@@ -932,44 +1059,10 @@ export function SearchCommand() {
               </CommandPrimitive.Group>
             )}
 
-            {!query.trim() && recentIssues.length > 0 && (
-              <CommandPrimitive.Group
-                heading={
-                  <>
-                    <Clock className="size-3" />
-                    <span>{t(($) => $.groups.recent)}</span>
-                  </>
-                }
-                className={`${GROUP_CLASS} [&_[cmdk-group-heading]]:flex [&_[cmdk-group-heading]]:items-center [&_[cmdk-group-heading]]:gap-2`}
-              >
-                {recentIssues.map((item) => (
-                  <CommandPrimitive.Item
-                    key={item.id}
-                    value={item.id}
-                    onSelect={handleSelect}
-                    className="flex cursor-default select-none items-center gap-2.5 rounded-lg px-3 py-2.5 text-body outline-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-accent"
-                  >
-                    <StatusIcon
-                      status={item.status}
-                      color={colorOf(item.status)}
-                      icon={iconOf(item.status)}
-                      category={issueStatusCategory(item) ?? undefined}
-                      className="size-4 shrink-0"
-                    />
-                    <span className="text-caption text-muted-foreground shrink-0">
-                      {item.identifier}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                    <IssueAssigneeAvatar
-                      assigneeType={item.assignee_type}
-                      assigneeId={item.assignee_id}
-                    />
-                  </CommandPrimitive.Item>
-                ))}
-              </CommandPrimitive.Group>
-            )}
-
-            {!isLoading && !query.trim() && recentIssues.length === 0 && (
+            {!isLoading &&
+              !query.trim() &&
+              recentIssues.length === 0 &&
+              filteredChats.length === 0 && (
               <div className="px-5 py-4 text-center text-caption text-muted-foreground">
                 {t(($) => $.empty.type_to_search)}
               </div>

@@ -62,7 +62,7 @@
     "unarchive": "Unarchive",
     "access_request_mention_title": "{{requester}} mentioned {{agent}} and needs your approval",
     "access_request_assign_title": "{{requester}} assigned {{agent}} and needs your approval",
-    "access_request_local_env_note": "This agent runs on your machine. Once approved, the task can use your local environment — keys, logins and files.",
+    "access_request_local_env_note": "Once approved, the task can access keys, logins and files on your machine.",
     "access_pass_prompt": "Also let them use it for a while:",
     "access_pass_2h": "2 hours",
     "access_pass_today": "Rest of today",
@@ -149,18 +149,17 @@
   },
   "board": {
     "title": "Inbox",
-    "lede": "One row per issue: running or stopped, why it stopped, what happened before, who moves next. Open the issue for details.",
     "activity_link": "All activity",
     "back_to_board": "One row per issue",
     "lanes": {
       "waiting": {
         "title": "Waiting on you",
-        "hint": "Issues that asked for you. Reply and the row goes away; the agent picks up again",
+        "hint": "Issues waiting on you; once you reply, the agent continues.",
         "empty": "Nothing is waiting on you"
       },
       "stalled": {
         "title": "Stopped · unexplained",
-        "hint": "No agent is running and the issue was never closed out. The server traced why",
+        "hint": "Issues with no agent running that were never closed out.",
         "empty": "Nothing stopped without an explanation"
       },
       "running": {
@@ -170,7 +169,7 @@
       },
       "fresh": {
         "title": "New activity",
-        "hint": "Unread since your last visit, and in none of the lanes above. Shown this visit only",
+        "hint": "Other issues with news since your last visit, shown this visit only.",
         "empty": "Nothing new"
       },
       "done": {

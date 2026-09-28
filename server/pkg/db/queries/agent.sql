@@ -84,7 +84,7 @@ INSERT INTO agent (
     instructions, custom_env, custom_args, mcp_config, model, thinking_level,
     service_tier, routing_tier, conversation_starters,
     composio_toolkit_allowlist, permission_mode, parent_agent_id,
-    runtime_inherited
+    runtime_inherited, routing_usage
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
@@ -94,7 +94,8 @@ INSERT INTO agent (
     sqlc.narg('composio_toolkit_allowlist')::text[],
     COALESCE(sqlc.narg('permission_mode'), 'private'),
     sqlc.narg('parent_agent_id')::uuid,
-    COALESCE(sqlc.narg('runtime_inherited')::boolean, FALSE)
+    COALESCE(sqlc.narg('runtime_inherited')::boolean, FALSE),
+    COALESCE(sqlc.narg('routing_usage')::text, 'normal')
 )
 RETURNING *;
 
@@ -215,6 +216,7 @@ UPDATE agent SET
     thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
     service_tier = COALESCE(sqlc.narg('service_tier'), service_tier),
     routing_tier = COALESCE(sqlc.narg('routing_tier'), routing_tier),
+    routing_usage = COALESCE(sqlc.narg('routing_usage'), routing_usage),
     conversation_starters = COALESCE(sqlc.narg('conversation_starters'), conversation_starters),
     composio_toolkit_allowlist = COALESCE(sqlc.narg('composio_toolkit_allowlist')::text[], composio_toolkit_allowlist),
     switchable_models = COALESCE(sqlc.narg('switchable_models'), switchable_models),
@@ -384,6 +386,22 @@ RETURNING *;
 -- the column back to NULL, so "this seat is not on the ladder" routes here.
 UPDATE agent SET routing_tier = NULL, updated_at = now()
 WHERE id = $1
+RETURNING *;
+
+-- name: SetAgentsRouting :many
+-- Bulk edit of the routing pair from the seats table (DENE-922). One
+-- statement, so a batch lands whole or not at all. set_tier distinguishes
+-- "leave the tier alone" from "clear it" — routing_tier is nullable, and a
+-- NULL argument alone cannot say which. routing_usage is NOT NULL, so NULL
+-- here always means "leave it".
+UPDATE agent SET
+    routing_tier = CASE WHEN sqlc.arg('set_tier')::boolean
+        THEN sqlc.narg('routing_tier')::text ELSE routing_tier END,
+    routing_usage = COALESCE(sqlc.narg('routing_usage')::text, routing_usage),
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND id = ANY(sqlc.arg('ids')::uuid[])
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: ClearAgentMcpConfig :one

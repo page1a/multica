@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Cmd+K 搜索聊天 · 界面预览</title>
+<style>
+  :root{--bg:#f4f4f5;--pop:#fff;--fg:#18181b;--muted:#71717a;--border:#e4e4e7;--accent:#f1f1f3;--mark:#fde68a;--new:#2563eb}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif;background:var(--bg);color:var(--fg);padding:32px}
+  h1{font-size:20px;margin:0 0 4px} .sub{color:var(--muted);margin:0 0 24px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:28px}
+  .case h2{font-size:15px;margin:0 0 4px} .case p{margin:0 0 10px;color:var(--muted);font-size:13px}
+  .panel{background:var(--pop);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.14),0 0 0 1px var(--border);overflow:hidden}
+  .input{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);padding:12px 16px}
+  .input svg{width:20px;height:20px;color:var(--muted)} .input .q{flex:1} .input .ph{color:var(--muted)}
+  .kbd{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:1px 6px}
+  .caret{display:inline-block;width:1px;height:16px;background:var(--fg);vertical-align:-3px;margin-left:1px}
+  .list{padding-bottom:4px}
+  .group{padding:8px} .gh{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--muted)}
+  .group.new{position:relative;background:linear-gradient(90deg,rgba(37,99,235,.06),transparent 60%)}
+  .group.new::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--new)}
+  .tag{font-size:10px;font-weight:600;color:var(--new);border:1px solid var(--new);border-radius:4px;padding:0 4px;margin-left:4px}
+  .item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px}
+  .item.sel{background:var(--accent)}
+  .ic{width:16px;height:16px;flex-shrink:0;color:var(--muted)}
+  .id{font-size:12px;color:var(--muted);flex-shrink:0}
+  .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .arch{font-size:12px;color:var(--muted);flex-shrink:0}
+  .av{width:20px;height:20px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;font-size:11px;color:#fff;font-weight:600}
+  mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
+  .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;border:2px solid}
+  .note{margin-top:28px;font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<h1>Cmd+K 搜索面板 · 能搜到具体聊天（PR #394）</h1>
+<p class="sub">按源码里的布局、顺序和文案还原的静态预览，数据是示例。<span class="tag">新增</span> 标出的蓝色分组是这次加的，其余是原来就有的。</p>
+
+<div class="grid">
+
+<!-- 1 空面板 -->
+<section class="case">
+  <h2>① 刚按下 Cmd+K，还没输入</h2>
+  <p>原来的「最近」任务照旧；下面多了一组「聊天」，最多 5 条，置顶在前、再按最近活动排。已归档的不出现。</p>
+  <div class="panel">
+    <div class="input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="q ph">输入命令或关键词搜索...</span><span class="kbd">Esc</span></div>
+    <div class="list">
+      <div class="group">
+        <div class="gh"><svg class="ic" style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>最近</div>
+        <div class="item sel"><span class="dot" style="border-color:#eab308"></span><span class="id">DENE-899</span><span class="t">工作区聊天共享广播</span><span class="av" style="background:#8b5cf6">悟</span></div>
+        <div class="item"><span class="dot" style="border-color:#22c55e;background:#22c55e"></span><span class="id">DENE-897</span><span class="t">关单不再落进永远等不到的阻塞</span><span class="av" style="background:#0ea5e9">布</span></div>
+        <div class="item"><span class="dot" style="border-color:#a1a1aa"></span><span class="id">DENE-893</span><span class="t">设置页加搜索框</span><span class="av" style="background:#f97316">天</span></div>
+      </div>
+      <div class="group new">
+        <div class="gh">聊天 <span class="tag">新增</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Cmd+K 搜索面板加聊天和任务</span><span class="av" style="background:#8b5cf6">悟</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Desktop 测试版发版检查</span><span class="av" style="background:#0ea5e9">布</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">AI100 流动性挖矿主网上线</span><span class="av" style="background:#f97316">天</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">自建实例上传超时排查</span><span class="av" style="background:#8b5cf6">悟</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">未命名聊天</span><span class="av" style="background:#10b981">拉</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2 输入关键词 -->
+<section class="case">
+  <h2>② 输入关键词：「发版」</h2>
+  <p>按聊天标题匹配（中文里任意位置都行；拼音要从标题开头打，比如 zijian 或 zjsl 能命中「自建实例上传超时排查」）。最多 8 条；已归档的也能搜到，排在最后并标「已归档」。任务结果在它下面照常出。</p>
+  <div class="panel">
+    <div class="input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="q">发版<span class="caret"></span></span><span class="kbd">Esc</span></div>
+    <div class="list">
+      <div class="group new">
+        <div class="gh">聊天 <span class="tag">新增</span></div>
+        <div class="item sel"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Desktop 测试版<mark>发版</mark>检查</span><span class="av" style="background:#0ea5e9">布</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">正式<mark>发版</mark>流程梳理</span><span class="arch">已归档</span><span class="av" style="background:#8b5cf6">悟</span></div>
+      </div>
+      <div class="group">
+        <div class="gh">任务</div>
+        <div class="item"><span class="dot" style="border-color:#22c55e;background:#22c55e"></span><span class="id">DENE-276</span><span class="t">Desktop <mark>发版</mark>丢交棒</span><span class="av" style="background:#0ea5e9">布</span></div>
+        <div class="item"><span class="dot" style="border-color:#eab308"></span><span class="id">DENE-812</span><span class="t">双通道<mark>发版</mark>测试线</span><span class="av" style="background:#f97316">天</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 输入 聊天 -->
+<section class="case">
+  <h2>③ 输入「聊天」或 chat</h2>
+  <p>除了原来那个「跳到聊天页」的入口，下面直接列出最近的聊天（最多 8 条）。至少打 2 个字才触发，只打一个 c 不会被聊天刷屏。</p>
+  <div class="panel">
+    <div class="input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="q">聊天<span class="caret"></span></span><span class="kbd">Esc</span></div>
+    <div class="list">
+      <div class="group">
+        <div class="gh">页面</div>
+        <div class="item sel"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t"><mark>聊天</mark></span></div>
+      </div>
+      <div class="group new">
+        <div class="gh">聊天 <span class="tag">新增</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Cmd+K 搜索面板加聊天和任务</span><span class="av" style="background:#8b5cf6">悟</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Desktop 测试版发版检查</span><span class="av" style="background:#0ea5e9">布</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">AI100 流动性挖矿主网上线</span><span class="av" style="background:#f97316">天</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">自建实例上传超时排查</span><span class="av" style="background:#8b5cf6">悟</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">小队筛选与分组</span><span class="av" style="background:#10b981">拉</span></div>
+        <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">未命名聊天</span><span class="av" style="background:#10b981">拉</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 点选 -->
+<section class="case">
+  <h2>④ 点一条聊天</h2>
+  <p>面板关闭，直接打开那个聊天会话。按住 Cmd 点（或 Cmd+回车）会在新标签页打开，不影响当前页面。</p>
+  <div class="panel" style="padding:28px 24px;color:var(--muted);font-size:13px;line-height:1.9">
+    点「Desktop 测试版发版检查」<br>
+    → 面板关闭<br>
+    → 跳到 <b style="color:var(--fg)">聊天 › Desktop 测试版发版检查</b>，和从侧边栏点进去是同一个页面<br><br>
+    Cmd + 点击<br>
+    → 新开一个标签页打开这条聊天，当前页不动
+  </div>
+</section>
+
+</div>
+
+<p class="note">说明：这是照着源码结构还原的示意图，不是真实截图；配色按默认浅色主题近似。聊天标题、头像、任务号都是示例数据。</p>
+</body>
+</html>

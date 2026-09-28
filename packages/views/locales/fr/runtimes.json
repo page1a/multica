@@ -34,7 +34,7 @@
     "failed": "Impossible de démarrer Mika",
     "dialog_title": "Où Mika doit-il s'exécuter ?",
     "cancel": "Annuler",
-    "dialog_description": "Choisissez le runtime que Mika utilisera. Vous pourrez le modifier plus tard dans les paramètres."
+    "dialog_description": "Choisissez le runtime utilisé par Mika."
   },
   "machine": {
     "search_placeholder": "Rechercher des machines…",
@@ -259,7 +259,7 @@
       "instance_type_required": "Le type d'instance est obligatoire",
       "disk_size_invalid": "La taille du disque doit être un entier positif"
     },
-    "create_hint": "Choisissez un nom, un type d'instance et une taille de disque. Fleet s'occupe du reste."
+    "create_hint": "Choisissez un nom, un type d'instance et une taille de disque ; Fleet applique le reste."
   },
   "update": {
     "cli_version_label": "Version du CLI :",
@@ -486,7 +486,7 @@
     "title": "Limites du forfait",
     "observed": "Mis à jour {{when}}",
     "unavailable": "Limites du forfait indisponibles",
-    "unavailable_hint": "Aucun instantané de quota n'a été transmis. Codex en transmet un après une session CLI ; les daemons plus anciens et les CLI non pris en charge restent indisponibles.",
+    "unavailable_hint": "Aucun quota transmis pour l'instant. Lancez une session CLI Codex pour l'afficher.",
     "unavailable_hint_claude": "Claude Code ne transmet actuellement les limites du forfait qu'après avoir atteint une limite de session.",
     "limit_reached": "Limite atteinte",
     "used": "{{percent}} % utilisés",

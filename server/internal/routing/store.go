@@ -11,9 +11,17 @@ import (
 type Issue struct {
 	ID    string
 	Title string
-	// DescriptionSummary is a clipped description. The full body never leaves
-	// the deployment.
+	// DescriptionSummary is a clipped description for the judge.
 	DescriptionSummary string
+	// Description is the body the analysis role reads, bounded by the store.
+	// The judge never receives it.
+	Description string
+	// ContentHash is ContentHash(title, full description). The cached
+	// analysis is reused only while it matches.
+	ContentHash string
+	// Analysis is the record cached on the issue, nil when there is none or
+	// it could not be read. Its freshness is checked by the caller.
+	Analysis *AnalysisRecord
 	// Status is the status CATEGORY (todo / in_progress / in_review / done /
 	// blocked / backlog / cancelled), already resolved from any custom status.
 	// The state table is written against the seven categories, so a workspace

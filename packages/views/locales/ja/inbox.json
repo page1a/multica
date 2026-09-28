@@ -59,7 +59,7 @@
     "unarchive": "アーカイブ解除",
     "access_request_mention_title": "{{requester}} が {{agent}} をメンションしました。承認が必要です",
     "access_request_assign_title": "{{requester}} が {{agent}} に割り当てました。承認が必要です",
-    "access_request_local_env_note": "このエージェントはあなたのマシンで動作します。承認するとタスクはローカル環境（キー、ログイン、ファイル）にアクセスできます。",
+    "access_request_local_env_note": "承認すると、このタスクはあなたのマシン上のキー、ログイン状態、ファイルにアクセスできます。",
     "access_pass_prompt": "一定期間の利用も許可する：",
     "access_pass_2h": "2 時間",
     "access_pass_today": "今日中",
@@ -146,18 +146,17 @@
   },
   "board": {
     "title": "Inbox",
-    "lede": "One row per issue: running or stopped, why it stopped, what happened before, who moves next. Open the issue for details.",
     "activity_link": "All activity",
     "back_to_board": "One row per issue",
     "lanes": {
       "waiting": {
         "title": "Waiting on you",
-        "hint": "Issues that asked for you. Reply and the row goes away; the agent picks up again",
+        "hint": "あなたの返信や対応を待っているタスクです。返信するとエージェントが再開します。",
         "empty": "Nothing is waiting on you"
       },
       "stalled": {
         "title": "Stopped · unexplained",
-        "hint": "No agent is running and the issue was never closed out. The server traced why",
+        "hint": "実行中のエージェントがなく、まだ締めくくられていないタスクです。",
         "empty": "Nothing stopped without an explanation"
       },
       "running": {
@@ -167,7 +166,7 @@
       },
       "fresh": {
         "title": "新着あり",
-        "hint": "前回以降に未読があり、上のどのレーンにも入らないチケット。今回だけ表示",
+        "hint": "前回の訪問以降に新着がある他のタスクで、今回のみ表示されます。",
         "empty": "新着はありません"
       },
       "done": {

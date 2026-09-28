@@ -361,7 +361,7 @@ describe("CreateProjectModal — local directory execution mode", () => {
 
     const shared = screen.getByRole("radio", { name: /Share this workspace/i });
     expect(shared).not.toBeDisabled();
-    expect(screen.getByText(/does not store shared mode/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not support shared mode/i)).toBeInTheDocument();
     await user.click(shared);
     expect(screen.getByRole("button", { name: /^Shared$/i })).toBeInTheDocument();
   });

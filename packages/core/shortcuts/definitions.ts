@@ -12,6 +12,7 @@ export type ShortcutActionId =
   | "toggleRightSidebar"
   | "toggleChat"
   | "findInIssue"
+  | "focusPageSearch"
   | "archiveInboxItem"
   | "send"
   | "goBack"
@@ -94,6 +95,14 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   // to keep working while the caret sits in the chat composer itself.
   { id: "toggleChat", category: "general", defaultShortcut: primary("J"), allowInEditable: true },
   { id: "findInIssue", category: "general", defaultShortcut: primary("F"), allowInEditable: true },
+  // Plain `/` is the common "jump to this page's search" key. Not allowed in
+  // editables, so typing a slash in a composer or comment stays a slash.
+  {
+    id: "focusPageSearch",
+    category: "general",
+    defaultShortcut: createShortcutChord("/"),
+    allowInEditable: false,
+  },
   {
     id: "archiveInboxItem",
     category: "general",

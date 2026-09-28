@@ -967,11 +967,13 @@ export function ChatWindow() {
                   variant="ghost"
                   size="icon-sm"
                   className="text-muted-foreground"
+                  aria-label={t(($) => $.window.minimize_tooltip)}
                   onClick={handleMinimize}
                 />
               }
             >
-              <Minus />
+              {/* A phone sheet slides away downward; the desktop card minimises. */}
+              {isMobile ? <ChevronDown /> : <Minus />}
             </TooltipTrigger>
             <TooltipContent side="top">{t(($) => $.window.minimize_tooltip)}</TooltipContent>
           </Tooltip>

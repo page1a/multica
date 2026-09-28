@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { parseWithFallback } from "../api/schema";
-import type { RoutingState } from "./routing-settings";
+import type { RoutingMode, RoutingRole, RoutingState } from "./routing-settings";
 
 /**
  * The server's read-only report on whether routing is actually working
@@ -80,6 +80,24 @@ export interface RoutingHealth {
   policy_prompt: string;
   provider_quotas: ProviderQuotaSummary[];
   seats: RoutingSeatSummary[];
+  /**
+   * Which model roles are on (DENE-923). The gateway fields above describe
+   * the primary role — the judge when it is on, else the analysis model —
+   * and `roles` describes each one on its own.
+   */
+  mode: RoutingMode;
+  roles: RoutingRoleHealth[];
+}
+
+/** One model role's endpoint, reduced like the top-level gateway fields. */
+export interface RoutingRoleHealth {
+  role: RoutingRole;
+  enabled: boolean;
+  model: string;
+  gateway_host: string;
+  gateway_scope: "workspace" | "deployment";
+  gateway_key_set: boolean;
+  gateway_protocol: "openai" | "systemone";
 }
 
 export interface ProviderQuotaSummary {
@@ -125,6 +143,8 @@ export const RoutingHealthSchema = z.object({
   policy_prompt: z.string().optional(),
   provider_quotas: z.array(z.unknown()).optional(),
   seats: z.array(z.unknown()).optional(),
+  mode: z.string().optional(),
+  roles: z.array(z.unknown()).optional(),
 });
 
 /**
@@ -154,6 +174,8 @@ export const UNKNOWN_ROUTING_HEALTH: RoutingHealth = {
   policy_prompt: "",
   provider_quotas: [],
   seats: [],
+  mode: "judge",
+  roles: [],
 };
 
 const KNOWN_STATES: readonly RoutingState[] = [
@@ -215,6 +237,60 @@ export function parseRoutingHealth(raw: unknown): RoutingHealth {
     policy_prompt: typeof parsed.policy_prompt === "string" ? parsed.policy_prompt : "",
     provider_quotas: parseProviderQuotas(parsed.provider_quotas),
     seats: parseSeatSummaries(parsed.seats),
+    mode: normalizeRoutingMode(parsed.mode),
+    roles: parseRoleHealth(parsed.roles),
+  };
+}
+
+const KNOWN_MODES: readonly RoutingMode[] = ["none", "analysis", "analysis_judge", "judge"];
+
+/** A backend that predates the split omits `mode`; it only had the judge. */
+function normalizeRoutingMode(value: unknown): RoutingMode {
+  return typeof value === "string" && (KNOWN_MODES as readonly string[]).includes(value)
+    ? (value as RoutingMode)
+    : "judge";
+}
+
+function parseRoleHealth(value: unknown): RoutingRoleHealth[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isQuotaRecord(item) || (item.role !== "analysis" && item.role !== "judge")) {
+      return [];
+    }
+    return [{
+      role: item.role,
+      enabled: item.enabled === true,
+      model: typeof item.model === "string" ? item.model : "",
+      gateway_host: typeof item.gateway_host === "string" ? item.gateway_host : "",
+      gateway_scope: item.gateway_scope === "workspace" ? "workspace" : "deployment",
+      gateway_key_set: item.gateway_key_set === true,
+      gateway_protocol: item.gateway_protocol === "systemone" ? "systemone" : "openai",
+    }];
+  });
+}
+
+/**
+ * One role's endpoint. A backend that predates `roles` reports only the
+ * judge, through the top-level fields, so the judge falls back to those and
+ * the analysis role to an unset endpoint.
+ */
+export function roleHealth(
+  health: RoutingHealth | undefined,
+  role: RoutingRole,
+): RoutingRoleHealth | undefined {
+  if (!health) return undefined;
+  // `?? []`: a report that skipped the parser (a mocked client) has no list.
+  const reported = (health.roles ?? []).find((r) => r.role === role);
+  if (reported) return reported;
+  if (role === "analysis") return undefined;
+  return {
+    role,
+    enabled: true,
+    model: health.model,
+    gateway_host: health.gateway_host,
+    gateway_scope: health.gateway_scope,
+    gateway_key_set: health.gateway_key_set,
+    gateway_protocol: health.gateway_protocol,
   };
 }
 

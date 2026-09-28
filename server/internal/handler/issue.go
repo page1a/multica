@@ -28,6 +28,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/permission"
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
@@ -1835,11 +1836,12 @@ func appendIssueDateFilter(where []string, addArg func(any) string, filter *issu
 	))
 }
 
-// appendIssueTableSearchFilter adds a quick identity search to the ordinary
-// ListIssues window. Unlike the ranked global search endpoint, this predicate
-// preserves the table's active filters, explicit sort, total, and pagination.
-// Every word must appear in the title; a complete identifier (or bare issue
-// number) also matches the immutable numeric issue number.
+// appendIssueTableSearchFilter adds a quick search to the ordinary ListIssues
+// window. Unlike the ranked global search endpoint, this predicate preserves
+// the table's active filters, explicit sort, total, and pagination. Every word
+// must appear somewhere in the issue — its title, its description, or any of
+// its comments (words may be spread across them); a complete identifier (or
+// bare issue number) also matches the immutable numeric issue number.
 func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw string) []string {
 	query := strings.TrimSpace(raw)
 	if query == "" {
@@ -1849,12 +1851,16 @@ func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw s
 	words := splitSearchTerms(strings.ToLower(query))
 	ors := make([]string, 0, 2)
 	if len(words) > 0 {
-		titleMatches := make([]string, 0, len(words))
+		wordMatches := make([]string, 0, len(words))
 		for _, word := range words {
-			pattern := "%" + escapeLike(word) + "%"
-			titleMatches = append(titleMatches, fmt.Sprintf("LOWER(i.title) LIKE %s", addArg(pattern)))
+			pattern := addArg("%" + escapeLike(word) + "%")
+			wordMatches = append(wordMatches, fmt.Sprintf(
+				"(LOWER(i.title) LIKE %[1]s OR LOWER(COALESCE(i.description, '')) LIKE %[1]s OR EXISTS ("+
+					"SELECT 1 FROM comment c WHERE c.workspace_id = i.workspace_id AND c.issue_id = i.id AND LOWER(c.content) LIKE %[1]s))",
+				pattern,
+			))
 		}
-		ors = append(ors, "("+strings.Join(titleMatches, " AND ")+")")
+		ors = append(ors, "("+strings.Join(wordMatches, " AND ")+")")
 	}
 	if number, ok := parseQueryNumber(query); ok {
 		ors = append(ors, fmt.Sprintf("i.number = %s", addArg(number)))
@@ -3071,6 +3077,12 @@ type CreateIssueRequest struct {
 	OriginID   *string `json:"origin_id,omitempty"`
 
 	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
+
+	// RoutingFacts lets the creator — usually an agent that just wrote the
+	// ticket and already knows its shape — supply the facts routing would
+	// otherwise ask the analysis model for (DENE-923). They are cached
+	// against this content, so editing the ticket later invalidates them.
+	RoutingFacts *routing.Facts `json:"routing_facts,omitempty"`
 }
 
 func duplicateIssueMessage(issue IssueResponse) string {
@@ -3097,6 +3109,15 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
+	}
+	if req.RoutingFacts != nil {
+		facts := req.RoutingFacts.Normalize()
+		if !facts.Valid() {
+			writeError(w, http.StatusBadRequest,
+				"routing_facts: scope must be small|module|cross_module, clarity clear|vague, risk low|medium|high")
+			return
+		}
+		req.RoutingFacts = &facts
 	}
 
 	workspaceID := h.resolveWorkspaceID(r)
@@ -3409,6 +3430,18 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// same entry point. This call and the status change that may follow it
 	// moments later can both be in flight at once; the conditional writes and
 	// the one-comment-per-kind index are what make that safe.
+	if req.RoutingFacts != nil {
+		// Written before the route is queued, so the first route already
+		// finds them and skips the analysis call. Hashed from the stored
+		// row, not the request: the create path may have rewritten the body.
+		if err := h.writeAnalysisRecord(r.Context(), issue.WorkspaceID, issue.ID, routing.AnalysisRecord{
+			Facts:  *req.RoutingFacts,
+			Source: routing.FactsFromCreator,
+			Hash:   routing.ContentHash(issue.Title, issue.Description.String),
+		}); err != nil {
+			slog.Warn("routing facts write failed", append(logger.RequestAttrs(r), "error", err, "issue_id", uuidToString(issue.ID))...)
+		}
+	}
 	h.RouteIssueAsync(r, workspaceID, uuidToString(issue.ID))
 
 	writeJSON(w, http.StatusCreated, resp)
@@ -3918,6 +3951,17 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		} else {
 			params.ParentIssueID = pgtype.UUID{Valid: false} // explicit null = remove parent
 		}
+	}
+	// Sub-issues are execution-only: their acceptance seat belongs to the
+	// parent and must never be copied or assigned locally.  Clear both the
+	// explicit request and any stale reviewer already stored on an issue as
+	// soon as the resulting parent link is present.  Mark the pair as touched
+	// so the atomic update's concurrent-field refresh does not restore it.
+	if params.ParentIssueID.Valid {
+		params.ReviewerType = pgtype.Text{Valid: false}
+		params.ReviewerID = pgtype.UUID{Valid: false}
+		rawFields["reviewer_type"] = json.RawMessage("null")
+		rawFields["reviewer_id"] = json.RawMessage("null")
 	}
 	if _, ok := rawFields["project_id"]; ok {
 		if req.ProjectID != nil && strings.TrimSpace(*req.ProjectID) != "" {
@@ -4848,6 +4892,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			} else {
 				params.Stage = pgtype.Int4{Valid: false} // explicit null = unstage
 			}
+		}
+		// Sub-issues are execution-only. A batch re-parent can otherwise carry
+		// a legacy acceptance seat (or a seat copied from the parent) into the
+		// child because this path starts from the existing row. Keep the batch
+		// write aligned with UpdateIssue: any resulting parent link clears both
+		// reviewer columns before the status guard and atomic update run.
+		if params.ParentIssueID.Valid {
+			params.ReviewerType = pgtype.Text{Valid: false}
+			params.ReviewerID = pgtype.UUID{Valid: false}
 		}
 
 		// Validate the resulting assignee pair when this batch update touches

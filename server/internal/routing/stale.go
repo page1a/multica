@@ -232,7 +232,13 @@ func (r *Router) routeStale(ctx context.Context, workspaceID string, settings Se
 		return noop("review remarks unreadable"), err
 	}
 
-	decision, err := r.Judge.Stale(ctx, settings.Target(), r.staleState(issue, quiet, remarks))
+	target, called := settings.PrimaryTarget()
+	if !called {
+		// No model is switched on. Waking is the default every weak answer
+		// falls to anyway, and it writes no status.
+		return r.wakeStale(ctx, workspaceID, issue, StaleDecision{Action: StaleWake, Reason: "没有启用分析或判断模型，直接叫醒验收席"}, quiet)
+	}
+	decision, err := r.Judge.Stale(ctx, target, r.staleState(issue, quiet, remarks))
 	if err != nil {
 		return r.reportUnavailable(ctx, workspaceID, issue, err)
 	}

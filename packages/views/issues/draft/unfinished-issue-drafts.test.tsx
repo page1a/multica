@@ -138,7 +138,7 @@ describe("UnfinishedIssueDraftsBanner", () => {
 
     expect(onResume).not.toHaveBeenCalled();
     expect(await screen.findByText("Unfinished alignments")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Discard “Dark mode”/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Discard "Dark mode"/ })).toBeTruthy();
   });
 
   it("resumes the row the user clicks", async () => {
@@ -157,7 +157,7 @@ describe("UnfinishedIssueDraftsBanner", () => {
     renderBanner([one], onResume);
 
     await userEvent.click(screen.getByRole("button"));
-    await userEvent.click(await screen.findByRole("button", { name: /Discard “Dark mode”/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Discard "Dark mode"/ }));
 
     // The confirm says what the server actually does — archive, not delete.
     expect(await screen.findByText(/archived as abandoned/)).toBeTruthy();
@@ -166,7 +166,7 @@ describe("UnfinishedIssueDraftsBanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Keep it" }));
     expect(mocks.abandonIssueDraft).not.toHaveBeenCalled();
 
-    await userEvent.click(await screen.findByRole("button", { name: /Discard “Dark mode”/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Discard "Dark mode"/ }));
     await userEvent.click(await screen.findByRole("button", { name: /^Discard$/ }));
 
     await waitFor(() => expect(mocks.abandonIssueDraft).toHaveBeenCalledWith("sess-1"));
@@ -183,7 +183,7 @@ describe("UnfinishedIssueDraftsBanner", () => {
     renderBanner([one]);
 
     await userEvent.click(screen.getByRole("button"));
-    await userEvent.click(await screen.findByRole("button", { name: /Discard “Dark mode”/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Discard "Dark mode"/ }));
     await userEvent.click(await screen.findByRole("button", { name: /^Discard$/ }));
 
     expect(
