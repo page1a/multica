@@ -265,6 +265,46 @@ describe("withRoutingSettings", () => {
     });
   });
 
+  it("persists switching analysis back to the API gateway", () => {
+    const runtime = withRoutingSettings(
+      {},
+      {
+        enabled: true,
+        model: "claude-sonnet",
+        confidence_threshold: 0.7,
+        stale_review_hours: 24,
+        base_url: "",
+        analysis: {
+          enabled: true,
+          model: "claude-sonnet",
+          base_url: "",
+          source: "runtime_subscription",
+          runtime_id: "runtime-1",
+          thinking_level: "low",
+        },
+        judge_enabled: false,
+        usage_priority: true,
+        allow_upshift: false,
+      },
+    );
+    const gateway = withRoutingSettings(
+      runtime,
+      {
+        enabled: true,
+        model: "claude-sonnet",
+        confidence_threshold: 0.7,
+        stale_review_hours: 24,
+        base_url: "",
+        analysis: { enabled: true, model: "gpt-4o", base_url: "https://gw.example/v1", source: "api_gateway" },
+        judge_enabled: false,
+        usage_priority: true,
+        allow_upshift: false,
+      },
+    );
+    expect((gateway.routing as { analysis: { source: string } }).analysis.source).toBe("api_gateway");
+    expect(parseRoutingSettings(gateway).analysis.source).not.toBe("runtime_subscription");
+  });
+
   // The key is write-only and lives outside RoutingSettings: the three cases
   // are what keeps an unrelated settings save from deleting a stored key.
   it("omits the key field entirely when no key was typed", () => {

@@ -1,0 +1,1 @@
+DROP TABLE chat_session_link_read_audit;

@@ -6,7 +6,9 @@
     "search_placeholder": "Rechercher un titre ou un contenu de discussion…",
     "search_clear": "Effacer la recherche",
     "search_empty": "Aucune discussion ne correspond",
-    "back": "Retour"
+    "back": "Retour",
+    "new_chat_in_project": "Les nouvelles discussions restent dans « {{title}} »",
+    "new_chat_unbound": "Les nouvelles discussions ne sont liées à aucun projet"
   },
   "project_bar": {
     "all": "Tout",
@@ -24,7 +26,10 @@
     "unpin": "Retirer l'épingle",
     "drag": "Glisser pour réordonner",
     "empty": "Aucune discussion dans ce projet",
-    "unread": "Non lu"
+    "unread": "Non lu",
+    "switch": "Changer de projet",
+    "switch_search": "Rechercher un projet…",
+    "switch_empty": "Aucun projet ne correspond"
   },
   "project_nudge": {
     "bind": "Lier à un projet",
@@ -199,7 +204,11 @@
       "label": "Recommander une action",
       "prompt": "Examinez ce que vous savez de mon espace de travail et recommandez une première action utile."
     },
-    "customize": "Personnaliser les amorces"
+    "customize": "Personnaliser les amorces",
+    "inbox": {
+      "label": "Résume ma boîte de réception",
+      "prompt": "Résume-moi ma boîte de réception"
+    }
   },
   "onboarding_cards": {
     "aria_label": "Façons de démarrer",
@@ -275,7 +284,9 @@
     "row_actions_aria": "Actions de discussion",
     "edit_access": "Modifier l'accès",
     "private_tag": "Privé",
-    "extra_tag": "Personnes en plus"
+    "extra_tag": "Personnes en plus",
+    "show_more": "Afficher plus ({{count}})",
+    "show_fewer": "Afficher moins"
   },
   "header": {
     "view_profile": "Voir le profil de l'agent",

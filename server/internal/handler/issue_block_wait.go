@@ -111,6 +111,11 @@ func (h *Handler) syncBlockWait(ctx context.Context, prev, next db.Issue) {
 		for _, key := range blockwait.WaitKeys() {
 			h.deleteIssueMeta(ctx, next, key)
 		}
+		// block.watched is not a wait key, but a row that left blocked must
+		// stop being a patrol candidate: DENE-1002 added in_progress to the
+		// sweep, and a plain blocked -> in_progress move would otherwise stay
+		// watched forever with nothing to wake for.
+		h.deleteIssueMeta(ctx, next, blockwait.KeyWatched)
 	}
 	if prev.Status == "in_review" && next.Status != "in_review" {
 		h.deleteIssueMeta(ctx, next, blockwait.KeyReleased)
@@ -300,7 +305,15 @@ func (h *Handler) authorIsReviewer(issue db.Issue, comment db.Comment) bool {
 }
 
 func (h *Handler) releaseAcceptedIssue(ctx context.Context, issue db.Issue, seed blockwait.Decision) releaseOutcome {
-	prs, err := h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	view, ensureErr := h.ensureIssueDeliveries(ctx, issue)
+	var prs []db.ListPullRequestsByIssueRow
+	var err error
+	if ensureErr != nil {
+		slog.Warn("block wait: delivery lookup failed", "error", ensureErr, "issue_id", uuidToString(issue.ID))
+		prs, err = h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	} else {
+		prs = view.GateRows()
+	}
 	if err != nil {
 		slog.Warn("block wait: list pull requests failed", "error", err, "issue_id", uuidToString(issue.ID))
 		return releaseOutcome{Status: issue.Status}
@@ -411,7 +424,7 @@ func (h *Handler) mergeAcceptedIssue(ctx context.Context, issue db.Issue, prs []
 	if open == nil {
 		return h.finishAcceptedIssue(ctx, issue, decision.Reason)
 	}
-	err := h.mergePullRequest(ctx, open.InstallationID, open.RepoOwner, open.RepoName, int(open.PrNumber))
+	err := h.mergeGatePull(ctx, issue.WorkspaceID, *open)
 	if err == nil {
 		out := h.finishAcceptedIssue(ctx, issue, decision.Reason+" PR 已合并。")
 		out.Merged = true
@@ -536,6 +549,7 @@ func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 		ReviewNudged:   blockwait.MetaString(meta, blockwait.KeyReviewNudged) == "1",
 		ReviewerHuman:  issue.ReviewerType.Valid && issue.ReviewerType.String == "member",
 		ReviewerEmpty:  reviewerSlotEmpty(issue),
+		Watched:        blockwait.MetaString(meta, blockwait.KeyWatched) == blockwait.WatchedYes,
 	})
 	switch decision.Action {
 	case blockwait.ActionRelease, blockwait.ActionWake, blockwait.ActionSeat:

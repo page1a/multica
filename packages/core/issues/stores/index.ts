@@ -77,3 +77,10 @@ export {
   type SubIssueRowProperties,
   type SubIssueRowPropertyKey,
 } from "./sub-issue-display-store";
+export {
+  useIssueDetailSectionsStore,
+  ISSUE_DETAIL_SECTIONS,
+  DEFAULT_ISSUE_DETAIL_SECTIONS_OPEN,
+  type IssueDetailSection,
+  type IssueDetailSectionsOpen,
+} from "./issue-detail-sections-store";

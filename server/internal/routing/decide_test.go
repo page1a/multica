@@ -2,10 +2,41 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestRuntimeAnalysisFailureFallsBackToJudge(t *testing.T) {
+	store := newCachingStore(analysisAndJudge())
+	store.settings.Analysis.Source = AnalysisSourceRuntimeSubscription
+	store.settings.Analysis.RuntimeID = "runtime-1"
+	judge := &fakeJudge{verdict: confidentVerdict()}
+	analyst := &fakeAnalyst{err: errors.New("runtime offline")}
+	r := newRouter(store, judge)
+	r.Analyst = analyst
+	if _, err := r.decide(context.Background(), "ws", store.settings, store.issue, JudgeState{}); err != nil {
+		t.Fatalf("runtime failure did not fall back: %v", err)
+	}
+	if judge.callCount() != 1 {
+		t.Fatalf("judge calls = %d, want 1", judge.callCount())
+	}
+}
+
+func TestGatewayAnalysisFailureIsNotRetriedAsJudge(t *testing.T) {
+	store := newCachingStore(analysisAndJudge())
+	judge := &fakeJudge{verdict: confidentVerdict()}
+	analyst := &fakeAnalyst{err: errors.New("gateway unavailable")}
+	r := newRouter(store, judge)
+	r.Analyst = analyst
+	if _, err := r.decide(context.Background(), "ws", store.settings, store.issue, JudgeState{}); err == nil {
+		t.Fatal("gateway failure unexpectedly fell back to judge")
+	}
+	if judge.callCount() != 0 {
+		t.Fatalf("judge calls = %d, want 0", judge.callCount())
+	}
+}
 
 // fakeAnalyst is the analysis role's double. Like fakeJudge it counts calls,
 // because "this combination did not call the model" is half of what the

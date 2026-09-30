@@ -83,6 +83,16 @@ describe("chat empty-state conversation starters", () => {
       "Suggest three useful issues I could assign to you.",
     );
   });
+
+  it("offers the inbox walk-through under any agent's starters (DENE-975)", () => {
+    const onPickPrompt = renderEmptyState(
+      agent([{ label: "Review the release PR", prompt: "Review it." }]),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Walk me through my inbox" }));
+
+    expect(onPickPrompt).toHaveBeenCalledWith("Walk me through my inbox");
+  });
 });
 
 // Who may see "customize" is decided by the container (chat-window reads the

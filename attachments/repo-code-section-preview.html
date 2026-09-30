@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-Hans"><meta charset="utf-8"><title>DENE-986 项目页代码区块与设置页总览 · 预览</title>
+<style>
+:root{--fg:#18181b;--mut:#71717a;--bd:#e4e4e7;--bg:#fff;--soft:#f4f4f5;--ok:#16a34a;--warn:#d97706;--bad:#dc2626}
+*{box-sizing:border-box}body{margin:0;background:#fafafa;color:var(--fg);font:14px/1.5 -apple-system,"PingFang SC",Inter,sans-serif;padding:32px}
+h2{font-size:12px;letter-spacing:.06em;color:var(--mut);margin:28px 0 10px;font-weight:600}
+.wrap{display:grid;grid-template-columns:300px 1fr;gap:24px;max-width:1080px}
+.card{background:var(--bg);border:1px solid var(--bd);border-radius:12px}
+.side{padding:14px}.cap{font-size:12px;font-weight:600;padding:2px 6px;margin-bottom:6px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 6px}
+.name{font-size:12px;font-weight:600}.st{font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block}.ok{background:var(--ok)}.warn{background:var(--warn)}.bad{background:var(--bad)}
+.btn{font-size:12px;border-radius:7px;padding:3px 10px;border:1px solid transparent;background:var(--fg);color:#fff;white-space:nowrap}
+.btn.o{background:#fff;color:var(--fg);border-color:var(--bd)}.ghost{font-size:12px;color:var(--mut);padding:4px 6px}
+.x{color:var(--mut);opacity:.5;font-size:12px;margin-left:6px}
+table{width:100%;border-collapse:collapse}th{font-size:12px;color:var(--mut);font-weight:500;text-align:left;padding:10px 14px}
+td{padding:12px 14px;border-top:1px solid var(--bd);font-size:12px;vertical-align:middle}td.m{font-family:ui-monospace,monospace}
+.dlg{width:420px;padding:18px}.tabs{display:flex;gap:14px;font-size:12px;color:var(--mut);margin:10px 0}.tabs b{color:var(--fg);border-bottom:2px solid var(--fg);padding-bottom:3px}
+.inp{border:1px solid var(--bd);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--mut);margin-bottom:8px}
+.item{display:flex;justify-content:space-between;padding:7px 4px;font-size:12px;border-top:1px solid var(--bd)}.item i{color:var(--mut);font-style:normal}
+small{color:var(--mut);font-size:11px}
+</style>
+<body>
+<p style="max-width:760px"><b>DENE-986 预览</b>：每行只有「仓库名 · 状态点+一句话 · 一个按钮」。状态和按钮都是服务端 <code>mode</code>/<code>next_action</code> 直接给的，前端只做颜色与文案映射，不自己判断接没接通。下面各行取自组件测试里的真实状态。</p>
+
+<h2>项目页 · 「代码」区块</h2>
+<div class="wrap"><div class="card side">
+  <div class="cap">代码 ›</div>
+  <div class="row"><div><div class="name">acme/api</div><div class="st"><span class="dot ok"></span>GitHub App · acme</div></div><span class="x">✕</span></div>
+  <div class="row"><div><div class="name">acme/web</div><div class="st"><span class="dot bad"></span>未安装 GitHub App</div></div><div><span class="btn">安装 GitHub App</span><span class="x">✕</span></div></div>
+  <div class="row"><div><div class="name">acme/billing</div><div class="st"><span class="dot bad"></span>令牌失效</div></div><div><span class="btn">替换令牌</span><span class="x">✕</span></div></div>
+  <div class="row"><div><div class="name">acme/docs</div><div class="st"><span class="dot warn"></span>仅本机 CLI</div></div><div><span class="btn o">添加令牌</span><span class="x">✕</span></div></div>
+  <div class="row"><div><div class="name">acme/infra</div><div class="st"><span class="dot bad"></span>未接通 · 请联系 Kun</div></div><span class="x">✕</span></div>
+  <div class="ghost">＋ 添加仓库</div>
+</div>
+<div class="card dlg"><b>添加仓库</b>
+  <div class="tabs"><b>链接</b><span>选择</span></div>
+  <div class="inp">https://github.com/owner/repo</div>
+  <div style="text-align:right"><span class="btn">添加</span></div>
+  <div class="tabs" style="margin-top:18px"><span>链接</span><b>选择</b></div>
+  <div class="inp">搜索仓库</div>
+  <div class="item"><span>acme/api</span><i>已添加</i></div>
+  <div class="item"><span>acme/mobile</span><span class="btn o">选择</span></div>
+  <div class="item"><span>acme/sdk</span><span class="btn o">选择</span></div>
+  <small>添加时服务端会顺手把新仓库登记到工作区。</small>
+</div></div>
+
+<h2>设置 · 代码仓库（新增「项目」列，状态与按钮同上）</h2>
+<div class="card" style="max-width:1080px"><table>
+<tr><th>仓库</th><th>项目</th><th>状态</th><th></th></tr>
+<tr><td class="m">github.com/acme/api</td><td>Billing · Web</td><td><span class="st"><span class="dot ok"></span>GitHub App · acme</span></td><td></td></tr>
+<tr><td class="m">github.com/acme/web</td><td>Web</td><td><span class="st"><span class="dot bad"></span>未安装 GitHub App</span></td><td><span class="btn">安装 GitHub App</span></td></tr>
+<tr><td class="m">gitlab.corp.local/team/svc</td><td>—</td><td><span class="st"><span class="dot bad"></span>未接通</span></td><td><span class="btn">添加令牌</span></td></tr>
+</table></div>
+<h2>设置 · Git 连接（每个账号下多一行「项目：…」）</h2>
+<div class="card" style="max-width:1080px;padding:6px 16px">
+<div class="row" style="padding:12px 0"><div><div style="font-size:14px">GitHub App · acme</div><div style="font:12px ui-monospace,monospace;color:var(--mut)">github.com/acme</div><div style="font-size:12px;color:var(--mut)">项目: Billing · Web</div></div><span class="st"><span class="dot ok"></span>正常</span></div>
+</div>
+</body></html>

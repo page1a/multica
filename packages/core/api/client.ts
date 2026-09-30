@@ -1,6 +1,6 @@
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
-import type { ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
+import type { InboxBoardResponse, ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
 import type { WorkThreadSnapshot } from "../types/work_thread";
 import { configStore } from "../config";
 import type {
@@ -115,6 +115,10 @@ import type {
   StartMikaOnboardingResponse,
   CancelTaskResponse,
   Project,
+  ProjectMemoryStatus,
+  ProjectMemoryChecklistItem,
+  CloseIssueRequest,
+  CloseIssueResponse,
   ProjectMember,
   ResourceShare,
   CreateProjectRequest,
@@ -187,9 +191,23 @@ import type {
   ListGitHubInstallationsResponse,
   ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
+  GitHubAppStatus,
+  GitHubAppSetup,
   ListVCSConnectionsResponse,
   ConnectVCSRequest,
   ConnectVCSResponse,
+  ListRepoLinksResponse,
+  ListProjectReposResponse,
+  AttachProjectRepoRequest,
+  AttachProjectRepoResponse,
+  ListRepoConnectionsResponse,
+  CreateRepoLinkRequest,
+  CreateRepoLinkResponse,
+  TestRepoLinkResponse,
+  PinRepoBindingRequest,
+  RepoBinding,
+  TestRepoBindingRequest,
+  TestRepoBindingResponse,
   ListLarkInstallationsResponse,
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
@@ -273,6 +291,8 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import { compressImageForUpload } from "../attachments/compress-image";
+import { defaultStorage } from "../platform/storage";
 import {
   parseRoutingHealth,
   type RoutingHealth,
@@ -504,8 +524,21 @@ import {
   EMPTY_ISSUE_STATUS_ENTRY,
   EMPTY_RESOURCE_LABELS_RESPONSE,
   GitHubConnectResponseSchema,
+  GitHubAppStatusSchema,
+  GitHubAppSetupSchema,
+  EMPTY_GITHUB_APP_STATUS,
   ListGitHubInstallationsResponseSchema,
   ListGitHubRepositoriesResponseSchema,
+  ListRepoLinksResponseSchema,
+  CreateRepoLinkResponseSchema,
+  TestRepoLinkResponseSchema,
+  RepoBindingSchema,
+  TestRepoBindingResponseSchema,
+  EMPTY_LIST_REPO_LINKS_RESPONSE,
+  EMPTY_CREATE_REPO_LINK_RESPONSE,
+  EMPTY_TEST_REPO_LINK_RESPONSE,
+  EMPTY_REPO_BINDING,
+  EMPTY_TEST_REPO_BINDING_RESPONSE,
   EMPTY_GITHUB_CONNECT_RESPONSE,
   EMPTY_LIST_GITHUB_INSTALLATIONS_RESPONSE,
   EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
@@ -1548,6 +1581,13 @@ export class ApiClient {
 
   async upsertClientUsage(data: ClientUsageRequest): Promise<void> {
     await this.fetch("/api/client-usage", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async closeIssue(id: string, data: CloseIssueRequest): Promise<CloseIssueResponse> {
+    return this.fetch(`/api/issues/${id}/close`, {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -3387,6 +3427,16 @@ export class ApiClient {
     return this.fetch("/api/inbox/unread-issues");
   }
 
+  // The inbox lanes, built server-side (DENE-975). `unread_since` replays the
+  // unread markers of a visit that has since marked everything read.
+  async getInboxBoard(params: { tz?: string; unread_since?: string } = {}): Promise<InboxBoardResponse> {
+    const search = new URLSearchParams();
+    if (params.tz) search.set("tz", params.tz);
+    if (params.unread_since) search.set("unread_since", params.unread_since);
+    const query = search.toString();
+    return this.fetch(`/api/inbox/board${query ? `?${query}` : ""}`);
+  }
+
   // Read one issue's inbox rows, except the ones an open call hangs on.
   async markIssueInboxRead(issueId: string): Promise<{ count: number }> {
     return this.fetch(`/api/inbox/issues/${issueId}/read`, { method: "POST" });
@@ -4256,15 +4306,102 @@ export class ApiClient {
   // File Upload & Attachments
   async uploadFile(
     file: File,
-    opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
+    opts?: { issueId?: string; commentId?: string; chatSessionId?: string; onProgress?: (uploadedBytes: number, totalBytes: number) => void },
     // Optional abort signal so a module-level upload coordinator (MUL-5181)
     // can cancel an in-flight upload on logout. When aborted, `fetch` rejects
     // with an AbortError, which the coordinator distinguishes from a real
     // failure via `signal.aborted` / `err.name === "AbortError"`.
     signal?: AbortSignal,
   ): Promise<Attachment> {
+    // Large phone photos are downscaled first: on a slow uplink the original
+    // often cannot finish inside the proxy timeout (see compress-image.ts).
+    const body = await compressImageForUpload(file);
+    // Cloudflare limits a single request to roughly 100s. Send larger files
+    // as independently retryable 2 MiB chunks. Keep the server session id in
+    // durable browser storage so a failed request can query the server and
+    // continue with only the missing chunks.
+    if (body.size > 2 * 1024 * 1024) {
+      const resumeKey = `multica:upload:${this.baseUrl}:${body.name}:${body.size}:${body.lastModified}:${opts?.issueId ?? ""}:${opts?.commentId ?? ""}:${opts?.chatSessionId ?? ""}`;
+      let uploadId: string | null = null;
+      try { uploadId = defaultStorage.getItem(resumeKey); } catch { /* private mode storage is best effort */ }
+      let session: { upload_id: string; chunk_size: number } | null = null;
+      if (uploadId) {
+        const resumed = await fetch(`${this.baseUrl}/api/upload-file/chunked/${encodeURIComponent(uploadId)}`, {
+          headers: this.authHeaders(), credentials: "include", signal,
+        });
+        if (resumed.ok) session = (await resumed.json()) as { upload_id: string; chunk_size: number };
+        else if (resumed.status === 404) {
+          try { defaultStorage.removeItem(resumeKey); } catch { /* best effort */ }
+          uploadId = null;
+        } else {
+          throw new ApiError(
+            await this.parseErrorMessage(resumed, `Upload resume failed: ${resumed.status}`),
+            resumed.status,
+            resumed.statusText,
+          );
+        }
+      }
+      if (!session) {
+        const meta = { filename: body.name, size: body.size, content_type: body.type, issue_id: opts?.issueId, comment_id: opts?.commentId, chat_session_id: opts?.chatSessionId };
+        const started = await fetch(`${this.baseUrl}/api/upload-file/chunked`, { method: "POST", headers: { ...this.authHeaders(), "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(meta), signal });
+        if (!started.ok) {
+          throw new ApiError(
+            await this.parseErrorMessage(started, `Upload failed: ${started.status}`),
+            started.status,
+            started.statusText,
+          );
+        }
+        session = (await started.json()) as { upload_id: string; chunk_size: number };
+        uploadId = session.upload_id;
+        try { defaultStorage.setItem(resumeKey, session.upload_id); } catch { /* best effort */ }
+      }
+      if (!session || !uploadId) throw new Error("Upload session is missing an id");
+      const status = await fetch(`${this.baseUrl}/api/upload-file/chunked/${encodeURIComponent(uploadId!)}`, { headers: this.authHeaders(), credentials: "include", signal });
+      if (!status.ok) {
+        throw new ApiError(
+          await this.parseErrorMessage(status, `Upload status failed: ${status.status}`),
+          status.status,
+          status.statusText,
+        );
+      }
+      const uploaded = new Set<number>(((await status.json()) as { chunks?: number[] }).chunks ?? []);
+      const chunkSize = session.chunk_size || 2 * 1024 * 1024;
+      for (let index = 0, offset = 0; offset < body.size; index++, offset += chunkSize) {
+        const chunk = body.slice(offset, Math.min(body.size, offset + chunkSize));
+        if (uploaded.has(index)) {
+          opts?.onProgress?.(Math.min(body.size, offset + chunk.size), body.size);
+          continue;
+        }
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const res = await fetch(`${this.baseUrl}/api/upload-file/chunked/${uploadId}/chunk?index=${index}`, { method: "PUT", headers: this.authHeaders(), credentials: "include", body: chunk, signal });
+            if (!res.ok) {
+              throw new ApiError(
+                await this.parseErrorMessage(res, `Chunk upload failed: ${res.status}`),
+                res.status,
+                res.statusText,
+              );
+            }
+            lastError = undefined; break;
+          } catch (err) { lastError = err; if (signal?.aborted) throw err; }
+        }
+        if (lastError) throw lastError;
+        opts?.onProgress?.(Math.min(body.size, offset + chunk.size), body.size);
+      }
+      const done = await fetch(`${this.baseUrl}/api/upload-file/chunked/${uploadId}/complete`, { method: "POST", headers: this.authHeaders(), credentials: "include", signal });
+      if (!done.ok) {
+        throw new ApiError(
+          await this.parseErrorMessage(done, `Upload failed: ${done.status}`),
+          done.status,
+          done.statusText,
+        );
+      }
+      try { defaultStorage.removeItem(resumeKey); } catch { /* best effort */ }
+      return parseWithFallback(await done.json(), AttachmentResponseSchema, EMPTY_ATTACHMENT, { endpoint: "POST /api/upload-file/chunked/complete" });
+    }
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", body);
     if (opts?.issueId) formData.append("issue_id", opts.issueId);
     if (opts?.commentId) formData.append("comment_id", opts.commentId);
     if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
@@ -4870,6 +5007,24 @@ export class ApiClient {
 
   async getProject(id: string): Promise<Project> {
     return this.fetch(`/api/projects/${id}`);
+  }
+
+  async listProjectMemoryLocations(): Promise<{ locations: ProjectMemoryChecklistItem[] }> {
+    return this.fetch("/api/project-memory/locations");
+  }
+
+  async getProjectMemory(id: string): Promise<ProjectMemoryStatus> {
+    return this.fetch(`/api/projects/${id}/memory/status`);
+  }
+
+  async checkProjectMemory(
+    id: string,
+    locations: unknown[],
+  ): Promise<ProjectMemoryStatus> {
+    return this.fetch(`/api/projects/${id}/memory/check`, {
+      method: "POST",
+      body: JSON.stringify({ locations }),
+    });
   }
 
   async createProject(data: CreateProjectRequest): Promise<Project> {
@@ -5695,6 +5850,29 @@ export class ApiClient {
     );
   }
 
+  async getGitHubApp(workspaceId: string): Promise<GitHubAppStatus> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/app`);
+    return parseWithFallback(
+      raw,
+      GitHubAppStatusSchema,
+      EMPTY_GITHUB_APP_STATUS,
+      { endpoint: "GET /api/workspaces/:id/github/app" },
+    );
+  }
+
+  async beginGitHubApp(workspaceId: string, org?: string): Promise<GitHubAppSetup> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/app`, {
+      method: "POST",
+      body: JSON.stringify({ org: org ?? "" }),
+    });
+    return parseWithFallback(
+      raw,
+      GitHubAppSetupSchema,
+      { action_url: "", manifest: {}, launch_url: "" },
+      { endpoint: "POST /api/workspaces/:id/github/app" },
+    );
+  }
+
   async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/github/installations`,
@@ -5771,6 +5949,117 @@ export class ApiClient {
     return this.fetch(
       `/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/rotate-webhook`,
       { method: "POST" },
+    );
+  }
+
+  // Server-computed reach for every repository (DENE-985). Pages render it
+  // as it arrives; they do not derive a connection state themselves.
+  async listProjectRepos(projectId: string): Promise<ListProjectReposResponse> {
+    const raw = await this.fetch<Partial<ListProjectReposResponse>>(
+      `/api/projects/${projectId}/repos`,
+    );
+    const repos = Array.isArray(raw?.repos) ? raw.repos : [];
+    return { repos, total: raw?.total ?? repos.length };
+  }
+
+  async attachProjectRepo(
+    projectId: string,
+    data: AttachProjectRepoRequest,
+  ): Promise<AttachProjectRepoResponse> {
+    return this.fetch(`/api/projects/${projectId}/repos`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async removeProjectRepo(projectId: string, resourceId: string): Promise<void> {
+    await this.fetch(`/api/projects/${projectId}/repos/${resourceId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async listRepoConnections(workspaceId: string): Promise<ListRepoConnectionsResponse> {
+    const raw = await this.fetch<Partial<ListRepoConnectionsResponse>>(
+      `/api/workspaces/${workspaceId}/repos/connections`,
+    );
+    return { repos: Array.isArray(raw?.repos) ? raw.repos : [] };
+  }
+
+  // Repository connection catalog (GitHub App / token, GitLab, Forgejo, Gitea).
+  async listRepoLinks(workspaceId: string): Promise<ListRepoLinksResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repo-links`);
+    return parseWithFallback(
+      raw,
+      ListRepoLinksResponseSchema,
+      EMPTY_LIST_REPO_LINKS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/repo-links" },
+    );
+  }
+
+  async createRepoLink(
+    workspaceId: string,
+    body: CreateRepoLinkRequest,
+  ): Promise<CreateRepoLinkResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repo-links`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return parseWithFallback(
+      raw,
+      CreateRepoLinkResponseSchema,
+      EMPTY_CREATE_REPO_LINK_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/repo-links" },
+    );
+  }
+
+  async deleteRepoLink(workspaceId: string, linkId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/repo-links/${linkId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async testRepoLink(
+    workspaceId: string,
+    linkId: string,
+  ): Promise<TestRepoLinkResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/repo-links/${linkId}/test`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestRepoLinkResponseSchema,
+      EMPTY_TEST_REPO_LINK_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/repo-links/:linkId/test" },
+    );
+  }
+
+  async pinRepoBinding(
+    workspaceId: string,
+    body: PinRepoBindingRequest,
+  ): Promise<RepoBinding> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repo-bindings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return parseWithFallback(raw, RepoBindingSchema, EMPTY_REPO_BINDING, {
+      endpoint: "PUT /api/workspaces/:id/repo-bindings",
+    });
+  }
+
+  async testRepoBinding(
+    workspaceId: string,
+    body: TestRepoBindingRequest,
+  ): Promise<TestRepoBindingResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/repo-bindings/test`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return parseWithFallback(
+      raw,
+      TestRepoBindingResponseSchema,
+      EMPTY_TEST_REPO_BINDING_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/repo-bindings/test" },
     );
   }
 

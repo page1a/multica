@@ -137,7 +137,20 @@
     "next_owner": "다음: {{name}}",
     "next_owner_none": "다음: 없음",
     "waiting_on": "{{id}} 대기",
-    "last_activity_missing": "활동 시각 없음"
+    "last_activity_missing": "활동 시각 없음",
+    "knowledge_none": "해당하는 지식 없음",
+    "knowledge_change": "지식: {{locations}}",
+    "section_title": "종료 기록",
+    "conclusion": "결론",
+    "status": "상태",
+    "evidence": "이유",
+    "evidence_missing": "이유 댓글을 아직 불러오지 못했습니다.",
+    "conclusion_delivered": "납품됨",
+    "conclusion_blocked": "막힘",
+    "conclusion_awaiting_review": "검토 대기",
+    "conclusion_awaiting_human": "사람 확인 대기",
+    "conclusion_deferred": "백로그 / 할 일로 되돌림",
+    "conclusion_continuing": "중단, 다음 회차 계속"
   },
   "blocker_summary": {
     "title": "차단됨 · 근본 원인 {{count}}개",
@@ -819,6 +832,7 @@
     "remove_parent_issue": "상위 태스크 제거",
     "remove_parent_issue_success": "상위 태스크를 제거했습니다",
     "add_sub_issue": "하위 태스크 추가...",
+    "close_issue": "마감",
     "delete_issue": "태스크 삭제",
     "pin_to_sidebar": "사이드바에 고정",
     "unpin_from_sidebar": "사이드바 고정 해제"

@@ -83,7 +83,11 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read file %s: %w", path, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
+	// A 2 MiB chunk keeps every request below proxy limits, but a slow uplink
+	// can still take minutes for a full attachment. The resumable client keeps
+	// progress server-side, so the command deadline should cover a realistic
+	// large-file transfer rather than the historical single-request budget.
+	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(10*time.Minute))
 	defer cancel()
 
 	att, err := client.UploadChatAttachment(ctx, data, path, taskID)

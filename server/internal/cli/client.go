@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -105,6 +106,98 @@ const (
 	// structured body.
 	transferErrorBodyLimit = 1 << 20
 )
+
+type resumableUploadState struct {
+	UploadID string    `json:"upload_id"`
+	Updated  time.Time `json:"updated_at"`
+}
+
+func resumableUploadStatePath() string {
+	if p := strings.TrimSpace(os.Getenv("MULTICA_UPLOAD_STATE_FILE")); p != "" {
+		return p
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil || cache == "" {
+		return ""
+	}
+	return filepath.Join(cache, "multica", "resumable-uploads.json")
+}
+
+func resumableUploadKey(baseURL, filename string, size int, fields map[string]string) string {
+	b, _ := json.Marshal(struct {
+		BaseURL string            `json:"base_url"`
+		Name    string            `json:"name"`
+		Size    int               `json:"size"`
+		Fields  map[string]string `json:"fields"`
+	}{baseURL, filepath.Base(filename), size, fields})
+	return string(b)
+}
+
+func loadResumableUpload(key string) string {
+	p := resumableUploadStatePath()
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	var states map[string]resumableUploadState
+	if json.Unmarshal(b, &states) != nil {
+		return ""
+	}
+	s, ok := states[key]
+	if !ok || s.UploadID == "" || time.Since(s.Updated) > 24*time.Hour {
+		return ""
+	}
+	return s.UploadID
+}
+
+func saveResumableUpload(key, uploadID string) {
+	p := resumableUploadStatePath()
+	if p == "" || uploadID == "" {
+		return
+	}
+	states := map[string]resumableUploadState{}
+	if b, err := os.ReadFile(p); err == nil {
+		_ = json.Unmarshal(b, &states)
+	}
+	if states == nil {
+		states = map[string]resumableUploadState{}
+	}
+	states[key] = resumableUploadState{UploadID: uploadID, Updated: time.Now()}
+	b, err := json.Marshal(states)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(p, b, 0o600)
+}
+
+func clearResumableUpload(key string) {
+	p := resumableUploadStatePath()
+	if p == "" {
+		return
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	var states map[string]resumableUploadState
+	if json.Unmarshal(b, &states) != nil {
+		return
+	}
+	delete(states, key)
+	if len(states) == 0 {
+		_ = os.Remove(p)
+		return
+	}
+	if out, err := json.Marshal(states); err == nil {
+		_ = os.WriteFile(p, out, 0o600)
+	}
+}
 
 // errorBodyLimit picks the read cap for a failing request path.
 func errorBodyLimit(path string) int64 {
@@ -559,9 +652,166 @@ type AttachmentResponse struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+func (c *APIClient) uploadChunked(ctx context.Context, data []byte, filename string, fields map[string]string) (AttachmentResponse, error) {
+	if len(data) <= 2<<20 {
+		return AttachmentResponse{}, fmt.Errorf("chunked upload requires a large payload")
+	}
+	stateKey := resumableUploadKey(c.BaseURL, filename, len(data), fields)
+	uploadID := loadResumableUpload(stateKey)
+	httpClient := c.HTTPClient
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > httpClient.Timeout {
+			copyClient := *httpClient
+			copyClient.Timeout = remaining
+			httpClient = &copyClient
+		}
+	}
+	meta := map[string]any{"filename": filepath.Base(filename), "size": len(data)}
+	for k, v := range fields {
+		if v != "" {
+			meta[k] = v
+		}
+	}
+	b, _ := json.Marshal(meta)
+	var s struct {
+		UploadID  string `json:"upload_id"`
+		ChunkSize int    `json:"chunk_size"`
+	}
+	if uploadID != "" {
+		statusReq, e := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/upload-file/chunked/"+url.PathEscape(uploadID), nil)
+		if e == nil {
+			c.setHeaders(statusReq)
+			statusResp, doErr := httpClient.Do(statusReq)
+			if doErr == nil && statusResp.StatusCode < 400 {
+				var status struct {
+					UploadID string `json:"upload_id"`
+					Size     int    `json:"size"`
+				}
+				_ = json.NewDecoder(statusResp.Body).Decode(&status)
+				statusResp.Body.Close()
+				if status.UploadID == uploadID && status.Size == len(data) {
+					s.UploadID = uploadID
+					s.ChunkSize = 2 << 20
+				} else {
+					uploadID = ""
+				}
+			} else {
+				if statusResp != nil {
+					statusResp.Body.Close()
+				}
+				uploadID = ""
+			}
+		}
+	}
+	if uploadID == "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file/chunked", bytes.NewReader(b))
+		if err != nil {
+			return AttachmentResponse{}, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		c.setHeaders(req)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return AttachmentResponse{}, err
+		}
+		if resp.StatusCode >= 400 {
+			defer resp.Body.Close()
+			return AttachmentResponse{}, newHTTPError(http.MethodPost, "/api/upload-file/chunked", resp)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+			resp.Body.Close()
+			return AttachmentResponse{}, err
+		}
+		resp.Body.Close()
+		uploadID = s.UploadID
+		if uploadID == "" {
+			return AttachmentResponse{}, fmt.Errorf("missing upload id")
+		}
+		saveResumableUpload(stateKey, uploadID)
+	}
+	if s.ChunkSize <= 0 {
+		s.ChunkSize = 2 << 20
+	}
+	uploaded := map[int]bool{}
+	statusReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/upload-file/chunked/"+url.PathEscape(uploadID), nil)
+	if err == nil {
+		c.setHeaders(statusReq)
+		if statusResp, e := httpClient.Do(statusReq); e == nil {
+			if statusResp.StatusCode < 400 {
+				var status struct {
+					Chunks []int `json:"chunks"`
+				}
+				_ = json.NewDecoder(statusResp.Body).Decode(&status)
+				for _, idx := range status.Chunks {
+					uploaded[idx] = true
+				}
+			}
+			statusResp.Body.Close()
+		}
+	}
+	for i, off := 0, 0; off < len(data); i, off = i+1, off+s.ChunkSize {
+		end := off + s.ChunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		if uploaded[i] {
+			continue
+		}
+		path := fmt.Sprintf("%s/api/upload-file/chunked/%s/chunk?index=%d", c.BaseURL, uploadID, i)
+		var last error
+		for attempt := 0; attempt < 3; attempt++ {
+			rq, e := http.NewRequestWithContext(ctx, http.MethodPut, path, bytes.NewReader(data[off:end]))
+			if e != nil {
+				last = e
+				continue
+			}
+			c.setHeaders(rq)
+			rr, e := httpClient.Do(rq)
+			if e == nil && rr.StatusCode < 400 {
+				rr.Body.Close()
+				last = nil
+				break
+			}
+			if e != nil {
+				last = e
+			} else {
+				last = newHTTPError(http.MethodPut, "/api/upload-file/chunked", rr)
+				rr.Body.Close()
+			}
+		}
+		if last != nil {
+			return AttachmentResponse{}, last
+		}
+	}
+	fin, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/api/upload-file/chunked/%s/complete", c.BaseURL, uploadID), nil)
+	if err != nil {
+		return AttachmentResponse{}, err
+	}
+	c.setHeaders(fin)
+	rr, err := httpClient.Do(fin)
+	if err != nil {
+		return AttachmentResponse{}, err
+	}
+	defer rr.Body.Close()
+	if rr.StatusCode >= 400 {
+		return AttachmentResponse{}, newHTTPError(http.MethodPost, "/api/upload-file/chunked/complete", rr)
+	}
+	var out AttachmentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+		return AttachmentResponse{}, err
+	}
+	clearResumableUpload(stateKey)
+	return out, nil
+}
+
 // UploadFile uploads a file via multipart form to /api/upload-file.
 // It returns the attachment ID from the server response.
 func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename string, issueID string) (string, error) {
+	if len(fileData) > 2<<20 {
+		out, err := c.uploadChunked(ctx, fileData, filename, map[string]string{"issue_id": issueID})
+		return out.ID, err
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -618,6 +868,9 @@ func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename st
 // reply that task produces on completion. Returns the full AttachmentResponse
 // (id + markdown_url) so the agent can embed the image inline in its reply.
 func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
+	if len(fileData) > 2<<20 {
+		return c.uploadChunked(ctx, fileData, filename, map[string]string{"task_id": taskID})
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -680,6 +933,10 @@ func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, f
 // without associating it with an issue or comment. It decodes the full
 // AttachmentResponse and returns the attachment ID and URL.
 func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, filename string) (string, string, error) {
+	if len(fileData) > 2<<20 {
+		out, err := c.uploadChunked(ctx, fileData, filename, nil)
+		return out.ID, out.URL, err
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 

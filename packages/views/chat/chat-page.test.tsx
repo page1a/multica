@@ -49,6 +49,7 @@ vi.mock("./components/chat-empty-state", () => ({
 }));
 vi.mock("./components/new-chat-button", () => ({
   NewChatButton: () => <div>new-chat-button</div>,
+  DirectNewChatButton: () => <div>direct-new-chat-button</div>,
 }));
 vi.mock("./components/offline-banner", () => ({
   OfflineBanner: () => null,
@@ -91,6 +92,7 @@ vi.mock("@multica/core/paths", async () => {
     useWorkspacePaths: () => ({
       chat: () => "/acme/chat",
       chatSession: (id: string) => `/acme/chat/${id}`,
+      agentDetail: (id: string) => `/acme/agents/${id}`,
     }),
   };
 });
@@ -107,7 +109,10 @@ const storeRef = vi.hoisted(() => ({
 const storeListeners = vi.hoisted(() => new Set<() => void>());
 const availableAgentsRef = vi.hoisted(() => ({ current: [] as Agent[] }));
 const agentsSettledRef = vi.hoisted(() => ({ current: true }));
+const runtimeBoundRef = vi.hoisted(() => ({ current: true }));
 const mockStartNewChat = vi.hoisted(() => vi.fn());
+const mockHandleSend = vi.hoisted(() => vi.fn(async (_text: string) => true));
+const mockPrefill = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockSetActiveSession = vi.hoisted(() =>
   vi.fn((id: string | null) => {
@@ -155,7 +160,7 @@ vi.mock("./components/use-chat-controller", async () => {
       currentSession: null,
       isSessionArchived: false,
       isAgentArchived: false,
-      isAgentRuntimeBound: true,
+      isAgentRuntimeBound: runtimeBoundRef.current,
       activeAgent: availableAgentsRef.current[0] ?? null,
       noAgent: false,
       availability: "online",
@@ -171,10 +176,11 @@ vi.mock("./components/use-chat-controller", async () => {
       restoreDraftRequest: null,
       handleRestoreDraftConsumed: vi.fn(),
       focusInputRequest: 0,
-      handleSend: vi.fn(),
+      handleSend: mockHandleSend,
+      prefillConversationStarter: mockPrefill,
       handleStop: vi.fn(),
       handleUploadFile: vi.fn(),
-      handleNewChat: vi.fn(),
+      handleNewChat: () => mockSetActiveSession(null),
       handleStartNewChat: mockStartNewChat,
       handleSelectSession: (session: { id: string }) =>
         mockSetActiveSession(session.id),
@@ -259,14 +265,54 @@ beforeEach(() => {
   storeListeners.clear();
   availableAgentsRef.current = [agent];
   agentsSettledRef.current = true;
+  runtimeBoundRef.current = true;
   layout.width = DESKTOP;
+});
+
+describe("ChatPage ?prompt= deep link (DENE-975)", () => {
+  const PROMPT = "帮我过一遍收件箱";
+
+  it("opens a new chat, sends the prompt once and strips the param, under StrictMode", async () => {
+    storeRef.current = { activeSessionId: "old-session" };
+    const { replace, rerender } = renderPage(`prompt=${encodeURIComponent(PROMPT)}`, { strict: true });
+    await vi.waitFor(() => expect(mockHandleSend).toHaveBeenCalledWith(PROMPT));
+    rerender();
+    expect(mockHandleSend).toHaveBeenCalledTimes(1);
+    expect(storeRef.current.activeSessionId).toBeNull();
+    expect(replace).toHaveBeenCalledWith("/acme/chat");
+    expect(mockPrefill).not.toHaveBeenCalled();
+  });
+
+  it("waits for the agent to resolve before sending", async () => {
+    availableAgentsRef.current = [];
+    agentsSettledRef.current = false;
+    const { rerender } = renderPage(`prompt=${encodeURIComponent(PROMPT)}`);
+    expect(mockHandleSend).not.toHaveBeenCalled();
+    availableAgentsRef.current = [agent];
+    agentsSettledRef.current = true;
+    rerender();
+    await vi.waitFor(() => expect(mockHandleSend).toHaveBeenCalledTimes(1));
+  });
+
+  it("leaves the prompt in the composer when the agent cannot run it", () => {
+    runtimeBoundRef.current = false;
+    renderPage(`prompt=${encodeURIComponent(PROMPT)}`);
+    expect(mockHandleSend).not.toHaveBeenCalled();
+    expect(mockPrefill).toHaveBeenCalledWith(PROMPT);
+  });
+
+  it("falls back to the composer when the send is refused", async () => {
+    mockHandleSend.mockResolvedValueOnce(false);
+    renderPage(`prompt=${encodeURIComponent(PROMPT)}`);
+    await vi.waitFor(() => expect(mockPrefill).toHaveBeenCalledWith(PROMPT));
+  });
 });
 
 describe("ChatPage ?agent= deep link", () => {
   it("starts a new chat with the linked agent and strips the param", () => {
     const { replace } = renderPage("agent=agent-1");
     expect(mockStartNewChat).toHaveBeenCalledTimes(1);
-    expect(mockStartNewChat).toHaveBeenCalledWith(agent);
+    expect(mockStartNewChat).toHaveBeenCalledWith(agent, []);
     expect(replace).toHaveBeenCalledWith("/acme/chat");
     // composingNew opened the conversation pane instead of the neutral prompt.
     expect(screen.getByText("chat-input")).toBeInTheDocument();
@@ -300,7 +346,7 @@ describe("ChatPage ?agent= deep link", () => {
     availableAgentsRef.current = [agent];
     agentsSettledRef.current = true;
     rerender();
-    expect(mockStartNewChat).toHaveBeenCalledWith(agent);
+    expect(mockStartNewChat).toHaveBeenCalledWith(agent, []);
     expect(replace).toHaveBeenCalledWith("/acme/chat");
   });
 

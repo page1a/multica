@@ -23,11 +23,31 @@ export const CLOSE_CONCLUSIONS = [
   "blocked",
   "awaiting_review",
   "awaiting_human",
+  // DENE-1002: deliberate non-terminal closes.
+  "deferred",
+  "continuing",
 ] as const;
+
+export type CloseConclusion = (typeof CLOSE_CONCLUSIONS)[number];
 
 export const CLOSE_OWNER_TYPES = ["agent", "squad", "member", "none"] as const;
 
-export const CLOSE_WAKE_ACTIONS = ["stage_done", "mention", "none"] as const;
+export const CLOSE_WAKE_ACTIONS = [
+  "stage_done",
+  "mention",
+  "route",
+  "clock",
+  "none",
+] as const;
+
+/**
+ * A close that deliberately left the ticket open with a recorded reason:
+ * `deferred` (back to backlog/todo) or `continuing` (stays in_progress). Read
+ * by the parking judgement so neither reads as "stopped without saying why".
+ */
+export function closeProtocolExplainedPause(conclusion: string | null): boolean {
+  return conclusion === "deferred" || conclusion === "continuing";
+}
 
 export type CloseProtocolView = {
   complete: boolean;
@@ -41,10 +61,23 @@ export type CloseProtocolView = {
   wakeAction: string | null;
   waitingOn: string | null;
   at: string | null;
+  /** Comment carrying the reason this close rests on. */
+  evidenceCommentId: string | null;
   /** Optional blocker attribution written when conclusion=blocked. */
   blockKind: string | null;
   blockAction: string | null;
+  /**
+   * Present only when this close wrote `close.knowledge_audit`. Missing on
+   * older closes; not one of the eight keys that decide `complete`.
+   */
+  knowledgeAudit: CloseKnowledgeAudit | null;
 };
+
+export type CloseKnowledgeChange = { location: string; summary: string };
+
+export type CloseKnowledgeAudit =
+  | { none: true }
+  | { none: false; changes: CloseKnowledgeChange[] };
 
 function metaString(
   metadata: IssueMetadata | null | undefined,
@@ -57,6 +90,28 @@ function metaString(
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return null;
+}
+
+function readKnowledgeAudit(raw: string | null): CloseKnowledgeAudit | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { none?: unknown; changes?: unknown };
+    if (parsed.none === true) return { none: true };
+    if (!Array.isArray(parsed.changes)) return null;
+    const changes: CloseKnowledgeChange[] = [];
+    for (const item of parsed.changes) {
+      if (!item || typeof item !== "object") continue;
+      const location = (item as { location?: unknown }).location;
+      const summary = (item as { summary?: unknown }).summary;
+      if (typeof location !== "string" || typeof summary !== "string") continue;
+      if (location.trim() === "" || summary.trim() === "") continue;
+      changes.push({ location, summary });
+    }
+    if (changes.length === 0) return null;
+    return { none: false, changes };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -85,8 +140,10 @@ export function readCloseProtocol(
     wakeAction: metaString(metadata, "close.wake_action"),
     waitingOn,
     at: metaString(metadata, "close.at"),
+    evidenceCommentId: metaString(metadata, "close.evidence_comment_id"),
     blockKind: metaString(metadata, "close.block_kind"),
     blockAction: metaString(metadata, "close.block_action"),
+    knowledgeAudit: readKnowledgeAudit(metaString(metadata, "close.knowledge_audit")),
   };
 }
 

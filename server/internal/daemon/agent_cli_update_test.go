@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestReconcileAgentCLIUpgradesWhenIdle(t *testing.T) {
@@ -55,6 +56,7 @@ func TestReconcileAgentCLIWaitsWhileATaskIsRunning(t *testing.T) {
 	bin := "/usr/local/bin/claude"
 	d, bodies := newAgentCLITestDaemon(t, bin, "1.0.0")
 	d.activeTasks.Store(1)
+	d.beginProviderTask("rt-claude")
 	called := false
 	d.agentCLIRun = func(context.Context, string, ...string) ([]byte, error) {
 		called = true
@@ -70,8 +72,8 @@ func TestReconcileAgentCLIWaitsWhileATaskIsRunning(t *testing.T) {
 	if err := json.Unmarshal(lastCLIUpdate(t, bodies), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.Phase != agentCLIPhaseWaiting {
-		t.Fatalf("phase = %q, want waiting", status.Phase)
+	if status.Phase != agentCLIPhaseWaiting || status.WaitingTasks != 1 || status.Error != "" {
+		t.Fatalf("status = %#v, want waiting on 1 task with no error", status)
 	}
 	if d.updating.Load() {
 		t.Fatal("left the update barrier held")
@@ -215,13 +217,28 @@ func TestAgentCLIFollowFromTwoWorkspacesAppliesOnce(t *testing.T) {
 }
 
 func TestFinishActiveTaskKicksADeferredUpgrade(t *testing.T) {
-	d := &Daemon{agentCLIUpdateKick: make(chan struct{}, 1)}
-	d.activeTasks.Store(1)
-	d.finishActiveTask()
+	d := &Daemon{
+		agentCLIUpdateKick: make(chan struct{}, 1),
+		runtimeIndex:       map[string]Runtime{"rt-codex": {ID: "rt-codex", Provider: "codex"}, "rt-claude": {ID: "rt-claude", Provider: "claude"}},
+	}
+	d.activeTasks.Store(2)
+	codex := d.beginProviderTask("rt-codex")
+	claude := d.beginProviderTask("rt-claude")
+	if ok, running, _ := d.tryBeginAgentCLIUpgrade("codex", time.Now()); ok || running != 1 {
+		t.Fatalf("begin = %v/%d, want waiting on 1", ok, running)
+	}
+	// Another CLI going idle is not this upgrade's moment.
+	d.finishActiveTask(claude)
+	select {
+	case <-d.agentCLIUpdateKick:
+		t.Fatal("claude finishing woke the codex upgrade")
+	default:
+	}
+	d.finishActiveTask(codex)
 	select {
 	case <-d.agentCLIUpdateKick:
 	default:
-		t.Fatal("idle machine did not wake the updater")
+		t.Fatal("codex going idle did not wake the updater")
 	}
 }
 

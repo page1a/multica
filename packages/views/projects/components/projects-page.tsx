@@ -108,6 +108,7 @@ import { ProjectIcon } from "./project-icon";
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
+import { useRestoredScrollRef } from "../../platform";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
 import { PAGE_GUTTER, PAGE_TOOLBAR } from "../../layout/page-header";
@@ -816,6 +817,7 @@ export function ProjectsPage() {
   const toggleFilter = useProjectViewStore((s) => s.toggleFilter);
   const clearFilters = useProjectViewStore((s) => s.clearFilters);
   const isCompact = viewMode === "compact";
+  const restoreListScroll = useRestoredScrollRef("projects");
   const isColVisible = (key: ProjectColumnKey) => !hiddenColumns.includes(key);
 
   const { data: projects = [], isLoading } = useQuery(projectListOptions(wsId));
@@ -1244,7 +1246,11 @@ export function ProjectsPage() {
               <p className="text-body">{t(($) => $.page.no_matches)}</p>
             </div>
           ) : isCompact ? (
-            <div className="min-h-0 flex-1 overflow-auto @container">
+            <div
+              ref={restoreListScroll}
+              data-tab-scroll-root="projects"
+              className="min-h-0 flex-1 overflow-auto @container"
+            >
               <ListGrid
                 className={`${GRID_COLS} @2xl:min-w-[var(--pjc-minw)]`}
                 style={{
@@ -1277,7 +1283,11 @@ export function ProjectsPage() {
               </ListGrid>
             </div>
           ) : (
-            <div className={cn("min-h-0 flex-1 overflow-y-auto pt-4", PAGE_GUTTER)}>
+            <div
+              ref={restoreListScroll}
+              data-tab-scroll-root="projects"
+              className={cn("min-h-0 flex-1 overflow-y-auto pt-4", PAGE_GUTTER)}
+            >
               <div
                 className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
                 style={{ paddingBottom: LIST_GRID_BOTTOM_CLEARANCE }}

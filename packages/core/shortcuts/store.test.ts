@@ -31,6 +31,31 @@ describe("shortcut store", () => {
     expect(getShortcut("openSearch")).toBeNull();
   });
 
+  it("resolves a runtime-specific default and treats that chord as unset", () => {
+    configureShortcutRuntime("desktop");
+    expect(getShortcut("newChat")).toEqual(
+      createShortcutChord("N", { primary: true }),
+    );
+    useShortcutStore.getState().setShortcut(
+      "newChat",
+      createShortcutChord("N", { primary: true }),
+    );
+    expect(useShortcutStore.getState().overrides.newChat).toBeUndefined();
+
+    configureShortcutRuntime("web");
+    expect(getShortcut("newChat")).toEqual(
+      createShortcutChord("E", { primary: true, shift: true }),
+    );
+    useShortcutStore.getState().setShortcut(
+      "newChat",
+      createShortcutChord("E", { primary: true, shift: true }),
+    );
+    expect(useShortcutStore.getState().overrides.newChat).toBeUndefined();
+    expect(getShortcut("switchChatProject")).toEqual(
+      createShortcutChord("\\", { primary: true }),
+    );
+  });
+
   it("removes structurally equal overrides when restoring a default", () => {
     useShortcutStore.getState().setShortcut(
       "createIssue",

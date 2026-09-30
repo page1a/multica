@@ -25,6 +25,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -1212,6 +1213,31 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("vcs integration disabled (MULTICA_VCS_SECRET_KEY not set)")
 	}
 
+	// GitHub App credentials created from Settings. A dedicated key wins;
+	// otherwise the box is derived from JWT_SECRET so an owner can create
+	// the App without an extra env var. The row is loaded now and replaced
+	// in memory when the manifest callback stores a new one.
+	if ghKey, err := secretbox.LoadKey("MULTICA_GITHUB_APP_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(ghKey)
+		if err != nil {
+			slog.Error("github app: secretbox.New failed; Settings cannot store an App", "error", err)
+		} else {
+			h.GitHubAppSecrets = box
+		}
+	} else if jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET")); jwtSecret != "" {
+		box, err := githubapp.NewSecretBox(jwtSecret)
+		if err != nil {
+			slog.Error("github app: derived secretbox failed; Settings cannot store an App", "error", err)
+		} else {
+			h.GitHubAppSecrets = box
+		}
+	} else {
+		slog.Info("GitHub App Settings storage disabled (no MULTICA_GITHUB_APP_SECRET_KEY and no JWT_SECRET)")
+	}
+	if err := h.LoadGitHubAppCredential(context.Background()); err != nil {
+		slog.Error("github app: failed to load stored credential", "error", err)
+	}
+
 	// Plugin secrets use a dedicated deployment key. Keeping this separate from
 	// VCS and channel secrets gives operators an isolated rotation and blast
 	// radius; without it, saving a `secret` config field fails closed rather
@@ -1479,6 +1505,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
+	// Manifest callback and the CLI launch page. The signed state is the
+	// credential: GitHub redirects a browser that has no Multica session.
+	r.Get("/api/github/app/launch", h.LaunchGitHubApp)
+	r.Get("/api/github/app/callback", h.GitHubAppCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -1517,6 +1547,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/ws", h.DaemonWebSocket)
 		r.Get("/workspaces", h.ListDaemonWorkspaces)
 		r.Get("/workspaces/{workspaceId}/repos", h.GetDaemonWorkspaceRepos)
+		r.Get("/workspaces/{workspaceId}/memory", h.GetDaemonProjectMemoryTargets)
+		r.Post("/workspaces/{workspaceId}/memory/check", h.ReportDaemonProjectMemoryCheck)
 		r.Get("/workspaces/{workspaceId}/runtime-profiles", h.DaemonListRuntimeProfiles)
 
 		// Agent-triggered plugin hooks. The daemon's local MCP server calls
@@ -1540,6 +1572,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/runtimes/{runtimeId}/agent-cli/status", h.ReportAgentCLIStatus)
 		r.Post("/runtimes/{runtimeId}/model-catalog/refresh", h.RefreshRuntimeModelCatalog)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
+		r.Post("/runtimes/{runtimeId}/routing-analysis/{requestId}/result", h.ReportRoutingAnalysisResult)
 		r.Post("/runtimes/{runtimeId}/provider-presets/{requestId}/result", h.ReportProviderPresetResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
@@ -1637,6 +1670,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// middleware.Auth and never call this (MUL-7436).
 		r.Post("/api/auth/refresh", h.RefreshSession)
 		r.Post("/api/upload-file", h.UploadFile)
+		r.Post("/api/upload-file/chunked", h.StartChunkUpload)
+		r.Get("/api/upload-file/chunked/{uploadID}", h.ChunkUploadStatus)
+		r.Put("/api/upload-file/chunked/{uploadID}/chunk", h.UploadChunk)
+		r.Post("/api/upload-file/chunked/{uploadID}/complete", h.CompleteChunkUpload)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
@@ -1662,6 +1699,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// Read an issue by its link, workspace resolved from the URL, GET only
 		// (DENE-897). Gates run inside against the link's workspace.
 		h.MountLinkReadRoutes(r)
+		r.Get("/api/chat/links/{workspaceSlug}/sessions/{sessionId}/handoff", h.GetChatSessionLinkRead)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -1679,10 +1717,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
+					r.Get("/github/app", h.GetGitHubApp)
+					r.Post("/github/app", h.BeginGitHubApp)
 					// VCS connections (Forgejo / Gitea / GitLab) — member-visible
 					// for the same reason as GitHub installations; connect /
 					// disconnect are admin-gated in the group below.
 					r.Get("/vcs/connections", h.ListVCSConnections)
+					r.Post("/vcs/connections/{connectionId}/test", h.TestStoredConnection)
+					r.Delete("/vcs/connections/{connectionId}", h.DeleteVCSConnection)
+					r.Get("/repos/connections", h.ListRepoConnections)
+					r.Post("/repos/connections", h.UpsertRepoConnection)
+					r.Post("/repos/connections/test", h.TestRepoConnection)
 					// Custom runtime profiles — listing/reading is member-visible
 					// (the Runtime page renders for everyone; create/edit/delete
 					// are admin-gated below).
@@ -1788,10 +1833,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/github/connect", h.GitHubConnect)
 					r.Get("/github/installations/{installationId}/repositories", h.ListGitHubInstallationRepositories)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
-					// VCS connect / disconnect / webhook regeneration (admin-only).
+					// Instance-wide GitLab/Forgejo tokens stay admin-only. A repository
+					// token is saved through /repos/connections, which the
+					// person who added the repository can call.
 					r.Post("/vcs/connections", h.ConnectVCS)
 					r.Post("/vcs/connections/{connectionId}/rotate-webhook", h.RotateVCSConnectionWebhook)
-					r.Delete("/vcs/connections/{connectionId}", h.DeleteVCSConnection)
 				})
 
 				// Lark integration. Every endpoint here only requires
@@ -1988,6 +2034,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
+			// Project-memory checklist (DENE-972). Not under /api/projects: that
+			// tree is behind the projects module, and a close must be able to
+			// read the same list the server validates against.
+			r.Get("/api/project-memory/locations", h.ListProjectMemoryLocations)
+
 			// Module-level sharing (DENE-699). These endpoints are themselves
 			// not behind RequireModule: the caller needs them to learn which
 			// areas they may enter, and only owner/admin can write.
@@ -2166,6 +2217,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/", h.CreateProject)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetProject)
+					r.Get("/memory", h.GetProjectMemory)
+					r.Get("/memory/check", h.GetProjectMemory)
+					r.Get("/memory/status", h.GetProjectMemory)
+					r.Post("/memory/check", h.PostProjectMemoryCheck)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
 					// A project's scope change sweeps every resource it
@@ -2173,6 +2228,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/visibility/preview", h.PreviewProjectVisibility)
 					r.Put("/visibility", h.SetProjectVisibility)
 					r.Get("/resources", h.ListProjectResources)
+					// Compact repository-only surface used by the CLI and agents.
+					r.Get("/repos", h.ListProjectRepos)
+					r.Post("/repos", h.AttachProjectRepo)
+					r.Delete("/repos/{repoId}", h.RemoveProjectRepo)
 					// Where a new task on this machine would run, computed by
 					// the same function the claim path uses. The project page
 					// displays it; it does not derive a directory of its own.
@@ -2575,6 +2634,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// The board's unread snapshot and the ticket-level read
 				// (DENE-901).
 				r.Get("/unread-issues", h.ListUnreadInboxIssues)
+				// The inbox in five lanes, for the page, the CLI and agents
+				// reading it for their user (DENE-975).
+				r.Get("/board", h.GetInboxBoard)
 				r.Post("/issues/{issueId}/read", h.MarkIssueInboxRead)
 				r.Post("/archive-all", h.ArchiveAllInbox)
 				r.Post("/archive-all-read", h.ArchiveAllReadInbox)

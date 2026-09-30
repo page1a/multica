@@ -9,6 +9,7 @@ import {
   Settings,
   Users,
   FolderGit2,
+  Link2,
   Bell,
   Plug,
   Tags,
@@ -40,6 +41,7 @@ import { TokensTab } from "./tokens-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
 import { RepositoriesTab } from "./repositories-tab";
+import { GitConnectionsTab } from "./git-connections-tab";
 import { IntegrationsTab } from "./integrations-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { LabelsTab } from "./labels-tab";
@@ -227,6 +229,14 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
                 t(($) => $.page.tabs.repositories),
                 FolderGit2,
                 <RepositoriesTab />,
+                true,
+              ),
+              entry(
+                "git-connections",
+                t(($) => $.page.tabs.git_connections),
+                Link2,
+                <GitConnectionsTab />,
+                true,
               ),
             ]
           : []),

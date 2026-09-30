@@ -18,7 +18,7 @@ import enLayout from "../../locales/en/layout.json";
 
 const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues, layout: enLayout } };
 
-const mockViewport = vi.hoisted(() => ({ isMobile: false }));
+const mockViewport = vi.hoisted(() => ({ isMobile: false, isCompact: false }));
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
 // eager editor per issue and catches stale editor reuse across issue switches.
@@ -31,6 +31,8 @@ const emptyDraftAttachments = vi.hoisted(() => [] as unknown[]);
 
 vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => mockViewport.isMobile,
+  // A phone is always below the compact breakpoint too.
+  useIsCompact: () => mockViewport.isMobile || mockViewport.isCompact,
 }));
 
 // useWorkspaceId() derives from useCurrentWorkspace (relative import inside
@@ -372,6 +374,10 @@ vi.mock("@multica/core/issues/stores", async () => ({
   ...(await vi.importActual<
     typeof import("@multica/core/issues/stores/sub-issues-collapse-store")
   >("@multica/core/issues/stores/sub-issues-collapse-store")),
+  // Real store: the sidebar section folds are read and toggled through it.
+  ...(await vi.importActual<
+    typeof import("@multica/core/issues/stores/issue-detail-sections-store")
+  >("@multica/core/issues/stores/issue-detail-sections-store")),
   useRecentIssuesStore: Object.assign(
     (selector?: any) => {
       const state = { byWorkspace: {}, recordVisit: mockRecordVisit, pruneWorkspaces: vi.fn() };
@@ -455,12 +461,19 @@ vi.mock("@multica/core/issues/stores", async () => ({
 // layout.
 const scrollIntoViewSpy = vi.hoisted(() => vi.fn());
 const scrollToIndexSpy = vi.hoisted(() => vi.fn());
+// Every initialScrollTop the timeline Virtuoso was rendered with.
+const virtuosoInitialScrollTops = vi.hoisted(() => [] as unknown[]);
 
 vi.mock("react-virtuoso", () => ({
   Virtuoso: forwardRef(function MockVirtuoso(
-    { data, itemContent }: { data: unknown[]; itemContent: (i: number, item: unknown) => unknown },
+    {
+      data,
+      itemContent,
+      initialScrollTop,
+    }: { data: unknown[]; itemContent: (i: number, item: unknown) => unknown; initialScrollTop?: number },
     ref: any,
   ) {
+    virtuosoInitialScrollTops.push(initialScrollTop);
     useImperativeHandle(ref, () => ({
       // Real Virtuoso ref methods are not exercised by tests in this file
       // since the deep-link cold-path drives the container's scrollTop on the
@@ -691,6 +704,7 @@ describe("IssueDetail (shared)", () => {
     contentEditorMounts.count = 0;
     descriptionSelectionAction.current = undefined;
     mockViewport.isMobile = false;
+    mockViewport.isCompact = false;
     // Default: issue loads successfully
     mockApiObj.getIssue.mockResolvedValue(mockIssue);
     // /timeline returns the entries flat in chronological order (oldest first).
@@ -807,6 +821,18 @@ describe("IssueDetail (shared)", () => {
     expect(skeletonGutters).toEqual(
       horizontalGutters(container.querySelector(".max-w-4xl")),
     );
+  });
+
+  it("never lets the timeline Virtuoso scroll the page on its own", async () => {
+    // Virtuoso skips its initial scroll only for 0. An undefined prop snaps
+    // the person's first real scroll back to the top, and a restored offset
+    // is read list-relative, overshooting by the description's height
+    // (DENE-978). The container-level restore owns the offset.
+    virtuosoInitialScrollTops.length = 0;
+    renderIssueDetail();
+    await screen.findByTestId("virtuoso-mock");
+    expect(virtuosoInitialScrollTops.length).toBeGreaterThan(0);
+    expect(virtuosoInitialScrollTops.every((v) => v === 0)).toBe(true);
   });
 
   it("does not offer an acceptance slot on a sub-issue", async () => {
@@ -1123,6 +1149,23 @@ describe("IssueDetail (shared)", () => {
 
     expect(screen.queryByTestId("panel-group")).not.toBeInTheDocument();
     expect(screen.queryByText("Properties")).not.toBeInTheDocument();
+  });
+
+  it("folds the properties panel into a drawer on a portrait tablet", async () => {
+    // 768–1023px: the app nav is already a drawer here; a 320px properties
+    // panel beside the content would leave the description ~500px wide.
+    mockViewport.isCompact = true;
+
+    const { container } = renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("Implement authentication")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("panel-group")).not.toBeInTheDocument();
+    expect(screen.queryByText("Properties")).not.toBeInTheDocument();
+    // Still a tablet, not a phone: the composer stays pinned.
+    expect(container.querySelector(".sticky.bottom-0")).not.toBeNull();
   });
 
   it("pins the comment composer to the scroll viewport on a wide screen", async () => {
@@ -2693,7 +2736,7 @@ describe("IssueDetail (shared)", () => {
 
       await screen.findByText("Stage 1 child");
       expect(screen.getByText("No close record")).toBeInTheDocument();
-      expect(screen.getByText("delivered")).toBeInTheDocument();
+      expect(screen.getByText("Delivered")).toBeInTheDocument();
       expect(screen.getByText("Next: none")).toBeInTheDocument();
       const strips = screen.getAllByTestId("sub-issue-close-strip");
       expect(strips[0]).toHaveAttribute("data-close-state", "missing");

@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // Who picked the tier, for the decision comment.
@@ -41,6 +42,20 @@ func (r *Router) decide(ctx context.Context, workspaceID string, settings Settin
 
 	rec, cached, err := r.analysis(ctx, workspaceID, settings, issue, state)
 	if err != nil {
+		// Analysis is an enrichment step. A runtime can be offline or out of
+		// quota; when the judge is available, let it read the original ticket
+		// and dispatch once rather than stalling the ticket or dispatching twice.
+		// Runtime subscription analysis is best-effort: an offline or
+		// exhausted local runtime may fall back to the judge. API-gateway
+		// analysis keeps its historical failure semantics and must not silently
+		// turn into a second model call.
+		if settings.AnalysisTarget().UsesRuntime() && settings.JudgeOn() && r.Judge != nil {
+			v, judgeErr := r.Judge.Assign(ctx, settings.Target(), state)
+			if judgeErr == nil {
+				d.Verdict, d.Decider = v, DeciderJudge
+				return d, nil
+			}
+		}
 		return d, err
 	}
 	if rec != nil {
@@ -92,13 +107,28 @@ func (r *Router) analysis(ctx context.Context, workspaceID string, settings Sett
 	if r.Analyst == nil {
 		return nil, false, ErrJudgeUnavailable
 	}
-	rec, err := r.Analyst.Analyze(ctx, settings.AnalysisTarget(), AnalysisState{
+	failureKey := workspaceID + ":" + issue.ID + ":" + issue.ContentHash + ":" + model
+	// A gateway failure keeps its historical behaviour: the next routing pass
+	// may try it again.  The short suppression window is only for a runtime
+	// probe, where an offline/empty-quota daemon would otherwise be hammered by
+	// every status hook while its late result is still in flight.
+	if settings.AnalysisTarget().UsesRuntime() {
+		if at, ok := r.analysisFailures.Load(failureKey); ok && time.Since(at.(time.Time)) < 20*time.Second {
+			return nil, false, ErrJudgeUnavailable
+		}
+	}
+	requestCtx := WithAnalysisRequest(ctx, workspaceID, issue.ID, issue.ContentHash)
+	rec, err := r.Analyst.Analyze(requestCtx, settings.AnalysisTarget(), AnalysisState{
 		JudgeState:  state,
 		Description: issue.Description,
 	})
 	if err != nil {
+		if settings.AnalysisTarget().UsesRuntime() {
+			r.analysisFailures.Store(failureKey, time.Now())
+		}
 		return nil, false, err
 	}
+	r.analysisFailures.Delete(failureKey)
 	rec.Hash = issue.ContentHash
 	rec.Model = model
 	if cache, ok := r.Store.(AnalysisCache); ok && rec.Hash != "" {
@@ -110,6 +140,25 @@ func (r *Router) analysis(ctx context.Context, workspaceID string, settings Sett
 		}
 	}
 	return &rec, false, nil
+}
+
+// PreAnalyze warms the per-issue facts cache without dispatching the issue.
+// Handlers call it after content writes, including backlog writes; a later
+// route reuses the same record and therefore does not add model latency.
+func (r *Router) PreAnalyze(ctx context.Context, workspaceID string, issueID string) error {
+	settings, err := r.Store.Settings(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	if !settings.AnalysisOn() {
+		return nil
+	}
+	issue, err := r.Store.Issue(ctx, workspaceID, issueID)
+	if err != nil {
+		return err
+	}
+	_, _, err = r.analysis(ctx, workspaceID, settings, issue, JudgeState{Title: issue.Title, DescriptionSummary: issue.DescriptionSummary, Status: issue.Status})
+	return err
 }
 
 // advise asks whichever roles are on for the blocked row's advice. ok is

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  leadingFitCount,
   rankChatProjects,
   sessionMatchesChatProjectFilter,
-  visibleBarProjectIds,
+  visibleBarProjectIdsForWidths,
   type ChatProjectBarSession,
 } from "./project-bar";
 
@@ -63,18 +64,55 @@ describe("sessionMatchesChatProjectFilter", () => {
   });
 });
 
-describe("visibleBarProjectIds", () => {
-  const ordered = ["p1", "p2", "p3", "p4", "p5"];
+describe("leadingFitCount", () => {
+  const widths = [100, 100, 100, 100];
+  const gap = 8;
 
-  it("keeps the prefix that fits", () => {
-    expect(visibleBarProjectIds(ordered, 3, null)).toEqual(["p1", "p2", "p3"]);
+  it("shows more chips as the row gets wider, and never a partial chip", () => {
+    expect(leadingFitCount(widths, 0, gap)).toBe(0);
+    expect(leadingFitCount(widths, 99, gap)).toBe(0);
+    expect(leadingFitCount(widths, 100, gap)).toBe(1);
+    // 100 + 8 + 100 = 208. One pixel less drops the second chip.
+    expect(leadingFitCount(widths, 207, gap)).toBe(1);
+    expect(leadingFitCount(widths, 208, gap)).toBe(2);
+    expect(leadingFitCount(widths, 316, gap)).toBe(3);
+    expect(leadingFitCount(widths, 424, gap)).toBe(4);
+    expect(leadingFitCount(widths, 1000, gap)).toBe(4);
   });
 
-  it("keeps a selection from the overflow menu on the row", () => {
-    expect(visibleBarProjectIds(ordered, 3, "p5")).toEqual(["p1", "p2", "p5"]);
+  it("stops at a chip that has not been measured yet", () => {
+    expect(leadingFitCount([100, 0, 100], 1000, gap)).toBe(1);
+  });
+});
+
+describe("visibleBarProjectIdsForWidths", () => {
+  const ids = ["p1", "p2", "p3", "p4"];
+  const widths = [100, 100, 100, 100];
+  const gap = 8;
+
+  it("keeps pin order and overflows from the end", () => {
+    expect(visibleBarProjectIdsForWidths(ids, widths, 208, gap, null)).toEqual(["p1", "p2"]);
+    expect(visibleBarProjectIdsForWidths(ids, widths, 424, gap, null)).toEqual(ids);
   });
 
-  it("shows a project that is not a bar candidate when nothing else fits", () => {
-    expect(visibleBarProjectIds(ordered, 0, "elsewhere")).toEqual(["elsewhere"]);
+  it("keeps a later selection on the row by dropping the tail", () => {
+    expect(visibleBarProjectIdsForWidths(ids, widths, 208, gap, "p4")).toEqual(["p1", "p4"]);
+  });
+
+  it("keeps the selection beside earlier chips when it is narrow enough", () => {
+    expect(
+      visibleBarProjectIdsForWidths(["a", "b", "c"], [50, 50, 200], 200, gap, "d", 50),
+    ).toEqual(["a", "b", "d"]);
+  });
+
+  it("leaves a selection that cannot fit even alone off the row", () => {
+    expect(visibleBarProjectIdsForWidths(ids, widths, 208, gap, "wide", 300)).toEqual([
+      "p1",
+      "p2",
+    ]);
+  });
+
+  it("shows the selection alone when the other chips are wider than the row", () => {
+    expect(visibleBarProjectIdsForWidths(["a", "b"], [300, 100], 120, gap, "b")).toEqual(["b"]);
   });
 });

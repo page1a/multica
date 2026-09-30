@@ -332,6 +332,11 @@ deleted_attachments AS (
 deleted_visibility_audits AS (
     DELETE FROM visibility_audit WHERE workspace_id = $1
 ),
+-- Cross-workspace chat link reads are workspace-owned audit rows. Delete them
+-- explicitly so teardown does not depend on the workspace FK cascade.
+deleted_chat_session_link_read_audits AS (
+    DELETE FROM chat_session_link_read_audit WHERE workspace_id = $1
+),
 -- Module-level sharing (DENE-699) is workspace-keyed with no foreign key.
 deleted_module_visibility AS (
     DELETE FROM workspace_module_visibility WHERE workspace_id = $1
@@ -657,6 +662,10 @@ DELETE FROM vcs_pull_request WHERE vcs_pull_request.workspace_id = $1;
 WITH deleted_github_installations AS (
     DELETE FROM github_installation
     WHERE github_installation.workspace_id = $1
+),
+deleted_connection_nudges AS (
+    DELETE FROM connection_nudge
+    WHERE connection_nudge.workspace_id = $1
 )
 DELETE FROM vcs_connection WHERE vcs_connection.workspace_id = $1;
 

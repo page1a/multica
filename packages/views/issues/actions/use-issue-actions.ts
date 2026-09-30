@@ -34,6 +34,7 @@ export interface UseIssueActionsResult {
   removeParent: () => void;
   openAddChild: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
+  openClose: () => void;
 }
 
 /**
@@ -263,6 +264,12 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     openModal("issue-add-child", { issueId });
   }, [openModal, issueId, isGuest]);
 
+  const openClose = useCallback(() => {
+    if (!issueId) return;
+    if (isGuest) return;
+    openModal("issue-close", { issueId, identifier: issueIdentifier });
+  }, [openModal, issueId, issueIdentifier, isGuest]);
+
   const openDeleteConfirm = useCallback(
     (opts?: { onDeletedFallbackPath?: string }) => {
       if (!issueId) return;
@@ -287,5 +294,6 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     removeParent,
     openAddChild,
     openDeleteConfirm,
+    openClose,
   };
 }

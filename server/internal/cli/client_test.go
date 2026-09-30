@@ -1,15 +1,76 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestUploadChunkedResumesMissingChunks(t *testing.T) {
+	stateFile := t.TempDir() + "/uploads.json"
+	t.Setenv("MULTICA_UPLOAD_STATE_FILE", stateFile)
+	want := bytes.Repeat([]byte("chunk-data-"), (2<<20)/11+123)
+	var uploadID = "upload-resume-test"
+	chunks := map[int][]byte{}
+	failUploads := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/upload-file/chunked":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"upload_id": uploadID, "chunk_size": 2 << 20})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/upload-file/chunked/"+uploadID:
+			indices := make([]int, 0, len(chunks))
+			for i := range chunks {
+				indices = append(indices, i)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"upload_id": uploadID, "size": len(want), "chunks": indices})
+		case r.Method == http.MethodPut:
+			var index int
+			_, _ = fmt.Sscanf(r.URL.Query().Get("index"), "%d", &index)
+			data, _ := io.ReadAll(r.Body)
+			chunks[index] = data
+			if failUploads {
+				http.Error(w, "simulated interruption", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/complete"):
+			joined := append(append([]byte{}, chunks[0]...), chunks[1]...)
+			if !bytes.Equal(joined, want) {
+				http.Error(w, "corrupt", http.StatusConflict)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-resumed", SizeBytes: int64(len(joined))})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := NewAPIClient(srv.URL, "ws", "token")
+	if _, _, err := client.UploadFileWithURL(context.Background(), want, "video.mp4"); err == nil {
+		t.Fatal("expected interrupted upload to fail")
+	}
+	if len(chunks) != 1 || len(chunks[0]) == 0 {
+		t.Fatalf("first attempt did not leave a resumable chunk: %#v", chunks)
+	}
+	failUploads = false
+	id, _, err := client.UploadFileWithURL(context.Background(), want, "video.mp4")
+	if err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+	if id != "att-resumed" {
+		t.Fatalf("unexpected attachment id %q", id)
+	}
+}
 
 func TestPostJSON(t *testing.T) {
 	type reqBody struct {

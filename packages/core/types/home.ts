@@ -31,6 +31,7 @@ export type ParkingCategory =
   | "waiting_person"
   | "delegated"
   | "idle"
+  | "deferred"
   | "stalled_delivery"
   | "stalled_unclosed"
   | "stalled_reply_unclosed";
@@ -102,4 +103,51 @@ export interface UnreadInboxIssue {
   unread_count: number;
   held_count: number;
   latest_at: string;
+}
+
+export interface InboxBoardOwnerPayload {
+  type: string;
+  id: string;
+}
+
+/** One row of GET /api/inbox/board (DENE-975); `children` nest the same shape. */
+export interface InboxBoardRowPayload {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  parent_issue_id: string | null;
+  lane: "waiting" | "stalled" | "running" | "todo" | "fresh" | "done";
+  kind: string;
+  stuck_kind: string;
+  reason: string;
+  before: string;
+  from: InboxBoardOwnerPayload | null;
+  from_name: string;
+  next: InboxBoardOwnerPayload | null;
+  next_name: string;
+  at: string;
+  timeline: ParkingEvent[] | null;
+  unread: number;
+  children: InboxBoardRowPayload[] | null;
+}
+
+/**
+ * GET /api/inbox/board — the inbox lanes built server-side (DENE-975).
+ * `as_of` is the server clock at the read; pass it back as `unread_since` to
+ * replay this visit's unread markers after marking everything read.
+ */
+export interface InboxBoardResponse {
+  waiting: InboxBoardRowPayload[];
+  stalled: InboxBoardRowPayload[];
+  running: InboxBoardRowPayload[];
+  todo: InboxBoardRowPayload[];
+  fresh: InboxBoardRowPayload[];
+  done: InboxBoardRowPayload[];
+  viewer_id: string;
+  as_of: string;
+  unread_since: string | null;
+  tz: string;
+  day_start: string;
+  /** Unread rows a mark-all-read would clear (open calls excluded). */
+  unread_markable: number;
 }

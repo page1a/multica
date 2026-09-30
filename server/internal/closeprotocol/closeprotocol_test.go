@@ -417,3 +417,123 @@ func TestValidate_RouteWake(t *testing.T) {
 		t.Fatalf("route on done should fail rule route, got %v", err)
 	}
 }
+
+// DENE-1002: the two deliberate non-terminal conclusions and the clock wake.
+func TestValidate_DeferredAndContinuing(t *testing.T) {
+	t.Run("deferred on backlog", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionDeferred,
+			KeyStatus:        issuestatus.Backlog,
+			KeyNextOwnerType: OwnerNone,
+			KeyNextOwnerID:   "",
+			KeyWakeAction:    WakeNone,
+		})
+		if err := Validate(meta, issuestatus.Backlog, "需求还没定，放回待规划。"); err != nil {
+			t.Fatalf("deferred on backlog: %v", err)
+		}
+	})
+	t.Run("deferred on todo", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionDeferred,
+			KeyStatus:        issuestatus.Todo,
+			KeyNextOwnerType: OwnerNone,
+			KeyNextOwnerID:   "",
+			KeyWakeAction:    WakeNone,
+		})
+		if err := Validate(meta, issuestatus.Todo, "这轮先不做，放回待办。"); err != nil {
+			t.Fatalf("deferred on todo: %v", err)
+		}
+	})
+	t.Run("deferred requires an unstarted status", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionDeferred,
+			KeyStatus:        issuestatus.InProgress,
+			KeyNextOwnerType: OwnerNone,
+			KeyNextOwnerID:   "",
+			KeyWakeAction:    WakeNone,
+		})
+		err := Validate(meta, issuestatus.InProgress, "停一下。")
+		var ce *Error
+		if !errors.As(err, &ce) || ce.Rule != "deferred" {
+			t.Fatalf("deferred on in_progress should fail rule deferred, got %v", err)
+		}
+	})
+	t.Run("continuing on in_progress with a clock", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionContinuing,
+			KeyStatus:        issuestatus.InProgress,
+			KeyNextOwnerType: OwnerAgent,
+			KeyNextOwnerID:   reviewerID,
+			KeyWakeAction:    WakeClock,
+		})
+		if err := Validate(meta, issuestatus.InProgress, "这轮先停，到点继续。"); err != nil {
+			t.Fatalf("continuing with a clock: %v", err)
+		}
+	})
+	t.Run("continuing needs a next mover", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionContinuing,
+			KeyStatus:        issuestatus.InProgress,
+			KeyNextOwnerType: OwnerNone,
+			KeyNextOwnerID:   "",
+			KeyWakeAction:    WakeNone,
+		})
+		err := Validate(meta, issuestatus.InProgress, "停一下。")
+		var ce *Error
+		if !errors.As(err, &ce) || ce.Rule != "continuing" {
+			t.Fatalf("continuing without an owner or wait should fail rule continuing, got %v", err)
+		}
+	})
+	t.Run("continuing with a waited-on ticket", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionContinuing,
+			KeyStatus:        issuestatus.InProgress,
+			KeyNextOwnerType: OwnerNone,
+			KeyNextOwnerID:   "",
+			KeyWakeAction:    WakeNone,
+			KeyWaitingOn:     "DENE-806",
+		})
+		if err := Validate(meta, issuestatus.InProgress, "等 DENE-806 落地后继续。"); err != nil {
+			t.Fatalf("continuing on a ticket wait: %v", err)
+		}
+	})
+	t.Run("continuing requires in_progress", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion:    ConclusionContinuing,
+			KeyStatus:        issuestatus.Done,
+			KeyNextOwnerType: OwnerAgent,
+			KeyNextOwnerID:   reviewerID,
+			KeyWakeAction:    WakeNone,
+		})
+		err := Validate(meta, issuestatus.Done, "done")
+		var ce *Error
+		if !errors.As(err, &ce) || ce.Rule != "continuing" {
+			t.Fatalf("continuing on done should fail rule continuing, got %v", err)
+		}
+	})
+	t.Run("clock wake requires in_progress", func(t *testing.T) {
+		meta := base(map[string]string{
+			KeyConclusion: ConclusionAwaitingReview,
+			KeyStatus:     issuestatus.InReview,
+			KeyWakeAction: WakeClock,
+		})
+		err := Validate(meta, issuestatus.InReview, "review")
+		var ce *Error
+		if !errors.As(err, &ce) || ce.Rule != "clock" {
+			t.Fatalf("clock on in_review should fail rule clock, got %v", err)
+		}
+	})
+}
+
+func TestExplainedPause(t *testing.T) {
+	for _, conclusion := range []string{ConclusionDeferred, ConclusionContinuing} {
+		if !ExplainedPause(conclusion) {
+			t.Fatalf("ExplainedPause(%q) = false, want true", conclusion)
+		}
+	}
+	for _, conclusion := range []string{ConclusionDelivered, ConclusionBlocked, ConclusionAwaitingReview, ConclusionAwaitingHuman, ""} {
+		if ExplainedPause(conclusion) {
+			t.Fatalf("ExplainedPause(%q) = true, want false", conclusion)
+		}
+	}
+}

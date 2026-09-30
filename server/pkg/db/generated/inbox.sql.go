@@ -161,7 +161,7 @@ func (q *Queries) ArchiveInboxByIssueAndType(ctx context.Context, arg ArchiveInb
 const archiveInboxItem = `-- name: ArchiveInboxItem :one
 UPDATE inbox_item SET archived = true
 WHERE id = $1
-RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at
 `
 
 func (q *Queries) ArchiveInboxItem(ctx context.Context, id pgtype.UUID) (InboxItem, error) {
@@ -183,6 +183,7 @@ func (q *Queries) ArchiveInboxItem(ctx context.Context, id pgtype.UUID) (InboxIt
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }
@@ -369,7 +370,7 @@ INSERT INTO inbox_item (
     type, severity, issue_id, title, body,
     actor_type, actor_id, details, id
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::uuid, gen_random_uuid()))
-RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at
 `
 
 type CreateInboxItemParams struct {
@@ -419,12 +420,13 @@ func (q *Queries) CreateInboxItem(ctx context.Context, arg CreateInboxItemParams
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }
 
 const getInboxItem = `-- name: GetInboxItem :one
-SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details FROM inbox_item
+SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at FROM inbox_item
 WHERE id = $1
 `
 
@@ -447,12 +449,13 @@ func (q *Queries) GetInboxItem(ctx context.Context, id pgtype.UUID) (InboxItem, 
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }
 
 const getInboxItemInWorkspace = `-- name: GetInboxItemInWorkspace :one
-SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details FROM inbox_item
+SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at FROM inbox_item
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -480,6 +483,7 @@ func (q *Queries) GetInboxItemInWorkspace(ctx context.Context, arg GetInboxItemI
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }
@@ -529,7 +533,7 @@ WITH eligible_archived AS MATERIALIZED (
     UNION
     SELECT id FROM comment_anchors
 )
-SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details,
+SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.read_at,
        iss.status AS issue_status,
        iss.priority AS issue_priority,
        COALESCE(iss.visibility, 'workspace')::text AS issue_visibility,
@@ -566,6 +570,7 @@ type ListArchivedInboxItemsRow struct {
 	ActorType         pgtype.Text        `json:"actor_type"`
 	ActorID           pgtype.UUID        `json:"actor_id"`
 	Details           []byte             `json:"details"`
+	ReadAt            pgtype.Timestamptz `json:"read_at"`
 	IssueStatus       pgtype.Text        `json:"issue_status"`
 	IssuePriority     pgtype.Text        `json:"issue_priority"`
 	IssueVisibility   string             `json:"issue_visibility"`
@@ -622,6 +627,7 @@ func (q *Queries) ListArchivedInboxItems(ctx context.Context, arg ListArchivedIn
 			&i.ActorType,
 			&i.ActorID,
 			&i.Details,
+			&i.ReadAt,
 			&i.IssueStatus,
 			&i.IssuePriority,
 			&i.IssueVisibility,
@@ -641,8 +647,219 @@ func (q *Queries) ListArchivedInboxItems(ctx context.Context, arg ListArchivedIn
 	return items, nil
 }
 
+const listInboxBoardDoneIssues = `-- name: ListInboxBoardDoneIssues :many
+SELECT iss.id, iss.number, iss.title, iss.status, iss.parent_issue_id, iss.updated_at,
+       COALESCE(iss.visibility, 'workspace')::text AS visibility,
+       COALESCE(iss.creator_type, '')::text AS creator_type,
+       iss.creator_id,
+       iss.project_id,
+       COALESCE(iss.assignee_type, '')::text AS assignee_type,
+       iss.assignee_id
+FROM issue iss
+WHERE iss.workspace_id = $1 AND iss.status = 'done'
+  AND iss.updated_at >= $2::timestamptz
+  AND iss.updated_at < $3::timestamptz
+ORDER BY iss.updated_at DESC
+LIMIT 400
+`
+
+type ListInboxBoardDoneIssuesParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DayStart    pgtype.Timestamptz `json:"day_start"`
+	DayEnd      pgtype.Timestamptz `json:"day_end"`
+}
+
+type ListInboxBoardDoneIssuesRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	Number        int32              `json:"number"`
+	Title         string             `json:"title"`
+	Status        string             `json:"status"`
+	ParentIssueID pgtype.UUID        `json:"parent_issue_id"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Visibility    string             `json:"visibility"`
+	CreatorType   string             `json:"creator_type"`
+	CreatorID     pgtype.UUID        `json:"creator_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	AssigneeType  string             `json:"assignee_type"`
+	AssigneeID    pgtype.UUID        `json:"assignee_id"`
+}
+
+// The inbox board's "done today" (DENE-975): issues moved to done inside the
+// viewer's local day, newest first. Visibility is checked by the handler,
+// which keeps the first 100 visible rows.
+func (q *Queries) ListInboxBoardDoneIssues(ctx context.Context, arg ListInboxBoardDoneIssuesParams) ([]ListInboxBoardDoneIssuesRow, error) {
+	rows, err := q.db.Query(ctx, listInboxBoardDoneIssues, arg.WorkspaceID, arg.DayStart, arg.DayEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInboxBoardDoneIssuesRow{}
+	for rows.Next() {
+		var i ListInboxBoardDoneIssuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Title,
+			&i.Status,
+			&i.ParentIssueID,
+			&i.UpdatedAt,
+			&i.Visibility,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ProjectID,
+			&i.AssigneeType,
+			&i.AssigneeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInboxBoardIssuesByIDs = `-- name: ListInboxBoardIssuesByIDs :many
+SELECT iss.id, iss.number, iss.title, iss.status, iss.parent_issue_id, iss.updated_at,
+       COALESCE(iss.visibility, 'workspace')::text AS visibility,
+       COALESCE(iss.creator_type, '')::text AS creator_type,
+       iss.creator_id,
+       iss.project_id,
+       COALESCE(iss.assignee_type, '')::text AS assignee_type,
+       iss.assignee_id
+FROM issue iss
+WHERE iss.workspace_id = $1 AND iss.id = ANY($2::uuid[])
+`
+
+type ListInboxBoardIssuesByIDsParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	Ids         []pgtype.UUID `json:"ids"`
+}
+
+type ListInboxBoardIssuesByIDsRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	Number        int32              `json:"number"`
+	Title         string             `json:"title"`
+	Status        string             `json:"status"`
+	ParentIssueID pgtype.UUID        `json:"parent_issue_id"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Visibility    string             `json:"visibility"`
+	CreatorType   string             `json:"creator_type"`
+	CreatorID     pgtype.UUID        `json:"creator_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	AssigneeType  string             `json:"assignee_type"`
+	AssigneeID    pgtype.UUID        `json:"assignee_id"`
+}
+
+// The issues the inbox board's running tasks point at (DENE-975), for titles
+// and parents. Visibility is checked by the handler.
+func (q *Queries) ListInboxBoardIssuesByIDs(ctx context.Context, arg ListInboxBoardIssuesByIDsParams) ([]ListInboxBoardIssuesByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listInboxBoardIssuesByIDs, arg.WorkspaceID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInboxBoardIssuesByIDsRow{}
+	for rows.Next() {
+		var i ListInboxBoardIssuesByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Title,
+			&i.Status,
+			&i.ParentIssueID,
+			&i.UpdatedAt,
+			&i.Visibility,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ProjectID,
+			&i.AssigneeType,
+			&i.AssigneeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInboxBoardTodoIssues = `-- name: ListInboxBoardTodoIssues :many
+SELECT iss.id, iss.number, iss.title, iss.status, iss.parent_issue_id, iss.updated_at,
+       COALESCE(iss.visibility, 'workspace')::text AS visibility,
+       COALESCE(iss.creator_type, '')::text AS creator_type,
+       iss.creator_id,
+       iss.project_id,
+       COALESCE(iss.assignee_type, '')::text AS assignee_type,
+       iss.assignee_id
+FROM issue iss
+WHERE iss.workspace_id = $1 AND iss.status = 'todo'
+  AND iss.assignee_type = 'member' AND iss.assignee_id = $2::uuid
+ORDER BY iss.updated_at DESC
+LIMIT 400
+`
+
+type ListInboxBoardTodoIssuesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+type ListInboxBoardTodoIssuesRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	Number        int32              `json:"number"`
+	Title         string             `json:"title"`
+	Status        string             `json:"status"`
+	ParentIssueID pgtype.UUID        `json:"parent_issue_id"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Visibility    string             `json:"visibility"`
+	CreatorType   string             `json:"creator_type"`
+	CreatorID     pgtype.UUID        `json:"creator_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	AssigneeType  string             `json:"assignee_type"`
+	AssigneeID    pgtype.UUID        `json:"assignee_id"`
+}
+
+// The inbox board's "to do" lane (DENE-975): issues in todo assigned to the
+// viewer, newest first. Visibility is checked by the handler, which keeps
+// the first 100 visible rows.
+func (q *Queries) ListInboxBoardTodoIssues(ctx context.Context, arg ListInboxBoardTodoIssuesParams) ([]ListInboxBoardTodoIssuesRow, error) {
+	rows, err := q.db.Query(ctx, listInboxBoardTodoIssues, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInboxBoardTodoIssuesRow{}
+	for rows.Next() {
+		var i ListInboxBoardTodoIssuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Title,
+			&i.Status,
+			&i.ParentIssueID,
+			&i.UpdatedAt,
+			&i.Visibility,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ProjectID,
+			&i.AssigneeType,
+			&i.AssigneeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInboxItems = `-- name: ListInboxItems :many
-SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details,
+SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.read_at,
        iss.status AS issue_status,
        iss.priority AS issue_priority,
        COALESCE(iss.visibility, 'workspace')::text AS issue_visibility,
@@ -679,6 +896,7 @@ type ListInboxItemsRow struct {
 	ActorType         pgtype.Text        `json:"actor_type"`
 	ActorID           pgtype.UUID        `json:"actor_id"`
 	Details           []byte             `json:"details"`
+	ReadAt            pgtype.Timestamptz `json:"read_at"`
 	IssueStatus       pgtype.Text        `json:"issue_status"`
 	IssuePriority     pgtype.Text        `json:"issue_priority"`
 	IssueVisibility   string             `json:"issue_visibility"`
@@ -714,6 +932,7 @@ func (q *Queries) ListInboxItems(ctx context.Context, arg ListInboxItemsParams) 
 			&i.ActorType,
 			&i.ActorID,
 			&i.Details,
+			&i.ReadAt,
 			&i.IssueStatus,
 			&i.IssuePriority,
 			&i.IssueVisibility,
@@ -761,15 +980,19 @@ SELECT i.issue_id,
 FROM inbox_item i
 JOIN issue iss ON iss.id = i.issue_id
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
-  AND i.read = false AND i.archived = false
+  AND (i.read = false
+       OR ($3::timestamptz IS NOT NULL
+           AND i.read_at >= $3::timestamptz))
+  AND i.archived = false
 GROUP BY i.issue_id, iss.id
 ORDER BY max(i.created_at) DESC
 LIMIT 300
 `
 
 type ListUnreadInboxIssuesParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	RecipientID pgtype.UUID `json:"recipient_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RecipientID pgtype.UUID        `json:"recipient_id"`
+	UnreadSince pgtype.Timestamptz `json:"unread_since"`
 }
 
 type ListUnreadInboxIssuesRow struct {
@@ -794,8 +1017,11 @@ type ListUnreadInboxIssuesRow struct {
 // notifications for this person, how many, and how many of them hang on an
 // open call (those survive MarkAllInboxRead). Issue-less rows are not on the
 // board. Visibility is checked by the handler, like ListInboxItems.
+// unread_since replays a visit's snapshot (DENE-975): rows read at or after it
+// still count as unread, so a board refetched after the visit's mark-all-read
+// keeps marking what was new on arrival. NULL means live unread only.
 func (q *Queries) ListUnreadInboxIssues(ctx context.Context, arg ListUnreadInboxIssuesParams) ([]ListUnreadInboxIssuesRow, error) {
-	rows, err := q.db.Query(ctx, listUnreadInboxIssues, arg.WorkspaceID, arg.RecipientID)
+	rows, err := q.db.Query(ctx, listUnreadInboxIssues, arg.WorkspaceID, arg.RecipientID, arg.UnreadSince)
 	if err != nil {
 		return nil, err
 	}
@@ -831,7 +1057,7 @@ func (q *Queries) ListUnreadInboxIssues(ctx context.Context, arg ListUnreadInbox
 }
 
 const markAllInboxRead = `-- name: MarkAllInboxRead :execrows
-UPDATE inbox_item i SET read = true
+UPDATE inbox_item i SET read = true, read_at = now()
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
   AND i.archived = false AND i.read = false
   AND NOT EXISTS (
@@ -867,9 +1093,9 @@ func (q *Queries) MarkAllInboxRead(ctx context.Context, arg MarkAllInboxReadPara
 }
 
 const markInboxRead = `-- name: MarkInboxRead :one
-UPDATE inbox_item SET read = true
+UPDATE inbox_item SET read = true, read_at = COALESCE(read_at, now())
 WHERE id = $1
-RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at
 `
 
 func (q *Queries) MarkInboxRead(ctx context.Context, id pgtype.UUID) (InboxItem, error) {
@@ -891,14 +1117,15 @@ func (q *Queries) MarkInboxRead(ctx context.Context, id pgtype.UUID) (InboxItem,
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }
 
 const markInboxUnread = `-- name: MarkInboxUnread :one
-UPDATE inbox_item SET read = false
+UPDATE inbox_item SET read = false, read_at = NULL
 WHERE id = $1
-RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at
 `
 
 // Exact inverse of MarkInboxRead, and item-level for the same reason it is:
@@ -926,12 +1153,13 @@ func (q *Queries) MarkInboxUnread(ctx context.Context, id pgtype.UUID) (InboxIte
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }
 
 const markIssueInboxRead = `-- name: MarkIssueInboxRead :many
-UPDATE inbox_item i SET read = true
+UPDATE inbox_item i SET read = true, read_at = now()
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
   AND i.issue_id = $3 AND i.archived = false AND i.read = false
   AND NOT EXISTS (
@@ -976,7 +1204,7 @@ func (q *Queries) MarkIssueInboxRead(ctx context.Context, arg MarkIssueInboxRead
 }
 
 const markIssueSummonInboxRead = `-- name: MarkIssueSummonInboxRead :many
-UPDATE inbox_item i SET read = true
+UPDATE inbox_item i SET read = true, read_at = now()
 FROM issue_summon s
 WHERE s.id = ANY($1::uuid[])
   AND i.workspace_id = s.workspace_id
@@ -1047,7 +1275,7 @@ func (q *Queries) UnarchiveInboxByIssue(ctx context.Context, arg UnarchiveInboxB
 const unarchiveInboxItem = `-- name: UnarchiveInboxItem :one
 UPDATE inbox_item SET archived = false
 WHERE id = $1
-RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+RETURNING id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details, read_at
 `
 
 // Deliberately does not touch `read`: unarchiving restores an item to the main
@@ -1072,6 +1300,7 @@ func (q *Queries) UnarchiveInboxItem(ctx context.Context, id pgtype.UUID) (Inbox
 		&i.ActorType,
 		&i.ActorID,
 		&i.Details,
+		&i.ReadAt,
 	)
 	return i, err
 }

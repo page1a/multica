@@ -37,6 +37,15 @@ export function EmptyState({
     agent?.conversation_starters,
     fallbackStarters,
   );
+  // Every chat can walk its person through their inbox (DENE-975); it is not
+  // one of the agent's own starters, so it sits under them whatever they are.
+  const withInbox = [
+    ...starters,
+    {
+      label: t(($) => $.conversation_starters.inbox.label),
+      prompt: t(($) => $.conversation_starters.inbox.prompt),
+    },
+  ];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center-safe gap-5 overflow-y-auto px-6 py-8">
@@ -68,7 +77,7 @@ export function EmptyState({
           className="w-full max-w-sm space-y-2"
           aria-label={t(($) => $.conversation_starters.aria_label)}
         >
-          <ConversationStarterList starters={starters} onPick={onPickPrompt} />
+          <ConversationStarterList starters={withInbox} onPick={onPickPrompt} />
           {customizeHref ? (
             <div className="flex justify-center pt-1">
               <AppLink

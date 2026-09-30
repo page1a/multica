@@ -731,15 +731,16 @@ export function useChatController(opts?: { isActive?: boolean }) {
     });
   }, [pendingTaskId, activeSessionId, cancelChatTask]);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback((projectIds: readonly string[] = []) => {
     uiLogger.info("newChat", {
       previousSessionId: activeSessionId,
       previousPendingTask: pendingTaskId,
+      projectIds,
     });
-    // A fresh chat has no project unless the user explicitly chooses one.
-    // The open session's project is server-owned history, not a default for
-    // the next session.
-    setSelectedProjectIds([]);
+    // The caller names the new chat's projects. The chat page passes the
+    // project being browsed, or nothing from All / 随手聊. The open session's
+    // projects stay on that session — they are not copied across.
+    setSelectedProjectIds([...projectIds]);
     setActiveSession(null);
     requestInputFocus();
   }, [
@@ -754,14 +755,16 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // does not no-op when the agent is unchanged — "new chat" always clears the
   // active session so the user lands on an empty compose for that agent. The
   // session row is created lazily on the first send (see ensureSession).
+  // `projectIds` is the same contract as handleNewChat.
   const handleStartNewChat = useCallback(
-    (agent: Agent) => {
+    (agent: Agent, projectIds: readonly string[] = []) => {
       uiLogger.info("startNewChat", {
         agentId: agent.id,
         previousSessionId: activeSessionId,
+        projectIds,
       });
       setSelectedAgentId(agent.id);
-      setSelectedProjectIds([]);
+      setSelectedProjectIds([...projectIds]);
       setActiveSession(null);
       requestInputFocus();
     },
@@ -868,7 +871,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
     availableAgents,
     agentsSettled,
     sessions,
+    sessionsLoaded,
     projects,
+    projectsLoaded,
     activeSessionId,
     selectedAgentId,
     activeProjectIds,

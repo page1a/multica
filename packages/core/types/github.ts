@@ -137,6 +137,26 @@ export interface GitHubConnectResponse {
   configured: boolean;
 }
 
+/** Which GitHub App identity this deployment is using. Secrets stay on the server. */
+export interface GitHubAppStatus {
+  source: "none" | "env" | "database" | string;
+  configured: boolean;
+  read_only: boolean;
+  can_create: boolean;
+  block_reason?: "not_owner" | "secret_unavailable" | "public_url_missing" | string;
+  app_name?: string;
+  slug?: string;
+  html_url?: string;
+  manage_url?: string;
+}
+
+/** Manifest the browser posts to GitHub, plus a link a terminal can hand to a person. */
+export interface GitHubAppSetup {
+  action_url: string;
+  manifest: Record<string, unknown>;
+  launch_url: string;
+}
+
 export interface GitHubRepository {
   id: number;
   full_name: string;

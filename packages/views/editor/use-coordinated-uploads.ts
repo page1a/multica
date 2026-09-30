@@ -216,7 +216,7 @@ export interface CoordinatedUploads {
    * caller that drops it silently mints a second id and breaks that link.
    * Optional only for a caller with no editor placeholder to match.
    */
-  handleUpload: (file: File, uploadId?: string) => Promise<UploadResult | null>;
+  handleUpload: (file: File, uploadId?: string, onProgress?: (uploadedBytes: number, totalBytes: number) => void) => Promise<UploadResult | null>;
   /** Drop a placeholder (dismiss a failure / interrupted). */
   removeUpload: (clientUploadId: string) => void;
   /**
@@ -365,7 +365,7 @@ export function useCoordinatedUploads(
   const chatSessionId = ctx.chatSessionId;
 
   const handleUpload = useCallback(
-    (file: File, uploadId?: string): Promise<UploadResult | null> => {
+    (file: File, uploadId?: string, onProgress?: (uploadedBytes: number, totalBytes: number) => void): Promise<UploadResult | null> => {
       // Adopt the editor's id rather than minting a second one: the document
       // node and this draft record are the same upload, and a settle that
       // reaches a mount which did not start it can only find the node by id.
@@ -417,6 +417,7 @@ export function useCoordinatedUploads(
           file,
           api,
           ctx: { issueId, commentId, chatSessionId },
+          onProgress,
           onSettled: (outcome) => {
             if (outcome.status === "uploaded") {
               if (target) {

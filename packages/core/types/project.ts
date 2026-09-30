@@ -26,6 +26,43 @@ export interface Project {
   visibility?: "private" | "project" | "workspace";
 }
 
+/** Checklist slot, without a daemon observation. Close dialogs read this. */
+export interface ProjectMemoryChecklistItem {
+  key: string;
+  path: string;
+  kind: "file" | "directory";
+}
+
+export interface ProjectMemoryLocation {
+  key: string;
+  path: string;
+  kind: "file" | "directory";
+  exists: boolean;
+  is_directory: boolean;
+  modified_at: string | null;
+  observed_at: string | null;
+  error: string | null;
+}
+
+export interface ProjectMemoryIssue {
+  id: string;
+  identifier: string;
+  status: string;
+  title: string;
+}
+
+export interface ProjectMemoryStatus {
+  project_id: string;
+  workspace_id: string;
+  locations: ProjectMemoryLocation[];
+  missing: string[];
+  observed_at: string | null;
+  latest_sediment_at: string | null;
+  sediment_issue: ProjectMemoryIssue | null;
+  sediment_agent_configured: boolean;
+  sediment_error: string | null;
+}
+
 export interface ProjectVisibilityPreview {
   project_id: string;
   visibility: "private" | "project" | "workspace";

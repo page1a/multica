@@ -16,6 +16,7 @@ import { getPreviewKind } from "./utils/preview";
 interface AttachmentCardChromeProps {
   filename: string;
   uploading?: boolean;
+  uploadProgress?: number;
   canPreview: boolean;
   canDownload: boolean;
   canDelete?: boolean;
@@ -27,6 +28,7 @@ interface AttachmentCardChromeProps {
 function AttachmentCardChrome({
   filename,
   uploading,
+  uploadProgress,
   canPreview,
   canDownload,
   canDelete,
@@ -52,6 +54,11 @@ function AttachmentCardChrome({
             : filename}
         </p>
       </div>
+      {uploading && uploadProgress != null && (
+        <span className="shrink-0 text-caption text-muted-foreground" aria-label={`${uploadProgress}%`}>
+          {uploadProgress}%
+        </span>
+      )}
       {!uploading && canPreview && (
         <button
           type="button"
@@ -116,6 +123,8 @@ export interface AttachmentCardProps {
   href?: string;
   /** True while a synchronous upload is in flight (file-card NodeView only). */
   uploading?: boolean;
+  /** Integer percentage for an in-flight editor upload. */
+  uploadProgress?: number;
   /** Pressed when the Eye button is clicked. */
   onPreview: () => void;
   /** Pressed when the Download button is clicked. */
@@ -130,6 +139,7 @@ export function AttachmentCard({
   attachmentId,
   href,
   uploading,
+  uploadProgress,
   onPreview,
   onDownload,
   onDelete,
@@ -150,6 +160,7 @@ export function AttachmentCard({
       <AttachmentCardChrome
         filename={filename}
         uploading={uploading}
+        uploadProgress={uploadProgress}
         canPreview={canPreview}
         canDownload={!!href}
         canDelete={!!onDelete}

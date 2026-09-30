@@ -37,6 +37,11 @@ const (
 	CategoryDelegated = "delegated"
 	// CategoryIdle is a ticket nobody has started, or one parked in backlog.
 	CategoryIdle = "idle"
+	// CategoryDeferred is a deliberate stop with a recorded reason and a
+	// continuation: `issue close --outcome backlog|todo` (back to planning) or
+	// `--outcome in_progress` (this turn stops, the next continues). It is an
+	// explained state, never "stopped without saying why" (DENE-1002).
+	CategoryDeferred = "deferred"
 
 	// CategoryStalledDelivery: the last run failed or the platform refused
 	// the hand-off (branch not recorded, PR not linked, review refused), and
@@ -237,6 +242,18 @@ func Classify(in Input) Record {
 	if rec.CloseCurrent && conclusion == closeprotocol.ConclusionAwaitingHuman {
 		rec.Category = CategoryWaitingPerson
 		rec.NextOwner = closeOwner(in.Meta, in.Assignee)
+		return rec
+	}
+	// A deliberate non-terminal close (deferred / continuing) is an explained
+	// stop: the executor said why and named who continues. Without this the
+	// ticket reads as stalled_unclosed and lands in the inbox's "stopped
+	// without saying why" lane (DENE-1002).
+	if rec.CloseCurrent && closeprotocol.ExplainedPause(conclusion) {
+		rec.Category = CategoryDeferred
+		rec.NextOwner = closeOwner(in.Meta, in.Assignee)
+		if w := blockwait.MetaString(in.Meta, closeprotocol.KeyWaitingOn); w != "" {
+			rec.NextOwner = Owner{Type: "issue", ID: w}
+		}
 		return rec
 	}
 	if in.Status == "in_progress" && in.HasOpenChildren {
@@ -459,6 +476,8 @@ func FallbackSummary(rec Record) string {
 		return "卡住，等待已记录"
 	case CategoryDelegated:
 		return "子任务推进中"
+	case CategoryDeferred:
+		return "有意停下，写着谁接着做"
 	default:
 		return "尚未开跑"
 	}

@@ -6,13 +6,10 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronRight,
-  FolderGit,
   FolderOpen,
   Folders,
   GitBranch,
   Pencil,
-  Plus,
-  Search,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,7 +21,6 @@ import {
 } from "@multica/core/projects";
 import { projectCodeDecisionOptions } from "@multica/core/projects/code-decision";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
   GithubRepoResourceRef,
   LocalDirectoryExecutionMode,
@@ -34,11 +30,6 @@ import type {
 import { useConfigStore } from "@multica/core/config";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@multica/ui/components/ui/popover";
 import {
   Tooltip,
   TooltipTrigger,
@@ -79,7 +70,6 @@ import {
   worktreeUnavailableReason,
 } from "./local-directory-mode";
 import { useT } from "../../i18n";
-import { githubShortLabel } from "../../common/github-url";
 
 // Project Resources sidebar section.
 //
@@ -135,11 +125,8 @@ type ModeDialogState = {
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
-  const workspace = useCurrentWorkspace();
   const daemonStatus = useLocalDaemonStatus();
   const [open, setOpen] = useState(true);
-  const [addOpen, setAddOpen] = useState(false);
-  const [repoSearch, setRepoSearch] = useState("");
   const [picking, setPicking] = useState(false);
   const [modeDialog, setModeDialog] = useState<ModeDialogState | null>(null);
   const [modeSaving, setModeSaving] = useState(false);
@@ -201,9 +188,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   // always starts on in-place (DENE-617): whether a machine COULD run
   // parallel mode is no longer a reason to start the user there. Whether it
   // MAY is still the server's call, gated on save and surfaced inline.
-  const attachedUrls = new Set(
-    resources.filter(isGithubRef).map((r) => r.resource_ref.url),
-  );
   const attachedLocalPaths = new Set(
     resources
       .filter(isLocalDirectoryRef)
@@ -292,22 +276,9 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     }
   };
 
-  const repoQuery = repoSearch.trim().toLowerCase();
-  const filteredRepos =
-    workspace?.repos?.filter((repo) => repo.url.toLowerCase().includes(repoQuery)) ?? [];
-
-  const handleAttach = async (url: string) => {
-    try {
-      await createResource.mutateAsync({
-        resource_type: "github_repo",
-        resource_ref: { url },
-      });
-      toast.success(t(($) => $.resources.toast_attached));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
-      toast.error(msg);
-    }
-  };
+  // Repositories live in the "Code" section above, with their connection
+  // state. This list keeps every other kind of resource.
+  const listedResources = resources.filter((resource) => !isGithubRef(resource));
 
   const handleAttachLocalDirectory = async () => {
     if (picking) return;
@@ -377,7 +348,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
         defaultWorktreeRoot: validation.default_worktree_root,
         gitRoot: validation.git_root,
       });
-      setAddOpen(false);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -752,7 +722,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               {t(($) => $.resources.code_decision_unavailable)}
             </p>
           )}
-          {resources.length === 0 && (
+          {listedResources.length === 0 && (
             <p className="text-caption text-muted-foreground">
               {t(($) => $.resources.empty)}
             </p>
@@ -762,9 +732,9 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
             onMerge={handleMergeIntoLocal}
             disabled={deleteResource.isPending}
           />
-          {resources.length > 0 && (
+          {listedResources.length > 0 && (
             <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
-              {resources.map((resource) => (
+              {listedResources.map((resource) => (
                 <ResourceRow
                   key={resource.id}
                   resource={resource}
@@ -831,94 +801,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               ))}
             </div>
           )}
-          <Popover
-            open={addOpen}
-            onOpenChange={(v) => {
-              setAddOpen(v);
-              if (!v) setRepoSearch("");
-            }}
-          >
-            <PopoverTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-caption text-muted-foreground hover:text-foreground"
-                >
-                  <Plus className="size-3" />
-                  {t(($) => $.resources.add_button)}
-                </Button>
-              }
-            />
-            <PopoverContent align="start" className="w-72 p-2 space-y-2">
-              <div className="text-caption font-medium text-muted-foreground">
-                {t(($) => $.resources.popover_title)}
-              </div>
-              {workspace?.repos && workspace.repos.length > 0 && (
-                <>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      type="text"
-                      value={repoSearch}
-                      onChange={(e) => setRepoSearch(e.target.value)}
-                      aria-label={t(($) => $.resources.repos_search_placeholder)}
-                      placeholder={t(($) => $.resources.repos_search_placeholder)}
-                      className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                    />
-                  </div>
-                  <div className="max-h-48 space-y-1 overflow-y-auto">
-                    {filteredRepos.length === 0 && repoQuery && (
-                      <p className="py-2 text-center text-caption text-muted-foreground">
-                        {t(($) => $.resources.repos_search_empty)}
-                      </p>
-                    )}
-                    {filteredRepos.map((repo) => {
-                      const isAttached = attachedUrls.has(repo.url);
-                      const isDisabled = isAttached || createResource.isPending;
-                      return (
-                        // Use aria-disabled instead of the native `disabled` attribute so
-                        // hover events still reach the tooltip trigger on attached rows
-                        // (browsers suppress pointer events on disabled form controls).
-                        <button
-                          key={repo.url}
-                          type="button"
-                          aria-disabled={isDisabled}
-                          onClick={async () => {
-                            if (isDisabled) return;
-                            await handleAttach(repo.url);
-                            setAddOpen(false);
-                          }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-caption text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
-                        >
-                          <FolderGit className="size-3.5" />
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <span className="truncate flex-1">{githubShortLabel(repo.url)}</span>
-                              }
-                            />
-                            <TooltipContent side="top">{repo.url}</TooltipContent>
-                          </Tooltip>
-                          {isAttached && (
-                            <span className="text-micro text-muted-foreground">
-                              {t(($) => $.resources.attached_badge)}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-              <CustomRepoForm
-                onSubmit={async (url) => {
-                  await handleAttach(url);
-                  setAddOpen(false);
-                }}
-              />
-            </PopoverContent>
-          </Popover>
           {desktopMode && (
             <div className="flex flex-col">
               <Button
@@ -1029,40 +911,6 @@ function ResourceRow({
   gitInitPending,
 }: ResourceRowProps) {
   const { t } = useT("projects");
-  if (isGithubRef(resource)) {
-    const ref = resource.resource_ref;
-    const display = resource.label || (ref.ref ? `${githubShortLabel(ref.url)} @ ${ref.ref}` : githubShortLabel(ref.url));
-    const tooltip = ref.ref ? `${ref.url}\nref: ${ref.ref}` : ref.url;
-    return (
-      <div className="flex items-center gap-2 text-caption group">
-        <FolderGit className="size-3.5 text-muted-foreground shrink-0" />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <a
-                href={ref.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate flex-1 hover:underline"
-              >
-                {display}
-              </a>
-            }
-          />
-          <TooltipContent side="top" className="whitespace-pre-line">{tooltip}</TooltipContent>
-        </Tooltip>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="[@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity rounded-sm p-0.5 [@media(pointer:coarse)]:p-2 hover:bg-accent"
-          title={t(($) => $.resources.remove_tooltip)}
-        >
-          <Trash2 className="size-3 text-muted-foreground" />
-        </button>
-      </div>
-    );
-  }
-
   if (isLocalDirectoryRef(resource)) {
     return (
       <LocalDirectoryRow
@@ -1333,48 +1181,6 @@ function LocalDirectoryRow({
         <Trash2 className="size-3 text-muted-foreground" />
       </button>
     </div>
-  );
-}
-
-function CustomRepoForm({
-  onSubmit,
-}: {
-  onSubmit: (url: string) => Promise<void> | void;
-}) {
-  const { t } = useT("projects");
-  const [url, setUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const handle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    setSubmitting(true);
-    try {
-      await onSubmit(trimmed);
-      setUrl("");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <form onSubmit={handle} className="flex items-center gap-1.5 pt-1 border-t">
-      <input
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder={t(($) => $.resources.url_placeholder)}
-        className="flex-1 bg-transparent text-caption px-2 py-1 outline-none placeholder:text-muted-foreground"
-      />
-      <Button
-        type="submit"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-caption"
-        disabled={!url.trim() || submitting}
-      >
-        {t(($) => $.resources.url_submit)}
-      </Button>
-    </form>
   );
 }
 

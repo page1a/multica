@@ -11,6 +11,7 @@ type ModalType =
   | "issue-set-parent"
   | "issue-add-child"
   | "issue-delete-confirm"
+  | "issue-close"
   | "issue-run-confirm"
   | null;
 

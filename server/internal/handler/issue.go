@@ -4212,14 +4212,14 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.persistBlockRecord(r.Context(), issue, blockRecord)
 		h.summonNeedsHuman(r.Context(), issue, blockRecord.NeedsHuman, actorType, actorID, "")
 	}
-	if statusChanged {
-		h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
-		h.notifyWaitersOfIssueDone(r.Context(), prevIssue, issue)
-		// Routing hook (DENE-633): the status is now what it is, so ask who
-		// should be holding this ticket. The one status routing can write is
-		// in_review -> done, from the stale sweep (DENE-712), and that write
-		// does not come through here — it calls the same two notifications
-		// above for itself. So this cannot loop back.
+	if statusChanged || titleChanged || descriptionChanged {
+		if statusChanged {
+			h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
+			h.notifyWaitersOfIssueDone(r.Context(), prevIssue, issue)
+		}
+		// Route after content edits as well as status changes. The detached
+		// pass pre-analyzes the new content, so runtime-backed analysis is warm
+		// before a later dispatch.
 		h.RouteIssueAsync(r, uuidToString(issue.WorkspaceID), uuidToString(issue.ID))
 	}
 

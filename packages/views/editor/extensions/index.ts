@@ -86,6 +86,10 @@ export const ImageExtension = Image.extend({
         default: null,
         rendered: false,
       },
+      uploadProgress: {
+        default: null,
+        rendered: false,
+      },
       // Intrinsic pixel dimensions, captured on upload (file-upload.ts). The
       // browser uses width/height on <img> to compute aspect-ratio and reserve
       // the box before the image decodes, so inserting an image causes no
@@ -146,7 +150,7 @@ export interface EditorExtensionsOptions {
   queryClient?: import("@tanstack/react-query").QueryClient;
   onSubmitRef?: RefObject<(() => void) | undefined>;
   onUploadFileRef?: RefObject<
-    ((file: File, uploadId: string) => Promise<UploadResult | null>) | undefined
+    ((file: File, uploadId: string, onProgress: (uploadedBytes: number, totalBytes: number) => void) => Promise<UploadResult | null>) | undefined
   >;
   /**
    * Character count above which a plain-text paste becomes a .txt attachment

@@ -164,6 +164,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "todo": {
+        "title": "未着手",
+        "hint": "あなたに割り当てられ、まだ始まっていないタスク。",
+        "empty": "未着手のタスクはありません"
+      },
       "fresh": {
         "title": "新着あり",
         "hint": "前回の訪問以降に新着がある他のタスクで、今回のみ表示されます。",
@@ -189,6 +194,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "todo": "未着手",
       "fresh": "新着",
       "done": "Done"
     },
@@ -234,6 +240,21 @@
     "open_issue": "Open issue",
     "seen_other": "{{count}} already seen",
     "hide_seen": "Hide seen",
-    "load_error": "Some of this did not load; it will retry shortly"
+    "load_error": "Some of this did not load; it will retry shortly",
+    "ask_ai": "AI に説明してもらう",
+    "lane_filter_hint": "クリックすると左側でこのグループの通知だけを強調します",
+    "panel_title": "ボード",
+    "panel_hint": "ステータス別",
+    "back_to_panel": "ボードに戻る",
+    "filter_bar": "「{{lane}}」の通知を強調中",
+    "filter_clear": "解除",
+    "short": {
+      "waiting": "対応待ち",
+      "stalled": "停止",
+      "running": "実行中",
+      "todo": "未着手",
+      "fresh": "新着",
+      "done": "完了"
+    }
   }
 }

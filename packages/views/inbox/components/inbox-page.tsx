@@ -49,6 +49,7 @@ import {
   useInboxFilters,
   useInboxFilterStore,
 } from "@multica/core/inbox/filter-store";
+import { boardLaneByIssue, useInboxBoard, type BoardLane } from "@multica/core/home";
 
 import { IssueDetail, issueHighlightMementoKey } from "../../issues/components/issue-detail";
 import { useViewStateWriter } from "../../platform";
@@ -105,15 +106,22 @@ import {
 import { AutopilotQuotaNotice } from "./autopilot-quota-notice";
 import { AgentAccessRequestNotice, isAgentAccessRequestNotice } from "./agent-access-request-notice";
 import { useT } from "../../i18n";
+import { BoardAskAiButton, InboxBoardLanes, LANE_TAG_CLASS } from "../../home/components/home-page";
+import type { InboxRowDecoration } from "./inbox-list-item";
 import { useIssueLimitUpgradePrompt } from "../../modals/use-issue-limit-upgrade-prompt";
 
-const INBOX_LIST_DEFAULT_SIZE = 260;
+const INBOX_LIST_DEFAULT_SIZE = 320;
 const INBOX_LIST_MIN_SIZE = 240;
 const INBOX_LIST_MAX_SIZE = 400;
 
-/** The inbox's second layer: every notification, as before DENE-882. */
-export function InboxActivityPage() {
+/**
+ * Every notification, as before DENE-882. On wide screens this is the whole
+ * inbox (`merged`, DENE-1004): the list on the left, the board beside it
+ * whenever no notification is open, the two linked by lane.
+ */
+export function InboxActivityPage({ merged = false }: { merged?: boolean } = {}) {
   const { t } = useT("inbox");
+  const { t: tChat } = useT("chat");
   const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
   const showAutopilotQuotaRecoveryPrompt = useIssueLimitUpgradePrompt(
     "autopilot_quota",
@@ -159,6 +167,39 @@ export function InboxActivityPage() {
   const effectiveFilters = useMemo(() => inboxFiltersForPrioritySupport(filters, priorityFilterSupport), [filters, priorityFilterSupport]);
   const visibleItems = useMemo(() => filterInboxItems(viewItems, effectiveFilters), [viewItems, effectiveFilters]);
   const hasActiveFilters = inboxFilterCount(effectiveFilters) > 0;
+
+  // The merged inbox's board. It does not read everything on arrival the way
+  // the stand-alone board does: the list beside it is where unread is shown
+  // and cleared, row by row.
+  const inboxBoard = useInboxBoard(wsId, { autoRead: false });
+  const laneByIssue = useMemo(() => boardLaneByIssue(inboxBoard.board), [inboxBoard.board]);
+  const [laneFilter, setLaneFilter] = useState<BoardLane | null>(null);
+  const toggleLane = useCallback((lane: BoardLane) => setLaneFilter((cur) => (cur === lane ? null : lane)), []);
+  const laneOf = useCallback(
+    (item: InboxItem) => (item.issue_id ? laneByIssue.get(item.issue_id) ?? null : null),
+    [laneByIssue],
+  );
+  // A lane filter highlights rather than hides: that lane's notifications move
+  // to the top, the rest stay below it dimmed.
+  const listItems = useMemo(() => {
+    if (!merged || !laneFilter) return visibleItems;
+    return [
+      ...visibleItems.filter((i) => laneOf(i) === laneFilter),
+      ...visibleItems.filter((i) => laneOf(i) !== laneFilter),
+    ];
+  }, [merged, laneFilter, visibleItems, laneOf]);
+  const decorateRow = useCallback(
+    (item: InboxItem): InboxRowDecoration => {
+      const lane = laneOf(item);
+      return {
+        laneTag: lane
+          ? { label: t(($) => $.board.short[lane]), className: LANE_TAG_CLASS[lane] }
+          : undefined,
+        dimmed: !!laneFilter && lane !== laneFilter,
+      };
+    },
+    [laneOf, laneFilter, t],
+  );
   const selectedOnPage = viewItems.find((i) => (i.issue_id ?? i.id) === selectedKey);
   // A deep link can point beyond every loaded page. Resolve its group directly
   // without adding it to the cursor chain or mistaking a page miss for a 404.
@@ -201,6 +242,12 @@ export function InboxActivityPage() {
   useEffect(() => {
     if (selected) lastResolvedKeyRef.current = selectedKey;
   }, [selected, selectedKey]);
+
+  // Back on the board, the row of the issue just read stays marked.
+  const [lastViewedKey, setLastViewedKey] = useState(selectedKey);
+  useEffect(() => {
+    if (selectedKey) setLastViewedKey(selectedKey);
+  }, [selectedKey]);
 
   // Both the view and the selection live in the URL, so every write has to
   // carry the other one — a bare `?issue=` would silently drop the user out of
@@ -356,6 +403,14 @@ export function InboxActivityPage() {
     setSelectedKey(nextKey);
   };
 
+  // A board row opens in the detail pane when the issue has a notification
+  // here; otherwise there is nothing to select, so it opens as its own page.
+  const handleSelectBoardIssue = (issueId: string) => {
+    const item = selectionItems.find((i) => i.issue_id === issueId);
+    if (item) handleSelect(item);
+    else push(wsPaths.issueDetail(issueId));
+  };
+
   const handleMarkRead = (id: string) => {
     // Reading it back explicitly cancels an earlier park on the same row.
     if (manualUnreadIdRef.current === id) manualUnreadIdRef.current = null;
@@ -505,16 +560,19 @@ export function InboxActivityPage() {
   const listHeader = (
     <PageHeader>
       <div className="flex flex-1 items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground"
-          aria-label={t(($) => $.board.back_to_board)}
-          title={t(($) => $.board.back_to_board)}
-          onClick={() => push(wsPaths.inbox())}
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
+        {/* Merged, the board is already on screen beside the list. */}
+        {!merged && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            aria-label={t(($) => $.board.back_to_board)}
+            title={t(($) => $.board.back_to_board)}
+            onClick={() => push(wsPaths.inbox())}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        )}
         <h1 className="text-body font-semibold">{t(($) => $.page.title)}</h1>
         {unreadCount > 0 && (
           <NumberFlow
@@ -606,7 +664,7 @@ export function InboxActivityPage() {
       }}
     >
       <InboxList
-        items={visibleItems}
+        items={listItems}
         view={view}
         selectedKey={selectedKey}
         onLoadMore={isArchivedView && archiveQuery.hasNextPage ? loadNextArchivedPage : undefined}
@@ -615,6 +673,7 @@ export function InboxActivityPage() {
         onSelect={handleSelect}
         onAction={isArchivedView ? handleUnarchive : handleArchive}
         onOpenArchived={openArchived}
+        decorate={merged ? decorateRow : undefined}
         emptyLabel={
           hasActiveFilters && visibleItems.length === 0
             ? t(($) => $.filters.empty)
@@ -639,6 +698,23 @@ export function InboxActivityPage() {
     <>
       {listHeader}
       {isArchivedView && archivedBackRow}
+      {merged && laneFilter && (
+        <div
+          data-testid="inbox-lane-filter-bar"
+          className="flex shrink-0 items-center gap-2 border-b bg-primary/5 px-3 py-1.5 text-caption text-primary"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {t(($) => $.board.filter_bar, { lane: t(($) => $.board.lanes[laneFilter].title) })}
+          </span>
+          <button
+            type="button"
+            onClick={() => setLaneFilter(null)}
+            className="shrink-0 underline-offset-2 hover:underline"
+          >
+            {t(($) => $.board.filter_clear)}
+          </button>
+        </div>
+      )}
       {lookupLoading && (
         <p role="status" className="shrink-0 border-b px-3 py-2 text-caption text-muted-foreground">
           {t(($) => $.list.loading_selection)}
@@ -676,6 +752,20 @@ export function InboxActivityPage() {
       {/* Back goes to the list the user came FROM, so the label has to
           name it — "Inbox" here would be a lie about the destination. */}
       {isArchivedView ? t(($) => $.list.archived_title) : t(($) => $.page.back)}
+    </Button>
+  ) : undefined;
+
+  // Merged: the detail pane stands in for the board, so it carries the way back.
+  const boardBackAction = merged && !isCompact ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => setSelectedKey("")}
+      className="-ml-2 shrink-0 gap-1.5 text-muted-foreground"
+      data-testid="inbox-back-to-board"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      {t(($) => $.board.back_to_panel)}
     </Button>
   ) : undefined;
 
@@ -721,7 +811,7 @@ export function InboxActivityPage() {
         highlightRequestToken={highlightRequestToken}
         // The split layout already has a nav trigger in the list header.
         // Explicit false suppresses the detail header's fallback trigger.
-        leadingAction={compactBackAction ?? false}
+        leadingAction={compactBackAction ?? boardBackAction ?? false}
         onDelete={() => {
           // Issue deletion CASCADE-deletes the inbox item server-side, and the
           // issue:deleted WS event prunes it from the inbox cache. Just clear
@@ -737,6 +827,7 @@ export function InboxActivityPage() {
     </>
   ) : detailItem ? (
     <div className="p-6">
+      {boardBackAction && <div className="mb-3">{boardBackAction}</div>}
       <h2 className="text-title font-semibold">
         {isAutopilotQuotaNotice(detailItem.type)
           ? typeLabels[detailItem.type]
@@ -952,7 +1043,36 @@ export function InboxActivityPage() {
       </ResizablePanel>
       <ResizableHandle />
       <ResizablePanel id="detail" minSize="40%">
-      <div className="flex flex-col min-h-0 h-full">
+      {merged && (
+        // Kept mounted under an open detail so the way back lands on the same
+        // scroll position and "done today" does not refold mid-visit.
+        <div className={cn("flex h-full min-h-0 flex-col", detailContent && "hidden")} data-testid="inbox-board-pane">
+          <PageHeader>
+            <h2 className="text-body font-semibold">{t(($) => $.board.panel_title)}</h2>
+            <span className="flex-1 truncate text-caption text-muted-foreground">{t(($) => $.board.panel_hint)}</span>
+            <BoardAskAiButton
+              prompt={tChat(($) => $.conversation_starters.inbox.prompt)}
+              label={t(($) => $.board.ask_ai)}
+            />
+          </PageHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-4xl space-y-6 px-6 py-6">
+              <InboxBoardLanes
+                board={inboxBoard.board}
+                isLoading={inboxBoard.isLoading}
+                isError={inboxBoard.isError}
+                linking={{
+                  highlightIssueId: detailContent ? undefined : lastViewedKey || undefined,
+                  activeLane: laneFilter,
+                  onSelectIssue: handleSelectBoardIssue,
+                  onToggleLane: toggleLane,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      <div className={cn("flex flex-col min-h-0 h-full", merged && !detailContent && "hidden")}>
         {detailContent ?? (
           <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
             <Inbox className="mb-3 h-10 w-10 text-faint-foreground" />

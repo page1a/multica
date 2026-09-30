@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/projectmemory"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
@@ -672,6 +673,7 @@ type (
 	PendingUpdate           = protocol.DaemonHeartbeatPendingUpdate
 	PendingAgentCLI         = protocol.DaemonHeartbeatPendingAgentCLI
 	PendingModelList        = protocol.DaemonHeartbeatPendingModelList
+	PendingRoutingAnalysis  = protocol.DaemonHeartbeatPendingRoutingAnalysis
 	PendingProviderConfig   = protocol.DaemonHeartbeatPendingProviderConfig
 	PendingLocalSkills      = protocol.DaemonHeartbeatPendingLocalSkills
 	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
@@ -717,6 +719,13 @@ func (c *Client) RefreshModelCatalog(ctx context.Context, runtimeID string) erro
 // ReportModelListResult sends the model-discovery result back to the server.
 func (c *Client) ReportModelListResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/models/%s/result", runtimeID, requestID), result, nil)
+}
+
+// ReportRoutingAnalysisResult sends a no-tools runtime analysis response back
+// to the server. It uses a dedicated endpoint so task reports and analysis
+// cannot contend for the same request lifecycle.
+func (c *Client) ReportRoutingAnalysisResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/routing-analysis/%s/result", runtimeID, requestID), result, nil)
 }
 
 // ReportProviderConfigResult sends the provider-preset result back to the
@@ -1044,10 +1053,11 @@ func (c *Client) Deregister(ctx context.Context, runtimeIDs []string, reasons ma
 
 // RegisterResponse holds the server's response to a daemon registration.
 type RegisterResponse struct {
-	Runtimes     []Runtime       `json:"runtimes"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	Runtimes      []Runtime             `json:"runtimes"`
+	Repos         []RepoData            `json:"repos"`
+	ReposVersion  string                `json:"repos_version"`
+	Settings      json.RawMessage       `json:"settings,omitempty"`
+	MemoryTargets []ProjectMemoryTarget `json:"memory_targets,omitempty"`
 }
 
 func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterResponse, error) {
@@ -1059,10 +1069,43 @@ func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterRes
 }
 
 type WorkspaceReposResponse struct {
-	WorkspaceID  string          `json:"workspace_id"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	WorkspaceID   string                `json:"workspace_id"`
+	Repos         []RepoData            `json:"repos"`
+	ReposVersion  string                `json:"repos_version"`
+	Settings      json.RawMessage       `json:"settings,omitempty"`
+	MemoryTargets []ProjectMemoryTarget `json:"memory_targets,omitempty"`
+}
+
+// ProjectMemoryTarget is a local directory owned by this daemon. The server
+// sends the canonical checklist separately so the daemon never maintains its
+// own list of project-memory paths.
+type ProjectMemoryTarget struct {
+	ProjectID string `json:"project_id"`
+	Path      string `json:"path"`
+	DaemonID  string `json:"daemon_id"`
+}
+
+type WorkspaceMemoryTargetsResponse struct {
+	WorkspaceID string                   `json:"workspace_id"`
+	Checklist   []projectmemory.Location `json:"checklist"`
+	Projects    []ProjectMemoryTarget    `json:"projects"`
+}
+
+type ProjectMemoryCheckRequest struct {
+	ProjectID string                         `json:"project_id"`
+	Locations []projectmemory.LocationResult `json:"locations"`
+}
+
+func (c *Client) GetWorkspaceMemoryTargets(ctx context.Context, workspaceID string) (*WorkspaceMemoryTargetsResponse, error) {
+	var resp WorkspaceMemoryTargetsResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/memory", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ReportProjectMemoryCheck(ctx context.Context, workspaceID string, request ProjectMemoryCheckRequest) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/memory/check", workspaceID), request, nil)
 }
 
 func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {

@@ -22,6 +22,7 @@ vi.mock("@multica/ui/lib/clipboard", () => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  queryOptions: <T,>(options: T) => options,
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
@@ -42,6 +43,10 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@multica/core/projects/queries", () => ({
   projectDetailOptions: () => ({ queryKey: ["project-detail"] }),
+  projectMemoryOptions: () => ({ queryKey: ["project-memory"] }),
+  projectKeys: {
+    detail: (wsId: string, id: string) => ["projects", wsId, "detail", id],
+  },
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
@@ -78,6 +83,8 @@ vi.mock("@multica/core/chat", () => ({
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     projects: () => "/test-workspace/projects",
+    settings: () => "/test-workspace/settings",
+    issueDetail: (id: string) => `/test-workspace/issues/${id}`,
   }),
 }));
 
@@ -105,6 +112,7 @@ vi.mock("react-resizable-panels", () => ({
 
 vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => false,
+  useIsCompact: () => false,
 }));
 
 vi.mock("@multica/ui/components/common/emoji-picker", () => ({
@@ -216,6 +224,10 @@ vi.mock("../../common/actor-avatar", () => ({
 
 vi.mock("../../issues/components/priority-icon", () => ({
   PriorityIcon: () => null,
+}));
+
+vi.mock("./project-code-section", () => ({
+  ProjectCodeSection: () => null,
 }));
 
 vi.mock("./project-resources-section", () => ({

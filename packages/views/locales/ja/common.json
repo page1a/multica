@@ -170,5 +170,10 @@
     "queue_aria": "作業スレッドに入力をキュー",
     "insert": "割り込み",
     "prioritize_aria": "{{id}} を優先"
+  },
+  "scroll_to_bottom": {
+    "label": "最新へ移動",
+    "new_messages_other": "新着メッセージ {{count}} 件",
+    "new_comments_other": "新着コメント {{count}} 件"
   }
 }

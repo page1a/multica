@@ -176,7 +176,14 @@ func Accept(existing map[string]any, in Input, now time.Time) (Record, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return Merge(ParseMetadata(existing).StillWaiting(now).AsMeta(), in)
+	rec, err := Merge(ParseMetadata(existing).StillWaiting(now).AsMeta(), in)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := RejectAssociationWait(in, rec); err != nil {
+		return Record{}, err
+	}
+	return rec, nil
 }
 
 // FailureWake is the structured block written when a child run fails and

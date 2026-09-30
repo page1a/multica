@@ -164,6 +164,11 @@
         "hint": "只亮一个标记，不打扰你",
         "empty": "现在没有智能体在跑"
       },
+      "todo": {
+        "title": "待做",
+        "hint": "分给你、还没开始的任务。",
+        "empty": "没有待做的票"
+      },
       "fresh": {
         "title": "有新动态",
         "hint": "上次访问后有新消息的其他任务，仅本次显示。",
@@ -189,6 +194,7 @@
       "stalled_unclosed": "做完没收口",
       "stalled_reply_unclosed": "回了话没收口",
       "running": "在跑",
+      "todo": "待做",
       "fresh": "新动态",
       "done": "做完"
     },
@@ -234,6 +240,21 @@
     "open_issue": "去任务",
     "seen_other": "已看过的 {{count}} 条",
     "hide_seen": "收起看过的",
-    "load_error": "有一部分数据没加载出来，稍后会自动重试"
+    "load_error": "有一部分数据没加载出来，稍后会自动重试",
+    "ask_ai": "让 AI 讲给我听",
+    "lane_filter_hint": "点组名，左边只亮这一组的通知",
+    "panel_title": "看板",
+    "panel_hint": "按状态分组",
+    "back_to_panel": "回看板",
+    "filter_bar": "只亮「{{lane}}」这一组的通知",
+    "filter_clear": "清除",
+    "short": {
+      "waiting": "等你",
+      "stalled": "停了没交代",
+      "running": "在跑",
+      "todo": "待做",
+      "fresh": "新动态",
+      "done": "做完"
+    }
   }
 }

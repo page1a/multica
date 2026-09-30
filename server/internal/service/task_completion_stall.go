@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/blockwait"
+	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -81,7 +83,7 @@ func (s *TaskService) HandleCompletedTasks(ctx context.Context, tasks []db.Agent
 		// signal may queue would otherwise read as "still running" and hide
 		// the stop. Every status is recorded, blocked included.
 		s.RecordParking(ctx, t.IssueID, t)
-		if s.signalCompletionStall(ctx, issueKey, t.IssueID) {
+		if s.signalCompletionStall(ctx, issueKey, t) {
 			signalled++
 		}
 	}
@@ -97,7 +99,52 @@ func completionStallEligible(effectiveStatus string, hasActiveTask bool) bool {
 	return effectiveStatus == issuestatus.InProgress && !hasActiveTask
 }
 
-func (s *TaskService) signalCompletionStall(ctx context.Context, issueKey string, issueID pgtype.UUID) bool {
+// closeExplainsInProgressPause reports a deferred/continuing close record
+// written during (or after) the run that just finished. It is the same
+// freshness test parking.closeCurrent applies: the record must match the live
+// status and must not predate the run, so an old in_progress pause from an
+// earlier round cannot silence a later genuine stall (DENE-1002).
+func closeExplainsInProgressPause(meta map[string]any, status string, task db.AgentTaskQueue) bool {
+	if !closeprotocol.ExplainedPause(blockwait.MetaString(meta, closeprotocol.KeyConclusion)) {
+		return false
+	}
+	if s := blockwait.MetaString(meta, closeprotocol.KeyStatus); s != "" && s != status {
+		return false
+	}
+	at := blockwait.MetaString(meta, closeprotocol.KeyAt)
+	if at == "" {
+		return false
+	}
+	closedAt, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return false
+	}
+	began, ok := taskBegan(task)
+	if !ok {
+		return true
+	}
+	// close.at has second precision; a close in the same second the run
+	// started still belongs to it.
+	return !closedAt.Before(began.Truncate(time.Second))
+}
+
+// taskBegan is when the run started, or when it was queued if it never
+// started — the same ordering parking.Run.Began uses.
+func taskBegan(task db.AgentTaskQueue) (time.Time, bool) {
+	switch {
+	case task.StartedAt.Valid:
+		return task.StartedAt.Time, true
+	case task.DispatchedAt.Valid:
+		return task.DispatchedAt.Time, true
+	case task.CreatedAt.Valid:
+		return task.CreatedAt.Time, true
+	default:
+		return time.Time{}, false
+	}
+}
+
+func (s *TaskService) signalCompletionStall(ctx context.Context, issueKey string, task db.AgentTaskQueue) bool {
+	issueID := task.IssueID
 	issue, err := s.Queries.GetIssue(ctx, issueID)
 	if err != nil {
 		slog.Warn("completion stall: load issue failed", "issue_id", issueKey, "error", err)
@@ -114,6 +161,12 @@ func (s *TaskService) signalCompletionStall(ctx context.Context, issueKey string
 		return false
 	}
 	if s.hasOpenChildren(ctx, issue) {
+		return false
+	}
+	// A deliberate in_progress close wrote the reason and the continuation
+	// (DENE-1002). Recovery runs exist for a silent executor; this one spoke,
+	// so waking it again would turn an intended pause into a loop.
+	if closeExplainsInProgressPause(issueMetaMap(issue.Metadata), issue.Status, task) {
 		return false
 	}
 

@@ -408,6 +408,23 @@ describe("useChatController project context", () => {
     expect(h.store.setActiveSession).toHaveBeenCalledWith(null);
   });
 
+  it("binds the new chat to the project being browsed, not the one being left", () => {
+    openProjectSession([otherProject.id]);
+    h.agents = [agentA, agentB];
+    h.projects = [project, otherProject];
+
+    const { result } = renderHook(() => useChatController());
+    h.store.setActiveSession.mockClear();
+    h.store.setSelectedProjectIds.mockClear();
+    h.setProjectMutate.mockClear();
+
+    act(() => result.current.handleStartNewChat(agentB, [project.id]));
+
+    expect(h.store.setSelectedProjectIds).toHaveBeenCalledWith([project.id]);
+    expect(h.store.setActiveSession).toHaveBeenCalledWith(null);
+    expect(h.setProjectMutate).not.toHaveBeenCalled();
+  });
+
   it("clears the current session projects when using the plain new-chat action", () => {
     openProjectSession([project.id]);
     h.agents = [agentA];
@@ -421,6 +438,43 @@ describe("useChatController project context", () => {
 
     expect(h.store.setSelectedProjectIds).toHaveBeenCalledWith([]);
     expect(h.store.setActiveSession).toHaveBeenCalledWith(null);
+  });
+
+  it("binds a plain new chat to the supplied project", () => {
+    openProjectSession([otherProject.id]);
+    h.agents = [agentA];
+    h.projects = [project, otherProject];
+
+    const { result } = renderHook(() => useChatController());
+    h.setProjectMutate.mockClear();
+
+    act(() => result.current.handleNewChat([project.id]));
+
+    expect(h.store.setSelectedProjectIds).toHaveBeenCalledWith([project.id]);
+    expect(h.setProjectMutate).not.toHaveBeenCalled();
+  });
+
+  it("creates the browsed project's chat on the first send", async () => {
+    h.store.activeSessionId = null;
+    h.store.selectedAgentId = agentA.id;
+    h.sessions = [];
+    h.agents = [agentA];
+    h.projects = [project];
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      message_id: "message-1",
+      task_id: "task-1",
+      created_at: new Date(0).toISOString(),
+    } as Awaited<ReturnType<typeof api.sendChatMessage>>);
+
+    const { result } = renderHook(() => useChatController());
+    act(() => result.current.handleNewChat([project.id]));
+    await act(async () => {
+      await result.current.handleSend("hello", undefined, vi.fn());
+    });
+
+    expect(h.createSessionMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ project_ids: [project.id] }),
+    );
   });
 
   it("keeps a historical session's projects out of the next-chat draft state", () => {

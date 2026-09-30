@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   installationStatus: "active" as string,
   calls: [] as { queryKey: readonly unknown[]; enabled?: boolean }[],
   push: vi.fn(),
+  replace: vi.fn(),
 }));
 vi.mock("../../navigation/context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../navigation/context")>()),
@@ -22,6 +23,7 @@ vi.mock("../../navigation/context", async (importOriginal) => ({
     pathname: "/acme/settings",
     searchParams: new URLSearchParams(state.search),
     push: state.push,
+    replace: state.replace,
   }),
 }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
@@ -78,6 +80,7 @@ beforeEach(() => {
   state.installationStatus = "active";
   state.calls = [];
   state.push.mockClear();
+  state.replace.mockClear();
   configStore.getState().setFeatureFlags({ [COMPOSIO_MCP_APPS_FLAG]: true });
   configStore
     .getState()
@@ -87,18 +90,17 @@ beforeEach(() => {
 describe("Integration directory", () => {
   it("shows live connection summaries without mounting configuration forms", () => {
     renderWithI18n(<IntegrationsTab />);
-    expect(
-      screen.getByRole("link", { name: /GitHub Connected/ }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /GitHub/ })).not.toBeInTheDocument();
     expect(screen.queryByText("GitHub detail")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Lark Connected/ })).toBeInTheDocument();
     const shapes = ["lark", "slack", "dingtalk", "wecom", "telegram"].map(
       (channel) =>
         screen.getByTestId(`integration-channel-icon-${channel}`).innerHTML,
     );
     expect(new Set(shapes).size).toBe(5);
-    fireEvent.click(screen.getByRole("link", { name: /GitHub Connected/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Lark Connected/ }));
     expect(state.push).toHaveBeenCalledWith(
-      "/acme/settings?tab=integrations&integration=github",
+      "/acme/settings?tab=integrations&integration=lark",
     );
   });
   it("opens only the selected provider and offers a directory link", () => {
@@ -110,10 +112,21 @@ describe("Integration directory", () => {
       screen.getByRole("link", { name: "All integrations" }),
     ).toHaveAttribute("href", "/acme/settings?tab=integrations");
   });
-  it("handles the existing GitHub bookmark", () => {
-    state.search = "tab=github";
+  it("sends the old GitHub and Git provider pages to connections", () => {
+    state.search = "tab=integrations&integration=github";
+    const { unmount } = renderWithI18n(<IntegrationsTab />);
+    expect(state.replace).toHaveBeenCalledWith(
+      "/acme/settings?tab=git-connections",
+    );
+    expect(screen.queryByText("GitHub detail")).not.toBeInTheDocument();
+    unmount();
+    state.replace.mockClear();
+    state.search = "tab=integrations&integration=vcs";
     renderWithI18n(<IntegrationsTab />);
-    expect(screen.getByText("GitHub detail")).toBeInTheDocument();
+    expect(state.replace).toHaveBeenCalledWith(
+      "/acme/settings?tab=git-connections",
+    );
+    expect(screen.queryByText("VCS detail")).not.toBeInTheDocument();
   });
   it.each(["connected=notion", "error=composio_connect_failed"])(
     "mounts the OAuth result handler for %s",
@@ -150,29 +163,17 @@ describe("Integration directory", () => {
       screen.queryByRole("link", { name: /Composio/ }),
     ).not.toBeInTheDocument();
   });
-  it("only offers self-hosted Git providers when the deployment enables them", () => {
-    const { unmount } = renderWithI18n(<IntegrationsTab />);
+  it("keeps self-hosted Git off this directory", () => {
+    renderWithI18n(<IntegrationsTab />);
     expect(
       screen.queryByRole("link", { name: /Git providers/i }),
     ).not.toBeInTheDocument();
-    unmount();
-    configStore
-      .getState()
-      .setAuthConfig({ allowSignup: true, vcsIntegrationAvailable: true });
-    state.search = "tab=integrations&integration=vcs";
-    renderWithI18n(<IntegrationsTab />);
-    expect(screen.getByText("VCS detail")).toBeInTheDocument();
   });
-  it("reports revoked IM channels as disconnected while GitHub keeps counting rows", () => {
+  it("reports revoked IM channels as disconnected", () => {
     // Revoking an IM bot flips status and KEEPS the row, so counting rows would
     // leave a torn-down bot showing a green "Connected" here forever (#8496).
-    // GitHub hard-deletes instead, so its count-based read stays correct and a
-    // row that is still present really does mean connected.
     state.installationStatus = "revoked";
     renderWithI18n(<IntegrationsTab />);
-    expect(
-      screen.getByRole("link", { name: /GitHub Connected/ }),
-    ).toBeInTheDocument();
     for (const channel of ["Lark", "Slack", "DingTalk", "WeCom", "Telegram"]) {
       expect(
         screen.getByRole("link", { name: new RegExp(`${channel} Not connected`) }),

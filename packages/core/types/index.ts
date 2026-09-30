@@ -1,5 +1,6 @@
 export type { Issue, IssueStatus, BuiltInIssueStatus, IssuePriority, IssueAssigneeType, IssueReviewerType, IssueMetadata, IssueMetadataValue, IssueAgentGuardResponse, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext } from "./issue";
 export type { IssueDraft, IssueDraftStatus, IssueDraftPayload, IssueDraftChild, IssueDraftProjectProposal, IssueDraftProjectChoice, IssueDraftCreatedIssue, IssueDraftAssignmentWarning, IssueDraftPolicy, IssueDraftCapabilities, IssueDraftSession, IssueDraftSummary, IssueDraftFinalizeResult, IssueDraftRuntimeSwitch } from "./issue-draft";
+export type { CloseIssueRequest, CloseIssueResponse, CloseOutcome, KnowledgeAudit, KnowledgeAuditChange } from "./close";
 export type {
   IssueStatusCategory,
   IssueStatusEntry,
@@ -143,7 +144,7 @@ export type {
   PluginMCPTool,
   PluginTokenIssue,
 } from "./plugin";
-export type { ParkingOwner, ParkingEvent, ParkingCategory, ParkingRecord, ParkingRecordsResponse, WaitingSummon, UnreadInboxIssue } from "./home";
+export type { ParkingOwner, ParkingEvent, ParkingCategory, ParkingRecord, ParkingRecordsResponse, WaitingSummon, UnreadInboxIssue, InboxBoardOwnerPayload, InboxBoardRowPayload, InboxBoardResponse } from "./home";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread, ArchivedInboxPage, ArchivedInboxFacets } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
 export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, CommentTriggerOutcome, CommentTriggerStatus, Reaction } from "./comment";
@@ -218,6 +219,10 @@ export type {
 export type { StorageAdapter } from "./storage";
 export type {
   Project,
+  ProjectMemoryLocation,
+  ProjectMemoryChecklistItem,
+  ProjectMemoryIssue,
+  ProjectMemoryStatus,
   ProjectStatus,
   ProjectPriority,
   CreateProjectRequest,
@@ -250,6 +255,8 @@ export type {
   GitHubRepository,
   ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
+  GitHubAppStatus,
+  GitHubAppSetup,
 } from "./github";
 export type {
   VCSProvider,
@@ -258,6 +265,36 @@ export type {
   ConnectVCSRequest,
   ConnectVCSResponse,
 } from "./vcs";
+export type {
+  RepoLinkKind,
+  RepoLinkVisibility,
+  RepoLinkHealth,
+  RepoConnectionState,
+  RepoLink,
+  RepoSourceProject,
+  RepoBinding,
+  ListRepoLinksResponse,
+  CreateRepoLinkRequest,
+  CreateRepoLinkResponse,
+  TestRepoLinkResponse,
+  PinRepoBindingRequest,
+  TestRepoBindingRequest,
+  TestRepoBindingResponse,
+} from "./repo-link";
+export type {
+  RepoReachMode,
+  RepoReachNextActionKind,
+  RepoReachContact,
+  RepoReachNextAction,
+  RepoReachProject,
+  RepoReach,
+  ProjectRepoItem,
+  ListProjectReposResponse,
+  AttachProjectRepoRequest,
+  AttachProjectRepoResponse,
+  RepoConnectionCard,
+  ListRepoConnectionsResponse,
+} from "./repo-reach";
 export type {
   LarkInstallation,
   ListLarkInstallationsResponse,

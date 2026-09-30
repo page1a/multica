@@ -1,19 +1,13 @@
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { agentTaskSnapshotOptions } from "../agents/queries";
 import { onInboxInvalidate, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
-import type { UnreadInboxIssue } from "../types/home";
-import { buildInboxBoard, type InboxBoard } from "./board";
+import { boardFromResponse, type InboxBoard } from "./board";
 
 export const homeKeys = {
   all: (wsId: string) => ["workspaces", wsId, "home"] as const,
-  parking: (wsId: string) => [...homeKeys.all(wsId), "parking"] as const,
-  summons: (wsId: string) => [...homeKeys.all(wsId), "summons"] as const,
-  doneToday: (wsId: string, dayStart: string) =>
-    [...homeKeys.all(wsId), "done-today", dayStart] as const,
-  issuesByIds: (wsId: string, ids: readonly string[]) =>
-    [...homeKeys.all(wsId), "issues", ids.join(",")] as const,
+  board: (wsId: string, tz: string, unreadSince: string | null) =>
+    [...homeKeys.all(wsId), "board", tz, unreadSince ?? "live"] as const,
 };
 
 // Server verdicts change at a run's end and on replies; WS events invalidate
@@ -21,100 +15,27 @@ export const homeKeys = {
 // reconnect / missed-event safety net.
 const HOME_STALE_TIME = 30 * 1000;
 
-export function parkingRecordsOptions(wsId: string) {
-  return queryOptions({
-    queryKey: homeKeys.parking(wsId),
-    queryFn: () => api.listIssueParkingRecords({ limit: 500 }),
-    select: (data) => data.records ?? [],
-    staleTime: HOME_STALE_TIME,
-    refetchOnWindowFocus: true,
-  });
-}
-
-export function waitingSummonsOptions(wsId: string) {
-  return queryOptions({
-    queryKey: homeKeys.summons(wsId),
-    queryFn: () => api.listWaitingSummons(),
-    staleTime: HOME_STALE_TIME,
-    refetchOnWindowFocus: true,
-  });
-}
-
-/** Local midnight of `now`, and of the next day, as ISO strings. */
-export function localDayWindow(now: Date): { start: string; end: string } {
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { start: start.toISOString(), end: end.toISOString() };
-}
-
-export function doneTodayOptions(wsId: string, day: { start: string; end: string }) {
-  return queryOptions({
-    queryKey: homeKeys.doneToday(wsId, day.start),
-    queryFn: () =>
-      api.listIssues({
-        status: "done",
-        date_field: "updated_at",
-        date_start: day.start,
-        date_end: day.end,
-        sort_by: "updated_at",
-        sort_direction: "desc",
-        limit: 100,
-      }),
-    select: (data) => data.issues,
-    staleTime: HOME_STALE_TIME,
-    refetchOnWindowFocus: true,
-  });
-}
-
-export function issuesByIdsOptions(wsId: string, ids: readonly string[]) {
-  return queryOptions({
-    queryKey: homeKeys.issuesByIds(wsId, ids),
-    queryFn: () => api.listIssues({ ids: [...ids], limit: ids.length }),
-    select: (data) => data.issues,
-    staleTime: HOME_STALE_TIME,
-  });
+/** This browser's IANA zone; "done today" is counted in it. */
+export function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 /**
- * Opening the board reads everything (DENE-901): take the unread snapshot
- * first, then mark all read. The snapshot is what the board marks as new for
- * this visit; it lives in the mutation, so the refetches the read itself
- * triggers cannot wipe the markers mid-visit. Rows an open call hangs on are
- * skipped by the server and stay unread.
- *
- * Runs once per workspace per mount; the ref keeps StrictMode's double effect
- * from reading twice. The result is kept in state rather than read from the
- * mutation: StrictMode's remount detaches the mutation observer, and the
- * snapshot would land nowhere.
+ * The board as the server builds it (DENE-975). Without `unreadSince` the
+ * unread markers are live; with it, rows read at or after that moment still
+ * count, which replays a visit's markers after the visit marked all read.
  */
-export function useBoardUnreadSnapshot(wsId: string): readonly UnreadInboxIssue[] | undefined {
-  const qc = useQueryClient();
-  const { mutateAsync } = useMutation({
-    mutationFn: async () => {
-      const unread = await api.listUnreadInboxIssues();
-      // A failed read still leaves the markers to show; the badge just stays.
-      if (unread.some((u) => u.unread_count > u.held_count)) {
-        await api.markAllInboxRead().catch(() => undefined);
-      }
-      return unread;
-    },
-    onSettled: () => {
-      void onInboxInvalidate(qc, wsId);
-      void onInboxSummaryInvalidate(qc);
-    },
+export function inboxBoardOptions(wsId: string, tz: string, unreadSince: string | null) {
+  return queryOptions({
+    queryKey: homeKeys.board(wsId, tz, unreadSince),
+    queryFn: () => api.getInboxBoard({ tz, unread_since: unreadSince ?? undefined }),
+    staleTime: HOME_STALE_TIME,
+    refetchOnWindowFocus: true,
   });
-  const [snapshot, setSnapshot] = useState<{ wsId: string; rows: UnreadInboxIssue[] } | null>(null);
-  const took = useRef<string | null>(null);
-  useEffect(() => {
-    if (took.current === wsId) return;
-    took.current = wsId;
-    mutateAsync().then(
-      (rows) => setSnapshot({ wsId, rows }),
-      () => undefined,
-    );
-  }, [wsId, mutateAsync]);
-  return snapshot?.wsId === wsId ? snapshot.rows : undefined;
 }
 
 export interface InboxBoardResult {
@@ -123,55 +44,64 @@ export interface InboxBoardResult {
   isError: boolean;
 }
 
-const EMPTY: never[] = [];
+const EMPTY_BOARD: InboxBoard = { waiting: [], stalled: [], running: [], todo: [], fresh: [], done: [] };
 
 /**
- * The lanes of the inbox, assembled from the summon list, the parking
- * records, the workspace task snapshot and today's finished issues.
+ * The inbox lanes for this visit. Opening the board reads everything
+ * (DENE-901): the first read is live, and once it lands the visit notes the
+ * server's clock (`as_of`), marks all read, and from then on asks for the
+ * board with `unread_since` set to that mark. The markers of this visit
+ * survive the read itself and every later refetch; rows an open call hangs on
+ * are skipped by the server and stay unread.
+ *
+ * The mark is the server's clock, not this device's, so a skewed clock cannot
+ * drop or double the markers. The ref keeps StrictMode's double effect from
+ * reading twice.
+ *
+ * `autoRead: false` skips the arrival read and keeps asking for the live
+ * board: the merged inbox (DENE-1004) shows the notification list beside the
+ * board, and reading everything on arrival would wipe that list's unread
+ * badges before the viewer could see them.
  */
 export function useInboxBoard(
   wsId: string,
-  userId: string | null,
-  now: Date = new Date(),
-  unread?: readonly UnreadInboxIssue[],
+  { autoRead = true }: { autoRead?: boolean } = {},
 ): InboxBoardResult {
-  const dayStart = localDayWindow(now).start;
-  const day = useMemo(() => localDayWindow(new Date(dayStart)), [dayStart]);
+  const qc = useQueryClient();
+  const tz = useMemo(browserTimeZone, []);
+  const [visit, setVisit] = useState<{ wsId: string; since: string } | null>(null);
+  const since = visit?.wsId === wsId ? visit.since : null;
 
-  const summons = useQuery(waitingSummonsOptions(wsId));
-  const parking = useQuery(parkingRecordsOptions(wsId));
-  const tasks = useQuery(agentTaskSnapshotOptions(wsId));
-  const done = useQuery(doneTodayOptions(wsId, day));
-
-  const runningIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of tasks.data ?? EMPTY) {
-      if (t.issue_id && (t.status === "running" || t.status === "dispatched")) ids.add(t.issue_id);
-    }
-    return [...ids].sort();
-  }, [tasks.data]);
-  const runningIssues = useQuery({
-    ...issuesByIdsOptions(wsId, runningIds),
-    enabled: runningIds.length > 0,
+  const query = useQuery({
+    ...inboxBoardOptions(wsId, tz, since),
+    // The arrival read must be fresh: a cached board from an earlier visit
+    // would mark the wrong things read.
+    ...(since === null ? { staleTime: 0, refetchOnMount: "always" as const } : {}),
+    // Keep this workspace's board up while the replay loads; never another's.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === wsId ? prev : undefined),
   });
 
-  const board = useMemo(
-    () =>
-      buildInboxBoard({
-        userId,
-        summons: summons.data ?? EMPTY,
-        parking: parking.data ?? EMPTY,
-        tasks: tasks.data ?? EMPTY,
-        runningIssues: runningIds.length > 0 ? (runningIssues.data ?? EMPTY) : EMPTY,
-        doneIssues: done.data ?? EMPTY,
-        unread,
-      }),
-    [userId, summons.data, parking.data, tasks.data, runningIds.length, runningIssues.data, done.data, unread],
-  );
+  const marked = useRef<string | null>(null);
+  const arrival = autoRead && since === null && query.isFetchedAfterMount && !query.isFetching && !query.isPlaceholderData
+    ? query.data
+    : undefined;
+  useEffect(() => {
+    if (!arrival || marked.current === wsId) return;
+    marked.current = wsId;
+    const mark = arrival.as_of;
+    const read = arrival.unread_markable > 0
+      // A failed read still leaves the markers to show; the badge just stays.
+      ? api.markAllInboxRead().then(
+          () => {
+            void onInboxInvalidate(qc, wsId);
+            void onInboxSummaryInvalidate(qc);
+          },
+          () => undefined,
+        )
+      : Promise.resolve();
+    void read.then(() => setVisit({ wsId, since: mark }));
+  }, [arrival, wsId, qc]);
 
-  return {
-    board,
-    isLoading: summons.isLoading || parking.isLoading || tasks.isLoading || done.isLoading,
-    isError: summons.isError && parking.isError,
-  };
+  const board = useMemo(() => (query.data ? boardFromResponse(query.data) : EMPTY_BOARD), [query.data]);
+  return { board, isLoading: query.isLoading, isError: query.isError };
 }

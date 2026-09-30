@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/ghpr"
+	"github.com/multica-ai/multica/server/internal/glabmr"
 )
 
 // reportLocalPullRequests mirrors PRs for a completed run without relying on a
@@ -19,6 +20,17 @@ func (d *Daemon) reportLocalPullRequests(ctx context.Context, task Task, result 
 	}
 	prs, err := ghpr.List(ctx, dir, "--head", branch)
 	if err != nil || len(prs) == 0 {
+		if mrs, gerr := glabmr.List(ctx, dir); gerr == nil {
+			matched := prs[:0:0]
+			for _, mr := range mrs {
+				if mr.Branch == branch {
+					matched = append(matched, mr)
+				}
+			}
+			if len(matched) > 0 {
+				return d.client.ReportDaemonPullRequests(ctx, task.WorkspaceID, matched)
+			}
+		}
 		return err
 	}
 	return d.client.ReportDaemonPullRequests(ctx, task.WorkspaceID, prs)

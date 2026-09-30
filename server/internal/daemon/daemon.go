@@ -470,7 +470,8 @@ type Daemon struct {
 	agentDiscoveryKick chan struct{}
 
 	// agentCLIUpdateKick wakes agentCLIUpdateLoop for a manual update or for
-	// the moment the machine becomes idle. Buffered like agentDiscoveryKick.
+	// the moment a CLI with a waiting upgrade runs its last task. Buffered
+	// like agentDiscoveryKick.
 	agentCLIUpdateKick   chan struct{}
 	agentCLIMu           sync.Mutex
 	agentCLIFollow       map[string]bool // explicit per-provider choice; missing means follow (default on)
@@ -710,6 +711,12 @@ type Daemon struct {
 	claimMu        sync.Mutex
 	pauseClaims    bool // when true, the batch poller skips claiming
 	claimsInFlight int  // pollers that have decided to claim but haven't yet handed the task off to handleTask
+	// cliGate is the per-provider half of the same barrier, used by agent
+	// CLI upgrades (agent_cli_gate.go). Guarded by claimMu.
+	cliGate agentCLIGate
+	// claimGateWakeup nudges the batch poller when a held provider is
+	// released, so its queued tasks do not wait out a poll interval.
+	claimGateWakeup chan struct{}
 
 	activeEnvRootsMu   sync.Mutex
 	activeEnvRootsCond *sync.Cond      // signalled when an in-flight env-root GC mutation finishes
@@ -809,6 +816,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		runtimeSet:                newRuntimeSetWatcher(),
 		agentDiscoveryKick:        make(chan struct{}, 1),
 		agentCLIUpdateKick:        make(chan struct{}, 1),
+		claimGateWakeup:           make(chan struct{}, 1),
 		agentVersions:             make(map[string]string),
 		skippedAgents:             make(map[string]string),
 		resolvedPaths:             make(map[string]healedAgent),
@@ -3644,6 +3652,12 @@ func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) 
 	// what makes a toggled-off setting apply to checkouts that already exist
 	// instead of only to the next one (MUL-6921).
 	d.persistCoAuthoredByState(workspaceID)
+	// Project memory is an independent, read-only probe. The targets ride on
+	// this response so one refresh does not add a second control-plane read.
+	// An older server simply omits the field and the daemon keeps working.
+	if len(resp.MemoryTargets) > 0 {
+		d.refreshProjectMemoryTargets(refreshCtx, workspaceID, resp.MemoryTargets)
+	}
 
 	return resp, nil
 }
@@ -4609,6 +4623,9 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 		if d.repoCache != nil && len(resp.Repos) > 0 {
 			go d.syncWorkspaceRepos(id, resp.Repos)
 		}
+		if len(resp.MemoryTargets) > 0 {
+			d.refreshProjectMemoryTargets(ctx, id, resp.MemoryTargets)
+		}
 
 		// Tell the server about any tasks the previous daemon process was
 		// running on these runtimes. Without this, an issue can stay stuck
@@ -4803,11 +4820,12 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
-	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingProviderConfig != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
+	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingRoutingAnalysis != nil || resp.PendingProviderConfig != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
 			"update", resp.PendingUpdate != nil,
 			"model_list", resp.PendingModelList != nil,
+			"routing_analysis", resp.PendingRoutingAnalysis != nil,
 			"provider_config", resp.PendingProviderConfig != nil,
 			"local_skills", resp.PendingLocalSkills != nil,
 			"local_skill_import", resp.PendingLocalSkillImport != nil,
@@ -4825,6 +4843,11 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 			// win over the machine config. It is not logged.
 			listCtx := agent.WithModelEnvOverlay(ctx, resp.PendingModelList.EnvOverlay)
 			go d.handleModelList(listCtx, *rt, resp.PendingModelList.ID)
+		}
+	}
+	if resp.PendingRoutingAnalysis != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil {
+			go d.handleRoutingAnalysis(ctx, *rt, *resp.PendingRoutingAnalysis)
 		}
 	}
 	if resp.PendingProviderConfig != nil {
@@ -5173,6 +5196,11 @@ func (d *Daemon) handleLocalSkillImport(ctx context.Context, rt Runtime, pending
 // Overridable for tests to avoid real sleeps.
 var runtimeReportBackoffs = []time.Duration{0, 500 * time.Millisecond, 2 * time.Second, 4 * time.Second}
 
+// The server's routing waiter gives up after 20s so dispatch is never held up
+// by a slow subscription model. The daemon keeps the CLI alive longer so a
+// successful late result can still be returned and cached for the next pass.
+const routingAnalysisTimeout = 2 * time.Minute
+
 // reportLocalSkillListResult delivers a list-report to the server with retry
 // on transient failures. See reportRuntimeResultWithRetry for semantics.
 func (d *Daemon) reportLocalSkillListResult(ctx context.Context, rt Runtime, requestID string, payload map[string]any) {
@@ -5196,6 +5224,58 @@ func (d *Daemon) reportLocalSkillImportResult(ctx context.Context, rt Runtime, r
 func (d *Daemon) reportModelListResult(ctx context.Context, rt Runtime, requestID string, payload map[string]any) {
 	d.reportRuntimeResultWithRetry(ctx, "model_list", rt.ID, requestID, func(ctx context.Context) error {
 		return d.client.ReportModelListResult(ctx, rt.ID, requestID, payload)
+	})
+}
+
+// handleRoutingAnalysis executes one bounded, read-only prompt outside the
+// task worker pool. Runtime CLIs differ, so keep the invocation deliberately
+// small and provider-specific; the server validates the returned JSON.
+func (d *Daemon) handleRoutingAnalysis(ctx context.Context, rt Runtime, pending PendingRoutingAnalysis) {
+	var execPath string
+	var prefix []string
+	if spec, ok := d.customProfileLaunchForRuntime(rt.ID); ok {
+		execPath, prefix = spec.path, agent.FilterLaunchPrefix(rt.Provider, spec.fixedArgs, d.logger)
+	} else if entry, ok := d.agents()[rt.Provider]; ok {
+		entry, _ = d.resolveAgentEntry(ctx, rt.Provider, entry)
+		execPath = entry.Path
+	}
+	if execPath == "" {
+		d.reportRoutingAnalysisResult(ctx, rt, pending.ID, map[string]any{"status": "failed", "error": "runtime executable unavailable"})
+		return
+	}
+	args := append([]string{}, prefix...)
+	switch rt.Provider {
+	case "claude":
+		// Claude Code uses --effort for the thinking selector. Empty tools
+		// keeps this probe read-only and outside the task tool surface.
+		args = append(args, "-p", pending.Prompt, "--output-format", "json", "--tools", "", "--model", pending.Model)
+		if pending.ThinkingLevel != "" {
+			args = append(args, "--effort", pending.ThinkingLevel)
+		}
+	case "codex":
+		// Codex carries effort in model_reasoning_effort config; it has no
+		// --thinking flag. Keep the execution sandbox read-only.
+		args = append(args, "exec", "--json", "--sandbox", "read-only", "--model", pending.Model)
+		if pending.ThinkingLevel != "" {
+			args = append(args, "--config", "model_reasoning_effort="+pending.ThinkingLevel)
+		}
+		args = append(args, pending.Prompt)
+	default:
+		args = append(args, pending.Prompt)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, routingAnalysisTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(runCtx, execPath, args...).Output()
+	if err != nil {
+		d.reportRoutingAnalysisResult(ctx, rt, pending.ID, map[string]any{"status": "failed", "error": string(out)})
+		return
+	}
+	d.reportRoutingAnalysisResult(ctx, rt, pending.ID, map[string]any{"status": "completed", "result": string(out)})
+}
+
+func (d *Daemon) reportRoutingAnalysisResult(ctx context.Context, rt Runtime, requestID string, payload map[string]any) {
+	d.reportRuntimeResultWithRetry(ctx, "routing_analysis", rt.ID, requestID, func(ctx context.Context) error {
+		return d.client.ReportRoutingAnalysisResult(ctx, rt.ID, requestID, payload)
 	})
 }
 
@@ -5400,7 +5480,7 @@ func (d *Daemon) tryBeginServerUpdate(ctx context.Context) serverUpdateAcquireRe
 	}
 
 	d.claimMu.Lock()
-	if d.pauseClaims || d.activeTasks.Load() > 0 {
+	if d.pauseClaims || d.activeTasks.Load() > 0 || d.cliGate.upgrading > 0 {
 		d.claimMu.Unlock()
 		d.updating.Store(false)
 		return serverUpdateRuntimeBusy
@@ -5549,7 +5629,9 @@ func (d *Daemon) trySetClaimBarrier() bool {
 	// double-acquires: two holders both believe they own it, and whichever
 	// finishes first releases it out from under the other. tryBeginServerUpdate
 	// makes the same check for the same reason.
-	if d.pauseClaims || d.claimsInFlight > 0 || d.activeTasks.Load() > 0 {
+	// An agent CLI upgrade in progress counts as busy: restarting the
+	// daemon would kill its updater halfway through an install.
+	if d.pauseClaims || d.claimsInFlight > 0 || d.activeTasks.Load() > 0 || d.cliGate.upgrading > 0 {
 		return false
 	}
 	d.pauseClaims = true
@@ -5700,6 +5782,9 @@ func (d *Daemon) pollLoop(ctx context.Context, taskWakeups <-chan taskWakeup) er
 			// Targeted-runtime and catch-up wakeups both trigger one batch claim
 			// across the whole runtime set.
 			nudge()
+		case <-d.claimGateWakeup:
+			// A CLI upgrade released its provider; claim its queued tasks now.
+			nudge()
 		}
 	}
 }
@@ -5756,8 +5841,13 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 		slots := append([]int{slot}, drainAvailableSlots(sem, d.cfg.MaxConcurrentTasks-1)...)
 
 		// Auto-update barrier: refuse to claim while an update prepares to roll
-		// the process (paired with the re-check in tryAutoUpdate).
-		if !d.tryEnterClaim() {
+		// the process (paired with the re-check in tryAutoUpdate). A CLI
+		// being upgraded only drops its own runtimes from this claim.
+		claim, ok := d.tryEnterClaimFor(runtimeIDs)
+		if !ok || len(claim.runtimeIDs) == 0 {
+			if ok {
+				d.exitClaimFor(claim)
+			}
 			releaseSlots(slots)
 			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
 				return
@@ -5765,9 +5855,9 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			continue
 		}
 
-		claimResult, err := d.claimTasksWSFirst(pollerCtx, d.cfg.DaemonID, runtimeIDs, len(slots))
+		claimResult, err := d.claimTasksWSFirst(pollerCtx, d.cfg.DaemonID, claim.runtimeIDs, len(slots))
 		if err != nil {
-			d.exitClaim()
+			d.exitClaimFor(claim)
 			releaseSlots(slots)
 			if pollerCtx.Err() == nil {
 				d.logger.Warn("batch claim failed", "error", err)
@@ -5796,6 +5886,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			d.logger.Info("task received", "task", t.ID, "target", taskTarget)
 			taskWG.Add(1)
 			d.activeTasks.Add(1)
+			provider := d.beginProviderTask(t.RuntimeID)
 			if cache, ok := d.repoCache.(interface{ CancelMaintenance() }); ok {
 				// A task can reuse an existing worktree and never enter the
 				// checkout path that normally preempts repository maintenance.
@@ -5806,7 +5897,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			lease := newTaskSlotLease(sem, slot, func() { signalPollerWakeup(wakeup) })
 			go func(t Task, lease *taskSlotLease) {
 				defer taskWG.Done()
-				defer d.finishActiveTask()
+				defer d.finishActiveTask(provider)
 				// Release local capacity before waking the poller (the lease does
 				// both). The task's terminal callback and local cleanup have both
 				// finished at this point, so a successor that was previously
@@ -5820,7 +5911,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			}(t, lease)
 			dispatched++
 		}
-		d.exitClaim()
+		d.exitClaimFor(claim)
 		if dispatched < len(slots) {
 			releaseSlots(slots[dispatched:])
 		}
@@ -8503,6 +8594,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentSkills:                      convertSkillsForEnv(skills),
 		DisabledRuntimeSkills:            convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider),
 		Repos:                            convertReposForEnv(task.Repos),
+		ProjectRepos:                     convertReposForEnv(task.ProjectRepos),
+		WorkspaceRepoCount:               task.WorkspaceRepoCount,
+		OtherWorkspaceRepoCount:          task.OtherWorkspaceRepoCount,
 		ProjectID:                        task.ProjectID,
 		ProjectTitle:                     task.ProjectTitle,
 		ProjectDescription:               task.ProjectDescription,
@@ -11039,6 +11133,14 @@ func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
 	result := make([]execenv.RepoContextForEnv, len(repos))
 	for i, r := range repos {
 		result[i] = execenv.RepoContextForEnv{URL: r.URL, Description: r.Description, Ref: r.Ref}
+		if r.Reach != nil {
+			result[i].Reach = &execenv.RepoReachForEnv{
+				State: r.Reach.State, Mode: r.Reach.Mode, Hint: r.Reach.Hint,
+			}
+			if a := r.Reach.NextAction; a != nil {
+				result[i].Reach.NextAction = &execenv.RepoNextActionForEnv{Kind: a.Kind, For: a.For, URL: a.URL, Command: a.Command, Optional: a.Optional}
+			}
+		}
 	}
 	return result
 }
@@ -11074,6 +11176,7 @@ func convertProjectsForEnv(projects []ProjectContextData) []execenv.ProjectConte
 			Title:       p.Title,
 			Description: p.Description,
 			Resources:   convertProjectResourcesForEnv(p.Resources),
+			MemoryLine:  p.MemoryLine,
 		}
 	}
 	return result

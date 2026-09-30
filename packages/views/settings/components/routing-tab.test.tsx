@@ -245,7 +245,12 @@ describe("RoutingTab", () => {
       usage_priority: true,
       allow_upshift: false,
       judge_enabled: false,
-      analysis: { enabled: true, model: "gpt-5.6-luna", base_url: "" },
+      analysis: {
+        enabled: true,
+        model: "gpt-5.6-luna",
+        base_url: "",
+        source: "api_gateway",
+      },
     });
   });
 

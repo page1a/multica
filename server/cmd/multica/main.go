@@ -53,9 +53,11 @@ func init() {
 	autopilotCmd.GroupID = groupCore
 	workspaceCmd.GroupID = groupCore
 	repoCmd.GroupID = groupCore
+	connectionCmd.GroupID = groupCore
 	skillCmd.GroupID = groupCore
 	squadCmd.GroupID = groupCore
 	chatCmd.GroupID = groupCore
+	inboxCmd.GroupID = groupCore
 	transferCmd.GroupID = groupAdditional
 	logsCmd.GroupID = groupCore
 
@@ -70,6 +72,7 @@ func init() {
 	setupCmd.GroupID = groupAdditional
 	attachmentCmd.GroupID = groupAdditional
 	configCmd.GroupID = groupAdditional
+	settingsCmd.GroupID = groupCore
 	updateCmd.GroupID = groupAdditional
 	versionCmd.GroupID = groupAdditional
 
@@ -84,6 +87,7 @@ func init() {
 	rootCmd.AddCommand(skillCmd)
 	rootCmd.AddCommand(squadCmd)
 	rootCmd.AddCommand(chatCmd)
+	rootCmd.AddCommand(inboxCmd)
 	rootCmd.AddCommand(transferCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(daemonCmd)
@@ -94,6 +98,9 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(attachmentCmd)
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(settingsCmd)
+	githubAppCmd.GroupID = groupCore
+	rootCmd.AddCommand(githubAppCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(versionCmd)
 

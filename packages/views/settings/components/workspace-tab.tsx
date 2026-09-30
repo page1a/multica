@@ -7,6 +7,13 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
+import {
   AlertDialog,
   AlertDialogContent,
   AlertDialogHeader,
@@ -21,10 +28,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useLeaveWorkspace, useDeleteWorkspace } from "@multica/core/workspace/mutations";
 import {
+  agentListOptions,
   memberListOptions,
   workspaceKeys,
   workspaceListOptions,
 } from "@multica/core/workspace/queries";
+import { isAgentRuntimeBound } from "@multica/core/agents";
 import { issueKeys } from "@multica/core/issues/queries";
 import { api } from "@multica/core/api";
 import {
@@ -85,6 +94,10 @@ export function WorkspaceTab() {
   const wsId = workspace?.id;
   const { data: members = [], isFetched: membersFetched } = useQuery({
     ...memberListOptions(wsId ?? ""),
+    enabled: !!wsId,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId ?? ""),
     enabled: !!wsId,
   });
   const qc = useQueryClient();
@@ -152,6 +165,88 @@ export function WorkspaceTab() {
     onConfirm: () => Promise<void>;
   } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const sedimentAgentId =
+    ((workspace?.settings?.memory as Record<string, unknown> | undefined)
+      ?.sediment_agent as string | undefined) ?? "";
+  const [selectedSedimentAgentId, setSelectedSedimentAgentId] =
+    useState<string>(sedimentAgentId);
+
+  useEffect(() => {
+    setSelectedSedimentAgentId(sedimentAgentId);
+  }, [sedimentAgentId]);
+
+  const availableAgents = useMemo(
+    () =>
+      agents.filter(
+        (a) =>
+          !a.archived_at &&
+          a.work_enabled !== false &&
+          isAgentRuntimeBound(a),
+      ),
+    [agents],
+  );
+
+  const selectedAgent = useMemo(
+    () => agents.find((a) => a.id === selectedSedimentAgentId),
+    [agents, selectedSedimentAgentId],
+  );
+
+  const sedimentAgentItems = useMemo(() => {
+    const list: Array<{ value: string; label: string }> = [
+      {
+        value: "none",
+        label: t(($) => $.workspace.sediment_agent_none),
+      },
+    ];
+    const agentsToShow = [...availableAgents];
+    if (
+      selectedAgent &&
+      !availableAgents.some((a) => a.id === selectedAgent.id)
+    ) {
+      agentsToShow.unshift(selectedAgent);
+    }
+    for (const agent of agentsToShow) {
+      const offline = agent.status === "offline";
+      list.push({
+        value: agent.id,
+        label: offline
+          ? `${agent.name} (${t(($) => $.workspace.sediment_agent_offline)})`
+          : agent.name,
+      });
+    }
+    return list;
+  }, [availableAgents, selectedAgent, t]);
+
+  const handleSedimentAgentChange = async (nextValue: string | null) => {
+    if (!workspace) return;
+    const nextAgentId = !nextValue || nextValue === "none" ? null : nextValue;
+    setSelectedSedimentAgentId(nextAgentId ?? "");
+    try {
+      const updated = await api.updateWorkspace(workspace.id, {
+        settings: {
+          ...(workspace.settings ?? {}),
+          memory: {
+            ...((workspace.settings?.memory as Record<string, unknown> | undefined) ?? {}),
+            sediment_agent: nextAgentId,
+          },
+        },
+      });
+      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
+        old?.map((ws) => (ws.id === updated.id ? updated : ws)),
+      );
+      toast.success(t(($) => $.workspace.toast_saved), {
+        id: "settings-auto-save",
+      });
+    } catch (error) {
+      setSelectedSedimentAgentId(sedimentAgentId);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.workspace.toast_save_failed),
+      );
+    }
+  };
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
@@ -496,6 +591,43 @@ export function WorkspaceTab() {
                 className="font-mono uppercase"
                 placeholder={workspace.issue_prefix}
               />
+          </SettingsRow>
+
+          <SettingsRow
+            label={t(($) => $.workspace.sediment_agent_label)}
+            description={
+              <div className="space-y-1">
+                <div>{t(($) => $.workspace.sediment_agent_description)}</div>
+                {selectedAgent?.status === "offline" && (
+                  <div className="text-caption text-amber-600 dark:text-amber-400">
+                    {t(($) => $.workspace.sediment_agent_offline_hint)}
+                  </div>
+                )}
+              </div>
+            }
+            size="select-wide"
+          >
+            <Select
+              items={sedimentAgentItems}
+              value={selectedSedimentAgentId || "none"}
+              onValueChange={handleSedimentAgentChange}
+              disabled={!canManageWorkspace}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full"
+                aria-label={t(($) => $.workspace.sediment_agent_label)}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {sedimentAgentItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </SettingsRow>
 
             {!canManageWorkspace && (

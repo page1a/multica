@@ -145,18 +145,28 @@ func (h *Handler) refuseReviewWithoutDelivery(ctx context.Context, issue db.Issu
 	if strings.TrimSpace(noCodeReason) != "" {
 		return ""
 	}
-	prs, err := h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	if declaredFrom(ctx).Unverified {
+		return ""
+	}
+	view, err := h.ensureIssueDeliveries(ctx, issue)
+	prs := view.GateRows()
 	if err != nil {
 		slog.Warn("review gate: list pull requests failed", "issue_id", uuidToString(issue.ID), "error", err)
-		return "进不了待验收：没能读到这张票关联的 PR，稍后再试。"
+		prs, err = h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+		if err != nil {
+			return "进不了待验收：没能读到这张票关联的 PR，稍后再试。"
+		}
 	}
 	for _, pr := range prs {
 		if reviewDeliveryStates[strings.ToLower(pr.State)] {
 			return ""
 		}
 	}
+	if view.Denied {
+		return "没权限：保存的令牌读不了这个仓库。平台已经叫仓库登记人来接上。本机有发起人的登录时先跑 `multica connection add --from-gh --yes`；试不了就不要自己设等待条件。"
+	}
 	key := issueIdentifier(h.getIssuePrefix(ctx, issue.WorkspaceID), issue.Number)
-	return fmt.Sprintf("进不了待验收：%s 没有关联的 PR，验收人没有东西可看。没有 GitHub App 时，请用票号重跑 `multica issue close %s`，并检查 PR 标题或分支里包含 %s；纯文档或调研类没有代码交付的票，用 `--no-code <原因>` 说明。", key, key, key)
+	return fmt.Sprintf("进不了待验收：%s 没有关联的 PR，验收人没有东西可看。没有 GitHub App 时，请用票号重跑 `multica issue close %s`，并检查 PR 标题或分支里包含 %s；纯文档或调研类没有代码交付的票，用 `--no-code <原因>` 说明。也可以 `multica issue close %s --pr <链接>`。", key, key, key, key)
 }
 
 func reviewerChosen(reviewerType pgtype.Text, reviewerID pgtype.UUID, explicit bool) bool {
@@ -241,7 +251,15 @@ func (h *Handler) pickAcceptanceSeat(ctx context.Context, issue db.Issue, assign
 
 func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, actorType, actorID, noCodeReason string) statusTransition {
 	var tr statusTransition
-	prs, err := h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	view, ensureErr := h.ensureIssueDeliveries(ctx, issue)
+	var prs []db.ListPullRequestsByIssueRow
+	var err error
+	if ensureErr != nil {
+		slog.Warn("close gate: delivery lookup failed", "issue_id", uuidToString(issue.ID), "error", ensureErr)
+		prs, err = h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	} else {
+		prs = view.GateRows()
+	}
 	if err != nil {
 		slog.Warn("close gate: list pull requests failed", "issue_id", uuidToString(issue.ID), "error", err)
 		tr.status = issuestatus.Blocked
@@ -276,28 +294,60 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, act
 	// through --no-code with the link as the reason, same as docs-only work;
 	// the evidence comment and the acceptance seat carry the proof (DENE-943).
 	if actorType == "agent" && len(prs) == 0 {
+		if declared := declaredFrom(ctx); declared.Unverified {
+			tr.note = "申报的链接没能核实，按未核实放行：" + declared.URL
+			return tr
+		}
 		if reason := strings.TrimSpace(noCodeReason); reason != "" {
 			tr.noCode = reason
 			tr.note = "执行人声明这张票没有平台可见的 PR：" + reason + "。"
 			return tr
 		}
-		// No PR yet is something the closing agent can fix in this run.
-		// Parking it as blocked waited on an event nobody produces (DENE-899).
-		if deliveryBranchCount > 0 {
-			tr.refuse = "这张票有交付分支，但平台查不到它的 PR。先用 `gh pr create` 开 PR（标题带票号，打向主线），再重跑这条 close；close 会用本机 gh 把 PR 报给平台。代码不在 GitHub（比如内网 GitLab MR）就用 `--no-code <MR 链接和合入状态>` 说明。"
+		if view.Denied {
+			tr.refuse = "没权限：保存的令牌读不了这个仓库。平台已经叫仓库登记人来接上。本机有发起人的登录时先跑 `multica connection add --from-gh --yes`；试不了就不要自己设等待条件。"
 			return tr
 		}
-		tr.refuse = "这张票没有 PR 或交付分支，执行人关单必须带 `--no-code <原因>`。"
+		// The delivery lookup has already classified the missing delivery and
+		// supplied the next command. Keep that single source of truth here so a
+		// close refusal cannot fall back to the old generic PR wording.
+		if view.Gap != nil {
+			tr.refuse = view.Gap.Message + " 下一步：" + view.Gap.NextCommand
+			return tr
+		}
+		// This is only a defensive fallback for an unexpected empty lookup.
+		if deliveryBranchCount > 0 {
+			tr.refuse = "交付查询没有返回 PR 或 MR。下一步：multica issue close " + view.Ident + " --pr <链接>"
+			return tr
+		}
+		tr.refuse = "交付查询没有返回 PR 或 MR。下一步：multica issue close " + view.Ident + " --no-code <原因>"
 		return tr
 	}
 	if actorType == "agent" && strings.TrimSpace(noCodeReason) != "" {
 		tr.refuse = "这张票已经关联了 PR，不能用 `--no-code` 跳过合入门禁。"
 		return tr
 	}
-	// Without a GitHub App the server can neither read an open PR's checks nor
-	// merge it, so any block here waits on nothing. The closing agent has gh.
-	if actorType == "agent" && hasOpenPull(prs) && !h.canMergePulls() {
-		tr.refuse = fmt.Sprintf("这台服务没有合并权限，合不了 %s。确认检查通过后用 `gh pr merge --squash` 自己合，再重跑这条 close；要别人验收就改用 `--outcome in_review`。", mergeTarget(prs))
+	// Without a GitHub App the server cannot merge. A gh snapshot that already
+	// says the PR is dirty or red still blocks here, with that reason (DENE-906).
+	// A clean green PR, or one whose merge state was never reported, is refused
+	// back to the closing agent: it has gh and a block would wait on nothing.
+	if !hasOpenPull(prs) && !hasMergedPull(prs) {
+		if url := firstDraftURL(prs); url != "" {
+			tr.status = issuestatus.Blocked
+			tr.persistBlock = true
+			tr.block = blockwait.Record{
+				WaitCondition:  "草稿还没合并 " + url,
+				HasWakeAt:      true,
+				WakeAt:         time.Now().Add(blockwait.QuietAfter),
+				HasWaitTimeout: true,
+				WaitTimeout:    time.Now().Add(blockwait.QuietAfter),
+			}
+			tr.note = "找到了但还没合并：" + url + "。它还是草稿，先标成准备好再合。"
+			return tr
+		}
+	}
+	if actorType == "agent" && hasOpenPull(prs) && !h.serverCanMergeOpen(ctx, issue.WorkspaceID, prs) && !openPullSnapshotBlocks(prs) {
+		target := mergeTarget(prs)
+		tr.refuse = fmt.Sprintf("这台服务没有合并权限，合不了 %s。确认检查通过后用 `%s` 自己合，再重跑这条 close；要别人验收就改用 `--outcome in_review`。", target, localMergeCommand(target))
 		return tr
 	}
 	decision := blockwait.DecideClose(h.gatePRSnapshots(ctx, prs), time.Now())
@@ -307,7 +357,7 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, act
 	case blockwait.ReleaseMerge:
 		actor, _ := util.ParseUUID(actorID)
 		h.trackBaselineFix(ctx, issue, &decision, actorType, actor)
-		if err := h.mergeOpenPulls(ctx, prs); err != nil {
+		if err := h.mergeOpenPulls(ctx, issue.WorkspaceID, prs); err != nil {
 			rec := decision.Record
 			if !rec.Structured() {
 				rec = blockwait.FailureWake(time.Now(), "关联 PR 没能合并", 1)
@@ -342,14 +392,14 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, act
 	}
 }
 
-func (h *Handler) mergeOpenPulls(ctx context.Context, prs []db.ListPullRequestsByIssueRow) error {
+func (h *Handler) mergeOpenPulls(ctx context.Context, ws pgtype.UUID, prs []db.ListPullRequestsByIssueRow) error {
 	var merged int
 	for i := range prs {
 		pr := prs[i]
 		if !strings.EqualFold(pr.State, "open") {
 			continue
 		}
-		if err := h.mergePullRequest(ctx, pr.InstallationID, pr.RepoOwner, pr.RepoName, int(pr.PrNumber)); err != nil {
+		if err := h.mergeGatePull(ctx, ws, pr); err != nil {
 			return err
 		}
 		merged++
@@ -358,6 +408,58 @@ func (h *Handler) mergeOpenPulls(ctx context.Context, prs []db.ListPullRequestsB
 		return errPullNotMergeable
 	}
 	return nil
+}
+
+// openPullSnapshotBlocks is true when an open PR's gh snapshot is already a
+// reason to block: conflict, branch protection, or checks that are red or
+// still running. Empty and unknown merge state stay out, so a report that
+// never carried a snapshot still goes back to the agent instead of parking.
+func openPullSnapshotBlocks(prs []db.ListPullRequestsByIssueRow) bool {
+	for _, pr := range prs {
+		if !strings.EqualFold(pr.State, "open") {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(pr.MergeableState.String)) {
+		case "dirty", "behind", "blocked", "unstable":
+			return true
+		}
+		switch strings.ToLower(strings.TrimSpace(pr.ChecksRollupState.String)) {
+		case "failure", "error", "failing", "cancelled", "pending", "expected", "queued", "in_progress":
+			return true
+		}
+	}
+	return false
+}
+
+func hasMergedPull(prs []db.ListPullRequestsByIssueRow) bool {
+	for _, pr := range prs {
+		if strings.EqualFold(pr.State, "merged") {
+			return true
+		}
+	}
+	return false
+}
+
+func firstDraftURL(prs []db.ListPullRequestsByIssueRow) string {
+	for _, pr := range prs {
+		if strings.EqualFold(pr.State, "draft") && pr.HtmlUrl != "" {
+			return pr.HtmlUrl
+		}
+	}
+	return ""
+}
+
+func localMergeCommand(url string) string {
+	switch {
+	case strings.Contains(url, "/-/merge_requests/"):
+		return "glab mr merge " + url + " --squash --yes"
+	case strings.Contains(url, "/pulls/") && !strings.Contains(url, "github.com"):
+		return "先在网页上合并 " + url + "，再重跑 close"
+	case url == "" || url == "关联 PR":
+		return "gh pr merge --squash <url>"
+	default:
+		return "gh pr merge --squash " + url
+	}
 }
 
 func hasOpenPull(prs []db.ListPullRequestsByIssueRow) bool {

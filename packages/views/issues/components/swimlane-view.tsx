@@ -1505,7 +1505,7 @@ function SwimLaneViewImpl({
               customScrollParent={scrollEl}
               data={orderedLanes}
               computeItemKey={computeLaneKey}
-              initialScrollTop={restoredScrollTop}
+              initialScrollTop={restoredScrollTop ?? 0}
               initialItemCount={Math.min(orderedLanes.length, SWIMLANE_LANE_SEED_COUNT)}
               increaseViewportBy={{ top: 600, bottom: 600 }}
               components={laneComponents}

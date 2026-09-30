@@ -291,13 +291,20 @@
     "follow": "Auto-follow latest",
     "update_now": "Update now",
     "updating": "Updating…",
-    "waiting": "Waiting until this machine is idle",
+    "waiting": "Queued until running tasks finish",
     "unsupported": "This CLI cannot be updated automatically",
     "binary": "This copy: {{path}}",
     "check_failed": "Could not check the latest version",
     "follow_failed": "Could not save auto-follow",
     "update_request_failed": "Could not start the update",
-    "read_only": "Only the runtime owner or a workspace admin can update this CLI"
+    "read_only": "Only the runtime owner or a workspace admin can update this CLI",
+    "queued_tasks": "Queued: waiting for {{count}} {{cli}} task(s) to finish",
+    "queued_paused": "New {{cli}} tasks wait until the update is done; other CLIs keep working",
+    "queued_hold_expired": "Paused too long: {{cli}} takes tasks again and updates once idle ({{count}} running)",
+    "queued_daemon": "Queued: waiting for the Multica daemon's own update",
+    "queued_request": "Update requested, waiting for this machine to respond",
+    "updated_to": "Updated to {{version}}",
+    "update_failed": "Update failed"
   },
   "charts": {
     "heatmap_less": "Less",

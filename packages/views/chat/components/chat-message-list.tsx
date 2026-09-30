@@ -58,6 +58,8 @@ import {
 } from "../lib/copy-text";
 import { stripChatQuickActionsProtocol } from "../lib/quick-actions";
 import { useT } from "../../i18n";
+import { ScrollToBottomButton } from "../../common/scroll-to-bottom-button";
+import { useUnseenCount } from "../../common/use-unseen-count";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -208,10 +210,13 @@ export function ChatMessageList({
   const pinToLiveEnd = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
   }, []);
-  const { isFollowing, onContentHeightChanged, hasReachedLiveEnd } = useStickToBottom(
-    scrollContainerEl,
-    pinToLiveEnd,
-  );
+  const { isFollowing, onContentHeightChanged, hasReachedLiveEnd, awayFromLiveEnd } =
+    useStickToBottom(scrollContainerEl, pinToLiveEnd);
+  // Same route as the pin, animated: Virtuoso measures the last row before it
+  // decides where to stop, so it converges over unmeasured rows too.
+  const scrollToLiveEnd = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
+  }, []);
   // Soft edge fade hinting more content above/below. Kept small so it barely
   // grazes full-bleed previews (image / HTML) at the edges.
   const fadeStyle = useScrollFade(scrollRef, 16);
@@ -284,6 +289,17 @@ export function ChatMessageList({
   }, [messages, hasLive, pendingTaskId]);
 
   const firstIndex = renderItems.length > 0 ? firstItemIndex : 0;
+
+  // Jump-to-latest button. Shown only once the list has landed on the newest
+  // message (before that it is hidden and "away" is just Virtuoso settling).
+  // The badge counts replies that landed while the reader was scrolled up —
+  // the reader's own sends are not news to them.
+  const showJumpToLatest = hasReachedLiveEnd && awayFromLiveEnd;
+  const incomingKeys = useMemo(
+    () => renderItems.filter((i) => i.kind === "message" && i.message.role !== "user").map((i) => i.key),
+    [renderItems],
+  );
+  const newSinceAway = useUnseenCount(incomingKeys, showJumpToLatest);
   const liveEndKey = renderItems[renderItems.length - 1]?.key ?? null;
 
   const listContext: ChatListContext = {
@@ -315,6 +331,7 @@ export function ChatMessageList({
 
   return (
     <ImageSequenceProvider items={imageSequence}>
+    <div className="relative flex min-h-0 flex-1 flex-col">
     <div
       ref={setScrollContainerRef}
       data-tab-scroll-root
@@ -400,6 +417,14 @@ export function ChatMessageList({
       />
       </RichContentScrollRootProvider>
       )}
+    </div>
+    <ScrollToBottomButton
+      visible={showJumpToLatest}
+      newCount={newSinceAway}
+      unit="messages"
+      onClick={scrollToLiveEnd}
+      className="bottom-3 right-3"
+    />
     </div>
     </ImageSequenceProvider>
   );

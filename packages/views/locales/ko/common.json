@@ -170,5 +170,10 @@
     "queue_aria": "작업 스레드에 입력 대기열 추가",
     "insert": "끼워넣기",
     "prioritize_aria": "{{id}} 우선 처리"
+  },
+  "scroll_to_bottom": {
+    "label": "최신으로 이동",
+    "new_messages_other": "새 메시지 {{count}}개",
+    "new_comments_other": "새 댓글 {{count}}개"
   }
 }

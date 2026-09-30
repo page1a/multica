@@ -11,6 +11,8 @@ export type ShortcutActionId =
   | "toggleSidebar"
   | "toggleRightSidebar"
   | "toggleChat"
+  | "newChat"
+  | "switchChatProject"
   | "findInIssue"
   | "focusPageSearch"
   | "archiveInboxItem"
@@ -49,10 +51,22 @@ export interface ShortcutChord {
   modifiers: ShortcutModifiers;
 }
 
+/**
+ * Web and desktop cannot always share a default: a browser owns some bare
+ * primary chords the desktop shell does not. A plain chord means both
+ * runtimes ship the same binding.
+ */
+export interface RuntimeShortcutDefaults {
+  readonly web: ShortcutChord | null;
+  readonly desktop: ShortcutChord | null;
+}
+
+export type ShortcutDefault = ShortcutChord | null | RuntimeShortcutDefaults;
+
 export interface ShortcutActionDefinition {
   id: ShortcutActionId;
   category: ShortcutCategory;
-  defaultShortcut: ShortcutChord | null;
+  defaultShortcut: ShortcutDefault;
   /** Whether the global handler may run while focus is inside an editor/control. */
   allowInEditable: boolean;
 }
@@ -94,6 +108,27 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   // the binding is reaching — and dismissing — chat without a mouse, which has
   // to keep working while the caret sits in the chat composer itself.
   { id: "toggleChat", category: "general", defaultShortcut: primary("J"), allowInEditable: true },
+  // Desktop owns bare Mod+N. A browser does not (new window), and any extra
+  // modifier on N is reserved on both runtimes, so the web default is
+  // Mod+Shift+E. `allowInEditable` so the chord still starts a chat while the
+  // caret sits in the composer, and so a plain letter cannot be recorded over typing.
+  {
+    id: "newChat",
+    category: "general",
+    defaultShortcut: {
+      desktop: primary("N"),
+      web: createShortcutChord("E", { primary: true, shift: true }),
+    },
+    allowInEditable: true,
+  },
+  // Mod+Alt+P is reserved on both runtimes (extra modifier on P), and bare
+  // Mod+P is browser-owned on the web, so both runtimes share Mod+\.
+  {
+    id: "switchChatProject",
+    category: "general",
+    defaultShortcut: createShortcutChord("\\", { primary: true }),
+    allowInEditable: true,
+  },
   { id: "findInIssue", category: "general", defaultShortcut: primary("F"), allowInEditable: true },
   // Plain `/` is the common "jump to this page's search" key. Not allowed in
   // editables, so typing a slash in a composer or comment stays a slash.
@@ -134,6 +169,25 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
 export const SHORTCUT_ACTION_BY_ID = Object.fromEntries(
   SHORTCUT_ACTIONS.map((action) => [action.id, action]),
 ) as Record<ShortcutActionId, ShortcutActionDefinition>;
+
+function isRuntimeShortcutDefault(
+  value: ShortcutChord | RuntimeShortcutDefaults,
+): value is RuntimeShortcutDefaults {
+  return !("key" in value);
+}
+
+/** The chord this runtime ships when the person has not recorded their own. */
+export function defaultShortcutFor(
+  action: ShortcutActionId | Pick<ShortcutActionDefinition, "defaultShortcut">,
+  runtime: ShortcutRuntime = getShortcutRuntime(),
+): ShortcutChord | null {
+  const spec = typeof action === "string"
+    ? SHORTCUT_ACTION_BY_ID[action].defaultShortcut
+    : action.defaultShortcut;
+  if (spec === null) return null;
+  if (isRuntimeShortcutDefault(spec)) return spec[runtime];
+  return spec;
+}
 
 const MODIFIER_KEYS = new Set([
   "Alt", "AltGraph", "CapsLock", "Control", "Fn", "FnLock", "Hyper",

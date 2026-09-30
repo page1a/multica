@@ -62,6 +62,8 @@ func (e *RateLimitError) Error() string {
 type Client struct {
 	appID      string
 	privateKey *rsa.PrivateKey
+	cachedPEM  string
+	creds      CredentialFunc
 	apiBase    string
 	httpClient *http.Client
 	now        func() time.Time
@@ -77,6 +79,26 @@ type Client struct {
 type cachedToken struct {
 	token  string
 	expiry time.Time
+}
+
+// CredentialFunc returns the App id and PEM to use for the next token mint.
+// ok is false when the App is not configured. The function is called on each
+// mint so a credential stored while the process is running takes effect
+// without a restart.
+type CredentialFunc func() (appID, pem string, ok bool)
+
+// NewRefreshingClient builds a Client that reads credentials on each mint.
+// The client is non-nil even when the App is not configured yet, so the
+// snapshot workers can be started at boot and start succeeding after a
+// manifest callback stores a key.
+func NewRefreshingClient(fn CredentialFunc) *Client {
+	return &Client{
+		creds:      fn,
+		apiBase:    defaultAPIBase,
+		httpClient: &http.Client{Timeout: 20 * time.Second},
+		now:        time.Now,
+		tokens:     map[int64]cachedToken{},
+	}
 }
 
 // NewClientFromEnv builds a Client from GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.
@@ -106,23 +128,65 @@ func NewClientFromEnv() (*Client, error) {
 }
 
 // Enabled reports whether the App API is configured. A nil client is disabled.
-func (c *Client) Enabled() bool { return c != nil && c.privateKey != nil }
+// A refreshing client asks its credential function, so it can flip from
+// disabled to enabled after startup.
+func (c *Client) Enabled() bool {
+	if c == nil {
+		return false
+	}
+	if c.creds != nil {
+		_, _, ok := c.creds()
+		return ok
+	}
+	return c.privateKey != nil
+}
 
 // signAppJWT mints the short-lived RS256 JWT GitHub requires for
 // App-authenticated calls. iat is back-dated 60s to absorb clock skew and exp
 // is capped at 9 minutes (GitHub's ceiling is 10).
 func (c *Client) signAppJWT(now time.Time) (string, error) {
+	appID, key, err := c.signingKey()
+	if err != nil {
+		return "", err
+	}
 	claims := jwt.MapClaims{
 		"iat": now.Add(-60 * time.Second).Unix(),
 		"exp": now.Add(9 * time.Minute).Unix(),
-		"iss": c.appID,
+		"iss": appID,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	signed, err := tok.SignedString(c.privateKey)
+	signed, err := tok.SignedString(key)
 	if err != nil {
 		return "", errors.New("sign App JWT failed")
 	}
 	return signed, nil
+}
+
+// signingKey is the static key, or the key the refreshing function returns.
+func (c *Client) signingKey() (string, *rsa.PrivateKey, error) {
+	if c.creds == nil {
+		if c.privateKey == nil {
+			return "", nil, errors.New("github app is not configured")
+		}
+		return c.appID, c.privateKey, nil
+	}
+	appID, pem, ok := c.creds()
+	if !ok {
+		return "", nil, errors.New("github app is not configured")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.privateKey != nil && c.appID == appID && c.cachedPEM == pem {
+		return c.appID, c.privateKey, nil
+	}
+	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(pem))
+	if err != nil {
+		return "", nil, errors.New("parse GitHub App private key")
+	}
+	c.appID = appID
+	c.privateKey = key
+	c.cachedPEM = pem
+	return appID, key, nil
 }
 
 // installationToken returns a cached installation access token, minting a new

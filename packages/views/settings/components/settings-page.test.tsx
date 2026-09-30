@@ -22,6 +22,7 @@ vi.mock("./tokens-tab", stub("TokensTab"));
 vi.mock("./workspace-tab", stub("WorkspaceTab"));
 vi.mock("./members-tab", stub("MembersTab"));
 vi.mock("./repositories-tab", stub("RepositoriesTab"));
+vi.mock("./git-connections-tab", stub("GitConnectionsTab"));
 vi.mock("./github-tab", stub("GitHubTab"));
 vi.mock("./integrations-tab", stub("IntegrationsTab"));
 vi.mock("./notifications-tab", stub("NotificationsTab"));
@@ -191,6 +192,12 @@ describe("SettingsPage information architecture", () => {
     expect(
       within(nav).queryByRole("link", { name: /^(Issue|Chat|GitHub|Labs)$/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens the old GitHub bookmark on connections", () => {
+    navigationState.search = "tab=github";
+    renderWithI18n(<SettingsPage />);
+    expect(screen.getByText("GitConnectionsTab")).toBeInTheDocument();
   });
 
   it("opens old issue bookmarks in preferences", () => {

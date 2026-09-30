@@ -45,7 +45,14 @@ import {
   githubInstallationRepositoriesOptions,
   githubInstallationsOptions,
 } from "@multica/core/github";
-import { api } from "@multica/core/api";
+import { ApiError, api } from "@multica/core/api";
+import { repoConnectionsOptions } from "@multica/core/repo-reach";
+import {
+  parseRepoLocator,
+  repoLinkKeys,
+  repoLinkTitle,
+  resolveRepoLink,
+} from "@multica/core/repo-links";
 import type {
   GitHubRepository,
   Workspace,
@@ -62,6 +69,14 @@ import {
 import { useAutoSave } from "./use-auto-save";
 import { GitHubMark } from "./github-mark";
 import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
+import { settingsHref } from "./settings-navigation";
+import {
+  RepositoryConnectionControls,
+  repositorySourceLine,
+} from "./repository-connection";
+import { outcomeText, useRepoLinkLabels } from "./repo-link-present";
+import { useRepoCatalog } from "./use-repo-catalog";
+import { RepoReachControls } from "./repo-reach-view";
 
 const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
@@ -74,38 +89,16 @@ function repositoriesEqual(left: WorkspaceRepo[], right: WorkspaceRepo[]) {
   );
 }
 
+/** Same identity the connection matcher uses: host lowercased, path casing kept. */
 export function repositoryIdentity(rawURL: string): string | null {
-  const value = rawURL.trim();
-  if (!value) return null;
-
-  let host = "";
-  let path = "";
-  if (!value.includes("://")) {
-    const scpLike = value.match(/^(?:[^@\s/]+@)?([^:\s/]+):(.+)$/);
-    if (scpLike) {
-      host = scpLike[1] ?? "";
-      path = scpLike[2] ?? "";
-    }
-  }
-  if (!host) {
-    try {
-      const parsed = new URL(value);
-      host = parsed.hostname;
-      path = parsed.pathname;
-    } catch {
-      return null;
-    }
-  }
-
-  const normalizedPath = path
-    .replace(/^\/+|\/+$/g, "")
-    .replace(/\.git$/i, "");
-  if (!host || !normalizedPath) return null;
-  return `${host.toLowerCase()}/${normalizedPath}`;
+  const locator = parseRepoLocator(rawURL);
+  if (!locator || locator.owner === "*") return null;
+  return locator.name;
 }
 
 export function RepositoriesTab() {
   const { t } = useT("settings");
+  const linkLabels = useRepoLinkLabels();
   const user = useAuthStore((state) => state.user);
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
@@ -125,6 +118,20 @@ export function RepositoriesTab() {
   const [repositorySearch, setRepositorySearch] = useState("");
   const [shareScopeIndex, setShareScopeIndex] = useState<number | null>(null);
   const [shareAudienceSizes, setShareAudienceSizes] = useState<Record<string, number>>({});
+  const [testingUrl, setTestingUrl] = useState<string | null>(null);
+  const catalog = useRepoCatalog(wsId);
+  const { data: connectionCards } = useQuery(repoConnectionsOptions(wsId));
+  const reachOf = (url: string) => {
+    const identity = repositoryIdentity(url)?.toLowerCase();
+    return (connectionCards ?? []).find(
+      (card) =>
+        card.url === url ||
+        (identity !== undefined &&
+          repositoryIdentity(card.url)?.toLowerCase() === identity),
+    )?.reach;
+  };
+  const showReach = (connectionCards?.length ?? 0) > 0;
+  const showLinks = catalog.source === "catalog" || catalog.source === "legacy";
 
   const currentMember = members.find((member) => member.user_id === user?.id) ?? null;
   const canManageWorkspace =
@@ -206,7 +213,9 @@ export function RepositoriesTab() {
       return;
     }
 
-    if (githubError) {
+    if (githubError === "installation_taken") {
+      toast.error(t(($) => $.repositories.github_installation_taken));
+    } else if (githubError) {
       toast.error(t(($) => $.repositories.github_connect_failed));
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       setSelectedInstallationID(githubInstallations[0]!.id);
@@ -362,13 +371,63 @@ export function RepositoriesTab() {
     autoSave.saveNow(next);
   };
 
+  const openConnect = (scope: string) => {
+    const href = settingsHref(
+      navigation.pathname,
+      navigation.searchParams,
+      "git-connections",
+    );
+    navigation.push(`${href}&connect_scope=${encodeURIComponent(scope)}`);
+  };
+
+  const testRepository = async (repoUrl: string) => {
+    if (testingUrl) return;
+    setTestingUrl(repoUrl);
+    try {
+      const result = await api.testRepoBinding(wsId, { repo_url: repoUrl });
+      await queryClient.invalidateQueries({ queryKey: repoLinkKeys.all(wsId) });
+      const text = outcomeText(
+        result.ok,
+        result.hint,
+        result.next_command,
+        t(($) => $.repo_links.toast_ok),
+        t(($) => $.repo_links.toast_failed),
+      );
+      if (result.ok) toast.success(text);
+      else toast.error(text);
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+        toast.error(t(($) => $.repo_links.test_unavailable));
+        return;
+      }
+      toast.error(
+        error instanceof Error ? error.message : t(($) => $.repo_links.toast_failed),
+      );
+    } finally {
+      setTestingUrl(null);
+    }
+  };
+
+  const pinRepository = async (repoUrl: string, linkId: string | null) => {
+    try {
+      await api.pinRepoBinding(wsId, {
+        repo_url: repoUrl,
+        pinned_link_id: linkId,
+      });
+      await queryClient.invalidateQueries({ queryKey: repoLinkKeys.all(wsId) });
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t(($) => $.repo_links.toast_failed),
+      );
+    }
+  };
+
   if (!workspace) return null;
   const selectedRepository = shareScopeIndex === null ? null : repositories[shareScopeIndex] ?? null;
 
   return (
     <SettingsTab title={t(($) => $.page.tabs.repositories)}>
       <SettingsSection
-        description={t(($) => $.repositories.description)}
         action={
           <SettingsSaveState
             status={autoSave.status}
@@ -385,60 +444,129 @@ export function RepositoriesTab() {
             </div>
           ) : null}
 
-          {repositories.map((repository, index) => (
-            <div
-              key={index}
-              className="grid gap-2 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto] sm:items-center"
-            >
-              <Input
-                type="text"
-                name={`repository-${index}-url`}
-                autoComplete="off"
-                spellCheck={false}
-                aria-label={t(($) => $.repositories.url_placeholder)}
-                value={repository.url}
-                onChange={(event) =>
-                  updateRepository(index, "url", event.target.value)
-                }
-                onBlur={autoSave.flush}
-                disabled={!canManageWorkspace}
-                aria-invalid={!repository.url.trim()}
-                placeholder={t(($) => $.repositories.url_placeholder)}
-                className="font-mono text-caption"
-              />
-              <Input
-                type="text"
-                name={`repository-${index}-description`}
-                autoComplete="off"
-                aria-label={t(($) => $.repositories.description_placeholder)}
-                value={repository.description ?? ""}
-                onChange={(event) =>
-                  updateRepository(index, "description", event.target.value)
-                }
-                onBlur={autoSave.flush}
-                disabled={!canManageWorkspace}
-                placeholder={t(($) => $.repositories.description_placeholder)}
-              />
-              {canManageWorkspace ? (
-                <div className="flex items-center justify-self-end gap-1">
-                  <ShareScopeTrigger
-                    scope={repository.visibility}
-                    audienceSize={shareAudienceSizes[repository.url]}
-                    onClick={() => setShareScopeIndex(index)}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t(($) => $.repositories.delete_aria)}
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() => setPendingRemovalIndex(index)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
-              ) : null}
+          {showLinks && repositories.length > 0 ? (
+            <div className="hidden gap-2 px-4 pt-3 text-caption text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_auto_auto]">
+              <span>{t(($) => $.repo_links.column_repo)}</span>
+              <span>
+                {showReach
+                  ? t(($) => $.repo_reach.column_projects)
+                  : t(($) => $.repo_links.column_connection)}
+              </span>
+              <span>{t(($) => $.repo_links.column_status)}</span>
+              <span />
             </div>
-          ))}
+          ) : null}
+
+          {catalog.source === "unavailable" ? (
+            <p className="px-4 py-3 text-caption text-muted-foreground">
+              {t(($) => $.repo_links.load_failed)}
+            </p>
+          ) : null}
+
+          {repositories.map((repository, index) => {
+            const savedUrl = savedRepositories[index]?.url ?? "";
+            const urlDirty = repository.url.trim() !== savedUrl.trim();
+            const match =
+              showLinks && urlDirty
+                ? resolveRepoLink(catalog.links, repository.url, null)
+                : null;
+            const preview = match
+              ? match.link
+                ? t(($) => $.repo_links.preview_match, {
+                    name: repoLinkTitle(linkLabels.kind(match.link.kind), match.link),
+                  })
+                : t(($) => $.repo_links.preview_none)
+              : "";
+            const sourceLine = showLinks
+              ? repositorySourceLine(catalog, repository.url)
+              : "";
+            const fields = (
+              <>
+                <Input
+                  type="text"
+                  name={`repository-${index}-url`}
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label={t(($) => $.repositories.url_placeholder)}
+                  value={repository.url}
+                  onChange={(event) =>
+                    updateRepository(index, "url", event.target.value)
+                  }
+                  onBlur={autoSave.flush}
+                  disabled={!canManageWorkspace}
+                  aria-invalid={!repository.url.trim()}
+                  placeholder={t(($) => $.repositories.url_placeholder)}
+                  className="font-mono text-caption"
+                />
+                {sourceLine ? (
+                  <p className="truncate text-caption text-muted-foreground">{sourceLine}</p>
+                ) : null}
+                <Input
+                  type="text"
+                  name={`repository-${index}-description`}
+                  autoComplete="off"
+                  aria-label={t(($) => $.repositories.description_placeholder)}
+                  value={repository.description ?? ""}
+                  onChange={(event) =>
+                    updateRepository(index, "description", event.target.value)
+                  }
+                  onBlur={autoSave.flush}
+                  disabled={!canManageWorkspace}
+                  placeholder={t(($) => $.repositories.description_placeholder)}
+                />
+                {preview ? (
+                  <p className="truncate text-caption text-muted-foreground">{preview}</p>
+                ) : null}
+              </>
+            );
+            const actions = canManageWorkspace ? (
+              <div className="flex items-center justify-self-end gap-1">
+                <ShareScopeTrigger
+                  scope={repository.visibility}
+                  audienceSize={shareAudienceSizes[repository.url]}
+                  onClick={() => setShareScopeIndex(index)}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t(($) => $.repositories.delete_aria)}
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => setPendingRemovalIndex(index)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            ) : null;
+            const reach = showReach ? reachOf(repository.url) : undefined;
+            return (
+              <div
+                key={index}
+                className={
+                  showLinks
+                    ? "grid gap-2 px-4 py-3.5 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_auto_auto] sm:items-center"
+                    : "grid gap-2 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto] sm:items-center"
+                }
+              >
+                {showLinks ? <div className="min-w-0 space-y-1.5">{fields}</div> : fields}
+                {reach ? (
+                  <RepoReachControls reach={reach} trailing={actions} />
+                ) : showLinks ? (
+                  <RepositoryConnectionControls
+                    repoUrl={repository.url}
+                    catalog={catalog}
+                    canManageWorkspace={canManageWorkspace}
+                    testing={testingUrl === repository.url}
+                    trailing={actions}
+                    onTest={(url) => void testRepository(url)}
+                    onConnect={openConnect}
+                    onPin={(url, linkId) => void pinRepository(url, linkId)}
+                  />
+                ) : (
+                  actions
+                )}
+              </div>
+            );
+          })}
 
           {canManageWorkspace ? (
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">

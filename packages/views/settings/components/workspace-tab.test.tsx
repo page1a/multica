@@ -18,14 +18,23 @@ const workspaceRef = vi.hoisted(() => ({
     context: "",
     issue_prefix: "TES",
     repos: [] as { url: string }[],
+    settings: {} as Record<string, unknown>,
   },
 }));
 const membersRef = vi.hoisted(() => ({
   current: [{ user_id: "user-1", role: "owner" as "owner" | "admin" | "member" }],
 }));
+const agentsRef = vi.hoisted(() => ({
+  current: [] as Array<Record<string, unknown>>,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: membersRef.current, isFetched: true }),
+  useQuery: (options: { queryKey?: readonly unknown[] }) => {
+    if (options?.queryKey?.[0] === "agents") {
+      return { data: agentsRef.current, isFetched: true };
+    }
+    return { data: membersRef.current, isFetched: true };
+  },
   useQueryClient: () => ({
     setQueryData: vi.fn(),
     getQueryData: vi.fn(() => []),
@@ -45,6 +54,7 @@ vi.mock("@multica/core/platform", () => ({
 
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
+  agentListOptions: () => ({ queryKey: ["agents"], queryFn: vi.fn() }),
   workspaceListOptions: () => ({ queryKey: ["workspaces"], queryFn: vi.fn() }),
   workspaceKeys: { list: () => ["workspaces"] },
 }));
@@ -112,6 +122,7 @@ describe("WorkspaceTab — automatic updates", () => {
       context: "",
       issue_prefix: "TES",
       repos: [],
+      settings: {},
     };
     membersRef.current = [{ user_id: "user-1", role: "owner" }];
     mockUpdateWorkspace.mockImplementation(
@@ -244,5 +255,44 @@ describe("WorkspaceTab — automatic updates", () => {
 
     expect(screen.getByPlaceholderText("TES")).toBeDisabled();
     expect(screen.getByDisplayValue("Test Workspace")).toBeDisabled();
+  });
+
+  it("renders the sediment agent selector with default unconfigured state", () => {
+    agentsRef.current = [
+      {
+        id: "agent-1",
+        name: "Test Agent",
+        status: "online",
+        runtime_id: "rt-1",
+        work_enabled: true,
+      },
+    ];
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Memory Sediment Agent")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Memory Sediment Agent" })).toBeTruthy();
+  });
+
+  it("renders configured sediment agent and warning when offline", () => {
+    workspaceRef.current = {
+      ...workspaceRef.current,
+      settings: {
+        memory: {
+          sediment_agent: "agent-offline",
+        },
+      },
+    };
+    agentsRef.current = [
+      {
+        id: "agent-offline",
+        name: "Offline Agent",
+        status: "offline",
+        runtime_id: "rt-1",
+        work_enabled: true,
+      },
+    ];
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText(/Agent is currently offline/i)).toBeTruthy();
   });
 });

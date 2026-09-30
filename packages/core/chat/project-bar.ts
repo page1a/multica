@@ -97,18 +97,65 @@ export function rankChatProjects(
 }
 
 /**
- * The chips that actually render once the row has run out of room.
- * `fitCount` is how many of `orderedIds` fit. A project (or the "no
- * project" filter) chosen from the overflow menu stays on the row by
- * taking the last slot, so the selection never disappears into "more".
+ * How many leading chip widths fit in `available` px with `gap` px between
+ * them. A chip that would pass the end of the row is not counted — the row
+ * never keeps a partial chip. Widths that are not yet measured (`<= 0`)
+ * stop the scan.
  */
-export function visibleBarProjectIds(
-  orderedIds: readonly string[],
-  fitCount: number,
+export function leadingFitCount(
+  widths: readonly number[],
+  available: number,
+  gap: number,
+): number {
+  if (!(available > 0)) return 0;
+  let used = 0;
+  let count = 0;
+  for (let i = 0; i < widths.length; i++) {
+    const width = widths[i] ?? 0;
+    if (!(width > 0)) break;
+    const next = used + (count > 0 ? gap : 0) + width;
+    if (next > available) break;
+    used = next;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Chips to paint for this row width, in the person's pin order.
+ * Overflow comes off the end. `promotedId` is the current filter: when its
+ * own width fits, it stays on the row (taking the last slot and pushing the
+ * previous tail into overflow). When it cannot fit even by itself, it is
+ * left off the row so the caller can mark the overflow trigger selected
+ * instead of clipping the chip.
+ *
+ * `widths` lines up with `ids`. `promotedWidth` is only used when
+ * `promotedId` is not one of `ids` (the "no project" chip, or a project
+ * opened from the menu that is not otherwise on the bar).
+ */
+export function visibleBarProjectIdsForWidths(
+  ids: readonly string[],
+  widths: readonly number[],
+  available: number,
+  gap: number,
   promotedId: string | null,
+  promotedWidth?: number,
 ): string[] {
-  const fitted = orderedIds.slice(0, Math.max(0, Math.min(fitCount, orderedIds.length)));
+  const fitted = ids.slice(0, leadingFitCount(widths, available, gap));
   if (!promotedId || fitted.includes(promotedId)) return fitted;
-  if (fitted.length === 0) return [promotedId];
-  return [...fitted.slice(0, -1), promotedId];
+
+  const index = ids.indexOf(promotedId);
+  const width = index >= 0 ? (widths[index] ?? 0) : (promotedWidth ?? 0);
+  if (!(width > 0) || width > available) return fitted;
+
+  let used = 0;
+  const kept: string[] = [];
+  for (let i = 0; i < fitted.length; i++) {
+    const chip = widths[i] ?? 0;
+    const next = used + (kept.length > 0 ? gap : 0) + chip;
+    if (next + gap + width > available) break;
+    used = next;
+    kept.push(fitted[i]!);
+  }
+  return [...kept, promotedId];
 }

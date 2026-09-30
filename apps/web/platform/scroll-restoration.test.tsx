@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { useRestoredScrollOffset } from "@multica/views/platform";
 import { WebScrollRestorationProvider } from "./scroll-restoration";
@@ -98,5 +98,94 @@ describe("WebScrollRestorationProvider", () => {
 
     scrollContainer(screen.getByTestId("plain"), 480);
     expect(screen.getByTestId("restored").textContent).toBe("none");
+  });
+});
+
+describe("WebScrollRestorationProvider across a tab reload (DENE-978)", () => {
+  // A phone browser discards a background tab and reloads it on return; the
+  // module maps are gone then, so the mementos have to come back from
+  // sessionStorage.
+  afterEach(() => {
+    sessionStorage.clear();
+    vi.useRealTimers();
+  });
+
+  async function freshModule() {
+    vi.resetModules();
+    return import("./scroll-restoration");
+  }
+
+  function scrollBoth(el: HTMLElement, top: number, left: number) {
+    Object.defineProperty(el, "scrollLeft", { configurable: true, value: left });
+    scrollContainer(el, top);
+  }
+
+  it("serves offsets saved before the reload, horizontal included", async () => {
+    const before = await freshModule();
+    const view = render(
+      <before.WebScrollRestorationProvider>
+        <div data-tab-scroll-root="board" data-testid="container" />
+      </before.WebScrollRestorationProvider>,
+    );
+    scrollBoth(screen.getByTestId("container"), 40, 700);
+    // Going to the background flushes the coalesced write.
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    view.unmount();
+
+    const after = await freshModule();
+    const { useRestoredScrollEntry } = await import("@multica/views/platform");
+    function EntryProbe() {
+      const entry = useRestoredScrollEntry("board");
+      return <output data-testid="entry">{entry ? `${entry.top}/${entry.left ?? 0}` : "none"}</output>;
+    }
+    render(
+      <after.WebScrollRestorationProvider>
+        <EntryProbe />
+      </after.WebScrollRestorationProvider>,
+    );
+    expect(screen.getByTestId("entry").textContent).toBe("40/700");
+  });
+
+  it("coalesces scroll writes instead of hitting storage every frame", async () => {
+    vi.useFakeTimers();
+    const mod = await freshModule();
+    render(
+      <mod.WebScrollRestorationProvider>
+        <div data-tab-scroll-root="coalesced" data-testid="container" />
+      </mod.WebScrollRestorationProvider>,
+    );
+    scrollContainer(screen.getByTestId("container"), 100);
+    scrollContainer(screen.getByTestId("container"), 200);
+    expect(sessionStorage.getItem("multica:scroll-restoration")).toBeNull();
+
+    vi.advanceTimersByTime(300);
+    const saved = JSON.parse(sessionStorage.getItem("multica:scroll-restoration") ?? "{}");
+    expect(saved.offsets[`${window.location.pathname}::coalesced`].top).toBe(200);
+  });
+
+  it("survives a corrupt snapshot", async () => {
+    sessionStorage.setItem("multica:scroll-restoration", "{not json");
+    const mod = await freshModule();
+    const views = await import("@multica/views/platform");
+    function Probe() {
+      return <output data-testid="probe">{views.useRestoredScrollOffset("main") ?? "none"}</output>;
+    }
+    const view = render(
+      <mod.WebScrollRestorationProvider>
+        <div data-tab-scroll-root="main" data-testid="container" />
+        <Probe />
+      </mod.WebScrollRestorationProvider>,
+    );
+    expect(screen.getByTestId("probe").textContent).toBe("none");
+    // …and keeps working for new offsets.
+    scrollContainer(screen.getByTestId("container"), 300);
+    view.rerender(
+      <mod.WebScrollRestorationProvider>
+        <Probe />
+      </mod.WebScrollRestorationProvider>,
+    );
+    expect(screen.getByTestId("probe").textContent).toBe("300");
   });
 });

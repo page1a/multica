@@ -6,7 +6,9 @@
     "search_placeholder": "Search chat titles or content…",
     "search_clear": "Clear search",
     "search_empty": "No chats match",
-    "back": "Back"
+    "back": "Back",
+    "new_chat_in_project": "New chats stay in \"{{title}}\"",
+    "new_chat_unbound": "New chats are not tied to a project"
   },
   "project_bar": {
     "all": "All",
@@ -24,7 +26,10 @@
     "unpin": "Unpin",
     "drag": "Drag to reorder",
     "empty": "No chats for this project yet",
-    "unread": "Unread"
+    "unread": "Unread",
+    "switch": "Switch project",
+    "switch_search": "Search projects…",
+    "switch_empty": "No matching projects"
   },
   "project_nudge": {
     "bind": "Bind to a project",
@@ -199,7 +204,11 @@
       "label": "Recommend an action",
       "prompt": "Review what you know about my workspace and recommend a useful first action."
     },
-    "customize": "Customize starters"
+    "customize": "Customize starters",
+    "inbox": {
+      "label": "Walk me through my inbox",
+      "prompt": "Walk me through my inbox"
+    }
   },
   "onboarding_cards": {
     "aria_label": "Ways to start",
@@ -275,7 +284,9 @@
     "row_actions_aria": "Chat actions",
     "edit_access": "Edit access",
     "private_tag": "Private",
-    "extra_tag": "Extra people"
+    "extra_tag": "Extra people",
+    "show_more": "Show more ({{count}})",
+    "show_fewer": "Show fewer"
   },
   "header": {
     "view_profile": "View agent profile",

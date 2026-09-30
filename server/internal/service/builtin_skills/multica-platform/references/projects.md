@@ -8,6 +8,7 @@ display metadata; it is context later injected into task briefs and
 - [CLI](#cli)
 - [local_directory execution modes](#local_directory-execution-modes)
 - [Referring to a project in a comment](#referring-to-a-project-in-a-comment)
+- [Project memory and sediment agent](#project-memory-and-sediment-agent)
 - [When to add a resource](#when-to-add-a-resource)
 - [Debugging wrong context](#debugging-wrong-context)
 - [Side effects](#side-effects)
@@ -102,6 +103,11 @@ multica project resource update <project-id> <resource-id> --execution-mode shar
 multica project resource update <project-id> <resource-id> --url <new-github-url> --output json
 multica project resource update <project-id> <resource-id> --ref <branch-or-sha> --output json
 multica project resource remove <project-id> <resource-id> --output json
+multica project memory status <project-id> --output json
+multica project memory check <project-id> --output json
+multica project memory seat get --output json
+multica project memory seat set <agent-name-or-uuid> --output json
+multica project memory seat clear --output json
 ```
 
 For `github_repo`, non-JSON `--ref` sets `resource_ref.ref`, the default
@@ -275,6 +281,73 @@ Two consequences worth knowing before debugging:
   path and can only match by repository name, which is enough to ask and not
   enough to act.
 
+## Project memory and sediment agent
+
+Project memory is a fixed checklist of locations defined once on the server.
+Do not hand-copy the list: the authoritative set is the `locations` array returned by
+`multica project memory check|status <project-id> --output json`. At the time
+of writing it is `AGENTS.md`, `CONTEXT.md`, `docs/adr/`, `docs/README.md` and
+`docs/evidence/INDEX.md`.
+
+The check is presence only (file or directory exists). There is no staleness
+rule: an existing but old file never opens a ticket. The daemon only stats the
+directory; it never writes these files — the sediment ticket's executor does.
+
+### Reading status (no side effects)
+
+Both of these read the latest stored report and never open a ticket:
+
+```bash
+multica project memory status <project-id> --output json
+multica project memory check <project-id> --output json   # no --path
+```
+
+### Reporting a check (may open a sediment ticket)
+
+A new report is what can trigger a memory round. Reports come from the daemon
+(when it stats a project's local directory) or from the CLI with `--path`:
+
+```bash
+multica project memory check <project-id> --path <project-root> --output json
+```
+
+When the reported locations include a missing one, the server calls
+`EnsureMemoryRound`: an open sediment ticket for the project gets a reason
+comment, otherwise a new one is created and assigned to the workspace sediment
+agent (`settings.memory.sediment_agent`). With no seat configured, no ticket is
+created and the response carries `sediment_error` explaining why.
+
+Other triggers of the same round (server-side, no command needed): a stage
+advancing, a parent's sub-issues all reaching a terminal status, and the
+project being set to `completed`. Closing an ordinary issue does not trigger
+one.
+
+### Configuring the sediment agent seat
+
+The sediment agent seat determines which agent in the workspace handles
+automatic memory sediment tickets. It can be viewed and configured via CLI or
+in the workspace settings page:
+
+```bash
+# View the current sediment agent seat
+multica project memory seat get --output json
+
+# Configure the sediment agent seat by name or UUID
+multica project memory seat set "18号" --output json
+
+# Clear the sediment agent seat (disables automatic ticketing)
+multica project memory seat clear --output json
+```
+
+The server validates that the assigned agent:
+- exists within the current workspace;
+- is not archived;
+- has work enabled (`work_enabled !== false`);
+- has a bound runtime.
+
+Agents that are currently offline are accepted (they will process sediment
+tickets when their runtime reconnects).
+
 ## When to add a resource
 
 Add/update a project resource when the user asks for durable project context:
@@ -300,3 +373,15 @@ is task-local checkout state.
 Project create/update/delete/status and project resource add/update/remove
 mutate durable workspace state and affect future tasks. Ask before changing
 `local_directory` unless the user explicitly requested that exact local path.
+
+### Project repository commands
+
+Use the dedicated repository surface when attaching GitHub code to a project:
+
+```sh
+multica project repo add <project-id> --url <github-url> --output json
+multica project repo list <project-id> --output json
+multica project repo remove <project-id> <repo-resource-id> --output json
+```
+
+Attaching the same normalized URL twice is idempotent (`created` and `registered` come back false). `--output json` includes `repo.mode` and `repo.next_action` (`install_app`, `create_app`, `add_token`, `replace_token`, or `ask_owner`). `remove` detaches that project only; the workspace registry keeps the repository.

@@ -220,3 +220,76 @@ func TestErrorOnly(t *testing.T) {
 		t.Error("agent prose is not error-only")
 	}
 }
+
+// DENE-1002: a deliberate deferred/continuing close is an explained stop, not
+// a stalled one, and it names who continues.
+func TestDeliberateNonTerminalCloseIsExplained(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     string
+		conclusion string
+		ownerType  string
+		ownerID    string
+		waitingOn  string
+		wantOwner  Owner
+	}{
+		{
+			name: "todo deferred to planning", status: "todo", conclusion: "deferred",
+			ownerType: "none", ownerID: "", wantOwner: executor,
+		},
+		{
+			name: "in_progress continuing with the assignee", status: "in_progress", conclusion: "continuing",
+			ownerType: "agent", ownerID: "exec", wantOwner: executor,
+		},
+		{
+			name: "in_progress continuing while waiting on another ticket", status: "in_progress", conclusion: "continuing",
+			ownerType: "agent", ownerID: "exec", waitingOn: "DENE-806",
+			wantOwner: Owner{Type: "issue", ID: "DENE-806"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			meta := map[string]any{
+				"close.at":              t0.Add(5 * time.Minute).Format(time.RFC3339),
+				"close.status":          c.status,
+				"close.conclusion":      c.conclusion,
+				"close.next_owner_type": c.ownerType,
+				"close.next_owner_id":   c.ownerID,
+			}
+			if c.waitingOn != "" {
+				meta["close.waiting_on"] = c.waitingOn
+			}
+			rec := Classify(Input{
+				Status:   c.status,
+				Assignee: executor,
+				Meta:     meta,
+				Runs:     []Run{run("completed", t0, "", "")},
+			})
+			if rec.Category != CategoryDeferred || rec.Unexplained {
+				t.Fatalf("got %s unexplained=%v, want %s", rec.Category, rec.Unexplained, CategoryDeferred)
+			}
+			if !rec.CloseCurrent {
+				t.Fatal("close should be current")
+			}
+			if rec.NextOwner != c.wantOwner {
+				t.Errorf("next owner = %+v, want %+v", rec.NextOwner, c.wantOwner)
+			}
+		})
+	}
+
+	// The same record without a current close is still a stall: the conclusion
+	// only explains the run it was written against.
+	stale := Classify(Input{
+		Status:   "todo",
+		Assignee: executor,
+		Meta: map[string]any{
+			"close.at":         t0.Add(-time.Hour).Format(time.RFC3339),
+			"close.status":     "todo",
+			"close.conclusion": "deferred",
+		},
+		Runs: []Run{run("completed", t0, "", "")},
+	})
+	if stale.Category != CategoryStalledUnclosed || !stale.Unexplained {
+		t.Fatalf("a stale deferred close must not explain the run: %s unexplained=%v", stale.Category, stale.Unexplained)
+	}
+}

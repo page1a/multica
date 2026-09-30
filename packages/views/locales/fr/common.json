@@ -170,5 +170,12 @@
     "queue_aria": "Mettre une entrée en file dans le fil de travail",
     "insert": "Insérer",
     "prioritize_aria": "Prioriser {{id}}"
+  },
+  "scroll_to_bottom": {
+    "label": "Aller au plus récent",
+    "new_messages_one": "{{count}} nouveau message",
+    "new_messages_other": "{{count}} nouveaux messages",
+    "new_comments_one": "{{count}} nouveau commentaire",
+    "new_comments_other": "{{count}} nouveaux commentaires"
   }
 }

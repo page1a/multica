@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
  * Fit calculator for a single-row toolbar that collapses its tail into a
@@ -76,4 +76,72 @@ export function useSingleRowFit({
 
   // Never report more than exists (items can shrink between renders).
   return { containerRef, measureRef, fitCount: Math.min(fitCount, count) };
+}
+
+function sameNumbers(a: readonly number[], b: readonly number[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * Width of a single-row strip and the natural width of each measured child.
+ *
+ * The mirror (`measureRef`) must size to its content (`width: max-content`,
+ * `flex: none` children). A mirror that is stretched to the row reports
+ * every chip as wide as the row, so the fit stays stuck at one chip while
+ * the painted chip leaves a gap. Remeasures on row resize, mirror resize
+ * (labels, font load), and every commit.
+ */
+export function useMeasuredRow() {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLDivElement | null>(null);
+  const [available, setAvailable] = useState(0);
+  const [widths, setWidths] = useState<number[]>([]);
+
+  const recompute = useCallback(() => {
+    const container = containerRef.current;
+    const mirror = measureRef.current;
+    if (!container || !mirror) return;
+    const nextAvailable = Math.floor(container.clientWidth);
+    const nextWidths = Array.from(mirror.children).map((child) =>
+      Math.ceil((child as HTMLElement).getBoundingClientRect().width),
+    );
+    setAvailable((current) => (current === nextAvailable ? current : nextAvailable));
+    setWidths((current) => (sameNumbers(current, nextWidths) ? current : nextWidths));
+  }, []);
+
+  // After every commit the mirror has the current labels.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberate every-commit measure; the setState inside is change-guarded
+  useLayoutEffect(() => {
+    recompute();
+  });
+
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const container = containerRef.current;
+    const mirror = measureRef.current;
+    if (!container && !mirror) return;
+    const observer = new ResizeObserver(() => recompute());
+    if (container) observer.observe(container);
+    if (mirror) observer.observe(mirror);
+    return () => observer.disconnect();
+  }, [recompute]);
+
+  useEffect(() => {
+    const ready = document.fonts?.ready;
+    if (!ready) return;
+    let cancelled = false;
+    void ready.then(
+      () => {
+        if (!cancelled) recompute();
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [recompute]);
+
+  return { containerRef, measureRef, available, widths };
 }

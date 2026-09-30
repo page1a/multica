@@ -39,12 +39,22 @@ export function useTimeAgo() {
   };
 }
 
+/**
+ * Where the merged inbox (DENE-1004) files a row's issue on the board beside
+ * the list: a small tag naming the lane, and whether a lane filter dims it.
+ */
+export interface InboxRowDecoration {
+  laneTag?: { label: string; className: string };
+  dimmed?: boolean;
+}
+
 export function InboxListItem({
   item,
   view,
   isSelected,
   onClick,
   onAction,
+  decoration,
 }: {
   item: InboxItem;
   view: InboxView;
@@ -53,6 +63,7 @@ export function InboxListItem({
   // Archive in the main list, unarchive in the archived one — the row action is
   // always the reversal of the current view, so the two lists share this row.
   onAction: () => void;
+  decoration?: InboxRowDecoration;
 }) {
   const { t } = useT("inbox");
   const timeAgo = useTimeAgo();
@@ -128,11 +139,12 @@ export function InboxListItem({
       onContextMenu={
         openContextMenu ? (e) => openContextMenu(item, e) : undefined
       }
-      className={`group flex w-full cursor-default select-none items-center gap-3 rounded-md px-2 py-2.5 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
+      data-dimmed={decoration?.dimmed ? "" : undefined}
+      className={`group flex w-full cursor-default select-none items-center gap-3 rounded-md px-2 py-2.5 text-left outline-none transition-[background-color,opacity] focus-visible:ring-1 focus-visible:ring-ring ${
         isSelected
           ? "bg-accent"
           : "hover:bg-accent/50 data-[popup-open]:bg-accent/50"
-      }`}
+      } ${decoration?.dimmed ? "opacity-40 hover:opacity-100" : ""}`}
     >
       <ActorAvatar
         actorType={actorType}
@@ -192,6 +204,14 @@ export function InboxListItem({
             <InboxDetailLabel item={item} />
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
+            {decoration?.laneTag && (
+              <span
+                data-testid="inbox-row-lane-tag"
+                className={`whitespace-nowrap rounded-sm px-1 text-[11px] leading-4 font-medium ${decoration.laneTag.className}`}
+              >
+                {decoration.laneTag.label}
+              </span>
+            )}
             {/* Badge only, no hover card (MUL-5189). "An agent is on this"
                 is worth showing while triaging; the card behind it adds only
                 elapsed time, which does not change whether you open the row.

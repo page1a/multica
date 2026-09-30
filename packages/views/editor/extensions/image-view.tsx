@@ -16,6 +16,7 @@ function ImageView({ node, editor, selected, deleteNode }: NodeViewProps) {
   const src = (node.attrs.src as string) || "";
   const alt = (node.attrs.alt as string) || "";
   const uploading = node.attrs.uploading as boolean;
+  const uploadProgress = (node.attrs.uploadProgress as number | null) ?? undefined;
   const width = (node.attrs.width as number | null) ?? undefined;
   const height = (node.attrs.height as number | null) ?? undefined;
 
@@ -29,6 +30,7 @@ function ImageView({ node, editor, selected, deleteNode }: NodeViewProps) {
           url: src,
           filename: alt,
           uploading,
+          uploadProgress,
           // Intrinsic dimensions reserve the <img> box pre-decode (no shift).
           width,
           height,

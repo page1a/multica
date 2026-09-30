@@ -22,6 +22,8 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/closeprotocol"
+	"github.com/multica-ai/multica/server/internal/projectmemory"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
@@ -238,24 +240,45 @@ var issueStatusCmd = &cobra.Command{
 var issueCloseCmd = &cobra.Command{
 	Use:   "close <id>",
 	Short: "Close out an issue in one call: evidence comment, status, close record",
-	Long: "One command for the close protocol. The server posts the evidence comment,\n" +
+	Long:  issueCloseLong(),
+	Args:  exactArgs(1),
+	RunE:  runIssueClose,
+}
+
+func issueCloseLong() string {
+	return "One command for the close protocol. The server posts the evidence comment,\n" +
 		"writes the status and the close.* record in one transaction, and validates\n" +
 		"the record first — a close that is missing something is refused with the\n" +
 		"missing item named, and nothing is written.\n\n" +
-		"  --outcome done        delivered; a sub-issue's parent stage is notified\n" +
+		"  --outcome done        delivered; without a GitHub App, gh squash-merges an open\n" +
+		"                        PR first when it is clean and checks are green. A sub-issue's\n" +
+		"                        parent stage is notified\n" +
 		"  --outcome in_review   delivered, awaiting acceptance (top-level issues only;\n" +
 		"                        routing hands the ticket to the acceptance seat, do not @ it)\n" +
 		"  --outcome blocked     needs one wait: --blocked-by / --wake-at /\n" +
 		"                        --wait-condition with --wait-timeout / --needs-human\n" +
 		"  --outcome cancelled   dropped on purpose; say why in --evidence\n" +
+		"  --outcome backlog     back to planning on purpose; say why in --evidence,\n" +
+		"                        no PR needed, nobody is woken\n" +
+		"  --outcome todo        back to the ready list on purpose; say why in --evidence,\n" +
+		"                        no PR needed, nobody is woken\n" +
+		"  --outcome in_progress this round stops and the next one continues; --evidence\n" +
+		"                        says why, and one of --wake-at / --wait-condition with\n" +
+		"                        --wait-timeout / --blocked-by / --needs-human says who\n" +
+		"                        continues. The clock wait is patrolled, so the ticket\n" +
+		"                        comes back without anyone @-ing it\n" +
 		"  --verdict pass        acceptance seat only, with --outcome done: the platform\n" +
 		"                        merges the open PR and sets done, or blocks with the reason\n\n" +
 		"--evidence is mandatory (PR link, test conclusion). Agent-authored bodies should\n" +
-		"use --evidence-file <path> inside the working directory. The response says what\n" +
+		"use --evidence-file <path> inside the working directory. --pr <url> registers that\n" +
+		"pull or merge request with the close; an unverifiable link still closes and is\n" +
+		"marked 未核实. The response says what\n" +
 		"was actually written: the status, whether a PR merged, and who gets woken.\n" +
-		"The old path (`issue status` + `comment add`) keeps working.",
-	Args: exactArgs(1),
-	RunE: runIssueClose,
+		"The old path (`issue status` + `comment add`) keeps working.\n\n" +
+		"Every close records a knowledge audit in that same transaction, including a\n" +
+		"ticket with no pull request. --knowledge-none declares that nothing qualified\n" +
+		"for project memory. Repeat --knowledge <key>=<summary> for each checklist slot\n" +
+		"this close wrote. Keys: " + strings.Join(projectmemory.LocationKeys(), ", ") + "."
 }
 
 var issueHandoffCmd = &cobra.Command{
@@ -1067,6 +1090,14 @@ func runIssuePullRequests(cmd *cobra.Command, args []string) error {
 
 	prs, _ := result["pull_requests"].([]any)
 	printIssuePullRequestsTable(normalizePullRequestList(prs))
+	if gap, ok := result["gap"].(map[string]any); ok {
+		if msg := strVal(gap, "message"); msg != "" {
+			fmt.Fprintf(os.Stderr, "%s\n", msg)
+		}
+		if next := strVal(gap, "next_command"); next != "" {
+			fmt.Fprintf(os.Stderr, "%s\n", next)
+		}
+	}
 	return nil
 }
 
@@ -1435,7 +1466,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	timeout := cli.APITimeout()
 	attachments, _ := cmd.Flags().GetStringSlice("attachment")
 	if len(attachments) > 0 {
-		timeout = cli.AtLeastAPITimeout(60 * time.Second)
+		timeout = cli.AtLeastAPITimeout(10 * time.Minute)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -1868,7 +1899,7 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if status == "in_review" || status == "done" {
-		refreshIssuePullRequests(ctx, client, issueRef.ID, issueRef.Display, false)
+		refreshIssuePullRequests(ctx, client, issueRef.ID, issueRef.Display, false, false)
 	}
 
 	var result map[string]any
@@ -1888,21 +1919,24 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 // registerIssueCloseFlags wires `issue close`; shared with its tests so they
 // exercise the flag set that ships.
 func registerIssueCloseFlags(cmd *cobra.Command) {
-	cmd.Flags().String("outcome", "", "Close outcome: done, in_review, blocked, or cancelled (required)")
+	cmd.Flags().String("outcome", "", "Close outcome: done, in_review, blocked, cancelled, backlog, todo, or in_progress (required; see --help for what each one needs)")
 	cmd.Flags().String("evidence", "", "Evidence body: PR link, test conclusion (decodes \\n; prefer --evidence-file for multi-line)")
 	cmd.Flags().Bool("evidence-stdin", false, "Read the evidence body from stdin")
 	cmd.Flags().String("evidence-file", "", "Read the evidence body from a UTF-8 file inside the working directory")
 	cmd.Flags().Bool("allow-external-file", false, "Allow --evidence-file to read a path outside the current working directory")
 	cmd.Flags().String("summary", "", "One-line conclusion placed above the evidence; for blocked it is the close.block_action (80 chars max)")
 	cmd.Flags().String("parent", "", "Comment ID to reply under; a comment-triggered run defaults to its trigger comment")
-	cmd.Flags().String("blocked-by", "", "Comma-separated issue identifiers this blocked issue is waiting on")
-	cmd.Flags().String("wake-at", "", "RFC3339 time to wake a blocked issue for another look")
-	cmd.Flags().String("wait-condition", "", "External condition a blocked issue is waiting on")
+	cmd.Flags().String("blocked-by", "", "Comma-separated issue identifiers this blocked issue is waiting on; on --outcome in_progress it says who continues")
+	cmd.Flags().String("wake-at", "", "RFC3339 time to wake a blocked issue for another look; on --outcome in_progress the patrol wakes the executor then")
+	cmd.Flags().String("wait-condition", "", "External condition a blocked issue is waiting on; on --outcome in_progress it is the condition for the next round")
 	cmd.Flags().String("wait-probe", "", "How to check the wait condition")
 	cmd.Flags().String("wait-timeout", "", "RFC3339 deadline for the wait condition")
-	cmd.Flags().String("needs-human", "", "Member UUID whose decision or acceptance the issue waits on")
+	cmd.Flags().String("needs-human", "", "Member UUID whose decision or acceptance the issue waits on; on --outcome in_progress this person continues it")
 	cmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent's --outcome in_review without a linked open/merged PR is refused unless this is given")
 	cmd.Flags().String("verdict", "", "Acceptance verdict, reviewer only: pass (merges and closes)")
+	cmd.Flags().String("pr", "", "Pull or merge request URL to register with this close. A verified link is stored; an unverifiable link still closes and is marked 未核实")
+	cmd.Flags().Bool("knowledge-none", false, "Declare this close wrote no qualified project memory")
+	cmd.Flags().StringArray("knowledge", nil, "Project-memory change as <key>=<summary>; repeat for each checklist location")
 	cmd.Flags().String("output", "json", "Output format: table or json")
 }
 
@@ -1912,16 +1946,39 @@ func registerIssueHandoffFlags(cmd *cobra.Command) {
 	cmd.Flags().String("output", "table", "Output format: table or json")
 }
 
-var validCloseOutcomes = []string{"done", "in_review", "blocked", "cancelled"}
+var validCloseOutcomes = []string{"done", "in_review", "blocked", "cancelled", "backlog", "todo", "in_progress"}
+
+// closeOutcomeNeeds is the one-line "what each outcome requires" contract the
+// help and the bad-outcome errors quote, so a caller never has to guess.
+const closeOutcomeNeeds = "done needs delivery evidence; in_review needs a linked PR (or --no-code); " +
+	"blocked needs one wait (--blocked-by / --wake-at / --wait-condition with --wait-timeout / --needs-human); " +
+	"cancelled needs --evidence; backlog and todo need --evidence and wake nobody; " +
+	"in_progress needs --evidence plus who continues (--wake-at / --wait-condition with --wait-timeout / --blocked-by / --needs-human)"
+
+// closeContinuationPresent mirrors the server's blockwait.Structured test: a
+// clock, a wait with a deadline, another ticket, or a named person.
+func closeContinuationPresent(cmd *cobra.Command) bool {
+	get := func(name string) string {
+		v, _ := cmd.Flags().GetString(name)
+		return strings.TrimSpace(v)
+	}
+	if get("blocked-by") != "" || get("wake-at") != "" || get("needs-human") != "" {
+		return true
+	}
+	return get("wait-condition") != "" && get("wait-timeout") != ""
+}
 
 func runIssueClose(cmd *cobra.Command, args []string) error {
 	outcome, _ := cmd.Flags().GetString("outcome")
 	outcome = strings.ToLower(strings.TrimSpace(outcome))
 	if outcome == "" {
-		return fmt.Errorf("--outcome is required: one of %s", strings.Join(validCloseOutcomes, ", "))
+		return fmt.Errorf("--outcome is required: one of %s. %s", strings.Join(validCloseOutcomes, ", "), closeOutcomeNeeds)
 	}
 	if !slices.Contains(validCloseOutcomes, outcome) {
-		return fmt.Errorf("--outcome %q is not a close outcome; use one of %s", outcome, strings.Join(validCloseOutcomes, ", "))
+		return fmt.Errorf("--outcome %q is not a close outcome; use one of %s. %s", outcome, strings.Join(validCloseOutcomes, ", "), closeOutcomeNeeds)
+	}
+	if outcome == "in_progress" && !closeContinuationPresent(cmd) {
+		return fmt.Errorf("--outcome in_progress must say who continues: give one of --wake-at <RFC3339>, --wait-condition \"...\" with --wait-timeout <RFC3339>, --blocked-by <issue>, or --needs-human <member>. To just put the ticket back without a continuation, use --outcome backlog or --outcome todo")
 	}
 	evidence, hasEvidence, err := resolveTextFlag(cmd, "evidence")
 	if err != nil {
@@ -1939,6 +1996,10 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 	if verdict != "" && verdict != "pass" {
 		return fmt.Errorf("--verdict only accepts pass; a failed acceptance is not a close — post it with `multica issue comment add <id> --verdict hold --content-file <path>`")
 	}
+	audit, err := knowledgeAuditFromFlags(cmd)
+	if err != nil {
+		return err
+	}
 
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -1952,7 +2013,7 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve issue: %w", err)
 	}
 
-	body := map[string]any{"outcome": outcome, "evidence": evidence}
+	body := map[string]any{"outcome": outcome, "evidence": evidence, "knowledge_audit": audit}
 	for _, pair := range []struct{ flag, key string }{
 		{"summary", "summary"},
 		{"parent", "parent_id"},
@@ -1963,6 +2024,7 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		{"wait-timeout", "wait_timeout"},
 		{"needs-human", "needs_human"},
 		{"no-code", "no_code_reason"},
+		{"pr", "pr_url"},
 	} {
 		if v, _ := cmd.Flags().GetString(pair.flag); strings.TrimSpace(v) != "" {
 			body[pair.key] = v
@@ -1972,7 +2034,7 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		body["verdict"] = verdict
 	}
 	if outcome == "done" || outcome == "in_review" {
-		refreshIssuePullRequests(ctx, client, issueRef.ID, issueRef.Display, outcome == "done" && verdict == "pass")
+		refreshIssuePullRequests(ctx, client, issueRef.ID, issueRef.Display, outcome == "done" && verdict == "pass", outcome == "done" && verdict == "")
 	}
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/close", body, &result); err != nil {
@@ -2000,6 +2062,30 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return cli.PrintJSON(os.Stdout, result)
+}
+
+// knowledgeAuditFromFlags builds the close body's knowledge_audit. The
+// sentences are the server's, so a local refusal and a 400 say the same thing.
+func knowledgeAuditFromFlags(cmd *cobra.Command) (closeprotocol.KnowledgeAudit, error) {
+	none, _ := cmd.Flags().GetBool("knowledge-none")
+	items, _ := cmd.Flags().GetStringArray("knowledge")
+	audit := closeprotocol.KnowledgeAudit{None: none}
+	for _, item := range items {
+		location, summary, ok := strings.Cut(item, "=")
+		if !ok {
+			location = item
+			summary = ""
+		}
+		audit.Changes = append(audit.Changes, closeprotocol.KnowledgeChange{
+			Location: location,
+			Summary:  summary,
+		})
+	}
+	parsed, _, err := closeprotocol.CanonicalKnowledgeAudit(audit)
+	if err != nil {
+		return closeprotocol.KnowledgeAudit{}, err
+	}
+	return parsed, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2529,7 +2615,7 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	timeout := cli.APITimeout()
 	attachments, _ := cmd.Flags().GetStringSlice("attachment")
 	if len(attachments) > 0 {
-		timeout = cli.AtLeastAPITimeout(60 * time.Second)
+		timeout = cli.AtLeastAPITimeout(10 * time.Minute)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

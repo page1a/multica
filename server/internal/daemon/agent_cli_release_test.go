@@ -105,7 +105,7 @@ func TestPlanAgentCLIUpgradeAddsNPMForThatPrefix(t *testing.T) {
 		t.Fatal(why)
 	}
 	if len(steps) != 1 || steps[0].Name != "npm" {
-		t.Fatalf("codex has no native updater; plan = %#v", steps)
+		t.Fatalf("an npm copy of codex updates only through its own prefix; plan = %#v", steps)
 	}
 	wantPrefix, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -131,5 +131,44 @@ func TestParseLatestVersions(t *testing.T) {
 	tag, err := parseGitHubLatestVersion([]byte(`{"tag_name":"v1.2.3"}`))
 	if err != nil || tag != "v1.2.3" {
 		t.Fatalf("github = %q, %v", tag, err)
+	}
+}
+
+func TestPlanAgentCLIUpgradeCodexStandaloneUsesNativeUpdate(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	real := filepath.Join(home, ".codex", "packages", "standalone", "releases", "0.157.1-aarch64-apple-darwin", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, ".local", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, launcher); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	spec, _ := agentCLIReleaseFor("codex")
+	steps, why := planAgentCLIUpgrade(spec, launcher)
+	if why != "" {
+		t.Fatal(why)
+	}
+	if len(steps) != 1 || steps[0].Name != "native" {
+		t.Fatalf("standalone codex plan = %#v", steps)
+	}
+	if steps[0].Argv[0] != launcher || steps[0].Argv[1] != "update" {
+		t.Fatalf("argv = %#v", steps[0].Argv)
+	}
+}
+
+func TestPlanAgentCLIUpgradeCodexElsewhereHasNoUpdater(t *testing.T) {
+	t.Parallel()
+	spec, _ := agentCLIReleaseFor("codex")
+	steps, why := planAgentCLIUpgrade(spec, "/opt/homebrew/bin/codex")
+	if len(steps) != 0 || why == "" {
+		t.Fatalf("an unknown codex copy must not be upgraded; plan = %#v, why = %q", steps, why)
 	}
 }

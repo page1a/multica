@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Multica platform actions the runtime brief does not fully cover: issue and PR contracts, automatic routing, close protocol, mentions, agents and base-role specialisations, squads, autopilots, projects, runtimes, skill import, workspace transfer. Not for the product code you are working on."
+description: "Use for Multica platform actions the runtime brief omits: inbox, issue and PR contracts, routing, close protocol, mentions, agents, specialisations, squads, autopilots, projects, runtimes, skill import, workspace transfer, sub-issues, GitHub App. Not for the product code you are working on."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -19,7 +19,8 @@ Read the invariants below, then open the reference(s) your task actually needs
 
 | Open | When the task is about |
 |---|---|
-| `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, sub-issues and stages, who else is running |
+| `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, who else is running |
+| `references/sub-issues.md` | Sub-issues: todo vs backlog at create time, stages as barrier groups, promoting parked children |
 | `references/routing.md` | Automatic routing: which slots it fills at which status, the 验收席 field, what an `issue route` result means, why dispatch stopped |
 | `references/close-protocol.md` | Closing an issue: the eight `close.*` keys, conclusion / status / next owner / wake decision tables, blocked-close fields, dispatcher stage promotion |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing |
@@ -27,10 +28,12 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/specialisations.md` | Base roles and specialisations: what a child inherits, the two-level cap, runtime following, solidify, the archive guard |
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
 | `references/autopilots.md` | Autopilots: schedule / webhook / manual triggers, `create_issue` vs `run_only`, why one did not fire |
-| `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode) |
+| `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode), and project memory (`check`, `status`, `seat`) |
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
+| `references/inbox.md` | The user asks about their inbox or what is stuck: `multica inbox board` and the fixed five-part answer |
 | `references/transfer.md` | `multica transfer export` / `import` / `bind-runtimes`, and the kun `/transfer/*` endpoints |
 | `references/skill-import.md` | Importing a skill into this workspace from a URL or a local archive |
+| `references/github-app.md` | GitHub App identity for this deployment: status, and a setup link a person opens to create the App |
 
 Open what the task needs. A single-domain task usually needs one; a task that
 crosses domains needs each domain it touches — creating a squad, assigning it an
@@ -59,6 +62,8 @@ you debugging access when the real problem was the id.
 **`--output json` writes to stdout; warnings and confirmations go to stderr.**
 Do not merge them (`2>&1`) into anything that parses the output — that makes a
 write which SUCCEEDED look like it failed, and invites a duplicate retry.
+
+**Long-tail settings:** `multica settings get <key>` and `multica settings set <key> --value-json '<json>'` (secrets via `--value-file` or `--value-stdin`); `repo.shares` revokes with `{"url","member_id","revoke":true}`. The key table is `docs/kun/settings-cli-coverage.md`.
 
 **Writes are real.** Creating, updating, deleting, assigning, commenting,
 mentioning, triggering and status changes mutate durable workspace state or

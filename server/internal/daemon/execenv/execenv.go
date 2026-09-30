@@ -18,9 +18,25 @@ import (
 
 // RepoContextForEnv describes a workspace repo available for checkout.
 type RepoContextForEnv struct {
-	URL         string // remote URL
-	Description string // optional repo description
-	Ref         string // optional default checkout ref for this task
+	URL         string           // remote URL
+	Description string           // optional repo description
+	Ref         string           // optional default checkout ref for this task
+	Reach       *RepoReachForEnv // project repository connectivity, when known
+}
+
+type RepoReachForEnv struct {
+	State      string
+	Mode       string
+	Hint       string
+	NextAction *RepoNextActionForEnv
+}
+
+type RepoNextActionForEnv struct {
+	Kind     string
+	For      string
+	URL      string
+	Command  string
+	Optional bool
 }
 
 // ProjectResourceForEnv describes a single resource attached to the issue's
@@ -44,6 +60,9 @@ type ProjectContextForEnv struct {
 	Title       string
 	Description string
 	Resources   []ProjectResourceForEnv
+	// MemoryLine is the single project-memory sentence from the claim.
+	// Empty leaves the brief byte-identical to a server that does not send it.
+	MemoryLine string
 }
 
 // CodeSourceForEnv describes where a task's code lives and why. Populated by
@@ -235,6 +254,9 @@ type TaskContextForEnv struct {
 	AgentSkills                   []SkillContextForEnv
 	DisabledRuntimeSkills         []RuntimeSkillRefForEnv
 	Repos                         []RepoContextForEnv // workspace repos available for checkout
+	ProjectRepos                  []RepoContextForEnv // project-only repos for the runtime brief
+	WorkspaceRepoCount            int                 // total workspace repos, for the project brief summary
+	OtherWorkspaceRepoCount       int                 // workspace repos outside the active project
 	// CodeSource is the resolved answer to "where does this task's code come
 	// from" (DENE-595). Zero value means the historical behavior: no directory
 	// pinned on this machine, every repo checked out on demand. When the

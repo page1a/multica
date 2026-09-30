@@ -73,6 +73,11 @@ func (h *Handler) routeIssueDetached(attrs []any, workspaceID, issueID string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), routeTimeout)
 		defer cancel()
+		// Warm analysis before the routing state machine. This also covers
+		// backlog tickets, whose route is intentionally a no-op until promoted.
+		if err := h.Routing.PreAnalyze(ctx, workspaceID, issueID); err != nil {
+			slog.Debug("routing pre-analysis unavailable", "workspace_id", workspaceID, "issue_id", issueID, "error", err)
+		}
 		outcome, err := h.Routing.Route(ctx, workspaceID, issueID)
 		if err != nil {
 			slog.Warn("routing pass failed",
@@ -102,6 +107,12 @@ func (h *Handler) RouteGroupNodeAsync(r *http.Request, workspaceID, issueID stri
 	go func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), routeTimeout)
 		defer cancel()
+		// Group-created backlog nodes do not enter Route's todo path yet, but
+		// their title and body are already final. Warm the same cache used by
+		// ordinary issue writes before applying the group fill rules.
+		if err := h.Routing.PreAnalyze(ctx, workspaceID, issueID); err != nil {
+			slog.Debug("group routing pre-analysis unavailable", "workspace_id", workspaceID, "issue_id", issueID, "error", err)
+		}
 		outcome, err := h.Routing.RouteGroupNode(ctx, workspaceID, issueID)
 		if err != nil {
 			slog.Warn("group routing pass failed",

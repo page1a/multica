@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -426,5 +429,96 @@ func TestBuildResourceRefFromFlagsLocalDirectoryPreservesIdentityFields(t *testi
 		if ref[key] != want {
 			t.Errorf("%s = %v, want %v (an unrelated mode edit must not drop identity)", key, ref[key], want)
 		}
+	}
+}
+
+func TestProjectMemorySeatCLI(t *testing.T) {
+	wsID := "11111111-1111-1111-1111-111111111111"
+	agentID := "22222222-2222-2222-2222-222222222222"
+
+	var currentSettings map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/"+wsID:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":       wsID,
+				"name":     "Test WS",
+				"settings": currentSettings,
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/"+wsID:
+			var body struct {
+				Settings map[string]any `json:"settings"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			currentSettings = body.Settings
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":       wsID,
+				"settings": currentSettings,
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/agents"):
+			if r.URL.Path == "/api/agents/"+agentID {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id":           agentID,
+					"name":         "Sediment Bot",
+					"status":       "idle",
+					"work_enabled": true,
+				})
+			} else {
+				_ = json.NewEncoder(w).Encode([]map[string]any{
+					{
+						"id":           agentID,
+						"name":         "Sediment Bot",
+						"status":       "idle",
+						"work_enabled": true,
+					},
+				})
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", wsID)
+
+	// 1. Get seat initially (unconfigured)
+	cmdGet := projectMemorySeatGetCmd
+	_ = cmdGet.Flags().Set("output", "json")
+	if err := runProjectMemorySeatGet(cmdGet, nil); err != nil {
+		t.Fatalf("runProjectMemorySeatGet failed: %v", err)
+	}
+
+	// 2. Set seat by agent name
+	cmdSet := projectMemorySeatSetCmd
+	_ = cmdSet.Flags().Set("output", "json")
+	_ = cmdSet.Flags().Set("clear", "false")
+	if err := runProjectMemorySeatSet(cmdSet, []string{"Sediment Bot"}); err != nil {
+		t.Fatalf("runProjectMemorySeatSet failed: %v", err)
+	}
+
+	mem, _ := currentSettings["memory"].(map[string]any)
+	if mem == nil || mem["sediment_agent"] != agentID {
+		t.Fatalf("expected memory.sediment_agent = %s, got %v", agentID, mem)
+	}
+
+	// 3. Get seat (now configured)
+	if err := runProjectMemorySeatGet(cmdGet, nil); err != nil {
+		t.Fatalf("runProjectMemorySeatGet configured failed: %v", err)
+	}
+
+	// 4. Clear seat
+	cmdClear := projectMemorySeatClearCmd
+	_ = cmdClear.Flags().Set("output", "json")
+	if err := runProjectMemorySeatSetAgent(cmdClear, "", true); err != nil {
+		t.Fatalf("runProjectMemorySeatSetAgent clear failed: %v", err)
+	}
+
+	memAfter, _ := currentSettings["memory"].(map[string]any)
+	if memAfter != nil && memAfter["sediment_agent"] != "" {
+		t.Fatalf("expected sediment_agent cleared, got %v", memAfter)
 	}
 }

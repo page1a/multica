@@ -1,6 +1,7 @@
 import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
 import { createLogger } from "../logger";
+import { retryUpload } from "../attachments/upload-retry";
 
 /**
  * Module-level file-upload coordinator (MUL-5181, L2).
@@ -42,6 +43,7 @@ export interface StartUploadArgs {
   /** Injected so the coordinator is framework-agnostic and unit-testable. */
   api: Pick<ApiClient, "uploadFile">;
   ctx?: UploadCoordinatorContext;
+  onProgress?: (uploadedBytes: number, totalBytes: number) => void;
   /**
    * Settled outcome. NOT called on abort — an aborted upload leaves its
    * placeholder in `uploading`, which the store drops on the next load (aborts
@@ -64,6 +66,7 @@ export function startUpload({
   file,
   api,
   ctx,
+  onProgress,
   onSettled,
 }: StartUploadArgs): void {
   const controller = new AbortController();
@@ -71,20 +74,24 @@ export function startUpload({
 
   void (async () => {
     try {
-      const attachment = await api.uploadFile(
-        file,
-        {
-          issueId: ctx?.issueId,
-          commentId: ctx?.commentId,
-          chatSessionId: ctx?.chatSessionId,
-        },
-        controller.signal,
+      const attachment = await retryUpload(
+        (trackProgress) =>
+          api.uploadFile(
+            file,
+            {
+              issueId: ctx?.issueId,
+              commentId: ctx?.commentId,
+              chatSessionId: ctx?.chatSessionId,
+              onProgress: trackProgress,
+            },
+            controller.signal,
+          ),
+        { signal: controller.signal, onProgress },
       );
       onSettled({ clientUploadId, status: "uploaded", attachment });
     } catch (err) {
       // An abort is not a failure: leave the placeholder untouched. It stays
-      // `uploading` for the rest of the session and is dropped on the next
-      // load. Every other error surfaces.
+      // uploading until the caller clears it during logout.
       if (controller.signal.aborted || (err instanceof Error && err.name === "AbortError")) {
         logger.info("upload aborted", { clientUploadId });
         return;

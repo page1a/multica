@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -71,10 +72,11 @@ type Router struct {
 	Judge Judge
 	// Analyst is the analysis role. Nil means this build cannot run it, and a
 	// workspace that switched it on gets the unavailable path.
-	Analyst Analyst
-	Breaker *Breaker
-	Ladder  Ladder
-	Log     *slog.Logger
+	Analyst          Analyst
+	Breaker          *Breaker
+	Ladder           Ladder
+	Log              *slog.Logger
+	analysisFailures sync.Map // content key -> time.Time
 }
 
 // New builds a Router with the shipped ladder and breaker.

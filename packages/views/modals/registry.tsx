@@ -10,6 +10,7 @@ import { FeedbackModal } from "./feedback";
 import { SetParentIssueModal } from "./set-parent-issue";
 import { AddChildIssueModal } from "./add-child-issue";
 import { DeleteIssueConfirmModal } from "./delete-issue-confirm";
+import { CloseIssueDialog } from "./close-issue";
 import { RunConfirmModal } from "./run-confirm";
 import { IssueLimitUpgradeDialog } from "./issue-limit-upgrade-dialog";
 
@@ -72,6 +73,9 @@ export function ModalRegistry() {
       break;
     case "issue-delete-confirm":
       activeModal = <DeleteIssueConfirmModal onClose={close} data={data} />;
+      break;
+    case "issue-close":
+      activeModal = <CloseIssueDialog onClose={close} data={data} />;
       break;
     case "issue-run-confirm":
       activeModal = <RunConfirmModal onClose={close} data={data} />;

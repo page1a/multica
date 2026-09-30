@@ -37,13 +37,14 @@ export function FileCardView({ node, editor, deleteNode }: NodeViewProps) {
   const href = (node.attrs.href as string) || "";
   const filename = (node.attrs.filename as string) || "";
   const uploading = node.attrs.uploading as boolean;
+  const uploadProgress = (node.attrs.uploadProgress as number | null) ?? undefined;
   const editable = editor?.isEditable ?? false;
 
   return (
     <NodeViewWrapper as="div" className="file-card-node" data-type="fileCard">
       <div contentEditable={false}>
         <Attachment
-          attachment={{ kind: "url", url: href, filename, uploading }}
+          attachment={{ kind: "url", url: href, filename, uploading, uploadProgress }}
           editable={editable}
           onDelete={editable ? deleteNode : undefined}
         />
@@ -80,6 +81,10 @@ export const FileCardExtension = Node.create({
         rendered: false,
       },
       uploadId: {
+        default: null,
+        rendered: false,
+      },
+      uploadProgress: {
         default: null,
         rendered: false,
       },

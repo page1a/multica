@@ -4,6 +4,8 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 
@@ -40,6 +42,12 @@ import {
 export interface ScrollRestorationEntry {
   top: number;
   height: number;
+  /**
+   * Horizontal offset, for containers that scroll sideways (the board's row
+   * of columns — on a phone only one column fits, so losing it drops the
+   * user back on the first status). Absent means 0.
+   */
+  left?: number;
   contentKey?: string;
 }
 
@@ -135,21 +143,71 @@ export function useRestoredScrollOffset(containerKey: string): number | undefine
 }
 
 /**
+ * How long a restore keeps retrying while the container is still too short to
+ * reach the saved offset. After a full reload (a phone browser discarding a
+ * background tab) the rows arrive with the first fetch, well after the
+ * container attached; within the app the cache is warm and the first attempt
+ * lands.
+ */
+const RESTORE_RETRY_MS = 3000;
+
+/** Input that means the user has taken over scrolling: stop restoring. */
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
+function applyScrollEntry(el: HTMLElement, entry: ScrollRestorationEntry): boolean {
+  const left = entry.left ?? 0;
+  if (entry.top > 0) el.scrollTop = entry.top;
+  if (left > 0) el.scrollLeft = left;
+  // Browsers clamp an out-of-range assignment; a clamp means the content is
+  // not tall/wide enough yet. One pixel of slack absorbs fractional offsets.
+  return Math.abs(el.scrollTop - entry.top) <= 1 && Math.abs(el.scrollLeft - left) <= 1;
+}
+
+/**
  * Ref callback for PLAIN (non-virtualized) scroll containers: assigns the
  * saved offset when the element attaches, which happens during commit —
  * before paint — so the first visible frame is already at the restored
  * position. Compose it with other refs via a merged callback.
+ *
+ * When the content is not tall enough yet (it is still loading after a
+ * reload), the assignment is clamped; the restore then retries each frame
+ * until it lands, the user starts scrolling, or RESTORE_RETRY_MS passes.
  */
 export function useRestoredScrollRef(
   containerKey: string,
 ): (el: HTMLElement | null) => void {
   const adapter = useContext(ScrollRestorationContext);
+  const cancelRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelRef.current?.(), []);
   return useCallback(
     (el: HTMLElement | null) => {
+      cancelRef.current?.();
+      cancelRef.current = null;
       if (!el) return;
       const saved = adapter?.get(containerKey);
-      if (!saved || saved.top <= 0) return;
-      el.scrollTop = saved.top;
+      if (!saved || (saved.top <= 0 && (saved.left ?? 0) <= 0)) return;
+      if (applyScrollEntry(el, saved)) return;
+      if (typeof requestAnimationFrame !== "function") return;
+
+      const deadline = Date.now() + RESTORE_RETRY_MS;
+      let frame = 0;
+      const stop = () => {
+        cancelAnimationFrame(frame);
+        for (const type of USER_SCROLL_EVENTS) el.removeEventListener(type, stop);
+        if (cancelRef.current === stop) cancelRef.current = null;
+      };
+      const tick = () => {
+        if (!el.isConnected || Date.now() > deadline || applyScrollEntry(el, saved)) {
+          stop();
+          return;
+        }
+        frame = requestAnimationFrame(tick);
+      };
+      for (const type of USER_SCROLL_EVENTS) {
+        el.addEventListener(type, stop, { once: true, passive: true });
+      }
+      cancelRef.current = stop;
+      frame = requestAnimationFrame(tick);
     },
     [adapter, containerKey],
   );

@@ -6,7 +6,9 @@
     "search_placeholder": "チャットのタイトルや内容を検索…",
     "search_clear": "検索をクリア",
     "search_empty": "一致するチャットはありません",
-    "back": "戻る"
+    "back": "戻る",
+    "new_chat_in_project": "新しいチャットは「{{title}}」に残ります",
+    "new_chat_unbound": "新しいチャットはプロジェクトに紐づきません"
   },
   "project_bar": {
     "all": "すべて",
@@ -23,7 +25,10 @@
     "unpin": "ピン留めを外す",
     "drag": "ドラッグして並べ替え",
     "empty": "このプロジェクトにはまだチャットがありません",
-    "unread": "未読"
+    "unread": "未読",
+    "switch": "プロジェクトを切り替え",
+    "switch_search": "プロジェクトを検索…",
+    "switch_empty": "一致するプロジェクトはありません"
   },
   "project_nudge": {
     "bind": "プロジェクトに紐づける",
@@ -194,7 +199,11 @@
       "label": "アクションを提案",
       "prompt": "私のワークスペースについて知っていることを踏まえ、最初に役立つアクションを提案してください。"
     },
-    "customize": "開始例をカスタマイズ"
+    "customize": "開始例をカスタマイズ",
+    "inbox": {
+      "label": "受信トレイをざっと説明して",
+      "prompt": "受信トレイをざっと説明して"
+    }
   },
   "onboarding_cards": {
     "aria_label": "はじめ方",
@@ -270,7 +279,9 @@
     "row_actions_aria": "チャットの操作",
     "edit_access": "権限を編集",
     "private_tag": "非公開",
-    "extra_tag": "追加メンバー"
+    "extra_tag": "追加メンバー",
+    "show_more": "さらに表示（{{count}}）",
+    "show_fewer": "表示を減らす"
   },
   "header": {
     "view_profile": "Agent のプロフィール",

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { GripVertical, Pin } from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { ChevronsUpDown, GripVertical, Pin } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -10,10 +10,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@multica/ui/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
+import { useShortcut } from "@multica/core/shortcuts";
+import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { chatSessionProjectIds } from "@multica/core/chat/project-context";
 import {
   rankChatProjects,
-  visibleBarProjectIds,
+  visibleBarProjectIdsForWidths,
   type ChatProjectFilter,
 } from "@multica/core/chat/project-bar";
 import {
@@ -21,13 +24,34 @@ import {
   useChatProjectBarStore,
 } from "@multica/core/chat/project-bar-store";
 import type { ChatSession, Project } from "@multica/core/types";
-import { useSingleRowFit } from "../../common/single-row-fit";
+import { useMeasuredRow } from "../../common/single-row-fit";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 
 const CHIP_GAP = 6;
 /** Not a project id. Stands in for the "no project" filter when it is promoted onto the bar. */
 const NONE_CHIP = "\0none";
+
+// Natural chip width. A mirror stretched to the row makes every chip measure
+// as wide as the row, so the fit stays at one chip and the painted chip
+// leaves an empty gap.
+const MIRROR_STYLE: CSSProperties = {
+  position: "absolute",
+  left: 0,
+  top: 0,
+  display: "flex",
+  flexDirection: "row",
+  flexWrap: "nowrap",
+  width: "max-content",
+  gap: CHIP_GAP,
+  visibility: "hidden",
+  pointerEvents: "none",
+};
+const CHIP_SLOT_STYLE: CSSProperties = {
+  display: "inline-flex",
+  flex: "none",
+  width: "max-content",
+};
 
 /**
  * One row above the chat list: All, then the person's pinned projects, then
@@ -40,14 +64,18 @@ export function ChatProjectBar({
   userId,
   filter,
   onFilterChange,
+  onOpenSwitcher,
 }: {
   projects: Project[];
   sessions: ChatSession[];
   userId: string | null;
   filter: ChatProjectFilter;
   onFilterChange: (filter: ChatProjectFilter) => void;
+  /** Opens the searchable jump list. Omitted on surfaces that don't switch. */
+  onOpenSwitcher?: () => void;
 }) {
   const { t } = useT("chat");
+  const projectSwitchChord = useShortcut("switchChatProject");
   const pinnedIds = useChatProjectBarStore(selectPinnedProjectIds(userId));
   const pin = useChatProjectBarStore((s) => s.pin);
   const unpin = useChatProjectBarStore((s) => s.unpin);
@@ -55,7 +83,6 @@ export function ChatProjectBar({
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [promotedId, setPromotedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const titleById = useMemo(
@@ -84,23 +111,38 @@ export function ChatProjectBar({
   }, [ranked]);
 
   const orderedIds = useMemo(() => ranked.bar.map((row) => row.id), [ranked]);
-  const { containerRef, measureRef, fitCount } = useSingleRowFit({
-    count: orderedIds.length,
-    gap: CHIP_GAP,
-    reserve: 0,
-  });
-  const visibleIds = visibleBarProjectIds(orderedIds, fitCount, promotedId);
+  // The open filter stays on the row even when it sits past the fold.
+  const promotedId =
+    filter.type === "project" ? filter.id : filter.type === "none" ? NONE_CHIP : null;
+  const measureIds = useMemo(() => {
+    if (!promotedId || orderedIds.includes(promotedId)) return orderedIds;
+    return [...orderedIds, promotedId];
+  }, [orderedIds, promotedId]);
+  const { containerRef, measureRef, available, widths } = useMeasuredRow();
+  const visibleIds = visibleBarProjectIdsForWidths(
+    orderedIds,
+    widths.slice(0, orderedIds.length),
+    available,
+    CHIP_GAP,
+    promotedId,
+    promotedId == null ? undefined : widths[measureIds.indexOf(promotedId)],
+  );
+  const visibleProjectCount = visibleIds.filter(
+    (id) => id !== NONE_CHIP && titleById.has(id),
+  ).length;
+  const overflowCount = Math.max(0, projects.length - visibleProjectCount);
+  const menuOwnsSelection =
+    (filter.type === "project" && !visibleIds.includes(filter.id)) ||
+    (filter.type === "none" && !visibleIds.includes(NONE_CHIP));
 
   useEffect(() => {
     if (filter.type !== "project" || projects.length === 0) return;
     if (titleById.has(filter.id)) return;
-    setPromotedId(null);
     onFilterChange({ type: "all" });
   }, [filter, projects.length, titleById, onFilterChange]);
 
-  const select = (next: ChatProjectFilter, promote: string | null) => {
+  const select = (next: ChatProjectFilter) => {
     onFilterChange(next);
-    setPromotedId(promote);
     setMenuOpen(false);
   };
 
@@ -134,16 +176,12 @@ export function ChatProjectBar({
     const title = titleById.get(id) ?? "";
     return (
       <Button
-        key={id}
         type="button"
         variant="outline"
         size="sm"
         aria-pressed={active}
         className={chipClass(active)}
-        onClick={() => {
-          const natural = orderedIds.slice(0, fitCount);
-          select({ type: "project", id }, natural.includes(id) ? null : id);
-        }}
+        onClick={() => select({ type: "project", id })}
       >
         {pinnedIds.includes(id) && <Pin className="size-3 shrink-0" aria-hidden />}
         {row?.hasUnread && (
@@ -160,50 +198,71 @@ export function ChatProjectBar({
     );
   };
 
+  const renderSlot = (id: string) =>
+    id === NONE_CHIP ? (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-pressed={filter.type === "none"}
+        className={chipClass(filter.type === "none")}
+        onClick={() => select({ type: "none" })}
+      >
+        {noneLabel}
+      </Button>
+    ) : (
+      renderProjectChip(id)
+    );
+
   return (
-    <div className="flex items-center gap-1.5 border-b px-2 pb-2">
+    <div className="relative flex items-center gap-1.5 border-b px-2 pb-2">
       <Button
         type="button"
         variant="outline"
         size="sm"
         aria-pressed={filter.type === "all"}
         className={chipClass(filter.type === "all")}
-        onClick={() => select({ type: "all" }, null)}
+        onClick={() => select({ type: "all" })}
       >
         {t(($) => $.project_bar.all)}
       </Button>
 
       <div
         ref={containerRef}
-        className="relative flex min-w-0 flex-1 items-center overflow-hidden"
+        className="flex h-7 min-w-0 flex-1 flex-nowrap items-center overflow-hidden"
         style={{ gap: CHIP_GAP }}
       >
-        {visibleIds.map((id) =>
-          id === NONE_CHIP ? (
-            <Button
-              key={NONE_CHIP}
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-pressed={filter.type === "none"}
-              className={chipClass(filter.type === "none")}
-              onClick={() => select({ type: "none" }, NONE_CHIP)}
-            >
-              {noneLabel}
-            </Button>
-          ) : (
-            renderProjectChip(id)
-          ),
-        )}
-        <div
-          ref={measureRef}
-          aria-hidden
-          className="pointer-events-none invisible absolute flex"
-          style={{ gap: CHIP_GAP }}
-        >
-          {orderedIds.map((id) => renderProjectChip(id))}
-        </div>
+        {visibleIds.map((id) => (
+          <span key={id} style={CHIP_SLOT_STYLE}>
+            {renderSlot(id)}
+          </span>
+        ))}
       </div>
+
+      {onOpenSwitcher && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="size-7 shrink-0 rounded-full"
+                aria-label={t(($) => $.project_bar.switch)}
+                onClick={onOpenSwitcher}
+              />
+            }
+          >
+            <ChevronsUpDown className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            <span className="inline-flex items-center gap-1.5">
+              {t(($) => $.project_bar.switch)}
+              {projectSwitchChord ? <ShortcutKeycaps shortcut={projectSwitchChord} /> : null}
+            </span>
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       <Popover
         open={menuOpen}
@@ -218,11 +277,16 @@ export function ChatProjectBar({
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 shrink-0 rounded-full px-2.5 text-caption"
+              aria-pressed={menuOwnsSelection}
+              className={cn(
+                "h-7 shrink-0 rounded-full px-2.5 text-caption",
+                menuOwnsSelection &&
+                  "border-foreground bg-foreground text-background hover:bg-foreground/90 hover:text-background",
+              )}
             />
           }
         >
-          {t(($) => $.project_bar.more, { count: projects.length })}
+          {t(($) => $.project_bar.more, { count: overflowCount })}
         </PopoverTrigger>
         <PopoverContent
           align="end"
@@ -265,7 +329,7 @@ export function ChatProjectBar({
                   dragOver={dragOverId === row.id}
                   pinLabel={t(($) => $.project_bar.unpin)}
                   dragLabel={t(($) => $.project_bar.drag)}
-                  onSelect={() => select({ type: "project", id: row.id }, row.id)}
+                  onSelect={() => select({ type: "project", id: row.id })}
                   onTogglePin={() => togglePin(row.id)}
                   onDragStart={(event) => {
                     event.dataTransfer.setData("text/plain", row.id);
@@ -294,7 +358,7 @@ export function ChatProjectBar({
                 countLabel={t(($) => $.project_bar.chat_count, { count: row.chatCount })}
                 pinned={false}
                 pinLabel={t(($) => $.project_bar.pin)}
-                onSelect={() => select({ type: "project", id: row.id }, row.id)}
+                onSelect={() => select({ type: "project", id: row.id })}
                 onTogglePin={() => togglePin(row.id)}
               />
             ))}
@@ -313,7 +377,7 @@ export function ChatProjectBar({
                   })}
                   pinned={false}
                   hidePin
-                  onSelect={() => select({ type: "none" }, NONE_CHIP)}
+                  onSelect={() => select({ type: "none" })}
                   onTogglePin={() => {}}
                 />
               </>
@@ -321,6 +385,16 @@ export function ChatProjectBar({
           </div>
         </PopoverContent>
       </Popover>
+      {/* Zero box so the max-content mirror cannot widen the page. */}
+      <div className="pointer-events-none absolute size-0 overflow-hidden" aria-hidden>
+        <div ref={measureRef} style={MIRROR_STYLE}>
+          {measureIds.map((id) => (
+            <span key={id} style={CHIP_SLOT_STYLE}>
+              {renderSlot(id)}
+            </span>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -55,6 +55,7 @@ import { conversationToMarkdown } from "../lib/copy-text";
  */
 export function ChatSessionHeader({
   leading,
+  trailing,
   session,
   agent,
   onArchive,
@@ -63,6 +64,8 @@ export function ChatSessionHeader({
   // Host-supplied control before the avatar — the compact Chat page's way back,
   // so a phone gets one header bar instead of a back bar stacked on this one.
   leading?: ReactNode;
+  // Host-supplied control at the far right — the chat page's new-chat button.
+  trailing?: ReactNode;
   session: ChatSession;
   agent: Agent | null;
   // Archiving the open conversation must move the pane off it (advance to the
@@ -328,6 +331,7 @@ export function ChatSessionHeader({
             ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      {trailing}
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>

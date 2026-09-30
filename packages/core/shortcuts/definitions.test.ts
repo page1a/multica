@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createShortcutChord,
+  defaultShortcutFor,
   formatShortcut,
   isShortcutAllowedForAction,
   isReservedShortcut,
@@ -46,33 +47,76 @@ afterEach(() => {
 
 describe("keyboard shortcut definitions", () => {
   it("keeps every shipped default inside the action safety policy", () => {
-    for (const action of SHORTCUT_ACTIONS) {
-      if (!action.defaultShortcut) continue;
-      expect(
-        isShortcutAllowedForAction(
-          action.id,
-          action.defaultShortcut,
-          "macos",
-        ),
-      ).toBe(true);
-      expect(
-        isShortcutAllowedForAction(
-          action.id,
-          action.defaultShortcut,
-          "windows",
-        ),
-      ).toBe(true);
+    for (const runtime of ["web", "desktop"] as const) {
+      for (const action of SHORTCUT_ACTIONS) {
+        const shortcut = defaultShortcutFor(action, runtime);
+        if (!shortcut) continue;
+        for (const platform of ["macos", "windows"] as const) {
+          expect(
+            isShortcutAllowedForAction(action.id, shortcut, platform, runtime),
+            `${action.id} on ${platform}/${runtime}`,
+          ).toBe(true);
+        }
+      }
     }
   });
 
   it("ships at most one action per default binding", () => {
-    const seen: { id: string; shortcut: ReturnType<typeof createShortcutChord> }[] = [];
-    for (const action of SHORTCUT_ACTIONS) {
-      const shortcut = action.defaultShortcut;
-      if (!shortcut) continue;
-      const clash = seen.find((other) => shortcutChordEquals(other.shortcut, shortcut));
-      expect(clash?.id, `${action.id} duplicates ${clash?.id}`).toBeUndefined();
-      seen.push({ id: action.id, shortcut });
+    for (const runtime of ["web", "desktop"] as const) {
+      const seen: { id: string; shortcut: ReturnType<typeof createShortcutChord> }[] = [];
+      for (const action of SHORTCUT_ACTIONS) {
+        const shortcut = defaultShortcutFor(action, runtime);
+        if (!shortcut) continue;
+        const clash = seen.find((other) => shortcutChordEquals(other.shortcut, shortcut));
+        expect(clash?.id, `${action.id} duplicates ${clash?.id} on ${runtime}`).toBeUndefined();
+        seen.push({ id: action.id, shortcut });
+      }
+    }
+  });
+
+  it("ships chat defaults the policy accepts, and keeps Mod+N on desktop only", () => {
+    const desktopNewChat = createShortcutChord("N", { primary: true });
+    const webNewChat = createShortcutChord("E", { primary: true, shift: true });
+    const switchProject = createShortcutChord("\\", { primary: true });
+    expect(defaultShortcutFor("newChat", "desktop")).toEqual(desktopNewChat);
+    expect(defaultShortcutFor("newChat", "web")).toEqual(webNewChat);
+    expect(defaultShortcutFor("switchChatProject", "desktop")).toEqual(switchProject);
+    expect(defaultShortcutFor("switchChatProject", "web")).toEqual(switchProject);
+
+    for (const platform of ["macos", "windows"] as const) {
+      for (const runtime of ["web", "desktop"] as const) {
+        expect(
+          isShortcutAllowedForAction("newChat", webNewChat, platform, runtime),
+          `web new-chat default on ${platform}/${runtime}`,
+        ).toBe(true);
+        expect(
+          isShortcutAllowedForAction("switchChatProject", switchProject, platform, runtime),
+          `project switch default on ${platform}/${runtime}`,
+        ).toBe(true);
+      }
+      expect(
+        isShortcutAllowedForAction("newChat", desktopNewChat, platform, "desktop"),
+      ).toBe(true);
+      expect(
+        isShortcutAllowedForAction("newChat", desktopNewChat, platform, "web"),
+      ).toBe(false);
+      // The previous hardcoded chords are reserved on every runtime.
+      expect(
+        isShortcutAllowedForAction(
+          "newChat",
+          createShortcutChord("N", { primary: true, alt: true }),
+          platform,
+          "web",
+        ),
+      ).toBe(false);
+      expect(
+        isShortcutAllowedForAction(
+          "switchChatProject",
+          createShortcutChord("P", { primary: true, alt: true }),
+          platform,
+          "desktop",
+        ),
+      ).toBe(false);
     }
   });
 

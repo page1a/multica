@@ -38,7 +38,7 @@ vi.mock("@tanstack/react-query", () => ({
   // pickers, which expect a different shape.
   useQuery: (options: { queryKey?: unknown[] }) => {
     const key = options?.queryKey?.[0];
-    if (key === "members" || key === "agents") return { data: [] };
+    if (key === "members" || key === "agents" || key === "vcs") return { data: [] };
     return {
       data: [
         {
@@ -57,6 +57,7 @@ vi.mock("@tanstack/react-query", () => ({
       ],
     };
   },
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   // runtimeListOptions builds its descriptor with this; the mocked useQuery
   // reads queryKey off it, so an identity passthrough is enough.
   queryOptions: (options: unknown) => options,
@@ -110,6 +111,7 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
   agentListOptions: () => ({ queryKey: ["agents"], queryFn: vi.fn() }),
+  workspaceKeys: { list: () => ["workspaces"] },
 }));
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({ getActorName: vi.fn() }),

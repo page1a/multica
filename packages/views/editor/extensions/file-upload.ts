@@ -37,6 +37,19 @@ export function removeUploadNode(editor: any, uploadId: string): boolean {
   return true;
 }
 
+/** Update the visible percentage on a live placeholder without serialising it. */
+export function updateUploadProgress(editor: any, uploadId: string, progress: number): boolean {
+  const hit = findUploadNode(editor, uploadId);
+  if (!hit) return false;
+  editor.view.dispatch(
+    editor.state.tr.setNodeMarkup(hit.pos, undefined, {
+      ...hit.node.attrs,
+      uploadProgress: Math.max(0, Math.min(100, Math.round(progress))),
+    }),
+  );
+  return true;
+}
+
 /**
  * Turn this upload's placeholder into the finished attachment, in place.
  *
@@ -65,6 +78,7 @@ export function settleUploadNode(editor: any, uploadId: string, result: UploadRe
       alt: result.filename,
       uploading: false,
       uploadId: null,
+      uploadProgress: null,
     });
   } else if (isImage) {
     tr.replaceWith(
@@ -78,6 +92,7 @@ export function settleUploadNode(editor: any, uploadId: string, result: UploadRe
       href,
       uploading: false,
       uploadId: null,
+      uploadProgress: null,
     });
   }
   editor.view.dispatch(tr);
@@ -111,6 +126,7 @@ export function insertUploadPlaceholder(
         fileSize: upload.size ?? 0,
         uploading: true,
         uploadId: upload.uploadId,
+        uploadProgress: 0,
       },
     })
     .run();
@@ -201,7 +217,7 @@ export async function uploadAndInsertFile(
 
   editor: any,
   file: File,
-  handler: (file: File, uploadId: string) => Promise<UploadResult | null>,
+  handler: (file: File, uploadId: string, onProgress: (uploadedBytes: number, totalBytes: number) => void) => Promise<UploadResult | null>,
   pos?: number,
 ) {
   const isImage = file.type.startsWith("image/");
@@ -212,7 +228,7 @@ export async function uploadAndInsertFile(
 
   if (isImage) {
     const blobUrl = URL.createObjectURL(file);
-    const imgAttrs = { src: blobUrl, alt: file.name, uploading: true, uploadId };
+    const imgAttrs = { src: blobUrl, alt: file.name, uploading: true, uploadId, uploadProgress: 0 };
     if (pos !== undefined) {
       editor.chain().focus().insertContentAt(pos, { type: "image", attrs: imgAttrs }).run();
     } else {
@@ -226,7 +242,9 @@ export async function uploadAndInsertFile(
     void applyImageDimensions(editor, file, blobUrl);
 
     try {
-      const result = await handler(file, uploadId);
+      const result = await handler(file, uploadId, (uploaded, total) => {
+        if (!editor.isDestroyed && total > 0) updateUploadProgress(editor, uploadId, (uploaded / total) * 100);
+      });
       // The upload outlives the mount (coordinator-owned, MUL-5181): by the
       // time it settles this editor may be destroyed. Dispatching against a
       // destroyed EditorView throws, and the catch would dispatch again —
@@ -241,7 +259,7 @@ export async function uploadAndInsertFile(
     }
   } else {
     // Non-image: insert skeleton fileCard → upload → finalize with real URL
-    const cardAttrs = { filename: file.name, href: "", fileSize: file.size, uploading: true, uploadId };
+    const cardAttrs = { filename: file.name, href: "", fileSize: file.size, uploading: true, uploadId, uploadProgress: 0 };
     const insertContent = { type: "fileCard", attrs: cardAttrs };
     if (pos !== undefined) {
       editor.chain().focus().insertContentAt(pos, insertContent).run();
@@ -250,7 +268,9 @@ export async function uploadAndInsertFile(
     }
 
     try {
-      const result = await handler(file, uploadId);
+      const result = await handler(file, uploadId, (uploaded, total) => {
+        if (!editor.isDestroyed && total > 0) updateUploadProgress(editor, uploadId, (uploaded / total) * 100);
+      });
       // See the image branch: a settle after this editor's destroy must not
       // dispatch against the dead EditorView.
       if (editor.isDestroyed) return;
@@ -304,7 +324,7 @@ export function pastedTextSource(file: File): string | undefined {
 
 export function createFileUploadExtension(
   onUploadFileRef: React.RefObject<
-    ((file: File, uploadId: string) => Promise<UploadResult | null>) | undefined
+    ((file: File, uploadId: string, onProgress: (uploadedBytes: number, totalBytes: number) => void) => Promise<UploadResult | null>) | undefined
   >,
   /**
    * Character count above which a plain-text paste is uploaded as a .txt

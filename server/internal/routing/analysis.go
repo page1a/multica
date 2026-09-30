@@ -174,6 +174,31 @@ type Analyst interface {
 	Stuck(ctx context.Context, target Target, st AnalysisState) (Advice, error)
 }
 
+// RuntimePromptRunner is the daemon-backed transport used by analysis when
+// the workspace selected a subscribed runtime. The runner returns the raw JSON
+// produced by the CLI; parsing and validation stay in this package so both
+// transports have identical semantics.
+type RuntimePromptRunner interface {
+	Run(ctx context.Context, target Target, prompt string) (string, error)
+}
+
+type analysisRequestContextKey struct{}
+
+// WithAnalysisRequest carries the ticket identity alongside a runtime probe.
+// The daemon may finish after the routing waiter timed out, so the handler
+// needs this identity to persist a late result safely.
+func WithAnalysisRequest(ctx context.Context, workspaceID, issueID, contentHash string) context.Context {
+	return context.WithValue(ctx, analysisRequestContextKey{}, [3]string{workspaceID, issueID, contentHash})
+}
+
+func AnalysisRequestFromContext(ctx context.Context) (workspaceID, issueID, contentHash string, ok bool) {
+	v, ok := ctx.Value(analysisRequestContextKey{}).([3]string)
+	if !ok {
+		return "", "", "", false
+	}
+	return v[0], v[1], v[2], true
+}
+
 const analyzeSystemPrompt = `You read a work ticket and reduce it to facts, then route it to a seat on a fixed ladder of AI agents.
 
 Facts — choose exactly one value for each:
@@ -204,8 +229,9 @@ You are not changing anything on the ticket. Respond with a JSON object with key
 // LLMAnalyst runs the analysis role on an OpenAI-compatible chat endpoint:
 // the deployment gateway, or the workspace's own when both halves are set.
 type LLMAnalyst struct {
-	Gen  TextGenerator
-	Dial func(baseURL, apiKey string) TextGenerator
+	Gen     TextGenerator
+	Dial    func(baseURL, apiKey string) TextGenerator
+	Runtime RuntimePromptRunner
 }
 
 func (a LLMAnalyst) generator(t Target) TextGenerator {
@@ -218,13 +244,19 @@ func (a LLMAnalyst) Available(t Target) bool {
 }
 
 func (a LLMAnalyst) ask(ctx context.Context, target Target, system string, st any, maxTokens int64) (string, error) {
-	gen := a.generator(target)
-	if gen == nil {
-		return "", ErrJudgeUnavailable
-	}
 	payload, err := json.Marshal(st)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrJudgeUnavailable, err)
+	}
+	if target.UsesRuntime() {
+		if a.Runtime == nil {
+			return "", ErrJudgeUnavailable
+		}
+		return a.Runtime.Run(ctx, target, system+"\n\n"+string(payload))
+	}
+	gen := a.generator(target)
+	if gen == nil {
+		return "", ErrJudgeUnavailable
 	}
 	raw, err := gen.GenerateJSON(ctx, target.Model, system, string(payload), 0, maxTokens)
 	if err != nil {
@@ -240,10 +272,23 @@ func (a LLMAnalyst) Analyze(ctx context.Context, target Target, st AnalysisState
 	if err != nil {
 		return AnalysisRecord{}, err
 	}
+	// Runtime CLIs wrap the model's JSON differently from the API gateway:
+	// Claude returns a result envelope and Codex may emit JSONL events. Keep
+	// that transport detail at the boundary so the rest of routing consumes the
+	// same facts object for both sources.
+	raw = unwrapRuntimeAnalysis(raw)
+	return ParseAnalysisResult(raw, target.Model)
+}
+
+// ParseAnalysisResult validates a runtime or gateway response at the common
+// routing boundary. It is also used by the daemon callback to persist a result
+// that arrives after the original routing waiter has timed out.
+func ParseAnalysisResult(raw, model string) (AnalysisRecord, error) {
 	var reply struct {
 		Facts
 		Verdict
 	}
+	raw = unwrapRuntimeAnalysis(raw)
 	if err := json.Unmarshal([]byte(raw), &reply); err != nil {
 		return AnalysisRecord{}, fmt.Errorf("%w: analysis was not JSON: %v", ErrJudgeUnavailable, err)
 	}
@@ -258,7 +303,72 @@ func (a LLMAnalyst) Analyze(ctx context.Context, target Target, st AnalysisState
 	default:
 		return AnalysisRecord{}, fmt.Errorf("%w: unknown reviewer branch %q", ErrJudgeUnavailable, v.Reviewer)
 	}
-	return AnalysisRecord{Facts: facts, Verdict: &v, Source: FactsFromAnalysis, Model: target.Model}, nil
+	return AnalysisRecord{Facts: facts, Verdict: &v, Source: FactsFromAnalysis, Model: model}, nil
+}
+
+// unwrapRuntimeAnalysis extracts the model message from the common CLI
+// envelopes. It intentionally returns the input unchanged when it is already
+// the facts object, preserving the historical API-gateway behaviour.
+func unwrapRuntimeAnalysis(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) >= 2 {
+			lines = lines[1:]
+			if last := len(lines) - 1; strings.HasPrefix(strings.TrimSpace(lines[last]), "```") {
+				lines = lines[:last]
+			}
+			raw = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &obj) == nil {
+		// Claude's --output-format json envelope.
+		if result, ok := obj["result"]; ok {
+			var text string
+			if json.Unmarshal(result, &text) == nil && strings.TrimSpace(text) != "" {
+				return unwrapRuntimeAnalysis(text)
+			}
+		}
+		// A few runtimes expose the final assistant message under item.text.
+		if item, ok := obj["item"]; ok {
+			var itemObj map[string]json.RawMessage
+			if json.Unmarshal(item, &itemObj) == nil {
+				if text, ok := itemObj["text"]; ok {
+					var s string
+					if json.Unmarshal(text, &s) == nil && strings.TrimSpace(s) != "" {
+						return unwrapRuntimeAnalysis(s)
+					}
+				}
+			}
+		}
+		// Already a plain facts object (or an unknown object): let the normal
+		// validation produce the useful error message.
+		return raw
+	}
+	if !strings.Contains(raw, "\n") {
+		return raw
+	}
+	// Codex --json and similar modes can emit one JSON object per line. Use the
+	// last line that contains a textual assistant result; progress events are
+	// ignored.
+	var candidate string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if unwrapped := unwrapRuntimeAnalysis(line); unwrapped != line {
+			candidate = unwrapped
+		}
+	}
+	if candidate != "" {
+		return candidate
+	}
+	return raw
 }
 
 // Stuck asks the blocked-row question with the stuck summary.

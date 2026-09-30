@@ -9,7 +9,7 @@ let searchParams = new URLSearchParams();
 let board: InboxBoard;
 let seenAt: string | null = null;
 const markSeen = vi.fn();
-const takeSnapshot = vi.fn();
+const readBoard = vi.fn();
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/auth", () => ({
@@ -18,6 +18,7 @@ vi.mock("@multica/core/auth", () => ({
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
+    chatWithPrompt: (prompt: string) => `/acme/chat?prompt=${encodeURIComponent(prompt)}`,
     issueDetail: (id: string) => `/acme/issues/${id}`,
   }),
 }));
@@ -36,16 +37,17 @@ vi.mock("@multica/core/home", async (importOriginal) => {
   );
   return {
     ...actual,
-    useInboxBoard: () => ({ board, isLoading: false, isError: false }),
-    useBoardUnreadSnapshot: (wsId: string) => {
-      takeSnapshot(wsId);
-      return undefined;
+    useInboxBoard: (wsId: string) => {
+      readBoard(wsId);
+      return { board, isLoading: false, isError: false };
     },
     useDoneSeenStore: store,
   };
 });
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({ searchParams, push, replace: vi.fn() }),
+  resolveClickIntent: (e: { metaKey?: boolean; ctrlKey?: boolean }) =>
+    e.metaKey || e.ctrlKey ? "new-tab" : "push",
   AppLink: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     <a href={href} {...rest}>
       {children}
@@ -53,10 +55,14 @@ vi.mock("../../navigation", () => ({
   ),
 }));
 vi.mock("../../inbox/components/inbox-page", () => ({
-  InboxActivityPage: () => <div data-testid="activity-layer" />,
+  InboxActivityPage: ({ merged }: { merged?: boolean }) => (
+    <div data-testid={merged ? "merged-inbox" : "activity-layer"} />
+  ),
 }));
+let compact = true;
+vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => compact }));
 
-import { HomePage } from "./home-page";
+import { HomePage, InboxBoardLanes, type BoardLinking } from "./home-page";
 import { InboxPage } from "../../inbox/components/inbox-layers";
 
 function row(over: Partial<BoardRow> & { issueId: string; lane: BoardRow["lane"] }): BoardRow {
@@ -71,6 +77,7 @@ function row(over: Partial<BoardRow> & { issueId: string; lane: BoardRow["lane"]
     from: null,
     fromName: "",
     next: null,
+    nextName: "",
     at: "2026-09-26T08:00:00Z",
     timeline: [],
     unread: 0,
@@ -83,9 +90,10 @@ beforeEach(() => {
   push.mockReset();
   mutate.mockReset();
   markSeen.mockReset();
-  takeSnapshot.mockReset();
+  readBoard.mockReset();
   searchParams = new URLSearchParams();
   seenAt = null;
+  compact = true;
   board = {
     waiting: [
       row({
@@ -108,6 +116,7 @@ beforeEach(() => {
       }),
     ],
     running: [row({ issueId: "882", lane: "running", next: { type: "agent", id: "a-2" } })],
+    todo: [row({ issueId: "890", lane: "todo", kind: "todo" })],
     fresh: [],
     done: [
       row({ issueId: "880", lane: "done", at: "2026-09-26T10:00:00Z" }),
@@ -117,9 +126,9 @@ beforeEach(() => {
 });
 
 describe("HomePage", () => {
-  it("shows one row per issue in the four lanes", () => {
+  it("shows one row per issue in the five lanes", () => {
     renderWithI18n(<HomePage />);
-    for (const lane of ["waiting", "stalled", "running", "done"]) {
+    for (const lane of ["waiting", "stalled", "running", "todo", "done"]) {
       expect(screen.getByTestId(`board-lane-${lane}`)).toBeInTheDocument();
     }
     const waiting = screen.getByTestId("board-lane-waiting");
@@ -134,13 +143,18 @@ describe("HomePage", () => {
     expect(within(stalled).getByText("Next: name:a-1")).toBeInTheDocument();
 
     expect(within(screen.getByTestId("board-lane-running")).getByText("name:a-2")).toBeInTheDocument();
+
+    // DENE-975: the viewer's todo work sits right after running.
+    expect(within(screen.getByTestId("board-lane-todo")).getByText("title 890")).toBeInTheDocument();
+    const lanes = screen.getAllByTestId(/^board-lane-/).map((el) => el.dataset.testid);
+    expect(lanes.indexOf("board-lane-todo")).toBe(lanes.indexOf("board-lane-running") + 1);
   });
 
   it("reads the board on arrival and marks what was unread (DENE-901)", () => {
     board.running[0] = { ...board.running[0]!, unread: 2 };
     board.fresh = [row({ issueId: "900", lane: "fresh", unread: 1 })];
     renderWithI18n(<HomePage />);
-    expect(takeSnapshot).toHaveBeenCalledWith("ws-1");
+    expect(readBoard).toHaveBeenCalledWith("ws-1");
     expect(within(screen.getByTestId("board-lane-running")).getByText("2 new")).toBeInTheDocument();
     const fresh = screen.getByTestId("board-lane-fresh");
     expect(within(fresh).getByText("title 900")).toBeInTheDocument();
@@ -204,4 +218,47 @@ describe("InboxPage layers", () => {
       expect(screen.getByTestId("activity-layer")).toBeInTheDocument();
     },
   );
+});
+
+describe("InboxPage on wide screens (DENE-1004)", () => {
+  it.each(["", "layer=activity", "issue=issue-1"])("shows the merged page for %s", (query) => {
+    compact = false;
+    searchParams = new URLSearchParams(query);
+    renderWithI18n(<InboxPage />);
+    expect(screen.getByTestId("merged-inbox")).toBeInTheDocument();
+  });
+});
+
+describe("InboxBoardLanes linked to the list (DENE-1004)", () => {
+  function linked(over: Partial<BoardLinking> = {}): BoardLinking {
+    return { activeLane: null, onSelectIssue: vi.fn(), onToggleLane: vi.fn(), ...over };
+  }
+
+  it("opens rows in place instead of navigating away", () => {
+    const linking = linked();
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} linking={linking} />);
+    fireEvent.click(screen.getByTestId("board-row-stalled").firstElementChild!);
+    fireEvent.click(screen.getByText("title 822"));
+    expect(linking.onSelectIssue).toHaveBeenNthCalledWith(1, "871");
+    expect(linking.onSelectIssue).toHaveBeenNthCalledWith(2, "822");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("filters by lane from the heading and marks the highlighted row", () => {
+    const linking = linked({ activeLane: "running", highlightIssueId: "882" });
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} linking={linking} />);
+    const heading = screen.getByTestId("board-lane-filter-running");
+    expect(heading).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("board-lane-filter-waiting"));
+    expect(linking.onToggleLane).toHaveBeenCalledWith("waiting");
+    expect(screen.getByTestId("board-row-running")).toHaveAttribute("data-highlighted");
+  });
+
+  it("unfolds seen done rows when the highlighted issue is among them", () => {
+    seenAt = "2026-09-26T08:00:00Z";
+    renderWithI18n(
+      <InboxBoardLanes board={board} isLoading={false} isError={false} linking={linked({ highlightIssueId: "879" })} />,
+    );
+    expect(within(screen.getByTestId("board-lane-done")).getByText("title 879")).toBeInTheDocument();
+  });
 });

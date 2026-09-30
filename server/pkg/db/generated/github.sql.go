@@ -661,7 +661,13 @@ INSERT INTO github_pull_request (
     $12, $13, $14, COALESCE($21::text, 'github_app')
 )
 ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
-    installation_id = EXCLUDED.installation_id,
+    -- A daemon or token report has no App installation id (it writes 0).
+    -- Keep the App's id so a later gh snapshot cannot unhook the merge path
+    -- (DENE-966). A real webhook still replaces it with its own id.
+    installation_id = CASE
+        WHEN EXCLUDED.installation_id = 0 THEN github_pull_request.installation_id
+        ELSE EXCLUDED.installation_id
+    END,
     title = EXCLUDED.title,
     state = EXCLUDED.state,
     html_url = EXCLUDED.html_url,
@@ -671,7 +677,10 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     merged_at = EXCLUDED.merged_at,
     closed_at = EXCLUDED.closed_at,
     pr_updated_at = EXCLUDED.pr_updated_at,
-    head_sha = EXCLUDED.head_sha,
+    head_sha = CASE
+        WHEN EXCLUDED.head_sha <> '' THEN EXCLUDED.head_sha
+        ELSE github_pull_request.head_sha
+    END,
     mergeable_state = CASE
         WHEN COALESCE($22::boolean, FALSE) THEN NULL
         WHEN EXCLUDED.mergeable_state IS NOT NULL THEN EXCLUDED.mergeable_state
@@ -680,7 +689,21 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     additions     = EXCLUDED.additions,
     deletions     = EXCLUDED.deletions,
     changed_files = EXCLUDED.changed_files,
-    source = EXCLUDED.source,
+    -- A gh report must not relabel an App or token row as daemon: the close
+    -- gate uses source to decide who is allowed to merge, and the snapshot
+    -- columns above already keep the previous mergeability when the report
+    -- did not carry one (DENE-906, DENE-966).
+    source = CASE
+        WHEN EXCLUDED.source = 'daemon' AND github_pull_request.installation_id <> 0
+            THEN github_pull_request.source
+        WHEN EXCLUDED.source = 'daemon' AND github_pull_request.source = 'token'
+            THEN github_pull_request.source
+        -- A token lookup must not relabel an App-backed row. installation_id
+        -- on the right is the stored value; a token upsert sends 0.
+        WHEN EXCLUDED.source = 'token' AND github_pull_request.installation_id <> 0
+            THEN github_pull_request.source
+        ELSE EXCLUDED.source
+    END,
     updated_at = now()
 RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source
 `
@@ -821,4 +844,29 @@ func (q *Queries) UpsertPendingGitHubInstallation(ctx context.Context, arg Upser
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const workspaceHasDaemonPullRequest = `-- name: WorkspaceHasDaemonPullRequest :one
+SELECT EXISTS (
+    SELECT 1 FROM github_pull_request
+    WHERE workspace_id = $1
+      AND lower(repo_owner) = lower($2)
+      AND lower(repo_name) = lower($3)
+      AND source = 'daemon'
+) AS has_daemon
+`
+
+type WorkspaceHasDaemonPullRequestParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RepoOwner   string      `json:"repo_owner"`
+	RepoName    string      `json:"repo_name"`
+}
+
+// A gh report for this repository landed without an App or a token. The
+// settings page calls that "本机命令行" rather than "未接通".
+func (q *Queries) WorkspaceHasDaemonPullRequest(ctx context.Context, arg WorkspaceHasDaemonPullRequestParams) (bool, error) {
+	row := q.db.QueryRow(ctx, workspaceHasDaemonPullRequest, arg.WorkspaceID, arg.RepoOwner, arg.RepoName)
+	var has_daemon bool
+	err := row.Scan(&has_daemon)
+	return has_daemon, err
 }

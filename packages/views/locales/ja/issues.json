@@ -137,7 +137,20 @@
     "next_owner": "次: {{name}}",
     "next_owner_none": "次: なし",
     "waiting_on": "{{id}} を待機",
-    "last_activity_missing": "活動時刻なし"
+    "last_activity_missing": "活動時刻なし",
+    "knowledge_none": "該当する知識なし",
+    "knowledge_change": "知識: {{locations}}",
+    "section_title": "クローズ記録",
+    "conclusion": "結論",
+    "status": "ステータス",
+    "evidence": "理由",
+    "evidence_missing": "理由のコメントはまだ読み込まれていません。",
+    "conclusion_delivered": "納品済み",
+    "conclusion_blocked": "ブロック",
+    "conclusion_awaiting_review": "レビュー待ち",
+    "conclusion_awaiting_human": "人の確認待ち",
+    "conclusion_deferred": "計画 / ToDo に戻した",
+    "conclusion_continuing": "停止中、次回続行"
   },
   "blocker_summary": {
     "title": "ブロック中 · 根因 {{count}} 件",
@@ -819,6 +832,7 @@
     "remove_parent_issue": "親タスクを解除",
     "remove_parent_issue_success": "親タスクを解除しました",
     "add_sub_issue": "サブタスクを追加...",
+    "close_issue": "クローズ",
     "delete_issue": "タスクを削除",
     "pin_to_sidebar": "サイドバーにピン留め",
     "unpin_from_sidebar": "サイドバーのピン留めを解除"

@@ -143,12 +143,23 @@ type Settings struct {
 // means the deployment gateway, and the key is sealed at rest and never sent
 // back to a client.
 type AnalysisSettings struct {
-	Enabled   bool   `json:"enabled"`
-	Model     string `json:"model"`
-	BaseURL   string `json:"base_url"`
-	APIKeyEnc string `json:"api_key_enc,omitempty"`
-	APIKey    string `json:"-"`
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model"`
+	BaseURL string `json:"base_url"`
+	// Source selects the transport used by the analysis role. api_gateway is
+	// the historical OpenAI-compatible path; runtime_subscription asks the
+	// selected local runtime to execute the read-only prompt.
+	Source        string `json:"source,omitempty"`
+	RuntimeID     string `json:"runtime_id,omitempty"`
+	ThinkingLevel string `json:"thinking_level,omitempty"`
+	APIKeyEnc     string `json:"api_key_enc,omitempty"`
+	APIKey        string `json:"-"`
 }
+
+const (
+	AnalysisSourceAPIGateway          = "api_gateway"
+	AnalysisSourceRuntimeSubscription = "runtime_subscription"
+)
 
 // Mode is which of the two roles are switched on. It decides who picks the
 // tier:
@@ -204,9 +215,12 @@ func (s Settings) AnalysisTarget() Target {
 		return Target{}
 	}
 	return Target{
-		Model:   s.Analysis.Model,
-		BaseURL: strings.TrimSpace(s.Analysis.BaseURL),
-		APIKey:  strings.TrimSpace(s.Analysis.APIKey),
+		Model:         s.Analysis.Model,
+		BaseURL:       strings.TrimSpace(s.Analysis.BaseURL),
+		APIKey:        strings.TrimSpace(s.Analysis.APIKey),
+		Source:        strings.TrimSpace(s.Analysis.Source),
+		RuntimeID:     strings.TrimSpace(s.Analysis.RuntimeID),
+		ThinkingLevel: strings.TrimSpace(s.Analysis.ThinkingLevel),
 	}
 }
 
@@ -227,9 +241,16 @@ func (s Settings) PrimaryTarget() (Target, bool) {
 // with whose key. Route resolves it once from Settings and passes it down, so
 // no layer below has to know whether the workspace brought its own gateway.
 type Target struct {
-	Model   string
-	BaseURL string
-	APIKey  string
+	Model         string
+	BaseURL       string
+	APIKey        string
+	Source        string
+	RuntimeID     string
+	ThinkingLevel string
+}
+
+func (t Target) UsesRuntime() bool {
+	return t.Source == AnalysisSourceRuntimeSubscription && t.RuntimeID != ""
 }
 
 // Override reports whether this target names a workspace-owned gateway rather
@@ -308,7 +329,7 @@ func (s Settings) State() State {
 	if s.JudgeOn() && strings.TrimSpace(s.Model) == "" {
 		return StateIncomplete
 	}
-	if s.AnalysisOn() && strings.TrimSpace(s.Analysis.Model) == "" {
+	if s.AnalysisOn() && (strings.TrimSpace(s.Analysis.Model) == "" || (s.Analysis.Source == AnalysisSourceRuntimeSubscription && strings.TrimSpace(s.Analysis.RuntimeID) == "")) {
 		return StateIncomplete
 	}
 	return StateEnabled

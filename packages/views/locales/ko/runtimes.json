@@ -279,13 +279,20 @@
     "follow": "최신 버전 자동 추적",
     "update_now": "지금 업데이트",
     "updating": "업데이트 중…",
-    "waiting": "이 머신이 한가해질 때까지 기다립니다",
+    "waiting": "실행 중인 작업이 끝날 때까지 대기 중",
     "unsupported": "이 CLI는 자동으로 업데이트할 수 없습니다",
     "binary": "업데이트하는 복사본: {{path}}",
     "check_failed": "최신 버전을 확인하지 못했습니다",
     "follow_failed": "자동 추적을 저장하지 못했습니다",
     "update_request_failed": "업데이트를 시작하지 못했습니다",
-    "read_only": "런타임 소유자나 워크스페이스 관리자만 업데이트할 수 있습니다"
+    "read_only": "런타임 소유자나 워크스페이스 관리자만 업데이트할 수 있습니다",
+    "queued_tasks": "대기 중: {{cli}} 작업 {{count}}개 완료 대기",
+    "queued_paused": "업데이트가 끝날 때까지 새 {{cli}} 작업은 대기하고 다른 CLI는 계속 작동합니다",
+    "queued_hold_expired": "너무 오래 멈춰서 {{cli}}이(가) 작업 수신을 재개했고, 한가해지면 업데이트합니다 (실행 중 {{count}}개)",
+    "queued_daemon": "대기 중: Multica 데몬 자체 업데이트 대기",
+    "queued_request": "업데이트를 요청했습니다. 이 머신의 응답을 기다리는 중",
+    "updated_to": "{{version}}(으)로 업데이트됨",
+    "update_failed": "업데이트 실패"
   },
   "charts": {
     "heatmap_less": "적음",

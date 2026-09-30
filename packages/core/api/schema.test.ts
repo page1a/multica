@@ -63,6 +63,17 @@ describe("ApiClient schema fallback", () => {
       });
     });
 
+    it("degrades a malformed repository-link catalog to an empty list", async () => {
+      stubFetchJson({ links: { id: "not-a-list" } });
+      const client = new ApiClient("https://api.example.test");
+      await expect(client.listRepoLinks("ws-1")).resolves.toEqual({
+        links: [],
+        bindings: [],
+        can_add_workspace: false,
+        can_add_personal: false,
+      });
+    });
+
     it("adds the allowlisted repository return target to the connect request", async () => {
       stubFetchJson({
         configured: true,
@@ -1550,5 +1561,32 @@ describe("ApiClient listSquadMembers schema failure", () => {
     stubFetchJson([]);
     const client = new ApiClient("https://api.example.test");
     await expect(client.listSquadMembers("sq-1")).resolves.toEqual([]);
+  });
+});
+
+describe("GitHub App identity", () => {
+  it("reads status and posts the optional organization", async () => {
+    stubFetchJson({
+      source: "none",
+      configured: false,
+      can_create: true,
+    });
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getGitHubApp("ws-1")).resolves.toMatchObject({
+      source: "none",
+      can_create: true,
+      read_only: false,
+    });
+
+    stubFetchJson({
+      action_url: "https://github.com/settings/apps/new",
+      manifest: { public: true },
+      launch_url: "https://api.example.test/api/github/app/launch?state=abc",
+    });
+    await client.beginGitHubApp("ws-1", "acme");
+    const fetchMock = vi.mocked(fetch);
+    const lastCall = fetchMock.mock.calls.at(-1);
+    expect(lastCall?.[0]).toBe("https://api.example.test/api/workspaces/ws-1/github/app");
+    expect(JSON.parse(String((lastCall?.[1] as RequestInit).body))).toEqual({ org: "acme" });
   });
 });

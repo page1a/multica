@@ -21,7 +21,7 @@ function GithubIcon({ className }: { className?: string }) {
     </svg>
   );
 }
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
 import {
@@ -30,8 +30,11 @@ import {
   PROJECT_PRIORITY_ORDER,
 } from "@multica/core/projects/config";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { api } from "@multica/core/api";
+import { repoConnectionsOptions } from "@multica/core/repo-reach";
+import { parseRepoLocator } from "@multica/core/repo-links";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
-import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
+import { memberListOptions, agentListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
@@ -60,6 +63,7 @@ import {
 import { ProjectStartDatePicker } from "../projects/components/project-start-date-picker";
 import { ProjectDueDatePicker } from "../projects/components/project-due-date-picker";
 import { PillButton } from "../common/pill-button";
+import { RepoReachStatus } from "../settings/components/repo-reach-view";
 import { githubShortLabel } from "../common/github-url";
 import {
   canSetLocalDirectorySharedOverride,
@@ -379,6 +383,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     leadType && leadId ? getActorName(leadType, leadId) : t(($) => $.create_project.lead);
 
   const createProject = useCreateProject();
+  const queryClient = useQueryClient();
+  const { data: connectionCards = [] } = useQuery(repoConnectionsOptions(wsId));
+  const repoIdentity = (url: string) => parseRepoLocator(url)?.name.toLowerCase() ?? url;
+  const reachFor = (url: string) =>
+    connectionCards.find((card) => repoIdentity(card.url) === repoIdentity(url))?.reach;
 
   const handleSubmit = async () => {
     if (!title.trim() || submitting) return;
@@ -428,6 +437,19 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         // Server attaches these in the same transaction as the project.
         resources,
       });
+      if (sourceMode === "repos") {
+        // A pasted link the workspace has never seen is registered through the
+        // attach endpoint, which is a no-op for the one just created with the
+        // project. A failure here must not undo the project.
+        const known = new Set(workspaceRepos.map((repo) => repoIdentity(repo.url)));
+        const unknown = selectedRepos.filter((url) => !known.has(repoIdentity(url)));
+        if (unknown.length > 0) {
+          await Promise.allSettled(
+            unknown.map((url) => api.attachProjectRepo(project.id, { repo_url: url })),
+          );
+          await queryClient.invalidateQueries({ queryKey: workspaceKeys.list() });
+        }
+      }
       if (
         sourceMode === "local" &&
         selectedLocalPath &&
@@ -901,6 +923,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                         >
                           <GithubIcon className="size-3 text-muted-foreground" />
                           <RepoUrlText url={url} />
+                          {reachFor(url) ? <RepoReachStatus reach={reachFor(url)!} /> : null}
                           <button
                             type="button"
                             onClick={() => toggleRepo(url)}

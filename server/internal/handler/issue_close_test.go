@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 )
@@ -16,6 +17,18 @@ import (
 // as the test member when agentID is empty) and returns the recorder.
 func closeIssueHTTP(t *testing.T, issueID, agentID, taskID string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
+	// Closes that predate the knowledge audit keep their original assertions.
+	// omit_knowledge_audit asks for the rejection path; every other body gets
+	// an explicit 无够格知识 declaration when it did not name an audit.
+	if body != nil {
+		omit, _ := body["omit_knowledge_audit"].(bool)
+		delete(body, "omit_knowledge_audit")
+		if omit {
+			delete(body, "knowledge_audit")
+		} else if _, ok := body["knowledge_audit"]; !ok {
+			body["knowledge_audit"] = map[string]any{"none": true}
+		}
+	}
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues/"+issueID+"/close", body)
 	req = withURLParam(req, "id", issueID)
@@ -510,6 +523,9 @@ func TestCloseDoneWithUnmergeablePullIsRewrittenToBlocked(t *testing.T) {
 	if got := issueMetaString(t, issue.ID, "block.wait_condition"); got == "" {
 		t.Fatalf("block.wait_condition should carry the merge failure")
 	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyKnowledgeAudit); got != `{"none":true}` {
+		t.Fatalf("rewritten close dropped the knowledge audit: %q", got)
+	}
 }
 
 // DENE-928/931: a child with an acceptance seat could neither enter in_review
@@ -547,9 +563,9 @@ func TestCloseChildWithSeatDoneByExecutor(t *testing.T) {
 	}
 }
 
-// DENE-943: code merged through an intranet GitLab MR leaves a delivery branch
-// the platform can never match to a PR. --no-code with the MR link is the exit;
-// once a PR is linked, --no-code still cannot skip the merge gate.
+// DENE-943: a delivery branch with no visible PR is refused with the delivery
+// lookup's reason and next step. An explicit --no-code still closes it; once a
+// PR is linked, --no-code cannot skip the merge gate.
 func TestCloseDoneWithBranchButNoVisiblePull(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -565,8 +581,9 @@ func TestCloseDoneWithBranchButNoVisiblePull(t *testing.T) {
 	}
 
 	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "MR 已合"})
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "--no-code") {
-		t.Fatalf("no reason: %d: %s", w.Code, w.Body.String())
+	body := w.Body.String()
+	if w.Code != http.StatusConflict || !strings.Contains(body, "这个仓库还没接上") || !strings.Contains(body, "下一步：") || !strings.Contains(body, "保存令牌") || !strings.Contains(body, "--pr") {
+		t.Fatalf("not connected: %d: %s", w.Code, body)
 	}
 	w = closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "MR 已合", "no_code_reason": "GitLab MR !200 已合 dev"})
 	if w.Code != http.StatusOK {
@@ -582,5 +599,363 @@ func TestCloseDoneWithBranchButNoVisiblePull(t *testing.T) {
 	w = closeIssueHTTP(t, linked.ID, agentID, linkedTask, map[string]any{"outcome": "done", "evidence": "x", "no_code_reason": "想跳过"})
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "--no-code") {
 		t.Fatalf("no-code over a linked PR: %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func closeError(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error: %v (%s)", err, w.Body.String())
+	}
+	return payload.Error
+}
+
+func assertCloseRejectedClean(t *testing.T, issueID, prevStatus string) {
+	t.Helper()
+	if got := issueStatusDirect(t, issueID); got != prevStatus {
+		t.Fatalf("status changed on a rejected close: %s", got)
+	}
+	if got := issueMetaString(t, issueID, closeprotocol.KeyConclusion); got != "" {
+		t.Fatalf("close record written on a rejected close: %s", got)
+	}
+	if got := issueMetaString(t, issueID, closeprotocol.KeyKnowledgeAudit); got != "" {
+		t.Fatalf("knowledge audit written on a rejected close: %s", got)
+	}
+	var n int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM comment WHERE issue_id = $1`, issueID).Scan(&n); err != nil {
+		t.Fatalf("count comments: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("comment written on a rejected close: %d", n)
+	}
+}
+
+func TestCloseWithoutKnowledgeAuditWritesNothing(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close missing audit", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":              "done",
+		"evidence":             "文档已更新。",
+		"no_code_reason":       "纯文档",
+		"omit_knowledge_audit": true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if got := closeError(t, w); got != closeprotocol.KnowledgeAuditRequiredMsg {
+		t.Fatalf("rejection = %s", got)
+	}
+	assertCloseRejectedClean(t, issue.ID, "in_progress")
+}
+
+func TestCloseKnowledgeNoneSucceeds(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close knowledge none", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":         "done",
+		"evidence":        "这次没有够格的项目记忆。",
+		"no_code_reason":  "纯文档",
+		"knowledge_audit": map[string]any{"none": true},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp CloseIssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.KnowledgeAudit == nil || !resp.KnowledgeAudit.None {
+		t.Fatalf("knowledge_audit = %#v", resp.KnowledgeAudit)
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyKnowledgeAudit); got != `{"none":true}` {
+		t.Fatalf("close.knowledge_audit = %q", got)
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "done" {
+		t.Fatalf("status = %s", got)
+	}
+}
+
+func TestCloseKnowledgeUnknownLocationWritesNothing(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close bad location", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":        "done",
+		"evidence":       "写到了清单外。",
+		"no_code_reason": "纯文档",
+		"knowledge_audit": map[string]any{
+			"changes": []any{map[string]any{"location": "DESIGN.md", "summary": "不在清单里"}},
+		},
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "不在项目记忆清单里") {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	assertCloseRejectedClean(t, issue.ID, "in_progress")
+}
+
+func TestCloseKnowledgeMixedFormWritesNothing(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close mixed audit", "in_progress")
+	w := closeIssueHTTP(t, issue.ID, "", "", map[string]any{
+		"outcome":  "cancelled",
+		"evidence": "不要了。",
+		"knowledge_audit": map[string]any{
+			"none":    true,
+			"changes": []any{map[string]any{"location": "context", "summary": "又写了一条"}},
+		},
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "不能同时") {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	assertCloseRejectedClean(t, issue.ID, "in_progress")
+}
+
+func TestCloseKnowledgeChangeIsStored(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close knowledge change", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":        "done",
+		"evidence":       "补了开张种子。",
+		"no_code_reason": "纯文档",
+		"knowledge_audit": map[string]any{
+			"changes": []any{map[string]any{"location": " agents ", "summary": " 补了开张种子 "}},
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	want := `{"changes":[{"location":"agents","summary":"补了开张种子"}]}`
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyKnowledgeAudit); got != want {
+		t.Fatalf("close.knowledge_audit = %q", got)
+	}
+	var resp CloseIssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.KnowledgeAudit == nil || len(resp.KnowledgeAudit.Changes) != 1 || resp.KnowledgeAudit.Changes[0].Location != "agents" {
+		t.Fatalf("knowledge_audit = %#v", resp.KnowledgeAudit)
+	}
+	if resp.Close[closeprotocol.KeyKnowledgeAudit] != want {
+		t.Fatalf("close map audit = %q", resp.Close[closeprotocol.KeyKnowledgeAudit])
+	}
+}
+
+func TestCloseVerdictWithoutKnowledgeAuditWritesNoComment(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	issue := createIssueHTTP(t, "verdict missing audit", "in_review")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET reviewer_type = 'agent', reviewer_id = $2 WHERE id = $1`, issue.ID, agentID); err != nil {
+		t.Fatalf("set reviewer: %v", err)
+	}
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":              "done",
+		"evidence":             "验收通过。",
+		"verdict":              "pass",
+		"omit_knowledge_audit": true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if got := closeError(t, w); got != closeprotocol.KnowledgeAuditRequiredMsg {
+		t.Fatalf("rejection = %s", got)
+	}
+	assertCloseRejectedClean(t, issue.ID, "in_review")
+}
+
+// DENE-1002 (2B): `--outcome backlog` and `--outcome todo` put the ticket back
+// on purpose. Each one writes the evidence comment and a `deferred` close
+// record, needs no PR, and wakes nobody.
+func TestCloseBacklogAndTodoReturnWithACloseRecord(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := handlerTestAgentID(t)
+	for _, outcome := range []string{"backlog", "todo"} {
+		t.Run(outcome, func(t *testing.T) {
+			issue := createIssueHTTP(t, "close "+outcome, "in_progress")
+			taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+
+			w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+				"outcome":  outcome,
+				"evidence": "这轮先不动，需求还没定；等排期再拉起来。",
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+			var resp CloseIssueResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Status != outcome {
+				t.Fatalf("status = %s, want %s", resp.Status, outcome)
+			}
+			if got := issueStatusDirect(t, issue.ID); got != outcome {
+				t.Fatalf("issue status = %s, want %s", got, outcome)
+			}
+			if got := issueMetaString(t, issue.ID, closeprotocol.KeyConclusion); got != closeprotocol.ConclusionDeferred {
+				t.Fatalf("close.conclusion = %q, want deferred", got)
+			}
+			if got := issueMetaString(t, issue.ID, closeprotocol.KeyStatus); got != outcome {
+				t.Fatalf("close.status = %q, want %s", got, outcome)
+			}
+			if got := issueMetaString(t, issue.ID, closeprotocol.KeyEvidenceCommentID); got == "" {
+				t.Fatal("the evidence comment must be recorded")
+			}
+			if got := issueMetaString(t, issue.ID, closeprotocol.KeyWakeAction); got != closeprotocol.WakeNone {
+				t.Fatalf("close.wake_action = %q, want none", got)
+			}
+			var n int
+			if err := testPool.QueryRow(context.Background(),
+				`SELECT count(*) FROM comment WHERE issue_id = $1`, issue.ID).Scan(&n); err != nil {
+				t.Fatalf("count comments: %v", err)
+			}
+			if n != 1 {
+				t.Fatalf("comments = %d, want the one evidence comment", n)
+			}
+			woken := strings.Join(resp.Woken, "\n")
+			if !strings.Contains(woken, "放回") {
+				t.Fatalf("the reply should explain the deliberate return, got %v", resp.Woken)
+			}
+		})
+	}
+}
+
+// DENE-1002: `--outcome in_progress` keeps the ticket in progress, records
+// who continues, and arms the block-wait patrol on the clock.
+func TestCloseInProgressRecordsWhoContinues(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	issue := createIssueHTTP(t, "close in_progress clock", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	if _, err := testPool.Exec(ctx,
+		`UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, issue.ID, agentID); err != nil {
+		t.Fatalf("assign issue: %v", err)
+	}
+	wakeAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
+
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":  "in_progress",
+		"evidence": "网关改造做到一半，先停；等扩容窗口到点继续。",
+		"wake_at":  wakeAt,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp CloseIssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "in_progress" {
+		t.Fatalf("status = %s, want in_progress", resp.Status)
+	}
+	if resp.StatusChanged {
+		t.Fatal("the ticket was already in_progress; no status change is expected")
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "in_progress" {
+		t.Fatalf("issue status = %s", got)
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyConclusion); got != closeprotocol.ConclusionContinuing {
+		t.Fatalf("close.conclusion = %q, want continuing", got)
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyWakeAction); got != closeprotocol.WakeClock {
+		t.Fatalf("close.wake_action = %q, want clock", got)
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyNextOwnerType); got != closeprotocol.OwnerAgent {
+		t.Fatalf("close.next_owner_type = %q, want agent", got)
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyNextOwnerID); got != agentID {
+		t.Fatalf("close.next_owner_id = %q, want %q", got, agentID)
+	}
+	if got := issueMetaString(t, issue.ID, "block.wake_at"); got == "" {
+		t.Fatal("the clock must be written to the block-wait record")
+	}
+	if got := issueMetaString(t, issue.ID, "block.watched"); got != "1" {
+		t.Fatalf("block.watched = %q, want 1 so the patrol wakes it", got)
+	}
+	if woken := strings.Join(resp.Woken, "\n"); !strings.Contains(woken, "叫醒") {
+		t.Fatalf("the reply should say who is woken when, got %v", resp.Woken)
+	}
+}
+
+// DENE-1002: an in_progress close with no continuation is refused with the
+// list of ways to say "who continues", and nothing is written.
+func TestCloseInProgressWithoutContinuationIsRejected(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close in_progress bare", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":  "in_progress",
+		"evidence": "先停一下，回头再说。",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"--wake-at", "--wait-condition", "--blocked-by", "--needs-human"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rejection should list %s, got %s", want, body)
+		}
+	}
+	assertCloseRejectedClean(t, issue.ID, "in_progress")
+}
+
+// DENE-1002: --needs-human on an in_progress close names the person who
+// continues instead of the assignee.
+func TestCloseInProgressNeedsHumanNamesThePerson(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close in_progress human", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	memberID := testUserID
+
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+		"outcome":     "in_progress",
+		"evidence":    "方案要你拍板后再继续。",
+		"needs_human": memberID,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyNextOwnerType); got != closeprotocol.OwnerMember {
+		t.Fatalf("close.next_owner_type = %q, want member", got)
+	}
+	if got := issueMetaString(t, issue.ID, closeprotocol.KeyNextOwnerID); got != memberID {
+		t.Fatalf("close.next_owner_id = %q, want %q", got, memberID)
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "in_progress" {
+		t.Fatalf("status = %s, want in_progress", got)
 	}
 }

@@ -96,7 +96,108 @@ describe("agent CLI update controls", () => {
       cli_update: { ...snapshot.cli_update, phase: "waiting" },
     });
     expect(
-      screen.getByText("Waiting until this machine is idle"),
+      screen.getByText("Queued until running tasks finish"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a queued upgrade in grey with how many tasks it waits for", () => {
+    renderControls({
+      cli_update: {
+        ...snapshot.cli_update,
+        phase: "waiting",
+        waiting_tasks: 2,
+        claims_paused: true,
+        wait_reason: "tasks",
+        // An older daemon put its waiting note here; it is not an error.
+        error: "waiting until this machine has no task running",
+      },
+    });
+    const queued = screen.getByText("Queued: waiting for 2 Claude task(s) to finish");
+    expect(queued).toHaveClass("text-muted-foreground");
+    expect(
+      screen.getByText(
+        "New Claude tasks wait until the update is done; other CLIs keep working",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("waiting until this machine has no task running"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Update available")).not.toBeInTheDocument();
+  });
+
+  it("says when a hold ran out and the CLI takes tasks again", () => {
+    renderControls({
+      cli_update: {
+        ...snapshot.cli_update,
+        phase: "waiting",
+        waiting_tasks: 1,
+        wait_reason: "hold_expired",
+      },
+    });
+    expect(
+      screen.getByText(
+        "Paused too long: Claude takes tasks again and updates once idle (1 running)",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps showing the update in progress until the daemon reports otherwise", () => {
+    renderControls({ cli_update: { ...snapshot.cli_update, phase: "updating" } });
+    expect(screen.getAllByText("Updating…").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled();
+  });
+
+  it("names the version it just updated to", () => {
+    renderControls({
+      cli_update: {
+        ...snapshot.cli_update,
+        phase: "current",
+        current_version: "2.1.9",
+        updated_at: "2026-09-30T00:00:00Z",
+      },
+    });
+    expect(screen.getByText("Updated to 2.1.9")).toHaveClass("text-success");
+  });
+
+  it("shows the failure reason in the list cell, not only on hover", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <AgentCLIUpdateControls
+          runtime={runtime({
+            cli_update: { ...snapshot.cli_update, phase: "failed", error: "npm: EACCES" },
+          })}
+          canManage
+          compact
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("npm: EACCES")).toHaveClass("text-destructive");
+  });
+
+  it("shows the click as queued until the daemon's next report", async () => {
+    vi.mocked(api.requestAgentCLIUpdate).mockResolvedValue(undefined);
+    const view = renderControls(snapshot);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    });
+    expect(
+      screen.getByText("Update requested, waiting for this machine to respond"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Update available")).not.toBeInTheDocument();
+
+    view.rerender(
+      controlsTree({
+        cli_update: {
+          ...snapshot.cli_update,
+          phase: "waiting",
+          waiting_tasks: 1,
+          claims_paused: true,
+          wait_reason: "tasks",
+        },
+      }),
+    );
+    expect(
+      screen.getByText("Queued: waiting for 1 Claude task(s) to finish"),
     ).toBeInTheDocument();
   });
 
@@ -122,7 +223,7 @@ describe("agent CLI update controls", () => {
       }),
     );
     expect(
-      screen.getByText("Waiting until this machine is idle"),
+      screen.getByText("Queued until running tasks finish"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Updating…")).not.toBeInTheDocument();
 
@@ -160,6 +261,33 @@ describe("agent CLI update controls", () => {
       fireEvent.click(screen.getByRole("switch"));
     });
     expect(api.setAgentCLIFollow).toHaveBeenCalledWith("rt-1", false);
+  });
+
+  it("keeps the compact list cell to two lines and moves the rest into a tooltip", () => {
+    const { container } = render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <AgentCLIUpdateControls
+          runtime={runtime({
+            cli_update: {
+              ...snapshot.cli_update,
+              phase: "unsupported",
+              error: "no updater for the copy at /usr/local/bin/claude",
+            },
+          })}
+          canManage
+          compact
+        />
+      </I18nProvider>,
+    );
+    // No stacked path/error paragraphs that would overflow the h-12 row.
+    expect(container.querySelectorAll("p")).toHaveLength(0);
+    // An unsupported CLI shows why, not a disabled switch and button.
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByText("2.1.5 / 2.1.9").closest("[title]")).toHaveAttribute(
+      "title",
+      "/usr/local/bin/claude\nno updater for the copy at /usr/local/bin/claude",
+    );
   });
 
   it("does not invent a snapshot the daemon has not reported", () => {

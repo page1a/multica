@@ -74,6 +74,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 });
 
 import { ChatThreadList } from "./chat-thread-list";
+import { useChatListViewStore } from "@multica/core/chat/list-view-store";
 
 const TEST_RESOURCES = { en: { chat: enChat, issues: enIssues } };
 
@@ -131,6 +132,7 @@ const ARCHIVE_LABEL = enChat.list.archive;
 
 beforeEach(() => {
   authState.userId = "user-1";
+  useChatListViewStore.setState({ view: "history", historyExpanded: false });
 });
 
 describe("ChatThreadList archive delegation", () => {
@@ -410,5 +412,174 @@ describe("ChatThreadList search results", () => {
       </I18nProvider>,
     );
     expect(screen.getByText(enChat.page.search_empty)).toBeTruthy();
+  });
+});
+
+describe("ChatThreadList history collapse (DENE-976)", () => {
+  // 1 pinned + 10 unpinned, newest first: p, u1 … u10.
+  const many: ChatSession[] = [
+    makeSession({ id: "p", pinned: true, updated_at: "2026-01-01T00:00:00Z" }),
+    ...Array.from({ length: 10 }, (_, i) =>
+      makeSession({
+        id: `u${i + 1}`,
+        updated_at: `2026-07-08T${String(23 - i).padStart(2, "0")}:00:00Z`,
+      }),
+    ),
+  ];
+  const rowTitles = () =>
+    Array.from(document.querySelectorAll("[tabindex='0'][class*='group/row']")).map(
+      (r) => r.textContent ?? "",
+    );
+  const moreButton = () => screen.queryByRole("button", { name: /Show more/ });
+
+  it("shows the pinned chat plus the 5 most recent, with a count of the rest", () => {
+    renderList(null, { renderedSessions: many });
+    expect(rowTitles()).toHaveLength(6);
+    expect(screen.getByText("Chat p")).toBeTruthy();
+    expect(screen.getByText("Chat u5")).toBeTruthy();
+    expect(screen.queryByText("Chat u6")).toBeNull();
+    expect(moreButton()!.textContent).toBe("Show more (5)");
+  });
+
+  it("expands to everything and collapses again", () => {
+    renderList(null, { renderedSessions: many });
+    fireEvent.click(moreButton()!);
+    expect(rowTitles()).toHaveLength(11);
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(rowTitles()).toHaveLength(6);
+  });
+
+  it("comes back expanded after the list remounts (DENE-978)", () => {
+    const first = render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList sessions={many} agents={[agent]} activeSessionId={null} onSelectSession={vi.fn()} onArchive={vi.fn()} />
+      </I18nProvider>,
+    );
+    fireEvent.click(moreButton()!);
+    first.unmount();
+
+    renderList(null, { renderedSessions: many });
+    expect(rowTitles()).toHaveLength(11);
+  });
+
+  it("keeps the open chat visible past the cap and counts only what is hidden", () => {
+    renderList("u8", { renderedSessions: many });
+    expect(screen.getByText("Chat u8")).toBeTruthy();
+    expect(rowTitles()).toHaveLength(7);
+    expect(moreButton()!.textContent).toBe("Show more (4)");
+  });
+
+  it("keeps a chat with unread replies visible past the cap", () => {
+    const withUnread = many.map((s) => (s.id === "u9" ? { ...s, unread_count: 2 } : s));
+    renderList(null, { renderedSessions: withUnread });
+    expect(screen.getByText("Chat u9")).toBeTruthy();
+    expect(moreButton()!.textContent).toBe("Show more (4)");
+  });
+
+  it("does not count pinned chats against the cap", () => {
+    const pinnedMany = many.map((s) => (s.id === "u1" || s.id === "u2" ? { ...s, pinned: true } : s));
+    renderList(null, { renderedSessions: pinnedMany });
+    expect(rowTitles()).toHaveLength(8);
+    expect(moreButton()!.textContent).toBe("Show more (3)");
+  });
+
+  it("shows no toggle when unpinned chats fit in the cap", () => {
+    renderList(null, { renderedSessions: many.slice(0, 6) });
+    expect(rowTitles()).toHaveLength(6);
+    expect(moreButton()).toBeNull();
+  });
+
+  it("does not truncate when the parent turns collapse off (project filter)", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={many}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+          collapseHistory={false}
+        />
+      </I18nProvider>,
+    );
+    expect(rowTitles()).toHaveLength(11);
+    expect(moreButton()).toBeNull();
+  });
+
+  it("does not truncate search results", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={many}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+          search={{ query: "chat", snippets: new Map() }}
+        />
+      </I18nProvider>,
+    );
+    expect(rowTitles()).toHaveLength(11);
+    expect(moreButton()).toBeNull();
+  });
+
+  it("does not truncate the archived view", () => {
+    const archived = Array.from({ length: 8 }, (_, i) =>
+      makeSession({ id: `a${i}`, status: "archived", updated_at: `2026-06-0${i + 1}T00:00:00Z` }),
+    );
+    renderList(null, { renderedSessions: [...many.slice(0, 2), ...archived] });
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(enChat.list.archived_title) }));
+    expect(rowTitles()).toHaveLength(8);
+    expect(moreButton()).toBeNull();
+  });
+});
+
+describe("ChatThreadList restored archive view (DENE-978)", () => {
+  // The view lives in the session-scoped list store, so an open archive
+  // survives opening a chat and coming back. The drained-archive fallback must
+  // wait for the sessions to load, or a restored archive is dropped while the
+  // list is still in flight.
+  beforeEach(() => {
+    useChatListViewStore.setState({ view: "archived" });
+  });
+
+  function renderEmpty(sessionsLoaded: boolean) {
+    return render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={[]}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+          sessionsLoaded={sessionsLoaded}
+        />
+      </I18nProvider>,
+    );
+  }
+
+  it("keeps a restored archive view while the sessions are still loading", () => {
+    renderEmpty(false);
+    expect(useChatListViewStore.getState().view).toBe("archived");
+  });
+
+  it("falls back to history once the loaded archive is empty", () => {
+    renderEmpty(true);
+    expect(useChatListViewStore.getState().view).toBe("history");
+  });
+
+  it("keeps the archive open when it still has chats", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={[makeSession({ id: "gone", status: "archived" })]}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+    expect(useChatListViewStore.getState().view).toBe("archived");
   });
 });

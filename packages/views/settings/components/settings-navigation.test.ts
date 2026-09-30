@@ -6,7 +6,7 @@ describe("settings location", () => {
   it.each([
     ["issue", "preferences", "issue", null],
     ["chat", "preferences", "chat", null],
-    ["github", "integrations", null, "github"],
+    ["github", "git-connections", null, null],
     ["lark", "integrations", null, "lark"],
     ["labs", "workspace", null, null],
   ])("resolves the retired %s entry", (old, tab, section, integration) => {

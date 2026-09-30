@@ -110,7 +110,7 @@ INSERT INTO inbox_item (
 RETURNING *;
 
 -- name: MarkInboxRead :one
-UPDATE inbox_item SET read = true
+UPDATE inbox_item SET read = true, read_at = COALESCE(read_at, now())
 WHERE id = $1
 RETURNING *;
 
@@ -121,7 +121,7 @@ RETURNING *;
 -- unread would resurrect older siblings the user already dealt with and
 -- inflate CountUnreadInbox (which counts raw rows), while changing nothing the
 -- UI shows.
-UPDATE inbox_item SET read = false
+UPDATE inbox_item SET read = false, read_at = NULL
 WHERE id = $1
 RETURNING *;
 
@@ -298,7 +298,7 @@ GROUP BY newest.workspace_id;
 -- (inbox_item_id) or when it notifies the comment carrying the call's @ — a
 -- mention summon writes no row of its own; the mention listener does. Keep the
 -- predicate in step with MarkIssueInboxRead and ListUnreadInboxIssues.
-UPDATE inbox_item i SET read = true
+UPDATE inbox_item i SET read = true, read_at = now()
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
   AND i.archived = false AND i.read = false
   AND NOT EXISTS (
@@ -315,7 +315,7 @@ WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $
 -- name: MarkIssueInboxRead :many
 -- Opening a ticket reads its notifications (DENE-901), except the rows an
 -- open call hangs on — same rule as MarkAllInboxRead.
-UPDATE inbox_item i SET read = true
+UPDATE inbox_item i SET read = true, read_at = now()
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
   AND i.issue_id = $3 AND i.archived = false AND i.read = false
   AND NOT EXISTS (
@@ -332,7 +332,7 @@ RETURNING i.id;
 
 -- name: MarkIssueSummonInboxRead :many
 -- The rows a call hangs on, read once the call is answered or closed.
-UPDATE inbox_item i SET read = true
+UPDATE inbox_item i SET read = true, read_at = now()
 FROM issue_summon s
 WHERE s.id = ANY(sqlc.arg('summon_ids')::uuid[])
   AND i.workspace_id = s.workspace_id
@@ -349,6 +349,9 @@ RETURNING i.id, i.workspace_id, i.recipient_id;
 -- notifications for this person, how many, and how many of them hang on an
 -- open call (those survive MarkAllInboxRead). Issue-less rows are not on the
 -- board. Visibility is checked by the handler, like ListInboxItems.
+-- unread_since replays a visit's snapshot (DENE-975): rows read at or after it
+-- still count as unread, so a board refetched after the visit's mark-all-read
+-- keeps marking what was new on arrival. NULL means live unread only.
 SELECT i.issue_id,
        count(*)::bigint AS unread_count,
        count(*) FILTER (WHERE NOT (NOT EXISTS (
@@ -376,7 +379,10 @@ SELECT i.issue_id,
 FROM inbox_item i
 JOIN issue iss ON iss.id = i.issue_id
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2
-  AND i.read = false AND i.archived = false
+  AND (i.read = false
+       OR (sqlc.narg('unread_since')::timestamptz IS NOT NULL
+           AND i.read_at >= sqlc.narg('unread_since')::timestamptz))
+  AND i.archived = false
 GROUP BY i.issue_id, iss.id
 ORDER BY max(i.created_at) DESC
 LIMIT 300;
@@ -422,3 +428,51 @@ WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $
     WHERE workspace_id = $1
       AND status = ANY(sqlc.arg('terminal_status_keys')::text[])
   );
+
+-- name: ListInboxBoardIssuesByIDs :many
+-- The issues the inbox board's running tasks point at (DENE-975), for titles
+-- and parents. Visibility is checked by the handler.
+SELECT iss.id, iss.number, iss.title, iss.status, iss.parent_issue_id, iss.updated_at,
+       COALESCE(iss.visibility, 'workspace')::text AS visibility,
+       COALESCE(iss.creator_type, '')::text AS creator_type,
+       iss.creator_id,
+       iss.project_id,
+       COALESCE(iss.assignee_type, '')::text AS assignee_type,
+       iss.assignee_id
+FROM issue iss
+WHERE iss.workspace_id = $1 AND iss.id = ANY(sqlc.arg('ids')::uuid[]);
+
+-- name: ListInboxBoardDoneIssues :many
+-- The inbox board's "done today" (DENE-975): issues moved to done inside the
+-- viewer's local day, newest first. Visibility is checked by the handler,
+-- which keeps the first 100 visible rows.
+SELECT iss.id, iss.number, iss.title, iss.status, iss.parent_issue_id, iss.updated_at,
+       COALESCE(iss.visibility, 'workspace')::text AS visibility,
+       COALESCE(iss.creator_type, '')::text AS creator_type,
+       iss.creator_id,
+       iss.project_id,
+       COALESCE(iss.assignee_type, '')::text AS assignee_type,
+       iss.assignee_id
+FROM issue iss
+WHERE iss.workspace_id = $1 AND iss.status = 'done'
+  AND iss.updated_at >= sqlc.arg('day_start')::timestamptz
+  AND iss.updated_at < sqlc.arg('day_end')::timestamptz
+ORDER BY iss.updated_at DESC
+LIMIT 400;
+
+-- name: ListInboxBoardTodoIssues :many
+-- The inbox board's "to do" lane (DENE-975): issues in todo assigned to the
+-- viewer, newest first. Visibility is checked by the handler, which keeps
+-- the first 100 visible rows.
+SELECT iss.id, iss.number, iss.title, iss.status, iss.parent_issue_id, iss.updated_at,
+       COALESCE(iss.visibility, 'workspace')::text AS visibility,
+       COALESCE(iss.creator_type, '')::text AS creator_type,
+       iss.creator_id,
+       iss.project_id,
+       COALESCE(iss.assignee_type, '')::text AS assignee_type,
+       iss.assignee_id
+FROM issue iss
+WHERE iss.workspace_id = $1 AND iss.status = 'todo'
+  AND iss.assignee_type = 'member' AND iss.assignee_id = sqlc.arg('user_id')::uuid
+ORDER BY iss.updated_at DESC
+LIMIT 400;

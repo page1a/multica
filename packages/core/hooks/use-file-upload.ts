@@ -5,6 +5,7 @@ import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
 import { attachmentDownloadPath } from "../types/attachment-url";
 import { MAX_FILE_SIZE } from "../constants/upload";
+import { retryUpload } from "../attachments/upload-retry";
 
 // Carries the full Attachment so editors that need preview metadata
 // (`content_type`, `download_url`) get it directly. Two URL fields are
@@ -114,18 +115,27 @@ export function useFileUpload(
   const uploading = inFlight > 0;
 
   const upload = useCallback(
-    async (file: File, ctx?: UploadContext): Promise<UploadResult | null> => {
+    async (
+      file: File,
+      ctx?: UploadContext,
+      onProgress?: (uploadedBytes: number, totalBytes: number) => void,
+    ): Promise<UploadResult | null> => {
       if (file.size > MAX_FILE_SIZE) {
         throw new Error("File exceeds 100 MB limit");
       }
 
       setInFlight((n) => n + 1);
       try {
-        const att: Attachment = await api.uploadFile(file, {
-          issueId: ctx?.issueId,
-          commentId: ctx?.commentId,
-          chatSessionId: ctx?.chatSessionId,
-        });
+        const att: Attachment = await retryUpload(
+          (trackProgress) =>
+            api.uploadFile(file, {
+              issueId: ctx?.issueId,
+              commentId: ctx?.commentId,
+              chatSessionId: ctx?.chatSessionId,
+              onProgress: trackProgress,
+            }),
+          { onProgress },
+        );
         return toUploadResult(att);
       } finally {
         setInFlight((n) => n - 1);
@@ -135,9 +145,13 @@ export function useFileUpload(
   );
 
   const uploadWithToast = useCallback(
-    async (file: File, ctx?: UploadContext): Promise<UploadResult | null> => {
+    async (
+      file: File,
+      ctx?: UploadContext,
+      onProgress?: (uploadedBytes: number, totalBytes: number) => void,
+    ): Promise<UploadResult | null> => {
       try {
-        return await upload(file, ctx);
+        return await upload(file, ctx, onProgress);
       } catch (err) {
         onError?.(err instanceof Error ? err : new Error("Upload failed"), file);
         return null;

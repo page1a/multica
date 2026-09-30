@@ -126,10 +126,11 @@ vi.mock("../../issues/components/issue-detail", () => ({
 }));
 
 const replace = vi.fn();
+const push = vi.fn();
 let searchParams = new URLSearchParams();
 
 vi.mock("../../navigation", () => ({
-  useNavigation: () => ({ searchParams, replace }),
+  useNavigation: () => ({ searchParams, replace, push }),
   // The inbox renders IssueDetail in a side panel and never passes
   // `deepLinkUsage`, so the usage dialog's URL mirroring is off here; a null
   // adapter is that same "no deep link" state, not a stand-in for navigation.
@@ -181,6 +182,43 @@ vi.mock("@multica/ui/components/ui/resizable", () => ({
   ),
   ResizableHandle: () => null,
 }));
+// The merged inbox's board (DENE-1004). The stub exposes what the page hands
+// it — the highlighted issue, the active lane and the two callbacks.
+const boardData: { board: import("@multica/core/home").InboxBoard } = {
+  board: { waiting: [], stalled: [], running: [], todo: [], fresh: [], done: [] },
+};
+const boardReads: Array<{ autoRead?: boolean } | undefined> = [];
+vi.mock("@multica/core/home", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/home")>();
+  return {
+    ...actual,
+    useInboxBoard: (_wsId: string, opts?: { autoRead?: boolean }) => {
+      boardReads.push(opts);
+      return { board: boardData.board, isLoading: false, isError: false };
+    },
+  };
+});
+vi.mock("../../home/components/home-page", () => ({
+  LANE_TAG_CLASS: { waiting: "w", stalled: "s", running: "r", todo: "t", fresh: "f", done: "d" },
+  BoardAskAiButton: () => null,
+  InboxBoardLanes: ({
+    board,
+    linking,
+  }: {
+    board: import("@multica/core/home").InboxBoard;
+    linking: import("../../home/components/home-page").BoardLinking;
+  }) => (
+    <div data-testid="board" data-highlight={linking.highlightIssueId ?? ""} data-lane={linking.activeLane ?? ""}>
+      {(["waiting", "stalled", "running", "todo", "fresh", "done"] as const).map((lane) => (
+        <button key={lane} type="button" data-testid={`lane-${lane}`} onClick={() => linking.onToggleLane(lane)} />
+      ))}
+      {Object.values(board).flat().map((r) => (
+        <button key={r.issueId} type="button" data-testid={`board-row-${r.issueId}`} onClick={() => linking.onSelectIssue(r.issueId)} />
+      ))}
+    </div>
+  ),
+}));
+
 vi.mock("./inbox-list", () => ({
   InboxList: ({
     items,
@@ -188,19 +226,30 @@ vi.mock("./inbox-list", () => ({
     onSelect,
     emptyLabel,
     emptyAction,
+    decorate,
   }: {
     items: InboxItem[];
     view: string;
     onSelect: (item: InboxItem) => void;
     emptyLabel?: string;
     emptyAction?: React.ReactNode;
+    decorate?: (item: InboxItem) => { laneTag?: { className: string }; dimmed?: boolean } | undefined;
   }) => (
     <div data-testid="list" data-view={view}>
-      {items.map((i) => (
-        <button key={i.id} data-testid="row" onClick={() => onSelect(i)}>
-          {i.id}
-        </button>
-      ))}
+      {items.map((i) => {
+        const d = decorate?.(i);
+        return (
+          <button
+            key={i.id}
+            data-testid="row"
+            data-lane={d?.laneTag?.className ?? ""}
+            data-dimmed={d?.dimmed ? "true" : undefined}
+            onClick={() => onSelect(i)}
+          >
+            {i.id}
+          </button>
+        );
+      })}
       {items.length === 0 && emptyLabel && <p>{emptyLabel}</p>}
       {items.length === 0 && emptyAction}
     </div>
@@ -281,6 +330,9 @@ function reset() {
   queryCalls.length = 0;
   searchParams = new URLSearchParams();
   replace.mockClear();
+  push.mockClear();
+  boardData.board = { waiting: [], stalled: [], running: [], todo: [], fresh: [], done: [] };
+  boardReads.length = 0;
   markReadMutate.mockClear();
   markUnreadMutate.mockClear();
   archiveMutate.mockClear();
@@ -306,7 +358,7 @@ describe("InboxPage", () => {
     render(<InboxPage />);
 
     const listPanel = screen.getByTestId("panel-list");
-    expect(listPanel).toHaveAttribute("data-default-size", "260");
+    expect(listPanel).toHaveAttribute("data-default-size", "320");
     expect(listPanel).toHaveAttribute("data-min-size", "240");
     expect(listPanel).toHaveAttribute("data-max-size", "400");
   });
@@ -978,5 +1030,78 @@ describe("InboxPage", () => {
 
     expect(replace).toHaveBeenCalledWith("/acme/issues/issue-404");
     expect(replace).not.toHaveBeenCalledWith("/acme/inbox?layer=activity");
+  });
+
+  describe("merged with the board on wide screens (DENE-1004)", () => {
+    function boardRow(issueId: string, lane: import("@multica/core/home").BoardLane) {
+      return {
+        issueId, identifier: issueId, title: issueId, parentIssueId: null, lane, kind: lane,
+        stuckKind: "", reason: "", before: "", from: null, fromName: "", next: null, nextName: "",
+        at: "2026-06-15T08:00:00Z", timeline: [], unread: 0, children: [],
+      };
+    }
+    function setup() {
+      reset();
+      layout.width = DESKTOP;
+      listData.active = [
+        item({ id: "n-run", issue_id: "issue-run" }),
+        item({ id: "n-wait", issue_id: "issue-wait" }),
+        item({ id: "n-loose", issue_id: "issue-loose" }),
+      ];
+      boardData.board.waiting = [boardRow("issue-wait", "waiting")];
+      boardData.board.running = [boardRow("issue-run", "running")];
+      boardData.board.done = [boardRow("issue-gone", "done")];
+    }
+    const rows = () => screen.getAllByTestId("row");
+
+    it("shows the board beside the list and tags each notification with its lane", () => {
+      setup();
+      render(<InboxPage merged />);
+      expect(screen.getByTestId("board")).toBeInTheDocument();
+      expect(rows().map((r) => r.dataset.lane)).toEqual(["r", "w", ""]);
+      // The list is where unread gets read here, not the board's arrival.
+      expect(boardReads.every((o) => o?.autoRead === false)).toBe(true);
+    });
+
+    it("brings a lane's notifications to the top and dims the rest, until cleared", () => {
+      setup();
+      render(<InboxPage merged />);
+      fireEvent.click(screen.getByTestId("lane-waiting"));
+      expect(rows().map((r) => r.textContent)).toEqual(["n-wait", "n-run", "n-loose"]);
+      expect(rows().map((r) => r.dataset.dimmed)).toEqual([undefined, "true", "true"]);
+      expect(screen.getByTestId("inbox-lane-filter-bar")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("lane-waiting"));
+      expect(screen.queryByTestId("inbox-lane-filter-bar")).toBeNull();
+      expect(rows().map((r) => r.textContent)).toEqual(["n-run", "n-wait", "n-loose"]);
+    });
+
+    it("opens a board row in the detail pane, or as its own page when it has no notification", () => {
+      setup();
+      render(<InboxPage merged />);
+      fireEvent.click(screen.getByTestId("board-row-issue-wait"));
+      expect(replace).toHaveBeenLastCalledWith(expect.stringContaining("issue=issue-wait"));
+      fireEvent.click(screen.getByTestId("board-row-issue-gone"));
+      expect(push).toHaveBeenCalledWith("/acme/issues/issue-gone");
+    });
+
+    it("gives the open detail a way back to the board, which marks the issue just read", () => {
+      setup();
+      searchParams = new URLSearchParams("issue=issue-run");
+      render(<InboxPage merged />);
+      expect(screen.getByTestId("inbox-board-pane")).toHaveClass("hidden");
+      const leading = issueDetailProps.at(-1)?.leadingAction as React.ReactElement;
+      render(leading);
+      fireEvent.click(screen.getByTestId("inbox-back-to-board"));
+      expect(replace).toHaveBeenLastCalledWith(expect.not.stringContaining("issue="));
+      expect(screen.getByTestId("board")).toHaveAttribute("data-highlight", "issue-run");
+      expect(screen.getByTestId("inbox-board-pane")).not.toHaveClass("hidden");
+    });
+
+    it("keeps the list alone and the back arrow when not merged", () => {
+      setup();
+      render(<InboxPage />);
+      expect(screen.queryByTestId("board")).toBeNull();
+      expect(rows().every((r) => r.dataset.lane === "")).toBe(true);
+    });
   });
 });

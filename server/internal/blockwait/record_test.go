@@ -1,6 +1,7 @@
 package blockwait
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -476,5 +477,41 @@ func TestGateLetsThroughOnlyBaselineFailures(t *testing.T) {
 		if d := gate([]PRSnapshot{namesMissing}, now); d.Action != ReleaseBlock {
 			t.Fatalf("%s: red rollup without names = %#v", name, d)
 		}
+	}
+}
+
+// DENE-1002: an in_progress ticket deliberately parked with a clock is woken
+// when the clock comes due, and the watch is dropped so a spent pause stops
+// being a patrol candidate. A row that was not parked this way stays invisible.
+func TestInProgressPauseWakesOnItsClock(t *testing.T) {
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	rec := Record{HasWakeAt: true, WakeAt: now.Add(-time.Minute)}
+
+	notDue := DecidePatrol(PatrolInput{
+		Status: "in_progress", Watched: true,
+		Record: Record{HasWakeAt: true, WakeAt: now.Add(time.Hour)},
+		Now:    now,
+	})
+	if notDue.Action != ActionHold {
+		t.Fatalf("a clock that is not due must hold: %#v", notDue)
+	}
+
+	due := DecidePatrol(PatrolInput{Status: "in_progress", Watched: true, Record: rec, Now: now})
+	if due.Action != ActionWake || !due.ConsumeWakeAt || !due.Unwatch {
+		t.Fatalf("due in_progress clock = %#v, want a one-shot wake that unwatches", due)
+	}
+	set, drop := due.FollowUp(now, "", "", "")
+	if set[KeyPatrolAt] == "" || set[KeySegmentNudged] != "1" {
+		t.Fatalf("follow-up set = %#v", set)
+	}
+	if !slices.Contains(drop, KeyWakeAt) || !slices.Contains(drop, KeyWatched) {
+		t.Fatalf("follow-up drop = %#v, want wake_at and watched", drop)
+	}
+
+	// Without the deliberate stamp, a leftover failure wake on an
+	// in_progress row stays invisible to the patrol.
+	unwatched := DecidePatrol(PatrolInput{Status: "in_progress", Record: rec, Now: now})
+	if unwatched.Action != ActionHold {
+		t.Fatalf("unwatched in_progress must hold: %#v", unwatched)
 	}
 }

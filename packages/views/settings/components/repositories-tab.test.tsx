@@ -10,7 +10,34 @@ const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockGetGitHubConnectURL = vi.hoisted(() => vi.fn());
 const mockFetchNextPage = vi.hoisted(() => vi.fn());
 const mockNavReplace = vi.hoisted(() => vi.fn());
+const mockNavPush = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
+const mockInvalidate = vi.hoisted(() => vi.fn());
+const mockTestRepoBinding = vi.hoisted(() => vi.fn());
+const mockPinRepoBinding = vi.hoisted(() => vi.fn());
+const catalogRef = vi.hoisted(() => ({
+  current: {
+    links: [] as {
+      id: string;
+      kind: string;
+      host: string;
+      owner: string;
+      visibility: string;
+      health: string;
+      can_manage: boolean;
+    }[],
+    bindings: [] as {
+      repo_url: string;
+      state: string;
+      can_configure: boolean;
+      pinned_link_id?: string | null;
+      source_projects?: { id: string; title: string }[];
+    }[],
+    can_add_workspace: false,
+    can_add_personal: false,
+  },
+}));
 const workspaceRef = vi.hoisted(() => ({
   current: {
     id: "workspace-1",
@@ -58,9 +85,20 @@ const searchParamsRef = vi.hoisted(() => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey: readonly unknown[] }) => {
     if (options.queryKey.includes("installations")) {
-      return { data: githubRef.current, ...githubQueryStateRef.current };
+      return { data: githubRef.current, ...githubQueryStateRef.current, isError: false };
     }
-    return { data: membersRef.current };
+    if (options.queryKey[0] === "repo-links") {
+      return { data: catalogRef.current, isPending: false, isError: false, error: null };
+    }
+    if (options.queryKey[0] === "vcs") {
+      return {
+        data: { connections: [], can_manage: false },
+        isPending: false,
+        isError: false,
+        error: null,
+      };
+    }
+    return { data: membersRef.current, isPending: false, isError: false, error: null };
   },
   useInfiniteQuery: () => ({
     data: {
@@ -78,7 +116,7 @@ vi.mock("@tanstack/react-query", () => ({
     isFetchingNextPage: false,
     fetchNextPage: mockFetchNextPage,
   }),
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: mockInvalidate }),
   queryOptions: <T,>(options: T) => options,
   infiniteQueryOptions: <T,>(options: T) => options,
 }));
@@ -98,9 +136,18 @@ vi.mock("@multica/core/workspace/queries", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(message: string, status: number) {
+      super(message);
+      this.status = status;
+    }
+  },
   api: {
     updateWorkspace: mockUpdateWorkspace,
     getGitHubConnectURL: mockGetGitHubConnectURL,
+    testRepoBinding: mockTestRepoBinding,
+    pinRepoBinding: mockPinRepoBinding,
   },
 }));
 
@@ -114,12 +161,12 @@ vi.mock("@multica/core/auth", () => {
 });
 
 vi.mock("sonner", () => ({
-  toast: { success: mockToastSuccess, error: vi.fn() },
+  toast: { success: mockToastSuccess, error: mockToastError },
 }));
 
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({
-    push: vi.fn(),
+    push: mockNavPush,
     replace: mockNavReplace,
     back: vi.fn(),
     pathname: "/acme/settings",
@@ -165,7 +212,14 @@ describe("RepositoriesTab — automatic updates", () => {
       isFetching: false,
     };
     githubRepositoriesRef.current = [];
+    catalogRef.current = {
+      links: [],
+      bindings: [],
+      can_add_workspace: false,
+      can_add_personal: false,
+    };
     searchParamsRef.current = new URLSearchParams("tab=repositories");
+    mockTestRepoBinding.mockResolvedValue({ ok: true });
     mockNavReplace.mockImplementation((path: string) => {
       searchParamsRef.current = new URLSearchParams(path.split("?")[1] ?? "");
     });
@@ -469,5 +523,87 @@ describe("RepositoriesTab — automatic updates", () => {
         name: "Choose GitHub repositories",
       }),
     ).toBeNull();
+  });
+
+  it("shows the matched connection and tests that repository", async () => {
+    const user = setupUser();
+    catalogRef.current = {
+      links: [
+        {
+          id: "link-1",
+          kind: "github_token",
+          host: "github.com",
+          owner: "multica-ai",
+          visibility: "workspace",
+          health: "ok",
+          can_manage: true,
+        },
+      ],
+      bindings: [],
+      can_add_workspace: true,
+      can_add_personal: false,
+    };
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Connected")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Connection" })).toHaveValue("");
+    await user.click(
+      screen.getByRole("button", { name: "Test github.com/multica-ai/multica" }),
+    );
+    await waitFor(() => {
+      expect(mockTestRepoBinding).toHaveBeenCalledWith("workspace-1", {
+        repo_url: "https://github.com/multica-ai/multica",
+      });
+    });
+    expect(mockInvalidate).toHaveBeenCalled();
+  });
+
+  it("offers connect when the account has no link", async () => {
+    const user = setupUser();
+    catalogRef.current = {
+      links: [],
+      bindings: [],
+      can_add_workspace: false,
+      can_add_personal: true,
+    };
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Not connected")).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Connect github.com/multica-ai/multica" }),
+    );
+    expect(mockNavPush).toHaveBeenCalledWith(
+      "/acme/settings?tab=git-connections&connect_scope=github.com%2Fmultica-ai",
+    );
+  });
+
+  it("pins a repository to one connection", async () => {
+    const user = setupUser();
+    mockPinRepoBinding.mockResolvedValue({});
+    catalogRef.current = {
+      links: [
+        {
+          id: "link-1",
+          kind: "github_app",
+          host: "github.com",
+          owner: "multica-ai",
+          visibility: "workspace",
+          health: "ok",
+          can_manage: true,
+        },
+      ],
+      bindings: [],
+      can_add_workspace: true,
+      can_add_personal: false,
+    };
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Connection" }), "link-1");
+    await waitFor(() => {
+      expect(mockPinRepoBinding).toHaveBeenCalledWith("workspace-1", {
+        repo_url: "https://github.com/multica-ai/multica",
+        pinned_link_id: "link-1",
+      });
+    });
   });
 });

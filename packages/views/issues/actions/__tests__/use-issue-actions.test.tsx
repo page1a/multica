@@ -333,6 +333,14 @@ describe("useIssueActions", () => {
       identifier: "TES-1",
       onDeletedFallbackPath: "/test/issues",
     });
+
+    act(() => {
+      result.current.openClose();
+    });
+    expect(mockOpenModal).toHaveBeenLastCalledWith("issue-close", {
+      issueId: "issue-1",
+      identifier: "TES-1",
+    });
   });
 
   it("openCreateSubIssue seeds the parent's project and assignee so the sub-issue inherits them", () => {

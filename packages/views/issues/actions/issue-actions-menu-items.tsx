@@ -8,6 +8,7 @@ import {
   ArrowUp,
   Calendar,
   CalendarClock,
+  ClipboardCheck,
   ExternalLink,
   FolderOpen,
   Link2,
@@ -120,6 +121,7 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openDeleteConfirm,
+    openClose,
   } = actions;
 
   // Subscribe to the issue's task list so the cache is warm by the time the
@@ -366,6 +368,13 @@ export function IssueActionsMenuItems({
           party's UI taking over the screen, so it opens because a person chose
           it, never on the plugin's own initiative. */}
       <PluginModalMenuItems issueId={issue.id} Item={P.Item} />
+
+      <P.Separator />
+
+      <P.Item onClick={openClose}>
+        <ClipboardCheck className="h-3.5 w-3.5" />
+        {t(($) => $.actions.close_issue)}
+      </P.Item>
 
       <P.Separator />
 

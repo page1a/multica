@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/ghpr"
 )
@@ -55,7 +56,7 @@ func TestRefreshIssuePullRequestsMergesAndReports(t *testing.T) {
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "", "mat_test")
-	refreshIssuePullRequests(context.Background(), client, issueID, "DENE-875", true)
+	refreshIssuePullRequests(context.Background(), client, issueID, "DENE-875", true, false)
 
 	if len(mergedURLs) != 1 || mergedURLs[0] != "https://github.com/o/r/pull/7" {
 		t.Fatalf("merged = %v, want only PR 7", mergedURLs)
@@ -80,11 +81,11 @@ func TestRefreshIssuePullRequestsReadOnlyAndSkip(t *testing.T) {
 	defer srv.Close()
 	client := cli.NewAPIClient(srv.URL, "", "mat_test")
 
-	refreshIssuePullRequests(context.Background(), client, "id", "55555555-5555-4555-8555-555555555555", true)
+	refreshIssuePullRequests(context.Background(), client, "id", "55555555-5555-4555-8555-555555555555", true, false)
 	if calls != 0 {
 		t.Fatalf("unresolvable uuid should not query gh, calls = %d", calls)
 	}
-	refreshIssuePullRequests(context.Background(), client, "id", "DENE-1", false)
+	refreshIssuePullRequests(context.Background(), client, "id", "DENE-1", false, false)
 	if calls == 0 {
 		t.Fatal("identifier reference should read gh")
 	}
@@ -111,7 +112,7 @@ func TestRefreshIssuePullRequestsUUIDResolvesIssueKey(t *testing.T) {
 	}))
 	defer srv.Close()
 	client := cli.NewAPIClient(srv.URL, "", "mat_test")
-	refreshIssuePullRequests(context.Background(), client, uuid, uuid, false)
+	refreshIssuePullRequests(context.Background(), client, uuid, uuid, false, false)
 	if len(filters) == 0 {
 		t.Fatal("UUID reference should query gh after resolving the issue key")
 	}
@@ -127,11 +128,122 @@ func TestRefreshIssuePullRequestsNoMatchReportsReason(t *testing.T) {
 	old := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
-	refreshIssuePullRequests(context.Background(), client, "id", "DENE-904", false)
+	refreshIssuePullRequests(context.Background(), client, "id", "DENE-904", false, false)
 	_ = w.Close()
 	os.Stderr = old
 	body, _ := io.ReadAll(r)
 	if !strings.Contains(string(body), "gh found no PR matching DENE-904") {
 		t.Fatalf("stderr = %q, want no-match reason", body)
+	}
+}
+
+// DENE-906: a plain --outcome done squash-merges only when gh says the open PR
+// is clean and green and the linked row is daemon-sourced (or not linked yet).
+// Dirty or red is reported as-is, which is what the close gate blocks on.
+func TestOutcomeDoneMergesCleanDaemonSnapshot(t *testing.T) {
+	const issueID = "55555555-5555-4555-8555-555555555555"
+	const prURL = "https://github.com/o/r/pull/906"
+	cases := []struct {
+		name       string
+		source     string
+		mergeable  string
+		rollup     string
+		failed     []string
+		wantMerge  bool
+		wantAction string
+		wantReason string
+	}{
+		{name: "clean green daemon", source: "daemon", mergeable: "clean", rollup: "success", wantMerge: true, wantAction: blockwait.ReleaseDone},
+		{name: "clean green no linked row", source: "", mergeable: "clean", rollup: "", wantMerge: true, wantAction: blockwait.ReleaseDone},
+		{name: "clean green app row", source: "github_app", mergeable: "clean", rollup: "success", wantMerge: false, wantAction: blockwait.ReleaseMerge},
+		{name: "dirty", source: "daemon", mergeable: "dirty", rollup: "success", wantMerge: false, wantAction: blockwait.ReleaseBlock, wantReason: "合并冲突"},
+		{name: "red check", source: "daemon", mergeable: "clean", rollup: "failure", failed: []string{"backend"}, wantMerge: false, wantAction: blockwait.ReleaseBlock, wantReason: "检查是红的"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := false
+			mergedAt := time.Date(2026, 9, 29, 6, 0, 0, 0, time.UTC)
+			origList, origMerge := ghListPRs, ghMergePR
+			t.Cleanup(func() { ghListPRs, ghMergePR = origList, origMerge })
+			ms, rollup := tc.mergeable, tc.rollup
+			base := ghpr.PR{
+				Owner: "o", Repo: "r", Number: 906, Title: "DENE-906: gate", State: "open",
+				URL: prURL, Branch: "agent/agent/dene-906", SHA: "abc",
+				MergeableState: &ms, ChecksRollup: &rollup, FailedCheckNames: tc.failed,
+			}
+			ghListPRs = func(_ context.Context, _ string, filter ...string) ([]ghpr.PR, error) {
+				if len(filter) == 0 || filter[0] != "--search" {
+					return nil, nil
+				}
+				pr := base
+				if merged {
+					pr.State, pr.MergedAt = "merged", &mergedAt
+				}
+				return []ghpr.PR{pr}, nil
+			}
+			merges := 0
+			ghMergePR = func(_ context.Context, _ string, got string) error {
+				merges++
+				if got != prURL {
+					t.Errorf("merge url = %s", got)
+				}
+				merged = true
+				return nil
+			}
+			var reported []ghpr.PR
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/issues/" + issueID + "/pull-requests":
+					prs := []any{}
+					if tc.source != "" {
+						prs = append(prs, map[string]any{"source": tc.source, "state": "open", "html_url": prURL})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"pull_requests": prs})
+				case "/api/issues/" + issueID + "/pull-requests/report":
+					var body struct {
+						PullRequests []ghpr.PR `json:"pull_requests"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					reported = body.PullRequests
+					w.WriteHeader(http.StatusAccepted)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			client := cli.NewAPIClient(srv.URL, "", "mat_test")
+			refreshIssuePullRequests(context.Background(), client, issueID, "DENE-906", false, true)
+
+			if tc.wantMerge && merges != 1 {
+				t.Fatalf("merges = %d, want 1", merges)
+			}
+			if !tc.wantMerge && merges != 0 {
+				t.Fatalf("merges = %d, want 0", merges)
+			}
+			if len(reported) != 1 {
+				t.Fatalf("reported = %+v", reported)
+			}
+			got := reported[0]
+			snap := blockwait.PRSnapshot{
+				Number: int(got.Number), State: got.State, URL: got.URL,
+				FailedChecks: got.FailedCheckNames, RunningChecks: got.ChecksRunning,
+			}
+			if got.MergeableState != nil {
+				snap.Mergeable = *got.MergeableState
+			}
+			if got.ChecksRollup != nil {
+				snap.Checks = *got.ChecksRollup
+			}
+			decision := blockwait.DecideClose([]blockwait.PRSnapshot{snap}, time.Now())
+			if decision.Action != tc.wantAction {
+				t.Fatalf("gate action = %s, want %s (%s)", decision.Action, tc.wantAction, decision.Record.WaitCondition)
+			}
+			if tc.wantReason != "" && !strings.Contains(decision.Record.WaitCondition, tc.wantReason) {
+				t.Fatalf("wait condition = %q, want %q", decision.Record.WaitCondition, tc.wantReason)
+			}
+			if tc.wantReason == "检查是红的" && !strings.Contains(decision.Record.WaitCondition, "backend") {
+				t.Fatalf("wait condition = %q, want the check name", decision.Record.WaitCondition)
+			}
+		})
 	}
 }

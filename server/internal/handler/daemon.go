@@ -467,10 +467,11 @@ func absoluteHostHomeDir(path string) string {
 }
 
 type daemonWorkspaceReposResponse struct {
-	WorkspaceID  string          `json:"workspace_id"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	WorkspaceID   string               `json:"workspace_id"`
+	Repos         []RepoData           `json:"repos"`
+	ReposVersion  string               `json:"repos_version"`
+	Settings      json.RawMessage      `json:"settings,omitempty"`
+	MemoryTargets []daemonMemoryTarget `json:"memory_targets,omitempty"`
 }
 
 func normalizeWorkspaceRepos(repos []RepoData) []RepoData {
@@ -974,12 +975,16 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	})
 
 	repoResp := workspaceReposResponse(req.WorkspaceID, ws.Repos, ws.Settings)
+	if targets, targetErr := h.listDaemonMemoryTargets(r.Context(), wsUUID); targetErr == nil {
+		repoResp.MemoryTargets = targets
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"runtimes":      resp,
-		"repos":         repoResp.Repos,
-		"repos_version": repoResp.ReposVersion,
-		"settings":      repoResp.Settings,
+		"runtimes":       resp,
+		"repos":          repoResp.Repos,
+		"repos_version":  repoResp.ReposVersion,
+		"settings":       repoResp.Settings,
+		"memory_targets": repoResp.MemoryTargets,
 	})
 }
 
@@ -1157,7 +1162,11 @@ func (h *Handler) GetDaemonWorkspaceRepos(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	writeJSON(w, http.StatusOK, workspaceReposResponse(workspaceID, ws.Repos, ws.Settings))
+	response := workspaceReposResponse(workspaceID, ws.Repos, ws.Settings)
+	if targets, targetErr := h.listDaemonMemoryTargets(r.Context(), parseUUID(workspaceID)); targetErr == nil {
+		response.MemoryTargets = targets
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // setRuntimeOffline flips a runtime offline, recording the daemon's reason when
@@ -1477,6 +1486,9 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if ack.PendingModelList != nil {
 		resp["pending_model_list"] = ack.PendingModelList
+	}
+	if ack.PendingRoutingAnalysis != nil {
+		resp["pending_routing_analysis"] = ack.PendingRoutingAnalysis
 	}
 	if ack.PendingProviderConfig != nil {
 		resp["pending_provider_config"] = ack.PendingProviderConfig
@@ -1835,6 +1847,14 @@ func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, suppor
 			slog.Warn("model list HasPending timed out", "runtime_id", runtimeID, "elapsed_ms", m.ProbeModelMs)
 		} else {
 			slog.Warn("model list HasPending failed", "error", probeModelErr, "runtime_id", runtimeID)
+		}
+	}
+
+	// Routing analysis is a separate lightweight queue. Claiming it here keeps
+	// it off the task/concurrency path while preserving the heartbeat transport.
+	if h.RoutingAnalysisStore != nil {
+		if pending := h.RoutingAnalysisStore.PopPending(ctx, runtimeID); pending != nil {
+			ack.PendingRoutingAnalysis = pending
 		}
 	}
 
@@ -3299,7 +3319,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 
-		projectCtx, projectErr := h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		projectCtx, projectErr := h.resolveClaimProjectContextForRequest(r, issue.ProjectID, issue.WorkspaceID)
 		if projectErr != nil {
 			slog.Error("issue claim: load project context failed; preserving task for redelivery",
 				"task_id", uuidToString(task.ID),
@@ -3681,7 +3701,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// A web chat can opt into the same durable project context as an
 		// issue-bound task — and, unlike an issue, it can carry several
 		// projects at once (DENE-523).
-		projectCtx, projectErr := h.resolveClaimChatProjectContext(r.Context(), cs)
+		projectCtx, projectErr := h.resolveClaimChatProjectContextForRequest(r, cs)
 		if projectErr != nil {
 			slog.Error("chat claim: load project context failed; preserving task for redelivery",
 				"task_id", uuidToString(task.ID),
@@ -3933,7 +3953,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// daemon the same resource contract as issue-bound and quick-create
 		// tasks: project repositories scope the checkout, while local_directory
 		// lets the daemon select the bound path and write its managed manifest.
-		projectCtx, projectErr := h.resolveClaimProjectContext(r.Context(), ap.ProjectID, ap.WorkspaceID)
+		projectCtx, projectErr := h.resolveClaimProjectContextForRequest(r, ap.ProjectID, ap.WorkspaceID)
 		if projectErr != nil {
 			slog.Error("autopilot claim: load project context failed; preserving task for redelivery",
 				"task_id", uuidToString(task.ID),
@@ -4005,7 +4025,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					quickCreateProjectID = parsed
 				}
 			}
-			projectCtx, projectErr := h.resolveClaimProjectContext(r.Context(), quickCreateProjectID, parseUUID(qc.WorkspaceID))
+			projectCtx, projectErr := h.resolveClaimProjectContextForRequest(r, quickCreateProjectID, parseUUID(qc.WorkspaceID))
 			if projectErr != nil {
 				slog.Error("quick-create claim: load project context failed; preserving task for redelivery",
 					"task_id", uuidToString(task.ID),

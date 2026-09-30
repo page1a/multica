@@ -11,6 +11,7 @@ const webRepoUrl = "https://github.com/multica-ai/web";
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: [] }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   // The modal now reads the runtime list to gate worktree mode, and
   // runtimeListOptions builds its descriptor with queryOptions.
   queryOptions: (options: unknown) => options,
@@ -56,6 +57,7 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
   agentListOptions: () => ({ queryKey: ["agents"], queryFn: vi.fn() }),
+  workspaceKeys: { list: () => ["workspaces"] },
 }));
 
 vi.mock("@multica/core/workspace/hooks", () => ({

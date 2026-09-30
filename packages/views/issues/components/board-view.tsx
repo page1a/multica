@@ -4,6 +4,7 @@ import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 
 import { useState, useCallback, useMemo, useEffect, useRef, memo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRestoredScrollRef } from "../../platform";
 import {
   DndContext,
   DragOverlay,
@@ -517,6 +518,17 @@ function BoardViewImpl({
   // #6700: drag empty board background with the left button to pan horizontally
   // (Trello/Linear). Card drags start on `[data-board-card]` and are ignored.
   const pan = useBoardDragPan<HTMLDivElement>();
+  // The row of columns scrolls sideways; on a phone one column fills the
+  // screen, so coming back from an issue must land on the same column.
+  const restoreBoardScrollRef = useRestoredScrollRef("board");
+  const panRef = pan.ref;
+  const attachBoardScroller = useCallback(
+    (el: HTMLDivElement | null) => {
+      panRef.current = el;
+      restoreBoardScrollRef(el);
+    },
+    [panRef, restoreBoardScrollRef],
+  );
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
@@ -704,7 +716,8 @@ function BoardViewImpl({
       onDragCancel={handleDragCancel}
     >
       <div
-        ref={pan.ref}
+        ref={attachBoardScroller}
+        data-tab-scroll-root="board"
         onPointerDown={pan.onPointerDown}
         onPointerMove={pan.onPointerMove}
         onPointerUp={pan.onPointerUp}

@@ -279,13 +279,20 @@
     "follow": "自动跟随最新版",
     "update_now": "立即更新",
     "updating": "正在更新…",
-    "waiting": "等这台机器没有任务后再更新",
+    "waiting": "排队中，等在跑的任务结束",
     "unsupported": "这个 CLI 还不能自动更新",
     "binary": "更新的是这一份：{{path}}",
     "check_failed": "查不到最新版本",
     "follow_failed": "没能保存自动跟随",
     "update_request_failed": "没能开始更新",
-    "read_only": "只有运行时所有者或工作区管理员能更新这个 CLI"
+    "read_only": "只有运行时所有者或工作区管理员能更新这个 CLI",
+    "queued_tasks": "排队中，等 {{count}} 个 {{cli}} 任务跑完",
+    "queued_paused": "更新完成前新的 {{cli}} 任务先排队，其他 CLI 照常接单",
+    "queued_hold_expired": "暂停太久，{{cli}} 已恢复接单，空闲后再更新（还有 {{count}} 个在跑）",
+    "queued_daemon": "排队中，等守护进程自身更新完成",
+    "queued_request": "已发出更新请求，等本机响应",
+    "updated_to": "已更新到 {{version}}",
+    "update_failed": "更新失败"
   },
   "charts": {
     "heatmap_less": "少",

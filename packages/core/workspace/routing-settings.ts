@@ -51,6 +51,9 @@ export interface RoutingAnalysisSettings {
   enabled: boolean;
   model: string;
   base_url: string;
+  source?: "api_gateway" | "runtime_subscription";
+  runtime_id?: string;
+  thinking_level?: string;
 }
 
 export interface RoutingSettings {
@@ -146,7 +149,7 @@ export const DEFAULT_ROUTING_SETTINGS: RoutingSettings = {
   enabled: false,
   model: "",
   judge_enabled: false,
-  analysis: { enabled: true, model: "", base_url: "" },
+  analysis: { enabled: true, model: "", base_url: "", source: "api_gateway", runtime_id: "", thinking_level: "low" },
   confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
   stale_review_hours: DEFAULT_STALE_REVIEW_HOURS,
   base_url: "",
@@ -182,6 +185,9 @@ export function parseRoutingSettings(
         enabled: analysisBlock.enabled === true,
         model: typeof analysisBlock.model === "string" ? analysisBlock.model : "",
         base_url: typeof analysisBlock.base_url === "string" ? analysisBlock.base_url : "",
+        ...(analysisBlock.source === "runtime_subscription" ? { source: "runtime_subscription" as const } : {}),
+        ...(typeof analysisBlock.runtime_id === "string" ? { runtime_id: analysisBlock.runtime_id } : {}),
+        ...(typeof analysisBlock.thinking_level === "string" ? { thinking_level: analysisBlock.thinking_level } : {}),
       }
     : { enabled: false, model: "", base_url: "" };
   return {
@@ -256,7 +262,7 @@ export function routingState(
   if (!settings.enabled) return "off";
   // A role that is on with no model is incomplete, whichever role it is.
   // Both off is not: it is the deliberate "no model" mode.
-  if (settings.analysis.enabled && settings.analysis.model.trim() === "") return "incomplete";
+  if (settings.analysis.enabled && (settings.analysis.model.trim() === "" || (settings.analysis.source === "runtime_subscription" && (settings.analysis.runtime_id ?? "").trim() === ""))) return "incomplete";
   if (settings.judge_enabled && settings.model.trim() === "") return "incomplete";
   if (health?.state === "ineffective") return "ineffective";
   return "enabled";
@@ -301,7 +307,17 @@ export function withRoutingSettings(
     enabled: next.analysis.enabled,
     model: next.analysis.model.trim(),
     base_url: next.analysis.base_url.trim(),
+    // Persist the selected transport on every save. Keeping the previously
+    // stored runtime value when the form switches back to the gateway makes
+    // a refresh silently re-enable runtime analysis.
   };
+  if (next.analysis.source === "runtime_subscription") {
+    analysis.source = "runtime_subscription";
+    analysis.runtime_id = (next.analysis.runtime_id ?? "").trim();
+    analysis.thinking_level = (next.analysis.thinking_level ?? "low").trim() || "low";
+  } else if (next.analysis.source === "api_gateway") {
+    analysis.source = "api_gateway";
+  }
   if (analysisApiKey !== undefined) {
     analysis[ROUTING_API_KEY_FIELD] = analysisApiKey.trim();
   }

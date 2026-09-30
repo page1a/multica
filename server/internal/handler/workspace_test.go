@@ -1513,3 +1513,70 @@ func TestUpdateWorkspace_RejectsInvalidIssuePrefix(t *testing.T) {
 		t.Fatalf("issue_prefix changed on a rejected update: %q → %q", before, after)
 	}
 }
+
+func TestUpdateWorkspace_SedimentAgentValidation(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	snapshotHandlerTestWorkspaceSettings(t)
+
+	// Create a valid agent with runtime bound and work_enabled=true
+	validAgentID := createHandlerTestAgent(t, "sediment-valid-"+t.Name(), []byte("[]"))
+	dbfx.Exec(t, `UPDATE agent SET status = 'idle', work_enabled = true WHERE id = $1`, validAgentID)
+
+	// Create an offline agent
+	offlineAgentID := createHandlerTestAgent(t, "sediment-offline-"+t.Name(), []byte("[]"))
+	dbfx.Exec(t, `UPDATE agent SET status = 'offline', work_enabled = true WHERE id = $1`, offlineAgentID)
+
+	// Create an archived agent
+	archivedAgentID := createHandlerTestAgent(t, "sediment-archived-"+t.Name(), []byte("[]"))
+	dbfx.Exec(t, `UPDATE agent SET archived_at = NOW(), work_enabled = true WHERE id = $1`, archivedAgentID)
+
+	// Create an agent with no runtime bound
+	noRuntimeAgentID := createHandlerTestAgent(t, "sediment-noruntime-"+t.Name(), []byte("[]"))
+	dbfx.Exec(t, `UPDATE agent SET runtime_id = NULL, work_enabled = true WHERE id = $1`, noRuntimeAgentID)
+
+	// Create an agent with work disabled
+	workDisabledAgentID := createHandlerTestAgent(t, "sediment-disabled-"+t.Name(), []byte("[]"))
+	dbfx.Exec(t, `UPDATE agent SET work_enabled = false WHERE id = $1`, workDisabledAgentID)
+
+	// 1. Valid agent -> 200
+	patchSettings := func(agentVal any) *testutil.Response {
+		req := withURLParam(
+			newRequest("PATCH", "/api/workspaces/"+testWorkspaceID, map[string]any{
+				"settings": map[string]any{
+					"memory": map[string]any{
+						"sediment_agent": agentVal,
+					},
+				},
+			}),
+			"id", testWorkspaceID,
+		)
+		return testutil.Call(t, testHandler.UpdateWorkspace, req)
+	}
+
+	patchSettings(validAgentID).Want(http.StatusOK)
+
+	// 2. Offline agent -> 200 OK (must not reject offline agent)
+	patchSettings(offlineAgentID).Want(http.StatusOK)
+
+	// 3. Clear sediment agent -> 200 OK
+	patchSettings("").Want(http.StatusOK)
+	patchSettings(nil).Want(http.StatusOK)
+
+	// 4. Invalid UUID -> 400
+	patchSettings("not-a-uuid").Want(http.StatusBadRequest)
+
+	// 5. Agent not in workspace -> 400
+	patchSettings("00000000-0000-0000-0000-000000000000").Want(http.StatusBadRequest)
+
+	// 6. Archived agent -> 400
+	patchSettings(archivedAgentID).Want(http.StatusBadRequest)
+
+	// 7. No runtime bound -> 400
+	patchSettings(noRuntimeAgentID).Want(http.StatusBadRequest)
+
+	// 8. Work disabled -> 400
+	patchSettings(workDisabledAgentID).Want(http.StatusBadRequest)
+}

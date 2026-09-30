@@ -276,7 +276,7 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	// ownership-only --no-start path if the command is hidden behind --help.
 	b.WriteString("- `multica issue assign <id> (--to X | --to-id <uuid> | --unassign) [--no-start]` — change ownership. On assign/update/status, `--no-start` records the change without starting another run — use it when the work is already underway.\n")
 	writeIssueStatusCommand(b, ctx)
-	b.WriteString("- `multica issue close <id> --outcome <done|in_review|blocked|cancelled> --evidence-file <path> [--summary \"...\"] [--blocked-by <issue> | --wake-at <RFC3339> | --wait-condition \"...\" --wait-timeout <dur> | --needs-human <member>] [--verdict pass]` — close this turn's work in one call: the evidence comment, the status flip, and the `close.*` record land in one transaction, and a close missing a piece is rejected naming exactly what is missing (DENE-859). `--verdict pass` is the acceptance seat's release: it merges the open PR and writes `done` in the same call. The reply reports the status actually written, whether the PR merged, and who is woken — quote it, do not restate it from memory.\n")
+	b.WriteString("- `multica issue close <id> --outcome <done|in_review|blocked|cancelled|backlog|todo|in_progress> --evidence-file <path> [--summary \"...\"] [--blocked-by <issue> | --wake-at <RFC3339> | --wait-condition \"...\" --wait-timeout <dur> | --needs-human <member>] [--verdict pass]` — close this turn's work in one call: the evidence comment, the status flip, and the `close.*` record land in one transaction, and a close missing a piece is rejected naming exactly what is missing (DENE-859). What each outcome needs: `done` delivery evidence, `in_review` a linked PR (or `--no-code <reason>`), `blocked` what it waits on, `cancelled` a reason. `backlog` / `todo` put the ticket back to planning or the ready list on purpose — a reason, no PR, nobody woken; `in_progress` stops this round while the next continues, so it must also name who continues, using the same wait flags (with `--wake-at` the platform wakes that owner when the clock comes due). `--verdict pass` is the acceptance seat's release: it merges the open PR and writes `done` in the same call. The reply reports the status actually written, whether the PR merged, and who is woken — quote it, do not restate it from memory.\n")
 	b.WriteString("- `multica issue handoff <id> --to <reviewer|dispatcher|agent-name>` — wake the next owner without closing: the server routes the seat, skips a target that already has an active run on this issue, refuses to put a person into the reviewer seat, and replies with who was actually targeted and whether a run was created (DENE-863). Use it instead of a hand-written @mention of the acceptance seat; quote the reply, do not restate it from memory.\n")
 	b.WriteString("- `multica issue summon <id> --to <member> --reason \"...\"` — call a person onto the issue in one step: the server writes their inbox row (needs you), subscribes them, leaves a visible @, and dedupes a second call before they reply; their reply wakes the executor (DENE-880). Use it instead of a hand-written @mention of a person. A close or status with `--needs-human` already calls that person — do not summon them again.\n")
 	b.WriteString("- `multica issue children <id> [--output json]` — list a parent's sub-issues grouped by stage.\n")
@@ -432,23 +432,58 @@ func writeCommentFormatting(b *strings.Builder) {
 // is configured. The closing paragraph from the legacy version is dropped
 // (it re-stated the opening); intro is tightened into one line.
 func writeRepositories(b *strings.Builder, ctx TaskContextForEnv) {
-	if len(ctx.Repos) == 0 {
+	projectScoped := len(ctx.projectContexts()) > 0
+	repos := ctx.Repos
+	if projectScoped {
+		repos = ctx.ProjectRepos
+		// A pre-DENE-987 server has no project_repos or workspace count. Keep
+		// that daemon/server pairing byte-compatible instead of hiding all repos.
+		if repos == nil && ctx.WorkspaceRepoCount == 0 && ctx.OtherWorkspaceRepoCount == 0 {
+			repos = ctx.Repos
+		}
+	}
+	if len(repos) == 0 && (!projectScoped || ctx.OtherWorkspaceRepoCount == 0) {
 		return
 	}
 	b.WriteString("## Repositories\n\n")
-	if ctx.CodeSource.UsesLocalDirectory() {
+	if len(repos) == 0 {
+		b.WriteString("This project has no repositories attached.\n\n")
+	} else if ctx.CodeSource.UsesLocalDirectory() {
 		// Pointing at Code Source rather than repeating the checkout
 		// instruction is the whole point: this list is what an agent read
 		// before cloning a repository the machine already had.
 		b.WriteString("Available in this workspace. This project is pinned to a local directory on this machine — read `## Code Source` below before checking anything out.\n\n")
 	} else {
-		b.WriteString("Available in this workspace — `multica repo checkout <url> [--ref <branch-or-sha>]` to fetch (creates a repository checkout on a dedicated branch).\n\n")
-	}
-	for _, repo := range ctx.Repos {
-		if repo.Description != "" {
-			fmt.Fprintf(b, "- %s — %s\n", repo.URL, repo.Description)
+		if projectScoped {
+			b.WriteString("Attached to this project — use `multica repo checkout <url> [--ref <branch-or-sha>]` to fetch (creates a repository checkout on a dedicated branch).\n\n")
 		} else {
-			fmt.Fprintf(b, "- %s\n", repo.URL)
+			b.WriteString("Available in this workspace — `multica repo checkout <url> [--ref <branch-or-sha>]` to fetch (creates a repository checkout on a dedicated branch).\n\n")
+		}
+	}
+	for _, repo := range repos {
+		if repo.Description != "" {
+			fmt.Fprintf(b, "- %s — %s", repo.URL, repo.Description)
+		} else {
+			fmt.Fprintf(b, "- %s", repo.URL)
+		}
+		if repo.Reach != nil {
+			fmt.Fprintf(b, " — RepoReach: %s", repo.Reach.State)
+			if repo.Reach.NextAction != nil {
+				action := repo.Reach.NextAction
+				fmt.Fprintf(b, "; next_action: %s", action.Kind)
+				if action.URL != "" {
+					fmt.Fprintf(b, " (%s)", action.URL)
+				} else if action.Command != "" {
+					fmt.Fprintf(b, " (%s)", action.Command)
+				}
+			}
+		}
+		b.WriteByte('\n')
+	}
+	if projectScoped {
+		other := ctx.OtherWorkspaceRepoCount
+		if other > 0 {
+			fmt.Fprintf(b, "\nThere are %d other workspace repositories; use `multica repo list` when needed.\n", other)
 		}
 	}
 	b.WriteString("\n")
@@ -556,6 +591,7 @@ func writeProjectContext(b *strings.Builder, ctx TaskContextForEnv) {
 			b.WriteString(desc)
 			b.WriteString("\n\n")
 		}
+		writeProjectMemoryLine(b, project.MemoryLine)
 		writeProjectResourceList(b, ctx, project.Resources)
 		return
 	}
@@ -571,9 +607,24 @@ func writeProjectContext(b *strings.Builder, ctx TaskContextForEnv) {
 			b.WriteString(desc)
 			b.WriteString("\n\n")
 		}
+		writeProjectMemoryLine(b, project.MemoryLine)
 		writeProjectResourceList(b, ctx, project.Resources)
 	}
 	b.WriteString("When a deliverable must be attributed to one project — creating an issue, for example — infer the target from the request and the project descriptions above. If it is still ambiguous, ask the user which project to use instead of guessing.\n\n")
+}
+
+// writeProjectMemoryLine emits the one project-memory sentence. A blank line
+// adds nothing, so a claim without the field keeps the previous brief.
+func writeProjectMemoryLine(b *strings.Builder, line string) {
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.Join(strings.Fields(line), " ")
+	if line == "" {
+		return
+	}
+	b.WriteString(line)
+	b.WriteString("\n\n")
 }
 
 // writeProjectResourceList emits one project's resource list, or the
@@ -869,12 +920,14 @@ func writeWorkflowIssue(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("- You delivered what the issue itself asks for and it awaits acceptance → `in_review`. This acceptance state belongs only to a top-level issue: its reviewer checks the parent together with the complete child-issue tree. A sub-issue is execution-only — do not fill or trigger a reviewer for it, and do not move it to `in_review`; finish the child through the close protocol so the parent barrier can account for it. When acceptance passes, the acceptance seat posts `multica issue comment add <id> --verdict pass` and the platform merges the open linked PR and sets `done` (a merge it cannot make turns into a structured `blocked`); pass when the checks this change owns are green and the ticket does not explicitly name a person and a decision still waiting on them (`close.conclusion=awaiting_human`). A check already red on the base branch is not that wait, and neither is a routing note that says 需要人拍板. A sentence that says 通过 is not a verdict. Do not leave a passed ticket in `in_review` for a person to click merge.\n")
 	b.WriteString("- The issue's work continues beyond this turn — you dispatched sub-issues, or delivered one part with more underway → `in_progress`.\n")
 	b.WriteString("- You cannot proceed without something you are missing → `blocked`, with what it waits on in that same `multica issue status` call (`--blocked-by <DENE-N>`, `--wake-at <RFC3339>`, `--wait-condition` with `--wait-timeout`, or `--needs-human <member uuid>` — the server rejects an agent's `blocked` without one), and post a comment explaining the blocker unless your Agent Identity forbids issue comments.\n")
-	b.WriteString("- Any of the three closes above is ONE call, not a status flip plus a comment: use `multica issue close` (unless your Agent Identity forbids status writes or comments). It writes the evidence comment, the status, and the `close.*` record together, so a half-close cannot land; a status write followed by a separate comment is the legacy path and stays accepted, but the close call is what the parent barrier and the reviewer seat read. Pick the flags from where the issue actually stands:\n")
+	b.WriteString("- Any close is ONE call, not a status flip plus a comment: use `multica issue close` (unless your Agent Identity forbids status writes or comments). It writes the evidence comment, the status, and the `close.*` record together, so a half-close cannot land; a status write followed by a separate comment is the legacy path and stays accepted, but the close call is what the parent barrier and the reviewer seat read. Pick the flags from where the issue actually stands:\n")
 	b.WriteString("  | Where the issue stands | Call |\n")
 	b.WriteString("  | --- | --- |\n")
 	b.WriteString("  | Sub-issue finished, or a top-level issue that needs no acceptance | `--outcome done --evidence-file ./close.md` — an open linked PR is merged first; if it cannot be, the close lands as `blocked` and the reply says so |\n")
 	b.WriteString("  | Top-level issue delivered, awaiting acceptance | `--outcome in_review --evidence-file ./close.md` (needs a linked open/merged PR — a docs or research ticket, or code merged outside GitHub, says why with `--no-code <reason or MR link>`, otherwise the close is refused; an empty reviewer slot is filled with a different-family acceptance seat in the same call, then routing hands it over; add `--needs-human <member>` only when a named person must decide) |\n")
 	b.WriteString("  | Waiting on something you cannot supply | `--outcome blocked --evidence-file ./close.md` plus exactly what you wait for: `--blocked-by <issue>`, `--wake-at <RFC3339>`, `--wait-condition \"...\" --wait-timeout <dur>`, or `--needs-human <member>` — a blocked close without one is rejected |\n")
+	b.WriteString("  | This round stops but the work goes on, and you can name who continues | `--outcome in_progress --evidence-file ./close.md` plus who continues: `--wake-at <RFC3339>`, `--wait-condition \"...\" --wait-timeout <dur>`, `--blocked-by <issue>`, or `--needs-human <member>` — without one the close is rejected; `--wake-at` wakes that owner by itself when the clock comes due |\n")
+	b.WriteString("  | The work goes back to planning or the ready list on purpose, with no continuation | `--outcome backlog --evidence-file ./close.md` or `--outcome todo --evidence-file ./close.md` — say why; no PR, nobody is woken |\n")
 	b.WriteString("  | Acceptance seat: the ticket passes | `--outcome done --verdict pass --evidence-file ./close.md` — the platform merges the open PR and writes `done`; a merge that cannot happen comes back as `blocked` with the reason, never as a silent `in_review` |\n")
 	b.WriteString("  | Acceptance seat: the ticket fails | not a close — `multica issue comment add <id> --verdict hold --content-file ./review.md`, which wakes the executor |\n")
 	b.WriteString("  | Not closing, only waking the next owner (a named agent, the dispatcher, or an already-`in_review` seat that never started) | not a close — `multica issue handoff <id> --to <agent-name|dispatcher|reviewer>`; a duplicate comes back as `duplicate: true` instead of a second run |\n")

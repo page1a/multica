@@ -671,6 +671,10 @@ type RepoData struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 	Ref         string `json:"ref,omitempty"`
+	// Reach is populated for project repositories on daemon claims. The
+	// workspace repository registry keeps this nil because it is only needed by
+	// the project-scoped runtime brief.
+	Reach *RepoReach `json:"reach,omitempty"`
 }
 
 // ProjectResourceData is the wire shape for a project resource included in a
@@ -704,6 +708,10 @@ type TaskProjectContextData struct {
 	Title       string                `json:"title"`
 	Description string                `json:"description,omitempty"`
 	Resources   []ProjectResourceData `json:"resources,omitempty"`
+	// MemoryLine is one brief line: the project-memory map path and the
+	// missing checklist. Empty on a server that has not observed the project.
+	// File bodies stay out of this payload. Mirror field: daemon ProjectContextData.
+	MemoryLine string `json:"memory_line,omitempty"`
 }
 
 // ConnectedAppData keeps the daemon-claim wire field local to handler types
@@ -789,33 +797,36 @@ type AgentTaskResponse struct {
 	// IssueStatusesOmitted is how many active custom statuses were dropped by
 	// the cap, so the brief can say the list is incomplete instead of
 	// presenting a truncated catalog as the whole one.
-	IssueStatusesOmitted int                   `json:"issue_statuses_omitted,omitempty"`
-	IssueStateDeltaKnown bool                  `json:"issue_state_delta_known,omitempty"`
-	IssueChangedFields   []string              `json:"issue_changed_fields,omitempty"`
-	IssueStatus          string                `json:"issue_status,omitempty"`
-	IssueAssigneeType    string                `json:"issue_assignee_type,omitempty"`
-	IssueAssigneeID      string                `json:"issue_assignee_id,omitempty"`
-	ThreadName           string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status               string                `json:"status"`
-	Priority             int32                 `json:"priority"`
-	DispatchedAt         *string               `json:"dispatched_at"`
-	StartedAt            *string               `json:"started_at"`
-	CompletedAt          *string               `json:"completed_at"`
-	Result               any                   `json:"result"`
-	Error                *string               `json:"error"`
-	FailureReason        string                `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
-	Attempt              int32                 `json:"attempt"`
-	MaxAttempts          int32                 `json:"max_attempts"`
-	ParentTaskID         *string               `json:"parent_task_id,omitempty"`
-	IsLeaderTask         bool                  `json:"is_leader_task,omitempty"`
-	LeaderRoleResolved   bool                  `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
-	Agent                *TaskAgentData        `json:"agent,omitempty"`
-	ConnectedApps        []ConnectedAppData    `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
-	Repos                []RepoData            `json:"repos,omitempty"`
-	ProjectID            string                `json:"project_id,omitempty"`          // issue's project, when present
-	ProjectTitle         string                `json:"project_title,omitempty"`       // for surfacing in agent context
-	ProjectDescription   string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
+	IssueStatusesOmitted    int                   `json:"issue_statuses_omitted,omitempty"`
+	IssueStateDeltaKnown    bool                  `json:"issue_state_delta_known,omitempty"`
+	IssueChangedFields      []string              `json:"issue_changed_fields,omitempty"`
+	IssueStatus             string                `json:"issue_status,omitempty"`
+	IssueAssigneeType       string                `json:"issue_assignee_type,omitempty"`
+	IssueAssigneeID         string                `json:"issue_assignee_id,omitempty"`
+	ThreadName              string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status                  string                `json:"status"`
+	Priority                int32                 `json:"priority"`
+	DispatchedAt            *string               `json:"dispatched_at"`
+	StartedAt               *string               `json:"started_at"`
+	CompletedAt             *string               `json:"completed_at"`
+	Result                  any                   `json:"result"`
+	Error                   *string               `json:"error"`
+	FailureReason           string                `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	Attempt                 int32                 `json:"attempt"`
+	MaxAttempts             int32                 `json:"max_attempts"`
+	ParentTaskID            *string               `json:"parent_task_id,omitempty"`
+	IsLeaderTask            bool                  `json:"is_leader_task,omitempty"`
+	LeaderRoleResolved      bool                  `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
+	Agent                   *TaskAgentData        `json:"agent,omitempty"`
+	ConnectedApps           []ConnectedAppData    `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
+	Repos                   []RepoData            `json:"repos,omitempty"`
+	ProjectRepos            []RepoData            `json:"project_repos,omitempty"`
+	WorkspaceRepoCount      int                   `json:"workspace_repo_count,omitempty"`
+	OtherWorkspaceRepoCount int                   `json:"other_workspace_repo_count,omitempty"`
+	ProjectID               string                `json:"project_id,omitempty"`          // issue's project, when present
+	ProjectTitle            string                `json:"project_title,omitempty"`       // for surfacing in agent context
+	ProjectDescription      string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectResources        []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
 	// CodeDecision states which code this run uses, computed once on the
 	// server by internal/coderesolve and shipped with the task so the daemon
 	// and the desktop UI read one answer instead of each deriving it from the

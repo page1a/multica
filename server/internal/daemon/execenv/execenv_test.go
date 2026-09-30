@@ -890,6 +890,9 @@ func TestProjectReposReplaceWorkspaceReposInMetaSkill(t *testing.T) {
 		Repos: []RepoContextForEnv{
 			{URL: "https://github.com/org/project-repo"},
 		},
+		ProjectRepos: []RepoContextForEnv{
+			{URL: "https://github.com/org/project-repo"},
+		},
 		ProjectResources: []ProjectResourceForEnv{
 			{
 				ID:           "33333333-4444-5555-6666-777777777777",
@@ -911,6 +914,36 @@ func TestProjectReposReplaceWorkspaceReposInMetaSkill(t *testing.T) {
 	}
 	if strings.Contains(s, "https://github.com/org/workspace-repo") {
 		t.Errorf("CLAUDE.md should not contain workspace repo when project has its own")
+	}
+}
+
+func TestProjectRepositoriesBriefIncludesReachAndHidesWorkspaceURLs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := TaskContextForEnv{
+		IssueID:                 "issue-1",
+		ProjectID:               "project-1",
+		ProjectTitle:            "Project A",
+		ProjectRepos:            []RepoContextForEnv{{URL: "https://github.com/org/project-repo", Reach: &RepoReachForEnv{State: "disconnected", Mode: "none", NextAction: &RepoNextActionForEnv{Kind: "install_app"}}}},
+		Repos:                   []RepoContextForEnv{{URL: "https://github.com/org/project-repo"}, {URL: "https://github.com/org/other-repo"}},
+		OtherWorkspaceRepoCount: 1,
+	}
+	if _, err := InjectRuntimeConfig(dir, "claude", ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "https://github.com/org/project-repo") || !strings.Contains(s, "RepoReach: disconnected") || !strings.Contains(s, "next_action: install_app") {
+		t.Fatalf("project repository reach missing from brief:\n%s", s)
+	}
+	if strings.Contains(s, "https://github.com/org/other-repo") {
+		t.Fatalf("workspace repository URL leaked into project brief:\n%s", s)
+	}
+	if !strings.Contains(s, "There are 1 other workspace repositories") || !strings.Contains(s, "multica repo list") {
+		t.Fatalf("workspace repository summary missing from brief:\n%s", s)
 	}
 }
 

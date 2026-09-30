@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -360,25 +360,25 @@ func rollupToConclusion(rollup pgtype.Text, failed, running, passed int64) *stri
 
 // githubAppSlug returns the GitHub App slug used to build the install URL.
 // Empty when the integration is not configured for this deployment.
-func githubAppSlug() string { return strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")) }
+// Environment variables win; otherwise the identity stored from Settings.
+func githubAppSlug() string { return githubapp.Current().Slug }
 
 // githubWebhookSecret is shared by webhook verification and state-token signing.
 // We reuse the webhook secret as the state HMAC key so operators only need to
 // configure one value.
-func githubWebhookSecret() string { return strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")) }
+func githubWebhookSecret() string { return githubapp.Current().WebhookSecret }
 
 // isGitHubConfigured returns true only when BOTH the install slug and the
 // webhook secret are set. The Connect button uses this single flag, so the
 // frontend never offers a flow that the backend would reject.
-func isGitHubConfigured() bool { return githubAppSlug() != "" && githubWebhookSecret() != "" }
+func isGitHubConfigured() bool { return githubapp.Current().InstallReady() }
 
 // isGitHubRepositoryBrowseConfigured is deliberately separate from the
 // install-flow flag. The App slug + webhook secret are enough to connect an
 // installation, but browsing its repositories also requires App JWT
 // credentials so the server can mint a short-lived installation token.
 func isGitHubRepositoryBrowseConfigured() bool {
-	return strings.TrimSpace(os.Getenv("GITHUB_APP_ID")) != "" &&
-		strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY")) != ""
+	return githubapp.Current().BrowseReady()
 }
 
 // signState produces an opaque token that binds a workspace ID to the
@@ -450,13 +450,6 @@ func isAllowedGitHubReturnTo(returnTo string) bool {
 	return returnTo == githubReturnToGitHub || returnTo == githubReturnToRepositories
 }
 
-func githubSettingsURL(frontend, returnTo string) string {
-	if !isAllowedGitHubReturnTo(returnTo) {
-		returnTo = githubReturnToGitHub
-	}
-	return strings.TrimRight(frontend, "/") + "/settings?tab=" + url.QueryEscape(returnTo)
-}
-
 // GitHubConnect (GET /api/workspaces/{id}/github/connect) returns the URL the
 // browser should open to install the Multica GitHub App against the caller's
 // repos. The state token binds the resulting setup callback to this workspace.
@@ -503,11 +496,8 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	installationIDStr := q.Get("installation_id")
 	state := q.Get("state")
-	frontend := strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
-	if frontend == "" {
-		frontend = "http://localhost:3000"
-	}
-	settingsURL := githubSettingsURL(frontend, githubReturnToGitHub)
+	frontend := h.appOrigin()
+	settingsURL := h.githubSettingsURL(r.Context(), frontend, "", githubReturnToGitHub)
 
 	if state == "" {
 		http.Redirect(w, r, settingsURL+"&github_error=missing_params", http.StatusFound)
@@ -518,7 +508,7 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settingsURL+"&github_error=invalid_state", http.StatusFound)
 		return
 	}
-	settingsURL = githubSettingsURL(frontend, returnTo)
+	settingsURL = h.githubSettingsURL(r.Context(), frontend, workspaceID, returnTo)
 	if installationIDStr == "" {
 		http.Redirect(w, r, settingsURL+"&github_error=missing_params", http.StatusFound)
 		return
@@ -537,6 +527,23 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 	// If the App auth is not configured we still create the row with the
 	// minimum we know; webhook events will refresh it as soon as one fires.
 	login, accountType, avatar := fetchInstallationAccount(r.Context(), installationID)
+
+	// One GitHub installation belongs to one workspace. A second workspace
+	// used to be inserted beside the first (migration 133 widened the unique
+	// key so a reconnect would not silently overwrite). New connections stop
+	// here with a message instead of attaching the same installation twice.
+	bound, err := h.Queries.ListGitHubInstallationsByInstallationID(r.Context(), installationID)
+	if err != nil {
+		slog.Error("github: failed to look up installation", "err", err, "installation_id", installationID)
+		http.Redirect(w, r, settingsURL+"&github_error=persist_failed", http.StatusFound)
+		return
+	}
+	for _, existing := range bound {
+		if uuidToString(existing.WorkspaceID) != workspaceID {
+			http.Redirect(w, r, settingsURL+"&github_error=installation_taken", http.StatusFound)
+			return
+		}
+	}
 
 	// Best-effort capture of the connecting user (may be nil if the public
 	// callback was hit without a session — e.g. user wasn't logged in to
@@ -675,14 +682,15 @@ func fetchInstallationAccount(ctx context.Context, installationID int64) (login,
 // `now` is injected for deterministic tests; production callers pass
 // time.Now().
 func signGitHubAppJWT(now time.Time) (string, error) {
-	appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
-	pemKey := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
+	creds := githubapp.Current()
+	appID := strings.TrimSpace(creds.AppID)
+	pemKey := strings.TrimSpace(creds.PrivateKeyPEM)
 	if appID == "" || pemKey == "" {
 		return "", nil
 	}
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(pemKey))
 	if err != nil {
-		return "", fmt.Errorf("parse GITHUB_APP_PRIVATE_KEY: %w", err)
+		return "", fmt.Errorf("parse GitHub App private key: %w", err)
 	}
 	// GitHub allows JWTs valid for up to 10 minutes. We back-date `iat`
 	// by 60 seconds to absorb modest clock skew between us and GitHub
@@ -967,6 +975,7 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	view, _ := h.ensureIssueDeliveries(r.Context(), issue)
 	rows, err := h.Queries.ListPullRequestsByIssue(r.Context(), issue.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list pull requests")
@@ -1002,7 +1011,11 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].PRCreatedAt > out[j].PRCreatedAt
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"pull_requests": out})
+	payload := map[string]any{"pull_requests": out}
+	if view.Gap != nil {
+		payload["gap"] = view.Gap
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // broadcastPRSnapshotApplied is the ghsnapshot pipeline's onApplied callback:

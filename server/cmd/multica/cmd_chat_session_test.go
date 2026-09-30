@@ -32,3 +32,14 @@ func TestParseChatSessionRef(t *testing.T) {
 		t.Fatal("expected an error for a url with no session id")
 	}
 }
+
+func TestParseChatSessionLinkRefKeepsWorkspaceSlug(t *testing.T) {
+	const id = "019ec09d-6222-722b-bdfa-427b105d80be"
+	ref, err := parseChatSessionLinkRef("https://app.example/acme/chat/" + id + "?from=copy")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if ref.ID != id || ref.Slug != "acme" {
+		t.Fatalf("ref = %+v, want id %s and slug acme", ref, id)
+	}
+}

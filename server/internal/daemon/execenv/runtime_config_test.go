@@ -239,6 +239,12 @@ func TestStatusRuleIsFactJudgmentAtBothMoments(t *testing.T) {
 		"`--no-code <reason or MR link>`, otherwise the close is refused",
 		"`--outcome blocked --evidence-file ./close.md`",
 		"a blocked close without one is rejected",
+		// DENE-1002: the two deliberate non-terminal rows, so an agent that
+		// must stop mid-work finds the outcome instead of a bare status flip.
+		"`--outcome in_progress --evidence-file ./close.md` plus who continues",
+		"without one the close is rejected",
+		"`--outcome backlog --evidence-file ./close.md` or `--outcome todo --evidence-file ./close.md`",
+		"no PR, nobody is woken",
 		"an open linked PR is merged first; if it cannot be, the close lands as `blocked`",
 		"an empty reviewer slot is filled with a different-family acceptance seat in the same call",
 		"`--outcome done --verdict pass --evidence-file ./close.md`",
@@ -2471,11 +2477,16 @@ func TestAvailableCommandsListIssueClose(t *testing.T) {
 	t.Parallel()
 	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "issue-1"})
 	for _, want := range []string{
-		"- `multica issue close <id> --outcome <done|in_review|blocked|cancelled> --evidence-file <path>",
+		"- `multica issue close <id> --outcome <done|in_review|blocked|cancelled|backlog|todo|in_progress> --evidence-file <path>",
 		"land in one transaction",
 		"rejected naming exactly what is missing",
 		"`--verdict pass` is the acceptance seat's release",
 		"quote it, do not restate it from memory",
+		// DENE-1002: the bullet is the only place an agent sees the new
+		// outcomes without --help, so it has to say what each one needs.
+		"`backlog` / `todo` put the ticket back to planning or the ready list on purpose",
+		"`in_progress` stops this round while the next continues",
+		"it must also name who continues",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("available commands missing %q\n---\n%s", want, out)

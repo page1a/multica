@@ -38,9 +38,45 @@ type Runtime struct {
 
 // RepoData holds repository information from the workspace.
 type RepoData struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
-	Ref         string `json:"ref,omitempty"`
+	URL         string         `json:"url"`
+	Description string         `json:"description,omitempty"`
+	Ref         string         `json:"ref,omitempty"`
+	Reach       *RepoReachData `json:"reach,omitempty"`
+}
+
+type RepoReachData struct {
+	RepoURL      string                 `json:"repo_url"`
+	Key          string                 `json:"key"`
+	Provider     string                 `json:"provider"`
+	Mode         string                 `json:"mode"`
+	State        string                 `json:"state"`
+	AccountLogin string                 `json:"account_login"`
+	LinkID       *string                `json:"link_id"`
+	LastLookup   RepoLastLookupData     `json:"last_lookup"`
+	Webhook      string                 `json:"webhook"`
+	Projects     []RepoReachProjectData `json:"projects"`
+	CanConfigure bool                   `json:"can_configure"`
+	Hint         string                 `json:"hint"`
+	NextAction   *RepoNextActionData    `json:"next_action"`
+}
+
+type RepoReachProjectData struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+type RepoLastLookupData struct {
+	OK    *bool  `json:"ok"`
+	At    string `json:"at"`
+	Error string `json:"error"`
+}
+
+type RepoNextActionData struct {
+	Kind     string `json:"kind"`
+	For      string `json:"for,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Command  string `json:"command,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 // ProjectResourceData mirrors handler.ProjectResourceData — a single project
@@ -66,6 +102,8 @@ type ProjectContextData struct {
 	Title       string                `json:"title"`
 	Description string                `json:"description,omitempty"`
 	Resources   []ProjectResourceData `json:"resources,omitempty"`
+	// MemoryLine mirrors handler.TaskProjectContextData.MemoryLine.
+	MemoryLine string `json:"memory_line,omitempty"`
 }
 
 // ConnectedAppData keeps the claim-response field local to daemon types while
@@ -114,16 +152,19 @@ type Task struct {
 	// order. Rendered into the brief's status-command line; empty (including on
 	// old servers that never send the field) keeps the brief byte-identical to
 	// the built-in-only form. IssueStatusesOmitted is the cap overflow count.
-	IssueStatuses        []IssueStatusData     `json:"issue_statuses,omitempty"`
-	IssueStatusesOmitted int                   `json:"issue_statuses_omitted,omitempty"`
-	ThreadName           string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Agent                *AgentData            `json:"agent,omitempty"`
-	ConnectedApps        []ConnectedAppData    `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
-	Repos                []RepoData            `json:"repos,omitempty"`
-	ProjectID            string                `json:"project_id,omitempty"`          // active project for this task, when present
-	ProjectTitle         string                `json:"project_title,omitempty"`       // human-readable project title for context injection
-	ProjectDescription   string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // project-scoped resources to expose to the agent
+	IssueStatuses           []IssueStatusData     `json:"issue_statuses,omitempty"`
+	IssueStatusesOmitted    int                   `json:"issue_statuses_omitted,omitempty"`
+	ThreadName              string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Agent                   *AgentData            `json:"agent,omitempty"`
+	ConnectedApps           []ConnectedAppData    `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
+	Repos                   []RepoData            `json:"repos,omitempty"`
+	ProjectRepos            []RepoData            `json:"project_repos,omitempty"`
+	WorkspaceRepoCount      int                   `json:"workspace_repo_count,omitempty"`
+	OtherWorkspaceRepoCount int                   `json:"other_workspace_repo_count,omitempty"`
+	ProjectID               string                `json:"project_id,omitempty"`          // active project for this task, when present
+	ProjectTitle            string                `json:"project_title,omitempty"`       // human-readable project title for context injection
+	ProjectDescription      string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectResources        []ProjectResourceData `json:"project_resources,omitempty"`   // project-scoped resources to expose to the agent
 	// CodeDecision is the server's answer to "which code does this run use",
 	// computed once by internal/coderesolve and shipped with the task
 	// (DENE-619). When it is set, it is the only answer the daemon acts on:

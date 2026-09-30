@@ -102,6 +102,21 @@ WHERE id = $1 AND workspace_id = $2;
 SELECT metadata, revision FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: FindOpenSedimentIssue :one
+SELECT * FROM issue
+WHERE workspace_id = $1
+  AND metadata @> jsonb_build_object('sediment_project', $2::text)
+  AND status NOT IN ('done', 'cancelled')
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
+
+-- name: FindLatestSedimentIssue :one
+SELECT * FROM issue
+WHERE workspace_id = $1
+  AND metadata @> jsonb_build_object('sediment_project', $2::text)
+ORDER BY updated_at DESC, id DESC
+LIMIT 1;
+
 -- name: ListIssuesWaitingOn :many
 -- DENE-232 Stage 3: waiters in this workspace whose close.waiting_on matches
 -- the waited-on issue's identifier (PREFIX-N) or its UUID. Containment uses
@@ -127,10 +142,13 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 -- name: ListBlockPatrolCandidates :many
 -- DENE-850 patrol. Only rows stamped block.watched after this feature began
 -- watching them, so a deploy does not walk tickets already sitting in review.
+-- DENE-1002 adds in_progress: a deliberate `issue close --outcome in_progress`
+-- stamps watched alongside its clock wait, and the patrol wakes the executor
+-- when that clock comes due. Ordinary in_progress rows are never stamped.
 -- Clocks are compared as UTC text. The writer uses RFC3339 with a Z suffix.
 -- Casting to timestamptz would abort every workspace's sweep on one bad value.
 SELECT * FROM issue
-WHERE status IN ('blocked', 'in_review')
+WHERE status IN ('blocked', 'in_review', 'in_progress')
   AND COALESCE(metadata->>'block.watched', '') = '1'
   AND NOT EXISTS (
     SELECT 1 FROM agent_task_queue t

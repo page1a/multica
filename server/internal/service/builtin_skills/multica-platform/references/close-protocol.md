@@ -17,6 +17,9 @@ rejected naming the missing item; nothing is half-written.
 multica issue close <id> --outcome done      --evidence-file ./close.md            # delivered; an open linked PR is merged first, or the close lands as blocked and says so
 multica issue close <id> --outcome in_review --evidence-file ./close.md            # top-level, awaiting acceptance: needs a linked PR (or --no-code <reason>); empty reviewer slot is filled, then routing hands over
 multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # or --wake-at / --wait-condition + --wait-timeout / --needs-human
+multica issue close <id> --outcome backlog   --evidence-file ./close.md            # back to planning on purpose (DENE-1002): a reason, no PR, nobody woken
+multica issue close <id> --outcome todo      --evidence-file ./close.md            # back to the ready list on purpose: same shape as backlog
+multica issue close <id> --outcome in_progress --evidence-file ./close.md --wake-at 2026-10-01T09:00:00Z   # stay in progress, and say who continues
 multica issue close <id> --outcome done --verdict pass --evidence-file ./close.md  # acceptance seat: merge the open PR, then done
 ```
 
@@ -36,12 +39,45 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
   the ticket carries no code (docs, research). `--needs-human <member>` turns it into
   `awaiting_human`; otherwise it is `awaiting_review` with `wake_action=route`
   — routing hands the ticket to the acceptance seat, no executor @mention.
+- `--outcome backlog` / `--outcome todo` are the deliberate return: the
+  ticket goes back to `backlog` / `todo` with a `deferred` conclusion, a
+  `none` next owner and no wake. It needs no PR (nothing shipped) — the
+  evidence says why the work goes back. This is the right close for "a reason,
+  no continuation"; do not park a ticket in `in_progress` for it.
+- `--outcome in_progress` keeps the ticket in flight while this run stops:
+  conclusion `continuing`, and it **must** name who continues, using the same
+  wait flags as `--outcome blocked` — `--wake-at <RFC3339>`,
+  `--wait-condition "..." --wait-timeout <dur>`, `--blocked-by <issue>`, or
+  `--needs-human <member>`. Without one the close is rejected ("放回进行中必须
+  写明「接下来谁继续」"). `--wake-at` writes `wake_action=clock`: the platform
+  wakes the next owner when the clock comes due, so a paused ticket resumes
+  instead of sitting until somebody notices. The next owner defaults to the
+  issue's assignee; `--needs-human` names the person instead.
 - `--verdict pass` is the acceptance seat's release and only pairs with
   `--outcome done` on an `in_review` ticket: the platform merges the open PR
   and writes `done`; if the merge cannot happen it comes back as `blocked`
   with the reason and `block_kind=external`. A failed acceptance is not a
   close: `multica issue comment add <id> --verdict hold --content-file
   ./review.md` wakes the executor.
+- `--pr <pull-or-mr-url>` declares the delivery when the platform has not
+  linked one yet (DENE-961). The server checks that URL against the
+  repository connection, registers it when the check succeeds, then runs the
+  normal gate. If it cannot verify the URL, the close still proceeds and the
+  ticket records `close.pr_unverified` (未核实); that link is not merged.
+  Do not block on “等待平台关联 PR” or any equivalent — that wait is rejected.
+  Use `--pr` instead. `multica issue pull-requests` reports the same gap.
+- Knowledge audit is required on every close, including a ticket with no pull
+  request. `--knowledge-none` declares that nothing qualified for project
+  memory. Repeat `--knowledge <key>=<summary>` for each checklist slot this
+  close wrote. The keys are the project-memory checklist (`agents`, `context`,
+  `adr`, `docs_index`, `evidence_index`); do not invent another list. The
+  server stores `close.knowledge_audit` in the same transaction as the
+  evidence comment, the status, and the other `close.*` keys. A missing
+  audit, an unknown location, an empty summary, a duplicate location, or both
+  forms at once is rejected and nothing is written. Declaring no qualified
+  knowledge is a valid close. This key is not one of the original eight:
+  older closes stay readable without it. A heading in a pull-request body is
+  not a second gate.
 - The reply reports the status actually written, whether the PR merged, and
   who is woken. Quote it; do not restate it from memory.
 
@@ -77,12 +113,12 @@ comment id. If `wake_action=mention`, the body must contain a live
 
 | key | allowed values |
 |---|---|
-| `close.conclusion` | `delivered` `blocked` `awaiting_review` `awaiting_human` |
+| `close.conclusion` | `delivered` `blocked` `awaiting_review` `awaiting_human` `deferred` `continuing` |
 | `close.status` | the issue's status key after step 1 |
 | `close.evidence_comment_id` | comment UUID |
 | `close.next_owner_type` | `agent` `squad` `member` `none` |
 | `close.next_owner_id` | UUID; `""` when type is `none` |
-| `close.wake_action` | `stage_done` `mention` `route` `none` |
+| `close.wake_action` | `stage_done` `mention` `route` `clock` `none` |
 | `close.waiting_on` | identifier such as `DENE-196`, or `""`. Prefer a real parent + stage for same-family waits; server wakes the waiter on `done`/`cancelled` unless that `(issue, agent)` already has a queued or running task |
 | `close.at` | RFC3339 UTC |
 | `close.block_kind` | `decision` `permission` `external` `dependency` `capacity`; required for new blocked closes |
@@ -103,6 +139,9 @@ Staged child = has a parent and (own `stage` or any staged sibling).
 | `awaiting_review` | top-level parent acceptance is an agent Reviewer | `in_review` | that Reviewer, or `none` and let routing fill the seat | `route` (what `issue close --outcome in_review` writes) or `mention` — **not** `done`; child barrier is already closed |
 | `awaiting_human` | top-level parent acceptance is a human | `in_review` | that member | `none`. Optional dispatcher: `mention` that agent and name the human in `waiting_on` or the evidence |
 | `blocked` | missing auth / human decision / external dep | `blocked` | who can unblock | `mention` if agent/squad, else `none` |
+| `deferred` | the work goes back to the plan or the ready list on purpose (`--outcome backlog` / `todo`) | `backlog` or `todo` | `none` | `none` — nothing shipped, nobody woken; no PR needed |
+| `continuing` | this run stops mid-work but the work goes on (`--outcome in_progress`); a continuation must be written | `in_progress` | the issue's assignee, or the `--needs-human` member | `clock` when the continuation is `--wake-at`; `none` when it is a person, a condition, or another issue |
+| (no close) | 交付查询报没权限 | do not change status | 仓库登记人（服务端 summon） | 先 `multica connection add --from-gh --yes`（本机有发起人的 gh 登录）；不行就交给服务端叫人，不要自己设等待条件 |
 | (no close) | this turn did not deliver this issue's ask | do not change status | — | do not write `close.*` |
 Four closing scenes:
 
@@ -116,7 +155,18 @@ Four closing scenes:
   a named human. Status `in_review`. `wake_action=none`. Barrier stays open
   on purpose.
 - **blocked** — missing permission, product decision, or external dependency.
-  Status `blocked`. Barrier stays open.
+  Status `blocked`. Barrier stays open. A wait that the platform can watch
+  (`--wake-at`, `--wait-condition` + `--wait-timeout`, `--blocked-by`) resumes
+  itself; a person wait is comment-only.
+- **backlog / todo (deliberate return)** — the work goes back to planning or
+  the ready list, with the reason recorded. Status `backlog` / `todo`.
+  Conclusion `deferred`. No PR, no wake, nobody is asked to continue.
+- **in_progress (paused, continues)** — the run stops but the work goes on,
+  and this close writes who continues with which wait. Status `in_progress`,
+  conclusion `continuing`. `--wake-at` wakes the next owner on the clock; a
+  person continuation (`--needs-human`) only leaves the record and the call. A
+  run that ends `in_progress` with no such close is the stall the completion
+  path above signals.
 Role defaults:
 
 | role | default conclusion | default status | wake |
@@ -169,11 +219,14 @@ count equals `total` (cancelled counts as done).
 There is no scan that retries a failed wake (the Stage 4 watchdog was removed
 in DENE-520). Two narrow backstops look at issue state instead:
 
-- **Block-wait patrol** (server, every minute). A `blocked` or `in_review`
-  issue that has been quiet for 30 minutes with no run working on it is woken
-  from its `block.*` wait: the executor, or the 验收席 for review. One wake per
-  wait segment; when the wait is a person, it only comments and starts no run.
-  It never promotes `backlog` children and never changes models.
+- **Block-wait patrol** (server, every minute). A `blocked`, `in_review`, or
+  `in_progress` issue that has been quiet for 30 minutes with no run working on
+  it is woken from its `block.*` wait: the executor, or the 验收席 for review.
+  An `in_progress` row is only a candidate when a `--outcome in_progress` close
+  marked it watched (DENE-1002), and the watch is dropped once it has been
+  woken, so an ordinary active ticket is never interrupted. One wake per wait
+  segment; when the wait is a person, it only comments and starts no run. It
+  never promotes `backlog` children and never changes models.
 - **Completion path**, fired by the run's `/complete` rather than by the
   clock: a run that ends cleanly while the issue is still `in_progress` with no
   active task behind it posts a
@@ -196,4 +249,9 @@ Checks: `close.status` equals `issue.status` and is a built-in key;
 `in_review` and `wake_action` in {`mention`,`route`}; `conclusion=awaiting_human` implies
 `in_review` and `next_owner_type=member` (or a dispatcher agent with
 `wake_action` in {`mention`,`route`} and the human named in `waiting_on` or the evidence);
-`conclusion=blocked` implies `blocked`; non-empty `waiting_on` forbids `done`.
+`conclusion=blocked` implies `blocked`; non-empty `waiting_on` forbids `done`;
+`conclusion=deferred` implies status in {`backlog`,`todo`}; `conclusion=continuing`
+implies `in_progress` and at least one of a non-`none` next owner or a non-empty
+`waiting_on`; `wake_action=clock` implies `in_progress`. A `continuing` close whose
+live status is `in_progress` also marks the ticket watched, so the block-wait
+patrol wakes it when its clock comes due and stops watching once it has.

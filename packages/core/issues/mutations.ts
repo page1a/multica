@@ -40,6 +40,7 @@ import { useRecentContextStore } from "../chat/recent-context-store";
 import { useRecentIssuesStore } from "./stores";
 import type { InboxItem, Issue, IssueReaction } from "../types";
 import type {
+  CloseIssueRequest,
   CreateCommentSubIssueManualRequest,
   CreateIssueRequest,
   ListIssuesCache,
@@ -401,6 +402,19 @@ export function useUpdateIssue() {
       if (ctx?.parentId || newParentId) {
         qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
       }
+    },
+  });
+}
+
+export function useCloseIssue() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, ...body }: CloseIssueRequest & { id: string }) =>
+      api.closeIssue(id, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, vars.id) });
+      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
     },
   });
 }

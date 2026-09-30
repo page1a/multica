@@ -170,5 +170,10 @@
     "queue_aria": "把输入加入工作线程队列",
     "insert": "插队",
     "prioritize_aria": "优先处理 {{id}}"
+  },
+  "scroll_to_bottom": {
+    "label": "回到底部",
+    "new_messages_other": "{{count}} 条新消息",
+    "new_comments_other": "{{count}} 条新评论"
   }
 }

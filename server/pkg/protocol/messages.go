@@ -185,6 +185,7 @@ type WorkspacesChangedPayload struct{}
 // newer server stays safe on an older daemon.
 const (
 	PendingWorkKindModelList        = "model_list"
+	PendingWorkKindRoutingAnalysis  = "routing_analysis"
 	PendingWorkKindProviderConfig   = "provider_config"
 	PendingWorkKindLocalSkills      = "local_skills"
 	PendingWorkKindLocalSkillImport = "local_skill_import"
@@ -548,6 +549,7 @@ type DaemonHeartbeatAckPayload struct {
 	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
 	PendingAgentCLI         *DaemonHeartbeatPendingAgentCLI         `json:"pending_agent_cli,omitempty"`
 	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
+	PendingRoutingAnalysis  *DaemonHeartbeatPendingRoutingAnalysis  `json:"pending_routing_analysis,omitempty"`
 	PendingProviderConfig   *DaemonHeartbeatPendingProviderConfig   `json:"pending_provider_config,omitempty"`
 	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
 	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
@@ -590,6 +592,16 @@ type DaemonHeartbeatPendingAgentCLI struct {
 type DaemonHeartbeatPendingModelList struct {
 	ID         string            `json:"id"`
 	EnvOverlay map[string]string `json:"env_overlay,omitempty"`
+}
+
+// DaemonHeartbeatPendingRoutingAnalysis is a lightweight, no-tools analysis
+// request. It is kept separate from task dispatch so it never consumes a
+// runtime's work concurrency slot.
+type DaemonHeartbeatPendingRoutingAnalysis struct {
+	ID            string `json:"id"`
+	Model         string `json:"model"`
+	ThinkingLevel string `json:"thinking_level,omitempty"`
+	Prompt        string `json:"prompt"`
 }
 
 // DaemonHeartbeatPendingProviderConfig describes a request for the daemon to

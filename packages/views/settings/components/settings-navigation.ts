@@ -4,7 +4,10 @@ export function resolveSettingsLocation(params: URLSearchParams) {
   if (tab === "issue" || tab === "chat") {
     return { tab: "preferences", section: tab, integration: null };
   }
-  if (tab === "github" || tab === "lark") {
+  if (tab === "github") {
+    return { tab: "git-connections", section: null, integration: null };
+  }
+  if (tab === "lark") {
     return { tab: "integrations", section: null, integration: tab };
   }
   return {

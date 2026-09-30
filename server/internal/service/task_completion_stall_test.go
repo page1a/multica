@@ -400,3 +400,56 @@ func TestHandleCompletedTasksSignalsWhenEveryChildIsTerminal(t *testing.T) {
 		t.Fatalf("signal comments = %d, want 1", len(comments))
 	}
 }
+
+// DENE-1002: a run that ended after the executor deliberately closed the
+// issue back into in_progress (with a recorded continuation) is not a stall.
+// No signal comment, no recovery run. A stale pause from an earlier run still
+// signals.
+func TestHandleCompletedTasksSkipsDeliberateInProgressPause(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("current pause is silent", func(t *testing.T) {
+		fx, svc, _, agentID, runtimeID := newCompletionStallFixture(t)
+		issueID := fx.Issue(t, "Paused on purpose", testutil.Cols{
+			"status":        "in_progress",
+			"assignee_type": "agent",
+			"assignee_id":   agentID,
+		})
+		completed := completedTaskFor(t, fx, agentID, runtimeID, issueID)
+		closedAt := time.Now().UTC().Add(time.Second).Format(time.RFC3339)
+		if _, err := fx.Pool.Exec(ctx, `UPDATE issue SET metadata = metadata || $2::jsonb WHERE id = $1`, issueID,
+			fmt.Sprintf(`{"close.conclusion":"continuing","close.status":"in_progress","close.at":%q}`, closedAt)); err != nil {
+			t.Fatalf("write close record: %v", err)
+		}
+		if got := svc.HandleCompletedTasks(ctx, []db.AgentTaskQueue{completed}); got != 0 {
+			t.Fatalf("HandleCompletedTasks signalled = %d, want 0", got)
+		}
+		if comments := completionStallComments(t, fx, issueID); len(comments) != 0 {
+			t.Fatalf("signal comments = %d, want 0", len(comments))
+		}
+		var active int
+		fx.QueryRow(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1
+			AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')`, issueID).Scan(&active)
+		if active != 0 {
+			t.Fatalf("recovery runs = %d, want 0", active)
+		}
+	})
+
+	t.Run("stale pause still signals", func(t *testing.T) {
+		fx, svc, _, agentID, runtimeID := newCompletionStallFixture(t)
+		issueID := fx.Issue(t, "Old pause", testutil.Cols{
+			"status":        "in_progress",
+			"assignee_type": "agent",
+			"assignee_id":   agentID,
+		})
+		completed := completedTaskFor(t, fx, agentID, runtimeID, issueID)
+		closedAt := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+		if _, err := fx.Pool.Exec(ctx, `UPDATE issue SET metadata = metadata || $2::jsonb WHERE id = $1`, issueID,
+			fmt.Sprintf(`{"close.conclusion":"continuing","close.status":"in_progress","close.at":%q}`, closedAt)); err != nil {
+			t.Fatalf("write close record: %v", err)
+		}
+		if got := svc.HandleCompletedTasks(ctx, []db.AgentTaskQueue{completed}); got != 1 {
+			t.Fatalf("HandleCompletedTasks signalled = %d, want 1", got)
+		}
+	})
+}

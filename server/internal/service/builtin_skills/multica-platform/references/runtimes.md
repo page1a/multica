@@ -29,6 +29,9 @@ multica runtime list --output json
 multica runtime usage <runtime-id> --output json
 multica runtime activity <runtime-id> --output json
 multica runtime update <runtime-id> --target-version <version> --output json
+multica runtime agent-cli <runtime-id> --output json
+multica runtime agent-cli <runtime-id> --update-now --output json
+multica runtime agent-cli <runtime-id> --follow on|off
 multica runtime delete <runtime-id>
 multica repo checkout <url>
 multica repo checkout <url> --ref <branch-or-sha>
@@ -48,7 +51,18 @@ omit response IDs retain best-effort per-event input/cache accounting. These
 fallback figures can be incomplete; use the provider's billing records for
 actual charges. This correction applies to new runs, not historical usage rows.
 
-`runtime update` and `runtime delete` are writes. Starting a runtime update is
+`runtime update` upgrades the Multica daemon itself. `runtime agent-cli` is
+about the provider CLI behind a built-in local runtime (Claude, Codex, ...):
+it prints the daemon's last `cli_update` report — `phase`
+(`current` / `available` / `waiting` / `updating` / `failed` / ...),
+`waiting_tasks` (this CLI's tasks an upgrade still waits for),
+`claims_paused` and `wait_reason`. `--update-now` stops new tasks for that CLI
+only, upgrades once its running tasks finish (other CLIs keep working), and
+gives the tasks back after at most 30 minutes if they never drain. It returns
+right away; read the command again for the next report.
+
+`runtime update`, `runtime agent-cli --update-now/--follow` and
+`runtime delete` are writes. Starting a runtime update is
 limited to its owner or a workspace owner/admin; the original initiator may keep
 polling that specific in-flight request if their admin role changes.
 

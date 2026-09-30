@@ -14,7 +14,7 @@ import (
 )
 
 // agentCLIUpdateLoop keeps each known agent CLI on the latest release when
-// the machine is idle, and reports current/latest/error for the runtime page.
+// that CLI has no task running, and reports its state for the runtime page.
 //
 // It does not touch Multica's own CLI (auto_update.go). It also does not
 // change any agent's configured model: after a successful upgrade it only
@@ -25,11 +25,14 @@ func (d *Daemon) agentCLIUpdateLoop(ctx context.Context) {
 	}
 	// The first look is soon after start, so the page is not blank for a
 	// whole version-refresh interval. Later looks share that interval, and a
-	// manual update or the last task finishing wakes the loop immediately.
+	// manual update or a CLI's last task finishing wakes the loop at once.
+	// The minute check only gives back a provider held past its limit.
 	timer := time.NewTimer(20 * time.Second)
 	defer timer.Stop()
 	ticker := time.NewTicker(agentVersionRefreshInterval)
 	defer ticker.Stop()
+	holdCheck := time.NewTicker(time.Minute)
+	defer holdCheck.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -40,6 +43,10 @@ func (d *Daemon) agentCLIUpdateLoop(ctx context.Context) {
 			d.reconcileAgentCLIs(ctx)
 		case <-d.agentCLIUpdateKick:
 			d.reconcileAgentCLIs(ctx)
+		case now := <-holdCheck.C:
+			if d.agentCLIHoldOverdue(now) {
+				d.reconcileAgentCLIs(ctx)
+			}
 		}
 	}
 }
@@ -54,19 +61,9 @@ func (d *Daemon) kickAgentCLIUpdate() {
 	}
 }
 
-// finishActiveTask drops one in-flight task and, when the machine is idle
-// again, wakes a deferred CLI upgrade. The claim barrier is not held while
-// tasks are running, so new work is not frozen just because an upgrade is
-// waiting.
-func (d *Daemon) finishActiveTask() {
-	if d.activeTasks.Add(-1) == 0 {
-		d.kickAgentCLIUpdate()
-	}
-}
-
 // handleAgentCLICommand records a follow switch or a manual update delivered
 // on the heartbeat. The upgrade itself waits for reconcileAgentCLIs, which
-// is what enforces the idle gate.
+// is what enforces the per-provider idle gate.
 func (d *Daemon) handleAgentCLICommand(runtimeID string, cmd *PendingAgentCLI) {
 	if cmd == nil || runtimeID == "" {
 		return
@@ -104,7 +101,11 @@ func (d *Daemon) handleAgentCLICommand(runtimeID string, cmd *PendingAgentCLI) {
 			}
 		}
 	}
+	var replaced string
 	if cmd.UpdateNow && cmd.RequestID != "" && d.agentCLIManual.RequestID != cmd.RequestID {
+		if prev := d.agentCLIManual.Provider; prev != "" && prev != rt.Provider {
+			replaced = prev
+		}
 		d.agentCLIManual = agentCLIManual{
 			RuntimeID: runtimeID,
 			Provider:  rt.Provider,
@@ -113,6 +114,11 @@ func (d *Daemon) handleAgentCLICommand(runtimeID string, cmd *PendingAgentCLI) {
 		changed = true
 	}
 	d.agentCLIMu.Unlock()
+	// One "update now" is pending per machine; a click for another CLI
+	// replaces it, and the replaced CLI must not stay held.
+	if replaced != "" {
+		d.releaseAgentCLIHold(replaced)
+	}
 	// A heartbeat repeats the same command until it is cleared. Only a new
 	// choice wakes the loop; otherwise the idle kick and the regular tick
 	// are what retry an upgrade.
@@ -122,10 +128,13 @@ func (d *Daemon) handleAgentCLICommand(runtimeID string, cmd *PendingAgentCLI) {
 }
 
 // agentCLIManual is one "update now" still waiting to run or to be acked.
+// HoldExpired is set once it held the provider for agentCLIHoldLimit; from
+// then on it waits like follow does, without holding new tasks back.
 type agentCLIManual struct {
-	RuntimeID string
-	Provider  string
-	RequestID string
+	RuntimeID   string
+	Provider    string
+	RequestID   string
+	HoldExpired bool
 }
 
 func (d *Daemon) reconcileAgentCLIs(ctx context.Context) {
@@ -135,6 +144,9 @@ func (d *Daemon) reconcileAgentCLIs(ctx context.Context) {
 	d.agentCLIMu.Lock()
 	d.ensureAgentCLIFollowLocked()
 	d.agentCLIMu.Unlock()
+	// Before anything can return early (a failed version check, a missing
+	// CLI), give back any provider held past its limit.
+	d.expireOverdueAgentCLIHold(time.Now())
 
 	agents := d.agents()
 	if len(agents) == 0 {
@@ -206,7 +218,7 @@ func (d *Daemon) reconcileOneAgentCLI(ctx context.Context, spec agentCLIRelease,
 			status.Note = "Already the latest copy: " + binaryPath
 		}
 		d.publishAgentCLIStatus(ctx, spec.Provider, status, manual)
-		d.clearAgentCLIManual(manual.RequestID)
+		d.finishAgentCLIManual(spec.Provider, manual.RequestID)
 		return
 	}
 
@@ -214,6 +226,7 @@ func (d *Daemon) reconcileOneAgentCLI(ctx context.Context, spec agentCLIRelease,
 	steps, why := planAgentCLIUpgrade(spec, binaryPath)
 	if !wantUpgrade {
 		status.Phase = agentCLIPhaseAvailable
+		d.clearAgentCLIWaiting(spec.Provider)
 		d.publishAgentCLIStatus(ctx, spec.Provider, status, agentCLIManual{})
 		return
 	}
@@ -221,32 +234,63 @@ func (d *Daemon) reconcileOneAgentCLI(ctx context.Context, spec agentCLIRelease,
 		status.Phase = agentCLIPhaseUnsupported
 		status.Error = why
 		d.publishAgentCLIStatus(ctx, spec.Provider, status, manual)
-		d.clearAgentCLIManual(manual.RequestID)
+		d.finishAgentCLIManual(spec.Provider, manual.RequestID)
 		return
 	}
 
-	// Do not hold the claim barrier while waiting. A busy machine keeps
-	// accepting tasks; the upgrade starts on a later tick once it is idle.
-	if d.tryBeginServerUpdate(ctx) != serverUpdateAcquired {
+	// Only this CLI waits. Other providers keep taking tasks throughout;
+	// an "update now" also stops this provider taking new ones, for at most
+	// agentCLIHoldLimit, so its running tasks can drain.
+	now := time.Now()
+	holding := manual.RequestID != "" && !manual.HoldExpired
+	if holding {
+		since := d.holdAgentCLIClaims(spec.Provider, now)
+		if now.Sub(since) >= agentCLIHoldLimit {
+			d.expireAgentCLIHold(spec.Provider, manual.RequestID)
+			manual.HoldExpired = true
+			holding = false
+		}
+	}
+	started, running, selfUpdate := d.tryBeginAgentCLIUpgrade(spec.Provider, now)
+	if !started {
 		status.Phase = agentCLIPhaseWaiting
-		status.Error = "waiting until this machine has no task running"
+		status.WaitingTasks = running
+		status.ClaimsPaused = holding
+		switch {
+		case selfUpdate:
+			status.WaitReason = agentCLIWaitDaemonUpdate
+			status.Note = "Waiting for the Multica daemon update on this machine to finish"
+		case manual.HoldExpired:
+			status.WaitReason = agentCLIWaitHoldExpired
+			status.Note = fmt.Sprintf("Held new %s tasks for %s but %d still running; taking tasks again and updating once none is running", spec.Provider, agentCLIHoldLimit, running)
+		case running == 0:
+			// Only a claim is in flight; its exit wakes the updater.
+			status.WaitReason = agentCLIWaitTasks
+			status.Note = fmt.Sprintf("Waiting for a %s task claim to finish", spec.Provider)
+		default:
+			status.WaitReason = agentCLIWaitTasks
+			if holding {
+				status.Note = fmt.Sprintf("Not taking new %s tasks; updating once %d running finish", spec.Provider, running)
+			} else {
+				status.Note = fmt.Sprintf("Updating once %d running %s tasks finish", running, spec.Provider)
+			}
+		}
 		d.publishAgentCLIStatus(ctx, spec.Provider, status, agentCLIManual{})
 		return
 	}
-	defer func() {
-		d.releaseClaimBarrier()
-		d.updating.Store(false)
-	}()
+	defer d.endAgentCLIUpgrade(spec.Provider)
 
 	status.Phase = agentCLIPhaseUpdating
 	status.Error = ""
+	status.ClaimsPaused = true
 	d.publishAgentCLIStatus(ctx, spec.Provider, status, agentCLIManual{})
+	status.ClaimsPaused = false
 
 	if err := d.runAgentCLIUpgrade(ctx, steps); err != nil {
 		status.Phase = agentCLIPhaseFailed
 		status.Error = clipCLIMessage(err.Error(), 500)
 		d.publishAgentCLIStatus(ctx, spec.Provider, status, manual)
-		d.clearAgentCLIManual(manual.RequestID)
+		d.finishAgentCLIManual(spec.Provider, manual.RequestID)
 		return
 	}
 
@@ -262,12 +306,14 @@ func (d *Daemon) reconcileOneAgentCLI(ctx context.Context, spec agentCLIRelease,
 	status.Error = ""
 	status.Note = "Updated this copy: " + binaryPath
 	status.Phase = agentCLIPhaseCurrent
+	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if stillNewer, ok := cliVersionNewer(latest, status.CurrentVersion); ok && stillNewer {
 		status.Phase = agentCLIPhaseAvailable
+		status.UpdatedAt = ""
 		status.Note = "Updater finished, but this copy still reads " + status.CurrentVersion + ": " + binaryPath
 	}
 	d.publishAgentCLIStatus(ctx, spec.Provider, status, manual)
-	d.clearAgentCLIManual(manual.RequestID)
+	d.finishAgentCLIManual(spec.Provider, manual.RequestID)
 }
 
 func (d *Daemon) agentCLICurrentVersion(provider string) string {
@@ -299,14 +345,59 @@ func (d *Daemon) peekAgentCLIManual(provider string) agentCLIManual {
 	return agentCLIManual{}
 }
 
-func (d *Daemon) clearAgentCLIManual(requestID string) {
+// finishAgentCLIManual ends one "update now": its request is acked and its
+// hold on the provider's tasks, if any, is given back.
+func (d *Daemon) finishAgentCLIManual(provider, requestID string) {
+	d.clearAgentCLIWaiting(provider)
 	if requestID == "" {
 		return
 	}
 	d.agentCLIMu.Lock()
-	defer d.agentCLIMu.Unlock()
-	if d.agentCLIManual.RequestID == requestID {
+	cleared := d.agentCLIManual.RequestID == requestID
+	if cleared {
 		d.agentCLIManual = agentCLIManual{}
+	}
+	d.agentCLIMu.Unlock()
+	if cleared {
+		d.releaseAgentCLIHold(provider)
+	}
+}
+
+func (d *Daemon) expireOverdueAgentCLIHold(now time.Time) {
+	if !d.agentCLIHoldOverdue(now) {
+		return
+	}
+	d.agentCLIMu.Lock()
+	manual := d.agentCLIManual
+	d.agentCLIMu.Unlock()
+	d.claimMu.Lock()
+	var overdue []string
+	for provider, h := range d.cliGate.held {
+		if !h.upgrading && now.Sub(h.since) >= agentCLIHoldLimit {
+			overdue = append(overdue, provider)
+		}
+	}
+	d.claimMu.Unlock()
+	for _, provider := range overdue {
+		if manual.Provider == provider {
+			d.expireAgentCLIHold(provider, manual.RequestID)
+		} else {
+			d.releaseAgentCLIHold(provider)
+		}
+	}
+}
+
+// expireAgentCLIHold gives the provider back its tasks after a hold ran out,
+// while the request itself keeps waiting for an idle moment.
+func (d *Daemon) expireAgentCLIHold(provider, requestID string) {
+	d.agentCLIMu.Lock()
+	if d.agentCLIManual.RequestID == requestID {
+		d.agentCLIManual.HoldExpired = true
+	}
+	d.agentCLIMu.Unlock()
+	d.releaseAgentCLIHold(provider)
+	if d.logger != nil {
+		d.logger.Warn("agent CLI update held new tasks past its limit; taking tasks again", "provider", provider, "limit", agentCLIHoldLimit)
 	}
 }
 

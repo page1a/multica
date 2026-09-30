@@ -167,6 +167,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "todo": {
+        "title": "À faire",
+        "hint": "Tâches qui vous sont assignées et pas encore commencées.",
+        "empty": "Rien à faire pour l'instant"
+      },
       "fresh": {
         "title": "Du nouveau",
         "hint": "Autres tâches avec du nouveau depuis votre dernière visite, affichées pour cette visite uniquement.",
@@ -192,6 +197,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "todo": "À faire",
       "fresh": "Nouveau",
       "done": "Done"
     },
@@ -240,6 +246,21 @@
     "seen_one": "{{count}} already seen",
     "seen_other": "{{count}} already seen",
     "hide_seen": "Hide seen",
-    "load_error": "Some of this did not load; it will retry shortly"
+    "load_error": "Some of this did not load; it will retry shortly",
+    "ask_ai": "Me le résumer",
+    "lane_filter_hint": "Cliquez pour mettre en avant les notifications de ce groupe à gauche",
+    "panel_title": "Tableau",
+    "panel_hint": "Par statut",
+    "back_to_panel": "Retour au tableau",
+    "filter_bar": "Notifications « {{lane}} » mises en avant",
+    "filter_clear": "Effacer",
+    "short": {
+      "waiting": "En attente",
+      "stalled": "Arrêté",
+      "running": "En cours",
+      "todo": "À faire",
+      "fresh": "Nouveau",
+      "done": "Terminé"
+    }
   }
 }

@@ -139,7 +139,20 @@
     "next_owner": "Next: {{name}}",
     "next_owner_none": "Next: none",
     "waiting_on": "Waiting on {{id}}",
-    "last_activity_missing": "No activity time"
+    "last_activity_missing": "No activity time",
+    "knowledge_none": "No qualified knowledge",
+    "knowledge_change": "Knowledge: {{locations}}",
+    "section_title": "Close record",
+    "conclusion": "Conclusion",
+    "status": "Status",
+    "evidence": "Reason",
+    "evidence_missing": "The reason comment was not loaded.",
+    "conclusion_delivered": "Delivered",
+    "conclusion_blocked": "Blocked",
+    "conclusion_awaiting_review": "Awaiting review",
+    "conclusion_awaiting_human": "Awaiting a person",
+    "conclusion_deferred": "Returned to planning / to-do",
+    "conclusion_continuing": "Paused, continues next round"
   },
   "blocker_summary": {
     "title": "Blocked · {{count}} root cause(s)",
@@ -850,6 +863,7 @@
     "remove_parent_issue": "Remove parent issue",
     "remove_parent_issue_success": "Removed parent issue",
     "add_sub_issue": "Add sub-issue...",
+    "close_issue": "Close out",
     "delete_issue": "Delete issue",
     "pin_to_sidebar": "Pin to sidebar",
     "unpin_from_sidebar": "Unpin from sidebar"

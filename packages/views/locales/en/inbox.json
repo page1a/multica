@@ -167,6 +167,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "todo": {
+        "title": "To do",
+        "hint": "Assigned to you and not started yet.",
+        "empty": "Nothing to do yet"
+      },
       "fresh": {
         "title": "New activity",
         "hint": "Other issues with news since your last visit, shown this visit only.",
@@ -192,6 +197,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "todo": "To do",
       "fresh": "New",
       "done": "Done"
     },
@@ -240,6 +246,21 @@
     "seen_one": "{{count}} already seen",
     "seen_other": "{{count}} already seen",
     "hide_seen": "Hide seen",
-    "load_error": "Some of this did not load; it will retry shortly"
+    "load_error": "Some of this did not load; it will retry shortly",
+    "ask_ai": "Walk me through it",
+    "lane_filter_hint": "Click to highlight this group's notifications on the left",
+    "panel_title": "Board",
+    "panel_hint": "Grouped by status",
+    "back_to_panel": "Back to board",
+    "filter_bar": "Highlighting notifications in “{{lane}}”",
+    "filter_clear": "Clear",
+    "short": {
+      "waiting": "Waiting",
+      "stalled": "Stopped",
+      "running": "Running",
+      "todo": "To do",
+      "fresh": "New",
+      "done": "Done"
+    }
   }
 }

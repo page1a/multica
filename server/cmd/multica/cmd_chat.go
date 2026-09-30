@@ -103,11 +103,15 @@ func runChatThread(cmd *cobra.Command, args []string) error {
 }
 
 func runChatSessionHandoff(cmd *cobra.Command, sessionRef string) error {
-	sessionID, err := parseChatSessionRef(sessionRef)
+	ref, err := parseChatSessionLinkRef(sessionRef)
 	if err != nil {
 		return err
 	}
-	resp, err := fetchChatRead(cmd, "/api/chat/sessions/"+url.PathEscape(sessionID)+"/handoff", "")
+	path := "/api/chat/sessions/" + url.PathEscape(ref.ID) + "/handoff"
+	if ref.Slug != "" {
+		path = "/api/chat/links/" + url.PathEscape(ref.Slug) + "/sessions/" + url.PathEscape(ref.ID) + "/handoff"
+	}
+	resp, err := fetchChatRead(cmd, path, "")
 	if err != nil {
 		return err
 	}
@@ -116,30 +120,44 @@ func runChatSessionHandoff(cmd *cobra.Command, sessionRef string) error {
 
 // parseChatSessionRef accepts a bare session UUID or an internal chat URL
 // (`…/chat/<session-id>` or `?session=<id>`).
+type chatSessionRef struct{ ID, Slug string }
+
 func parseChatSessionRef(raw string) (string, error) {
+	ref, err := parseChatSessionLinkRef(raw)
+	if err != nil {
+		return "", err
+	}
+	return ref.ID, nil
+}
+
+func parseChatSessionLinkRef(raw string) (chatSessionRef, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", fmt.Errorf("missing session id or url")
+		return chatSessionRef{}, fmt.Errorf("missing session id or url")
 	}
 	if id, ok := canonicalSessionID(raw); ok {
-		return id, nil
+		return chatSessionRef{ID: id}, nil
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("could not read a chat session id from %q", raw)
+		return chatSessionRef{}, fmt.Errorf("could not read a chat session id from %q", raw)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	for i, part := range parts {
 		if part == "chat" && i+1 < len(parts) {
 			if id, ok := canonicalSessionID(parts[i+1]); ok {
-				return id, nil
+				slug := ""
+				if i > 0 {
+					slug = parts[i-1]
+				}
+				return chatSessionRef{ID: id, Slug: slug}, nil
 			}
 		}
 	}
 	if id, ok := canonicalSessionID(parsed.Query().Get("session")); ok {
-		return id, nil
+		return chatSessionRef{ID: id}, nil
 	}
-	return "", fmt.Errorf("could not read a chat session id from %q", raw)
+	return chatSessionRef{}, fmt.Errorf("could not read a chat session id from %q", raw)
 }
 
 func canonicalSessionID(raw string) (string, bool) {

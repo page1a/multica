@@ -162,7 +162,7 @@ describe("uploadAndInsertFile", () => {
 
     const uploadTask = uploadAndInsertFile(editor, file, handler);
 
-    expect(handler).toHaveBeenCalledWith(file, expect.any(String));
+    expect(handler).toHaveBeenCalledWith(file, expect.any(String), expect.any(Function));
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
 
     editor.commands.insertContent("after");

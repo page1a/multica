@@ -104,7 +104,7 @@ describe("SubIssueCloseStrip", () => {
     const strip = screen.getByTestId("sub-issue-close-strip");
     expect(strip).toHaveAttribute("data-close-state", "ok");
     expect(chip("stage")).toHaveTextContent("Stage 2");
-    expect(chip("close.conclusion")).toHaveTextContent("delivered");
+    expect(chip("close.conclusion")).toHaveTextContent("Delivered");
     expect(chip("close.next_owner")).toHaveTextContent("Next: none");
     expect(queryChip("close.waiting_on")).not.toBeInTheDocument();
     expect(chip("last_activity_at")).toHaveTextContent("1h ago");
@@ -168,7 +168,7 @@ describe("SubIssueCloseStrip", () => {
       "close.status ≠ done",
     );
     expect(chip("close.conclusion")).toHaveTextContent(
-      "awaiting_review",
+      "Awaiting review",
     );
   });
 
@@ -202,5 +202,51 @@ describe("SubIssueCloseStrip", () => {
       "Waiting on DENE-196",
     );
     expect(chip("last_activity_at")).toHaveTextContent("4h ago");
+  });
+
+  it("shows a knowledge audit only when the close recorded one", () => {
+    const { rerender } = renderWithI18n(
+      <SubIssueCloseStrip
+        issue={issue({
+          status: "done",
+          metadata: {
+            ...{
+              "close.conclusion": "delivered",
+              "close.status": "done",
+              "close.evidence_comment_id": "comment-1",
+              "close.next_owner_type": "none",
+              "close.next_owner_id": "",
+              "close.wake_action": "none",
+              "close.waiting_on": "",
+              "close.at": "2026-09-15T12:00:00Z",
+            },
+            "close.knowledge_audit": JSON.stringify({ none: true }),
+          },
+        })}
+      />,
+    );
+    expect(chip("close.knowledge_audit")).toHaveTextContent("No qualified knowledge");
+
+    rerender(
+      <SubIssueCloseStrip
+        issue={issue({
+          status: "done",
+          metadata: {
+            "close.conclusion": "delivered",
+            "close.status": "done",
+            "close.evidence_comment_id": "comment-1",
+            "close.next_owner_type": "none",
+            "close.next_owner_id": "",
+            "close.wake_action": "none",
+            "close.waiting_on": "",
+            "close.at": "2026-09-15T12:00:00Z",
+            "close.knowledge_audit": JSON.stringify({
+              changes: [{ location: "agents", summary: "seed" }],
+            }),
+          },
+        })}
+      />,
+    );
+    expect(chip("close.knowledge_audit")).toHaveTextContent("Knowledge: agents");
   });
 });

@@ -41,8 +41,9 @@ func (h *Handler) SetAgentCLIFollow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
-// RequestAgentCLIUpdate asks the daemon to upgrade this CLI once the machine
-// has no task running. The page reads the result from metadata.cli_update.
+// RequestAgentCLIUpdate asks the daemon to upgrade this CLI once none of its
+// own tasks is running; meanwhile the daemon stops claiming new tasks for this
+// CLI only. The page reads the result from metadata.cli_update.
 func (h *Handler) RequestAgentCLIUpdate(w http.ResponseWriter, r *http.Request) {
 	rt, ok := h.requireManageableAgentCLI(w, r)
 	if !ok {

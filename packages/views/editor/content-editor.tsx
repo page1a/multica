@@ -139,7 +139,7 @@ interface ContentEditorBaseProps {
    * what lets a settle find its placeholder in a document a later mount
    * rebuilt. Hosts with no persistence may ignore it.
    */
-  onUploadFile?: (file: File, uploadId: string) => Promise<UploadResult | null>;
+  onUploadFile?: (file: File, uploadId: string, onProgress: (uploadedBytes: number, totalBytes: number) => void) => Promise<UploadResult | null>;
   /**
    * Character count above which a plain-text paste is uploaded as a
    * `pasted-text.txt` attachment instead of being inserted as body text.
@@ -398,7 +398,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const onReadyRef = useRef(onReady);
     const onUploadingChangeRef = useRef(onUploadingChange);
     const onUploadFileRef = useRef<
-      ((file: File, uploadId: string) => Promise<UploadResult | null>) | undefined
+      ((file: File, uploadId: string, onProgress: (uploadedBytes: number, totalBytes: number) => void) => Promise<UploadResult | null>) | undefined
     >(undefined);
     // Same reasoning as placeholderRef below: the extension array is built once
     // at mount, so the paste-as-file threshold is read through a ref to stay
@@ -441,8 +441,8 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     // stable across renders the way the original passthrough did.
     const wrappedOnUploadFile = useMemo(() => {
       if (!onUploadFile) return undefined;
-      return async (file: File, uploadId: string): Promise<UploadResult | null> => {
-        const result = await onUploadFile(file, uploadId);
+      return async (file: File, uploadId: string, onProgress: (uploadedBytes: number, totalBytes: number) => void): Promise<UploadResult | null> => {
+        const result = await onUploadFile(file, uploadId, onProgress);
         // Only track attachments that carry a persisted id — the no-workspace
         // avatar branch returns an id-less record that the resolver can't key
         // off of, and tracking it would just bloat memory without helping

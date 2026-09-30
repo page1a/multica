@@ -291,13 +291,20 @@
     "follow": "Suivre la dernière version",
     "update_now": "Mettre à jour",
     "updating": "Mise à jour…",
-    "waiting": "En attente que cette machine soit libre",
+    "waiting": "En file jusqu'à la fin des tâches en cours",
     "unsupported": "Ce CLI ne peut pas être mis à jour automatiquement",
     "binary": "Cette copie : {{path}}",
     "check_failed": "Impossible de vérifier la dernière version",
     "follow_failed": "Impossible d'enregistrer le suivi automatique",
     "update_request_failed": "Impossible de lancer la mise à jour",
-    "read_only": "Seul le propriétaire du runtime ou un admin peut mettre à jour ce CLI"
+    "read_only": "Seul le propriétaire du runtime ou un admin peut mettre à jour ce CLI",
+    "queued_tasks": "En file : {{count}} tâche(s) {{cli}} à terminer",
+    "queued_paused": "Les nouvelles tâches {{cli}} attendent la fin de la mise à jour ; les autres CLI continuent",
+    "queued_hold_expired": "Pause trop longue : {{cli}} reprend les tâches et se mettra à jour une fois libre ({{count}} en cours)",
+    "queued_daemon": "En file : en attente de la mise à jour du daemon Multica",
+    "queued_request": "Mise à jour demandée, en attente de cette machine",
+    "updated_to": "Mis à jour vers {{version}}",
+    "update_failed": "Échec de la mise à jour"
   },
   "charts": {
     "heatmap_less": "Moins",

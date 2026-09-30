@@ -27,6 +27,7 @@ import {
   useSetChatSessionPinned,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
+import { useChatListViewStore } from "@multica/core/chat/list-view-store";
 import { useAuthStore } from "@multica/core/auth";
 import type { Agent, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { ChatAccessDialog } from "./chat-access-dialog";
@@ -44,6 +45,10 @@ import { useLocale, useT } from "../../i18n";
 import { HighlightText } from "../../search/highlight-text";
 
 const apiLogger = createLogger("chat.api");
+
+// History view shows every pinned chat plus this many recent unpinned ones;
+// the rest sit behind "Show more". Same idea as the sidebar's pinned preview.
+export const HISTORY_PREVIEW_LIMIT = 5;
 
 // IM-style timestamp: today → clock, this year → M/D, else full date.
 function formatChatTime(dateStr: string, locale: string): string {
@@ -91,6 +96,8 @@ export function ChatThreadList({
   onArchive,
   emptyLabel,
   search,
+  sessionsLoaded = true,
+  collapseHistory = true,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
@@ -107,6 +114,14 @@ export function ChatThreadList({
    *  set (archived included, listed last and tagged), rows highlight the
    *  query, and a content hit's snippet replaces the last-message preview. */
   search?: { query: string; snippets: ReadonlyMap<string, string> };
+  /** False while the sessions query is still loading, so an empty `sessions`
+   *  is not mistaken for a drained archive. */
+  sessionsLoaded?: boolean;
+  /** Cap the history view at the recent few unpinned chats behind a "Show
+   *  more" row. The parent turns it off while a project filter is active so a
+   *  filtered result is never truncated. Search and the archived view never
+   *  truncate regardless. */
+  collapseHistory?: boolean;
 }) {
   const { t } = useT("chat");
   const locale = useLocale();
@@ -137,13 +152,25 @@ export function ChatThreadList({
     [sessions],
   );
 
-  // Which view is showing. Falls back to history when the archived list drains
-  // (last chat unarchived / deleted) so we never strand the user on an empty
-  // archive.
-  const [view, setView] = useState<"history" | "archived">("history");
+  // Which view is showing. Kept in the session-scoped list store so an open
+  // archive survives opening a chat and coming back. Falls back to history
+  // when the archived list drains (last chat unarchived / deleted) so we never
+  // strand the user on an empty archive — but only once the list has loaded:
+  // a restored archive view would otherwise be thrown away while the sessions
+  // are still in flight.
+  const view = useChatListViewStore((s) => s.view);
+  const setView = useChatListViewStore((s) => s.setView);
   useEffect(() => {
-    if (view === "archived" && archivedSessions.length === 0) setView("history");
-  }, [view, archivedSessions.length]);
+    if (sessionsLoaded && view === "archived" && archivedSessions.length === 0) {
+      setView("history");
+    }
+  }, [sessionsLoaded, view, archivedSessions.length, setView]);
+
+  // Session-local on purpose: a fresh page load goes back to the short list.
+  // Session-scoped with the view above: coming back to an expanded list whose
+  // scroll offset is restored needs the rows that were showing.
+  const historyExpanded = useChatListViewStore((s) => s.historyExpanded);
+  const setHistoryExpanded = useChatListViewStore((s) => s.setHistoryExpanded);
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [confirmingStopId, setConfirmingStopId] = useState<string | null>(null);
@@ -636,9 +663,47 @@ export function ChatThreadList({
     );
   }
 
+  // Pinned chats never count against the cap. Past the cap, the open chat and
+  // any chat with unread replies stay visible so nothing important hides
+  // inside the fold.
+  let shownHistory = historySessions;
+  let hiddenCount = 0;
+  const canCollapse = collapseHistory && !historyExpanded;
+  const unpinnedCount = historySessions.filter((s) => !s.pinned).length;
+  if (collapseHistory && unpinnedCount > HISTORY_PREVIEW_LIMIT) {
+    let seenUnpinned = 0;
+    const kept = historySessions.filter((s) => {
+      if (s.pinned) return true;
+      seenUnpinned += 1;
+      return (
+        seenUnpinned <= HISTORY_PREVIEW_LIMIT ||
+        s.id === activeSessionId ||
+        (s.unread_count ?? 0) > 0
+      );
+    });
+    hiddenCount = historySessions.length - kept.length;
+    if (canCollapse) shownHistory = kept;
+  }
+  const showMoreToggle =
+    collapseHistory &&
+    unpinnedCount > HISTORY_PREVIEW_LIMIT &&
+    (historyExpanded || hiddenCount > 0);
+
   return (
     <>
-      {historySessions.map(renderRow)}
+      {shownHistory.map(renderRow)}
+      {showMoreToggle && (
+        <button
+          type="button"
+          aria-expanded={historyExpanded}
+          onClick={() => setHistoryExpanded(!historyExpanded)}
+          className="mt-0.5 flex h-8 w-full items-center rounded-md px-2 text-left text-caption text-muted-foreground outline-none transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {historyExpanded
+            ? t(($) => $.list.show_fewer)
+            : t(($) => $.list.show_more, { count: hiddenCount })}
+        </button>
+      )}
       {archivedEntry}
       <ChatAccessDialog
         session={accessSession}

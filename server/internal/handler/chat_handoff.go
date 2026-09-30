@@ -47,6 +47,75 @@ func (h *Handler) GetChatSessionHandoff(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.writeChatSessionHandoff(w, r, session)
+}
+
+// GetChatSessionLinkRead serves a session URL whose workspace slug may differ
+// from the caller's bound workspace. Cross-workspace reads are authorized as
+// the direct human at the top of the caller's task chain and are audited in a
+// dedicated table because chat sessions have no issue timeline.
+func (h *Handler) GetChatSessionLinkRead(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	target, err := h.Queries.GetWorkspaceBySlug(r.Context(), chi.URLParam(r, "workspaceSlug"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return
+	}
+	session, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+		ID: parseUUID(chi.URLParam(r, "sessionId")), WorkspaceID: target.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return
+	}
+	if _, err := h.Queries.GetPublicChatSessionInWorkspace(r.Context(), db.GetPublicChatSessionInWorkspaceParams{ID: session.ID, WorkspaceID: target.ID}); err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return
+	}
+	callerWorkspace := ctxWorkspaceID(r.Context())
+	if callerWorkspace == "" || callerWorkspace == uuidToString(target.ID) {
+		access, err := h.chatAccessFor(r.Context(), session, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check chat access")
+			return
+		}
+		if !access.see {
+			writeError(w, http.StatusForbidden, "chat session is not visible")
+			return
+		}
+		h.writeChatSessionHandoff(w, r, session)
+		return
+	}
+	taskID := strings.TrimSpace(r.Header.Get("X-Task-ID"))
+	if taskID == "" {
+		writeError(w, http.StatusForbidden, "cross-workspace chat reads require a direct human task")
+		return
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), parseUUID(taskID))
+	if err != nil || !task.OriginatorSource.Valid || task.OriginatorSource.String != "direct_human" || !task.OriginatorUserID.Valid {
+		writeError(w, http.StatusForbidden, "cross-workspace chat reads require a direct human task")
+		return
+	}
+	access, err := h.chatAccessFor(r.Context(), session, uuidToString(task.OriginatorUserID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check chat access")
+		return
+	}
+	if !access.see {
+		writeError(w, http.StatusForbidden, "chat session is not visible")
+		return
+	}
+	if _, err := h.DB.Exec(r.Context(), `INSERT INTO chat_session_link_read_audit (workspace_id, chat_session_id, reader_workspace_id, reader_user_id, reader_agent_id, reader_task_id) VALUES ($1,$2,$3,$4,$5,$6)`, target.ID, session.ID, parseUUID(callerWorkspace), task.OriginatorUserID, task.AgentID, task.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to audit chat read")
+		return
+	}
+	h.writeChatSessionHandoff(w, r, session)
+}
+
+func (h *Handler) writeChatSessionHandoff(w http.ResponseWriter, r *http.Request, session db.ChatSession) {
 	limit := clampHandoffLimit(parseHistoryLimit(r.URL.Query().Get("limit")))
 	beforeCreatedAt, beforeID := parseTranscriptCursor(r.URL.Query().Get("before"))
 	// One extra row covers a hidden kickoff that visibleChatMessages drops, so

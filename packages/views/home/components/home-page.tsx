@@ -1,36 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, History } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, History, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useCreateComment } from "@multica/core/issues/mutations";
 import {
+  BOARD_LANES,
   splitSeenDone,
-  useBoardUnreadSnapshot,
   useDoneSeenStore,
   useInboxBoard,
   type BoardLane,
   type BoardRow,
+  type InboxBoard,
 } from "@multica/core/home";
 import type { ParkingEvent } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
-import { AppLink, useNavigation } from "../../navigation";
+import { AppLink, resolveClickIntent, useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { useTimeAgo } from "../../inbox/components/inbox-list-item";
 import { ACTIVITY_LAYER_PARAM, LAYER_PARAM } from "../../inbox/components/inbox-view";
 
 
-const LANE_TAG_CLASS: Record<BoardLane, string> = {
+export const LANE_TAG_CLASS: Record<BoardLane, string> = {
   waiting: "bg-destructive/10 text-destructive",
   stalled: "bg-warning/15 text-warning-foreground dark:text-warning",
   running: "bg-success/10 text-success",
+  todo: "bg-primary/10 text-primary",
   fresh: "bg-info/10 text-info",
   done: "bg-muted text-muted-foreground",
 };
@@ -39,6 +40,7 @@ const LANE_PILL_CLASS: Record<BoardLane, string> = {
   waiting: "border-destructive/30 text-destructive",
   stalled: "border-warning/40 text-warning-foreground dark:text-warning",
   running: "border-success/30 text-success",
+  todo: "border-primary/30 text-primary",
   fresh: "border-info/30 text-info",
   done: "text-muted-foreground",
 };
@@ -54,6 +56,7 @@ function useBoardCopy() {
       if (row.lane === "waiting") return tags[row.kind] ?? t(($) => $.board.tag.waiting_default);
       if (row.lane === "stalled") return tags[row.kind] ?? t(($) => $.board.stuck.default);
       if (row.lane === "fresh") return t(($) => $.board.tag.fresh);
+      if (row.lane === "todo") return t(($) => $.board.tag.todo);
       return row.lane === "running" ? t(($) => $.board.tag.running) : t(($) => $.board.tag.done);
     };
     const reason = (row: BoardRow): string => {
@@ -90,6 +93,21 @@ function useBoardCopy() {
 }
 
 type BoardCopy = ReturnType<typeof useBoardCopy>;
+
+/**
+ * Set when the board sits beside the notification list in the merged inbox
+ * (DENE-1004): rows open in the page's own detail pane instead of navigating
+ * away, and lane headings filter the list.
+ */
+export interface BoardLinking {
+  /** The issue to mark on the board: the open one, or the one just closed. */
+  highlightIssueId?: string;
+  activeLane: BoardLane | null;
+  onSelectIssue: (issueId: string) => void;
+  onToggleLane: (lane: BoardLane) => void;
+}
+
+const BoardLinkingContext = createContext<BoardLinking | null>(null);
 
 function formatClock(iso: string): string {
   const d = new Date(iso);
@@ -175,8 +193,15 @@ function BoardRowView({
 }) {
   const wsPaths = useWorkspacePaths();
   const { push } = useNavigation();
+  const linking = useContext(BoardLinkingContext);
   const [open, setOpen] = useState(false);
   const href = wsPaths.issueDetail(row.issueId);
+  const activate = () => (linking ? linking.onSelectIssue(row.issueId) : push(href));
+  const highlighted = !!linking && linking.highlightIssueId === row.issueId;
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (highlighted) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
   const reason = copy.reason(row);
   const meta = copy.meta(row);
   const hasTimeline = row.lane === "stalled" && row.timeline.length > 0;
@@ -188,17 +213,23 @@ function BoardRowView({
       : copy.timeAgo(row.at);
 
   return (
-    <div className={cn(!nested && "border-b last:border-b-0")} data-testid={`board-row-${row.lane}`}>
+    <div
+      ref={rowRef}
+      className={cn(!nested && "border-b last:border-b-0")}
+      data-testid={`board-row-${row.lane}`}
+      data-highlighted={highlighted ? "" : undefined}
+    >
       <div
         role="link"
         tabIndex={0}
-        onClick={() => push(href)}
+        onClick={activate}
         onKeyDown={(e) => {
-          if (e.key === "Enter") push(href);
+          if (e.key === "Enter") activate();
         }}
         className={cn(
           "grid cursor-pointer grid-cols-[6.5rem_1fr_auto] gap-3 px-4 py-3 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40",
           nested && "py-2 pl-8",
+          highlighted && "bg-accent/60 shadow-[inset_3px_0_0_var(--color-primary)]",
         )}
       >
         <span
@@ -216,7 +247,15 @@ function BoardRowView({
             </span>
             <AppLink
               href={href}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                // A plain click stays in the merged inbox; modifier clicks
+                // still open the issue as its own page or tab.
+                if (linking && resolveClickIntent(e) === "push") {
+                  e.preventDefault();
+                  linking.onSelectIssue(row.issueId);
+                }
+              }}
               className="truncate text-body font-medium hover:underline"
             >
               {row.title}
@@ -295,15 +334,36 @@ function LaneSection({
   copy: BoardCopy;
   footer?: ReactNode;
 }) {
+  const linking = useContext(BoardLinkingContext);
   const title = copy.t(($) => $.board.lanes[lane].title);
   const hint = copy.t(($) => $.board.lanes[lane].hint);
+  const active = linking?.activeLane === lane;
   return (
     <section aria-label={title} data-testid={`board-lane-${lane}`}>
       <div className="mb-2 flex items-baseline gap-2">
-        <h2 className="text-body font-semibold">{title}</h2>
+        {linking ? (
+          <h2 className="text-body font-semibold">
+            <button
+              type="button"
+              aria-pressed={active}
+              title={copy.t(($) => $.board.lane_filter_hint)}
+              onClick={() => linking.onToggleLane(lane)}
+              data-testid={`board-lane-filter-${lane}`}
+              className={cn(
+                "rounded-sm outline-none transition-colors hover:text-primary focus-visible:ring-1 focus-visible:ring-ring",
+                active && "text-primary",
+              )}
+            >
+              {title}
+              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">{rows.length}</span>
+            </button>
+          </h2>
+        ) : (
+          <h2 className="text-body font-semibold">{title}</h2>
+        )}
         <span className="text-caption text-muted-foreground">{hint}</span>
       </div>
-      <div className="overflow-hidden rounded-lg border bg-card">
+      <div className={cn("overflow-hidden rounded-lg border bg-card", active && "ring-2 ring-primary/60")}>
         {rows.length === 0 && !footer ? (
           <p className="px-4 py-3 text-caption text-muted-foreground">
             {copy.t(($) => $.board.lanes[lane].empty)}
@@ -318,17 +378,23 @@ function LaneSection({
 }
 
 /**
- * The inbox: one row per issue in five lanes (DENE-882). Arriving reads
- * everything but open calls; rows that were unread on arrival keep a marker
- * for this visit (DENE-901).
+ * The board's lanes (DENE-882): one row per issue. Rows that were unread on
+ * arrival keep a marker for this visit (DENE-901). Shared by the stand-alone
+ * board and the merged inbox, which passes `linking`.
  */
-export function HomePage() {
+export function InboxBoardLanes({
+  board,
+  isLoading,
+  isError,
+  linking,
+}: {
+  board: InboxBoard;
+  isLoading: boolean;
+  isError: boolean;
+  linking?: BoardLinking;
+}) {
   const wsId = useWorkspaceId();
-  const wsPaths = useWorkspacePaths();
-  const userId = useAuthStore((s) => s.user?.id ?? null);
   const copy = useBoardCopy();
-  const unread = useBoardUnreadSnapshot(wsId);
-  const { board, isLoading, isError } = useInboxBoard(wsId, userId, undefined, unread);
 
   // "Done today" shows once. Read the mark left by the previous visit, then
   // move it to now — on arrival and again on leaving, so rows that finish
@@ -341,20 +407,13 @@ export function HomePage() {
   }, [markSeen, wsId]);
   const done = useMemo(() => splitSeenDone(board.done, seenBefore), [board.done, seenBefore]);
   const [showSeen, setShowSeen] = useState(false);
-
-  const counts: Record<BoardLane, number> = {
-    waiting: board.waiting.length,
-    stalled: board.stalled.length,
-    running: board.running.length,
-    fresh: board.fresh.length,
-    done: board.done.length,
-  };
-  const lanes: BoardLane[] = ["waiting", "stalled", "running", "fresh", "done"];
+  // The issue being pointed at may sit among the folded rows.
+  const highlightSeen = !!linking?.highlightIssueId && done.seen.some((r) => r.issueId === linking.highlightIssueId);
 
   const seenFooter =
     done.seen.length > 0 ? (
       <>
-        {showSeen && done.seen.map((row) => <BoardRowView key={row.issueId} row={row} copy={copy} />)}
+        {(showSeen || highlightSeen) && done.seen.map((row) => <BoardRowView key={row.issueId} row={row} copy={copy} />)}
         <button
           type="button"
           onClick={() => setShowSeen((v) => !v)}
@@ -369,9 +428,71 @@ export function HomePage() {
     ) : undefined;
 
   return (
+    <BoardLinkingContext.Provider value={linking ?? null}>
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {BOARD_LANES.map((lane) => {
+            const pill = (
+              <>
+                <b className="mr-1 font-semibold tabular-nums">{board[lane].length}</b>
+                {copy.t(($) => $.board.lanes[lane].title)}
+              </>
+            );
+            const className = cn("rounded-full border px-2.5 py-0.5 text-caption", LANE_PILL_CLASS[lane]);
+            return linking ? (
+              <button
+                key={lane}
+                type="button"
+                aria-pressed={linking.activeLane === lane}
+                onClick={() => linking.onToggleLane(lane)}
+                className={cn(className, "transition-colors hover:bg-accent/60", linking.activeLane === lane && "bg-accent")}
+              >
+                {pill}
+              </button>
+            ) : (
+              <span key={lane} className={className}>
+                {pill}
+              </span>
+            );
+          })}
+        </div>
+        {isError && <p className="text-caption text-destructive">{copy.t(($) => $.board.load_error)}</p>}
+      </div>
+      {isLoading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : (
+        <>
+          <LaneSection lane="waiting" rows={board.waiting} copy={copy} />
+          <LaneSection lane="stalled" rows={board.stalled} copy={copy} />
+          <LaneSection lane="running" rows={board.running} copy={copy} />
+          <LaneSection lane="todo" rows={board.todo} copy={copy} />
+          {board.fresh.length > 0 && <LaneSection lane="fresh" rows={board.fresh} copy={copy} />}
+          <LaneSection lane="done" rows={done.fresh} copy={copy} footer={seenFooter} />
+        </>
+      )}
+    </BoardLinkingContext.Provider>
+  );
+}
+
+/**
+ * The inbox board on its own page — the compact-width inbox (DENE-882). Wide
+ * screens show it beside the notification list instead (DENE-1004).
+ */
+export function HomePage() {
+  const wsId = useWorkspaceId();
+  const wsPaths = useWorkspacePaths();
+  const copy = useBoardCopy();
+  const { t: tChat } = useT("chat");
+  const { board, isLoading, isError } = useInboxBoard(wsId);
+
+  return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader>
         <h1 className="flex-1 text-body font-semibold">{copy.t(($) => $.board.title)}</h1>
+        <BoardAskAiButton prompt={tChat(($) => $.conversation_starters.inbox.prompt)} label={copy.t(($) => $.board.ask_ai)} />
         <Button
           variant="ghost"
           size="sm"
@@ -385,36 +506,26 @@ export function HomePage() {
       </PageHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl space-y-6 px-6 py-6">
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {lanes.map((lane) => (
-                <span
-                  key={lane}
-                  className={cn("rounded-full border px-2.5 py-0.5 text-caption", LANE_PILL_CLASS[lane])}
-                >
-                  <b className="mr-1 font-semibold tabular-nums">{counts[lane]}</b>
-                  {copy.t(($) => $.board.lanes[lane].title)}
-                </span>
-              ))}
-            </div>
-            {isError && <p className="text-caption text-destructive">{copy.t(($) => $.board.load_error)}</p>}
-          </div>
-          {isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : (
-            <>
-              <LaneSection lane="waiting" rows={board.waiting} copy={copy} />
-              <LaneSection lane="stalled" rows={board.stalled} copy={copy} />
-              <LaneSection lane="running" rows={board.running} copy={copy} />
-              {board.fresh.length > 0 && <LaneSection lane="fresh" rows={board.fresh} copy={copy} />}
-              <LaneSection lane="done" rows={done.fresh} copy={copy} footer={seenFooter} />
-            </>
-          )}
+          <InboxBoardLanes board={board} isLoading={isLoading} isError={isError} />
         </div>
       </div>
     </div>
+  );
+}
+
+/** DENE-975: the chat agent reads this same board (`multica inbox board`) and tells it back. */
+export function BoardAskAiButton({ prompt, label }: { prompt: string; label: string }) {
+  const wsPaths = useWorkspacePaths();
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="text-muted-foreground"
+      nativeButton={false}
+      render={<AppLink href={wsPaths.chatWithPrompt(prompt)} data-testid="board-ask-ai" />}
+    >
+      <Sparkles className="size-4" />
+      {label}
+    </Button>
   );
 }

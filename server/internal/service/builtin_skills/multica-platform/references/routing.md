@@ -116,3 +116,10 @@ alone, exactly as if routing were off. Nothing is posted on a ticket about it.
 The reason is shown in one place only: Settings → Routing, which reports the
 state, the reason, when the model last answered, and offers a re-check. If
 automatic dispatch seems to have stopped, that section is where to look.
+
+Agent-created tickets should pass `--routing-facts` with scope, clarity, risk,
+and needs_human (plus an optional summary). The creator facts are accepted
+immediately and skip a duplicate analysis call. The analysis source can be
+changed without the browser: `multica workspace routing set --source
+runtime_subscription --runtime <id> --model <id> --thinking low`. Use
+`api_gateway` to retain the OpenAI-compatible path.

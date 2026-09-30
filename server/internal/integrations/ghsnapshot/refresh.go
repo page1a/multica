@@ -139,7 +139,10 @@ func (m *Manager) MergePullRequest(ctx context.Context, installationID int64, ow
 // Start launches the worker pool and the TTL sweeper under ctx. No-op (and
 // safe) when the manager is disabled.
 func (m *Manager) Start(ctx context.Context) {
-	if !m.Enabled() {
+	// A nil client is a deployment that will never have App credentials.
+	// A refreshing client may be disabled at boot and become enabled when
+	// Settings stores a key, so the workers have to be running already.
+	if m == nil || m.client == nil {
 		return
 	}
 	m.mu.Lock()

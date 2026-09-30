@@ -104,11 +104,11 @@ DENE-213 的任务说明要求「去 DENE-196 发一条评论，mention 验收�
 
 | 要素 | 字段（Stage 2 写死） | 必须可观察 |
 | --- | --- | --- |
-| 结论 | `close.conclusion` | `delivered` / `blocked` / `awaiting_review` / `awaiting_human` |
+| 结论 | `close.conclusion` | `delivered` / `blocked` / `awaiting_review` / `awaiting_human` / `deferred` / `continuing` |
 | 状态 | `close.status` **且** `issue.status` 与之相等 | 见 2.3 决策表 |
 | 证据 | `close.evidence_comment_id` | 本票一条评论（UUID）；可带 `--attachment` |
 | 下一责任人 | `close.next_owner_type` + `close.next_owner_id` | `agent` / `squad` / `member` / `none` + UUID 或空串 |
-| 唤醒动作 | `close.wake_action` | `stage_done` / `mention` / `route` / `none` |
+| 唤醒动作 | `close.wake_action` | `stage_done` / `mention` / `route` / `clock` / `none` |
 
 可选：`close.waiting_on`（另一个 issue 的 identifier，如 `DENE-196`），仅当本票在等另一张票时写。这把 1.3 的隐式等待变成显式字段。
 
@@ -119,18 +119,24 @@ DENE-213 的任务说明要求「去 DENE-196 发一条评论，mention 验收�
 CLI（DENE-859 起）：一条命令做完整个收口。
 
 ```bash
-multica issue close <id> --outcome done      --evidence-file ./close.md                     # 交付：子票、或没有验收门的顶层票；关联 PR 还开着就先合并，合不进去落成 blocked 并在回复里说明
+multica issue close <id> --outcome done      --evidence-file ./close.md --knowledge-none   # 交付：子票、或没有验收门的顶层票；关联 PR 还开着就先合并，合不进去落成 blocked 并在回复里说明。没有够格的项目记忆就加 --knowledge-none
 multica issue close <id> --outcome in_review --evidence-file ./close.md                     # 顶层票交付，等验收；要有关联 PR（纯文档票用 --no-code <原因>）；验收席为空则同一次调用补异族席位，再由路由交棒
 multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # 或 --wake-at / --wait-condition + --wait-timeout / --needs-human
+multica issue close <id> --outcome backlog   --evidence-file ./close.md                     # 有意放回待规划（DENE-1002）：写清原因，不要 PR，不叫醒任何人
+multica issue close <id> --outcome todo      --evidence-file ./close.md                     # 有意放回待办，形状同 backlog
+multica issue close <id> --outcome in_progress --evidence-file ./close.md --wake-at 2026-10-01T09:00:00Z   # 停在本轮、留着继续：必须写明「接下来谁继续」
 multica issue close <id> --outcome done --verdict pass --evidence-file ./close.md           # 验收席放行：平台合并 PR，再写 done
 ```
 
-服务端（`POST /api/issues/{id}/close`）在**一个事务**里做三件事：建证据评论、改 `issue.status`、写全部 `close.*` 键；落库前先过 `closeprotocol.Validate`，不合规就整体拒绝，并在错误里点名缺的那一项（缺证据、缺等待、子票不进 `in_review`、`awaiting_human` 缺责任人……）。事务外只剩叫醒（父票屏障、`waiting_on` 等待方、路由）——这些照原有路径跑，失败不回滚已落库的收口。
+服务端（`POST /api/issues/{id}/close`）在**一个事务**里做三件事：建证据评论、改 `issue.status`、写全部 `close.*` 键（含这次的知识审计）；落库前先过 `closeprotocol.Validate`，不合规就整体拒绝，并在错误里点名缺的那一项（缺证据、缺等待、缺知识审计、子票不进 `in_review`、`awaiting_human` 缺责任人……）。事务外只剩叫醒（父票屏障、`waiting_on` 等待方、路由）——这些照原有路径跑，失败不回滚已落库的收口。
 
 - `--evidence`（或 `--evidence-file` / `--evidence-stdin`）必填，`--summary` 放在证据上方。本回合有 triggering comment 时带同一 `--parent`；评论触发的 run 在同一张票上默认回那条线程。
 - `--outcome blocked` 必须带 DENE-850 的等待字段之一：`--blocked-by`、`--wake-at`、`--wait-condition` + `--wait-timeout`、`--needs-human`。不带即拒绝。
 - `--outcome in_review` 只给顶层票；子票用它会被拒绝（做完 `done`，卡住 `blocked`）。它走和 `issue status in_review` 同一道送审门禁（DENE-869）：智能体送审必须有关联的 open/draft/merged PR，纯文档或调研票用 `--no-code <原因>` 说明，否则被拒。带 `--needs-human <member>` 记成 `awaiting_human`；不带则是 `awaiting_review` + `wake_action=route`，由路由填验收席，不要求评论里 @ 谁。
+- `--outcome backlog` / `--outcome todo` 是有意放回：写成 `deferred` 结论，状态落在 `backlog` / `todo`，下一责任人 `none`、不叫醒任何人，也不需要 PR（什么都没交付）。证据里写清为什么放回去。**有原因但没人接着做**就用这两个，不要停在 `in_progress`。
+- `--outcome in_progress` 是本轮停下、事情继续：结论 `continuing`，并且**必须**写明「接下来谁继续」，复用 `--outcome blocked` 的同一组等待字段——`--wake-at <RFC3339>`、`--wait-condition "..." --wait-timeout <dur>`、`--blocked-by <issue>`、`--needs-human <member>`，一个都没有就被拒（「放回进行中必须写明「接下来谁继续」」）。带 `--wake-at` 时写 `wake_action=clock`：到点由巡检叫醒下一责任人，票会自己续起来。下一责任人默认取本票执行人；`--needs-human` 改成指定的人。
 - `--verdict pass` 只配 `--outcome done`，且票必须已在 `in_review`、调用者是验收席：平台先合并 PR 再写 `done`；合不进去（PR 脏、检查红、host 拒绝）回 `blocked` + `block_kind=external`，把原因写进评论。验收不通过不是收口：`multica issue comment add <id> --verdict hold --content-file ./review.md` 叫醒执行人。
+- `--pr <PR 或 MR 链接>`（DENE-961）：平台还没把交付关联上时，用它申报。服务端按仓库连接核实，核实成功就登记，再走原来的关单闸门。核不到也放行，票上记下 `close.pr_unverified`（未核实），这条链接不会被拿去合并。不要用「等平台关联 PR」卡住，这种等待会被拒绝。`multica issue pull-requests` 会给出同样的缺口和下一条命令。
 - 返回值如实报：实际写入的状态、PR 有没有合并、叫醒了谁。评论里照抄，不要凭记忆复述。
 
 不收口、只叫醒下一棒时用 `multica issue handoff`（DENE-863，`POST /api/issues/{id}/handoff`），不要手写 @：服务端负责路由和查重，回复以实际落库为准（`target_name`、`run_created`、`duplicate`）。
@@ -178,11 +184,13 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
 | C | `awaiting_review` | 顶层父票 `needs_acceptance` 且验收人是 agent（Reviewer 席） | `in_review` | 该 Reviewer agent，或 `none` 交给路由填席 | `route`（`issue close --outcome in_review` 写的就是这个）或 `mention` | `route`：路由把票交给验收席，无需评论里 @；`mention`：证据评论里 `mention://agent/<reviewer>`。**不** `done`；子票屏障已由终态事实关闭 |
 | D | `awaiting_human` | 顶层父票 `needs_acceptance` 且验收人是人类 | `in_review` | 该 member | `none` | `mention://member/…` **不会入队**。人类靠 inbox/看板。可另 `mention` 一个 dispatcher agent 做看门，此时 `wake_action=mention` 且 next_owner 是那个 agent |
 | E | `blocked` | 缺权限 / 外人决策 / 外部依赖 | `blocked` | 能解阻塞的人：人类决策用 member；能继续跑的 agent 用 agent | `mention`（next_owner 是 agent/squad 时）或 `none`（纯人类） | 不关屏障。父票继续等 |
+| G | `deferred` | 有意放回计划或待办（`--outcome backlog` / `todo`）：这轮不做，有原因，但没人接着做 | `backlog` 或 `todo` | `none` | `none` | 不叫醒任何人，不需要 PR |
+| H | `continuing` | 本轮停下但事情继续（`--outcome in_progress`）：必须写明接下来谁继续 | `in_progress` | 本票执行人，或 `--needs-human` 指定的人 | 到点等待写 `clock`；等人 / 等条件 / 等票写 `none` | `clock` 时由巡检到点叫醒下一责任人；其余只留记录 |
 | F | 本回合没有交付本票 ask（答问、旁证） | — | **不改状态** | — | — | 不写 `close.*` |
 
 `cancelled` 不在本协议的 agent 收尾表里。取消是用户决策（`issues.md` cancelled 段）。Agent 不得把做不完写成 `cancelled`。 `issue close --outcome cancelled` 存在只是为了让人（或被人明确授权的 agent）取消时也留下完整收口记录：它记成 `delivered` + `stage_done`，父票屏障按 cancelled 计入 done 侧。
 
-### 2.4 四种收尾场景（对照上表）
+### 2.4 收尾场景（对照上表）
 
 **`done`（场景 A/B）**
 
@@ -217,13 +225,30 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
 - 下一责任人：能解阻塞的 agent 或人类。
 - 唤醒：agent/squad 用 `mention`；人类 `none`。不关屏障。`issue close --outcome blocked` 把 DENE-850 的等待字段和 `close.block_kind` / `close.block_action` 一起写好：`--blocked-by` → `dependency`，`--needs-human` → `decision`，其余 → `external`，`block_action` 取 `--summary` 或等待条件。
 
+**`backlog` / `todo`（场景 G，有意放回）**
+
+- 用：这轮决定不做，需求还没定、优先级被挪后、或先回去等排期。它和 F 的区别是：F 是没交付 ask，G 是明确决定不做并留下原因。
+- 状态：`backlog` 或 `todo`。
+- 证据：为什么放回去，以及什么条件下值得再拉起来。
+- 下一责任人：`none`。
+- 唤醒：`none`。不需要 PR。**不要把「有原因但没人接着做」写成 `in_progress`**——那种票会被完成巡检当成「停了没交代」。
+
+**`in_progress`（场景 H，本轮停下、事情继续）**
+
+- 用：这份工作做到一半，本轮必须停，但下一步已经清楚、并且已经指定谁接着做。典型：等扩容窗口、等上游票落地、等某人拍板后才能继续。
+- 状态：`in_progress`（状态不变，但仍要走一次收口，留下结论、证据和「谁继续」）。
+- 证据：停在哪一步、为什么停、下一步是什么。
+- 下一责任人：本票执行人（默认），或 `--needs-human` 指定的人。
+- 唤醒：`--wake-at` 会写 `wake_action=clock`，票被打上巡检标记，到点叫醒下一责任人；等人 / 等条件 / 等票写 `none`，只留记录。没有等待字段的 `--outcome in_progress` 会被服务端拒绝。
+- 完成巡检（§7）读这条 `close.*` 记录：状态一致且记录不老于这次运行的就认为是「有意停下」，不再补发 `completion-stall`；记录过期或不匹配的照旧报停。
+
 ### 2.5 证据评论人读模板
 
 Agent 评论必须让人类不看 metadata 也能读懂。固定小标题，顺序不许换：
 
 ```markdown
 ## 结论
-<delivered | blocked | awaiting_review | awaiting_human> — 一句话。
+<delivered | blocked | awaiting_review | awaiting_human | deferred | continuing> — 一句话。
 
 ## 状态
 已写入 `<status>`。
@@ -282,6 +307,8 @@ Agent 评论必须让人类不看 metadata 也能读懂。固定小标题，顺�
 
 `cancelled` / 任何状态变更都**不**取消已经在飞的 task（`issue.go:3729-3740`）。停 run 必须 `issue cancel-task`。
 
+`--outcome in_progress` 是唯一「状态不变也要收口」的出口：`in_progress → in_progress` 在上表里是空迁移（不入队），但 `multica issue close` 仍会在同一事务里写证据评论和全套 `close.*` 记录。`--outcome backlog` / `todo` 走的是 `in_progress → backlog` / `in_progress → todo` 这两格，只改状态、不入队。
+
 ### 3.2 终态（对 stage 屏障）
 
 `isTerminalChildStatus`（`issue_child_done.go:417-419`）只认 canonical `done` 和 `cancelled`。自定义 status 先经 `childStatusResolver` 映射到 category（`:430-449`）。
@@ -300,7 +327,7 @@ Agent 评论必须让人类不看 metadata 也能读懂。固定小标题，顺�
 
 ## 4. 触发矩阵
 
-事件 → 唤醒谁 → 载体 → 失败表现。「失败时补偿」一列写的是实际兜底：Stage 4 看门狗已在 DENE-520 摘除，下表各行的入队失败只留 warn 日志或 `trigger_outcomes` 记录。§7 的两条窄兜底只看票的状态（收工仍 `in_progress`、安静的 `blocked` / `in_review`），不重放这里失败的某一次入队。
+事件 → 唤醒谁 → 载体 → 失败表现。「失败时补偿」一列写的是实际兜底：Stage 4 看门狗已在 DENE-520 摘除，下表各行的入队失败只留 warn 日志或 `trigger_outcomes` 记录。§7 的两条窄兜底只看票的状态（收工仍 `in_progress` 且没有交代过的 `continuing` 收口、安静的 `blocked` / `in_review` / 被收口标记盯上的 `in_progress`），不重放这里失败的某一次入队。
 
 | ID | 事件 | 唤醒谁 | 载体 | 失败表现 | 补偿 |
 | --- | --- | --- | --- | --- | --- |
@@ -354,16 +381,19 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 
 | 键 | 允许值 | 谁写 | 何时 |
 | --- | --- | --- | --- |
-| `close.conclusion` | `delivered` `blocked` `awaiting_review` `awaiting_human` | 收尾 agent | 状态写入成功之后 |
+| `close.conclusion` | `delivered` `blocked` `awaiting_review` `awaiting_human` `deferred` `continuing` | 收尾 agent | 状态写入成功之后 |
 | `close.status` | 与当时 `issue.status` 相同的 key | 同上 | 同上 |
 | `close.evidence_comment_id` | 评论 UUID | 同上 | 证据评论创建成功之后 |
 | `close.next_owner_type` | `agent` `squad` `member` `none` | 同上 | 同上 |
 | `close.next_owner_id` | UUID；type=`none` 时 `""` | 同上 | 同上 |
-| `close.wake_action` | `stage_done` `mention` `route` `none` | 同上 | 同上 |
+| `close.wake_action` | `stage_done` `mention` `route` `clock` `none` | 同上 | 同上 |
 | `close.waiting_on` | identifier（`DENE-196`）或 `""` | 同上 | 有跨票等待时必填，否则 `""` |
 | `close.at` | RFC3339 UTC | 同上 | 最后一键 |
 | `close.block_kind` | `decision` `permission` `external` `dependency` `capacity`；仅 blocked 收口必填 | 收尾 agent | 与 blocked 收口一并写入 |
 | `close.block_action` | 非空，最多 80 个字符；仅 blocked 收口必填 | 收尾 agent | 与 blocked 收口一并写入 |
+| `close.knowledge_audit` | `{"none":true}`，或 `{"changes":[{"location","summary"}]}` | 同一次 `issue close` | 每次新收口必填，和证据、状态同一事务。不是原来的八个键：旧收口没有它也仍然可读 |
+
+`close.knowledge_audit` 的位置只允许项目记忆清单：`agents`、`context`、`adr`、`docs_index`、`evidence_index`。CLI 用 `--knowledge-none` 声明无够格知识，或重复 `--knowledge <位置>=<摘要>`。缺审计、位置不在清单、摘要为空、同一位置写两次、两种写法一起用，都拒绝，评论和 `close.*` 都不落。无 PR 的票同样要带。声明无够格知识可以收口。PR 正文里的知识审计段不再是第二道关单门。
 
 阻塞扩展校验：`conclusion=blocked` 的新记录必须同时提供上述两个字段；旧记录缺少两字段时保持可读兼容。`block_kind=dependency` 必须有非空 `close.waiting_on`，且 `decision` / `permission` 必须指定具体的 `member`、`agent` 或 `squad` 责任人。非 blocked 收口的两个字段必须为空或不存在，避免解除阻塞后残留旧原因。人类审核逾期阈值按产品决策为 24 小时；`capacity` 阻塞不计入“需要你”摘要。
 
@@ -380,6 +410,9 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 - `conclusion=blocked` ⇒ `close.status=blocked`。
 - `conclusion=blocked` ⇒ 新记录的 `close.block_kind` / `close.block_action` 合法且动作不超过 80 个字符；`dependency` 必须配 `waiting_on`。
 - `waiting_on` 非空 ⇒ `close.status` ∈ {`in_review`,`blocked`,`in_progress`}，禁止 `done`。
+- `conclusion=deferred` ⇒ `close.status` ∈ {`backlog`,`todo`}（DENE-1002：有意放回计划或待办）。
+- `conclusion=continuing` ⇒ `close.status=in_progress`，且 `next_owner_type` 非 `none` 或 `waiting_on` 非空（DENE-1002：必须写明谁继续）。
+- `wake_action=clock` ⇒ `close.status=in_progress`（DENE-1002：到点叫醒只属于「本轮停下、事情继续」）。
 
 ### 6.2 角色收尾动作
 
@@ -388,6 +421,8 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 | Builder（父票有 PR/需审） | `awaiting_review` | `in_review` | `issue close --outcome in_review`，路由交给 Reviewer。PR 标题带 identifier；**不要**在仍等 Reviewer 时 `done`。`Closes` 留给合并 |
 | Builder（子票交付） | `delivered` | `done` | `stage_done`；不设置或触发独立 Reviewer，由父票统一验收 |
 | Builder（无验收门） | `delivered` | `done` | `stage_done`，禁止再 mention 父 assignee |
+| Builder（本轮做不完，但下一步已定） | `continuing` | `in_progress` | `issue close --outcome in_progress --wake-at <RFC3339>`（或其余等待字段之一）：写 `clock`，巡检到点叫醒下一责任人 |
+| Builder / Dispatcher（这轮决定不做） | `deferred` | `backlog` 或 `todo` | `issue close --outcome backlog|todo`：`none`，不叫醒任何人，不需要 PR |
 | Reviewer 通过，这次改动自己的检查是绿的，且没有显式人工保留 | `delivered` | `issue close --outcome done --verdict pass`（或发 `--verdict pass` 评论）：同一次调用里平台合并 PR 并置 `done`；合不进去平台改成 `blocked` 并叫醒执行人 | `stage_done` |
 | Reviewer 通过，但票上写明在等某个人做某个只有这个人能做的决定 | `awaiting_human` | `in_review` | `none`。评论写出那个人和要定的事。路由评论里的「需要人拍板」不是这一行 |
 | Reviewer 通过，但这次改动自己的检查是红的 | 不收口 | `in_progress`，mention Builder | `mention` |
@@ -439,7 +474,8 @@ DENE-859 之后的落点：`server/internal/handler/issue_close.go`（`POST /api
 之后补回的两条兜底只看票的状态，不重放某一次失败的入队：
 
 - **收工仍在 `in_progress`（DENE-382）。** run 正常结束、票还在 `in_progress`、后面没有排队的 run，也没有未终态子票时，平台写一条带 `completion-stall:run-completed-without-terminal-status` 的系统评论，并给同一执行人补排一次 run，让它按收口协议收尾。同一张票 30 分钟内最多一次。不改状态。代码：`server/internal/service/task_completion_stall.go`。
-- **阻塞 / 待验收的等待巡检（DENE-850）。** 每分钟扫一次。`blocked` 或 `in_review` 的票安静满 30 分钟、没有 run 在跑时，按 `block.*` 等待记录叫醒执行人或验收席；同一段等待最多叫醒一次，等的是人时只留言不排 run。代码：`server/internal/blockwait/`、`server/internal/handler/issue_block_wait.go`。
+  DENE-1002 起，`--outcome in_progress` 留下的 `continuing` 收口记录会让这条兜底让路：只要记录的 `close.status` 与当前状态一致、且 `close.at` 不老于刚结束的那次 run 的开始时间，就认为这次停下是**交代过的**，不写系统评论、不补排 run。记录过期或状态对不上（例如旧记录之后又跑了一轮）照旧报停——这正是「停了没交代」和「有意停下」的分界。
+- **阻塞 / 待验收的等待巡检（DENE-850）。** 每分钟扫一次。`blocked` 或 `in_review` 的票安静满 30 分钟、没有 run 在跑时，按 `block.*` 等待记录叫醒执行人或验收席；同一段等待最多叫醒一次，等的是人时只留言不排 run。DENE-1002 把 `in_progress` 也纳入候选：只有被 `--outcome in_progress` 收口打过 `block.watched=1` 标记的票才会被扫到，叫醒一次后撤掉标记，普通在跑的票不受影响。代码：`server/internal/blockwait/`、`server/internal/handler/issue_block_wait.go`。
 
 
 ## 8. 哪些结论会唤醒谁（给 Dispatcher 的速查）
@@ -451,6 +487,9 @@ DENE-859 之后的落点：`server/internal/handler/issue_close.go`（`POST /api
 | `awaiting_review` | `in_review` | Reviewer agent | 等本票最终 `done` |
 | `awaiting_human` | `in_review` | 无人（或可选 dispatcher） | 等人类收口后的 `done` |
 | `blocked` | `blocked` | 能解阻塞的 agent（若有） | 等解阻并最终 `done` |
+| `deferred` | `backlog` / `todo` | 无人 | 永不自动（想接着做要靠晋升或人拉起来） |
+| `continuing` + `clock` | `in_progress` | 到点后巡检叫醒下一责任人 | 等本票最终 `done` |
+| `continuing` + 等人/等票 | `in_progress` | 无人（被等票终态或人回复时另说） | 等本票最终 `done` |
 | 只评论 | 不变 | 仅当评论里有 agent/squad mention | 永不 |
 
 DENE-230 本票走 `awaiting_review`：Reviewer 醒，布尔玛（父票）要等 PR 合并把本票打成 `done` 之后才被 Stage 1 屏障叫醒，然后才能把 DENE-231 从 `backlog` 提到 `todo`。
@@ -537,3 +576,47 @@ Stage 1 DENE-230 `metadata: {}`，是真实的「未按协议收口」样本。S
 回滚后行为：子票列表回到「只有 stage 分组、没有下一唤醒者 / 异常态」。调度、屏障、waiting_on 唤醒不受影响。
 
 不回滚的：Stage 1–3 的协议与 waiting_on 路径（Stage 4 的补偿扫描已由 DENE-520 单独摘除）。Stage 5 只是只读展示。
+
+## 10. 关单支持放回待规划、待办与进行中（DENE-1002）
+
+收口原先只有四个出口：`done` / `in_review` / `blocked` / `cancelled`。一张票「这轮先不做」或「做到一半、下轮继续」没有诚实的出口——写 `blocked` 要编一个挡路的理由，写 `in_review` 要假装在等验收，留在 `in_progress` 又会被完成巡检当成「停了没交代」。本功能把这两种真实状态补成第一类收口结论，和原来四条一样走 `multica issue close` 的同一个接口、同一套校验。
+
+### 10.1 新增的出口
+
+| `--outcome` | `close.conclusion` | 状态 | 下一责任人 | 唤醒 | 要不要 PR | 要写什么 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `backlog` | `deferred` | `backlog` | `none` | `none` | 不要 | 为什么放回待规划 |
+| `todo` | `deferred` | `todo` | `none` | `none` | 不要 | 为什么放回待办 |
+| `in_progress` | `continuing` | `in_progress` | 本票执行人，或 `--needs-human` 指定的人 | `clock`（用 `--wake-at` 时）或 `none` | 不要 | 为什么停 + **接下来谁继续** |
+
+原来四条不变：`done` → `delivered`、`in_review` → `awaiting_review` / `awaiting_human`、`blocked` → `blocked`、`cancelled` → `delivered`。`--verdict pass` 仍然只配 `--outcome done`。
+
+三条新出口都不触发交付门禁：它们没有交付任何东西，所以不查 PR，也不需要 `--no-code`。
+
+### 10.2 「接下来谁继续」怎么表达
+
+不发明新参数：`--outcome in_progress` 复用 `--outcome blocked` 的同一组等待字段，至少一个：
+
+- `--wake-at <RFC3339>` — 到点继续。写 `wake_action=clock`，同时记下 DENE-850 的 `block.wake_at`。
+- `--wait-condition "..." --wait-timeout <dur>` — 等一个有时间上限的条件。
+- `--blocked-by <issue>` — 等另一张票。写 `close.waiting_on`，被等票进入终态时照旧叫醒等待方。
+- `--needs-human <member>` — 等人。下一责任人改成这个 member。
+
+一个都没有就被服务端拒绝，错误里点名缺的是「接下来谁继续」，并把可用的字段列出来。CLI 在发请求前先做同一道检查，省一次往返。
+
+下一责任人默认取本票 assignee（`--needs-human` 覆盖）。`in_progress` 收口同时写下 `block.watched=1`，让 DENE-850 的巡检把这张票纳入候选：只有被这样标记过的 `in_progress` 票会在到点后被叫醒，叫醒一次即撤掉标记，普通在跑的票不受影响。票离开 `blocked` 时同样清掉这个标记。
+
+### 10.3 三面齐
+
+- **服务端**：`server/internal/closeprotocol`（两个新结论 `deferred` / `continuing`、新唤醒动作 `clock`、四条新校验）、`server/internal/handler/issue_close.go`（七值 `closeOutcomes`、`deriveCloseRecord` 新增两条分支）、`server/internal/blockwait`（`in_progress` 到点叫醒 + 一次性撤标记）、`server/internal/service/task_completion_stall.go`（交代过的 `continuing` 不再报停）。
+- **CLI**：`multica issue close --help` 列出七个 `--outcome` 和各自的要求；`--outcome` 的 flag 说明同样列全；提交前校验 `in_progress` 的「谁继续」。
+- **Web / Desktop**：`packages/views/modals/close-issue.tsx` 的下拉从四个变七个，选中即显示该结论的要求，选中 `in_progress` 时多出「到点继续」和「谁继续」两个输入；`packages/views/issues/components/issue-close-record.tsx` 在票详情侧栏显示这条收口记录——结论、写入的状态、下一责任人、等待来源、时间，以及证据评论里写的原因。数据来自同一份 `close.*` metadata，前端不重算规则。
+- **skill**：`multica-platform/references/close-protocol.md` 的决策表、键表、校验清单已同步。
+
+以上三面都走 `POST /api/issues/{id}/close`，没有哪一面另写一份规则。
+
+### 10.4 完成巡检的新分界
+
+DENE-382 的完成巡检（§7）现在先看这条票有没有一个「对得上」的 `continuing` 收口记录：`close.status` 与票的当前状态一致，且 `close.at` 不早于刚结束那次 run 的开始时间（精确到秒）。对得上 → 认为这轮停下是交代过的，不写 `completion-stall` 系统评论，也不补排 run。对不上（记录比这次 run 还老，或状态已经变了）→ 照旧报停。
+
+这条分界线取代了以前「留在 `in_progress` 就要吃一次补排 run」的粗糙规则：现在 Agent 只要在收尾时写清「为什么停、谁继续」，就不会被当成停滞；而真正的不告而别仍然会被抓出来。

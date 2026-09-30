@@ -23,6 +23,7 @@ describe("paths.workspace(slug)", () => {
       "/acme/chat?agent=agent%20one",
     );
     expect(ws.chatSession("session one")).toBe("/acme/chat/session%20one");
+    expect(ws.chatWithPrompt("帮我 过一遍")).toBe(`/acme/chat?prompt=${encodeURIComponent("帮我 过一遍")}`);
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
     expect(ws.runtimeSettings("machine/runtime", "runtime one")).toBe(

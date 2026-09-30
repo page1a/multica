@@ -372,6 +372,9 @@ type StageAdvanceResponse struct {
 	// Error repeats Message on a refusal so every client that reads the
 	// ordinary {"error": ...} shape shows the reason.
 	Error string `json:"error,omitempty"`
+	// SedimentError is set when the stage did advance but the memory round
+	// could not be opened. The advance itself still stands.
+	SedimentError string `json:"sediment_error,omitempty"`
 }
 
 // planStageAdvance decides the advance from the children's resolved statuses.
@@ -488,6 +491,10 @@ func (h *Handler) AdvanceIssueStage(w http.ResponseWriter, r *http.Request) {
 	}
 	if resp.Advanced {
 		resp.Message = fmt.Sprintf("stage %d of %s promoted to todo: %s", stage, parentLabel, strings.Join(labels, ", "))
+		if parent.ProjectID.Valid {
+			reason := fmt.Sprintf("阶段推进：%s 进入第 %d 阶段", parentLabel, stage)
+			resp.SedimentError = h.noteMemoryProgress(r.Context(), parent.WorkspaceID, parent.ProjectID, reason)
+		}
 	} else {
 		resp.Message = fmt.Sprintf("stage %d of %s was already promoted by a concurrent advance", stage, parentLabel)
 	}

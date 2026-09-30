@@ -11,12 +11,14 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/ghpr"
+	"github.com/multica-ai/multica/server/internal/glabmr"
 )
 
 // Swappable for tests; production shells out to gh in the working directory.
 var (
-	ghListPRs = ghpr.List
-	ghMergePR = ghpr.Merge
+	ghListPRs   = ghpr.List
+	ghMergePR   = ghpr.Merge
+	glabListMRs = glabmr.List
 )
 
 var closeIdentRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-\d+$`)
@@ -24,10 +26,12 @@ var closeIdentRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-\d+$`)
 // refreshIssuePullRequests reports the issue's PR state from the caller's gh
 // before the close request, so the done gate reads the real merge state on a
 // workspace without a GitHub App (DENE-875). With merge set (a `--verdict pass`
-// done), open non-draft PRs naming the issue are squash-merged first — the
-// same step the gate would take through the App. Failures only warn: the
-// server gate stays fail-closed and blocks the close with a reason.
-func refreshIssuePullRequests(ctx context.Context, client *cli.APIClient, issueID, ident string, merge bool) {
+// done), open non-draft PRs naming the issue are squash-merged first.
+// mergeReady (a plain `--outcome done`) does the same only when every open
+// non-draft PR's gh snapshot is clean and green and the linked rows are
+// daemon-sourced — the gate cannot merge those itself (DENE-906). Failures
+// only warn: the server gate stays fail-closed and blocks the close with a reason.
+func refreshIssuePullRequests(ctx context.Context, client *cli.APIClient, issueID, ident string, merge, mergeReady bool) {
 	ident, ok := resolvePRIdentifier(ctx, client, issueID, ident)
 	if !ok {
 		return
@@ -49,6 +53,14 @@ func refreshIssuePullRequests(ctx context.Context, client *cli.APIClient, issueI
 		return namingIssue(prs, ident), nil
 	}
 	prs, err := list()
+	if err != nil || len(prs) == 0 {
+		if mrs, gerr := glabListMRs(ctx, dir); gerr == nil {
+			if named := namingIssue(mrs, ident); len(named) > 0 {
+				prs = named
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ! could not read PR state with gh (%v); the close gate uses what the server already knows\n", err)
 		return
@@ -57,9 +69,15 @@ func refreshIssuePullRequests(ctx context.Context, client *cli.APIClient, issueI
 		fmt.Fprintf(os.Stderr, "  ! gh found no PR matching %s in the title or current branch; check the PR title or branch contains the issue key\n", ident)
 		return
 	}
+	if !merge && mergeReady && !reportsGitLab(prs) && openNonDraftReady(prs) && linkedPullsAreDaemonOnly(ctx, client, issueID) {
+		merge = true
+	}
 	if merge {
 		mergedAny := false
 		for _, pr := range prs {
+			if pr.Provider == "gitlab" || pr.Provider == "forgejo" || pr.Provider == "gitea" {
+				continue
+			}
 			if pr.State != "open" || pr.IsDraft {
 				continue
 			}
@@ -120,6 +138,54 @@ func namingIssue(prs []ghpr.PR, ident string) []ghpr.PR {
 		out = append(out, pr)
 	}
 	return out
+}
+
+// openNonDraftReady is true when there is at least one open non-draft PR and
+// every one of them is clean with green (or absent) checks.
+func openNonDraftReady(prs []ghpr.PR) bool {
+	saw := false
+	for _, pr := range prs {
+		if pr.State != "open" || pr.IsDraft {
+			continue
+		}
+		if !pr.ReadyToMerge() {
+			return false
+		}
+		saw = true
+	}
+	return saw
+}
+
+// linkedPullsAreDaemonOnly reports whether every open linked PR was mirrored
+// by gh rather than a GitHub App. No linked row yet counts as daemon-only:
+// this close is about to create that row. A lookup failure does not merge.
+func linkedPullsAreDaemonOnly(ctx context.Context, client *cli.APIClient, issueID string) bool {
+	var body struct {
+		PullRequests []struct {
+			Source string `json:"source"`
+			State  string `json:"state"`
+		} `json:"pull_requests"`
+	}
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueID)+"/pull-requests", &body); err != nil {
+		fmt.Fprintf(os.Stderr, "  ! could not read linked PR sources (%v); not merging from gh\n", err)
+		return false
+	}
+	for _, pr := range body.PullRequests {
+		if strings.EqualFold(pr.State, "open") && pr.Source != "daemon" {
+			return false
+		}
+	}
+	return true
+}
+
+func reportsGitLab(prs []ghpr.PR) bool {
+	for _, pr := range prs {
+		switch pr.Provider {
+		case "gitlab", "forgejo", "gitea":
+			return true
+		}
+	}
+	return false
 }
 
 func currentGitBranch(dir string) string {

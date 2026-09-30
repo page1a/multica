@@ -7,20 +7,35 @@ SELECT * FROM vcs_connection
 WHERE workspace_id = $1
 ORDER BY created_at ASC;
 
+-- name: WorkspaceHasCLIPullRequest :one
+-- A glab/local report lands on a synthetic cli:// connection. The settings
+-- page uses that to show "this machine already reports MRs" for one repo.
+SELECT EXISTS (
+    SELECT 1
+    FROM vcs_pull_request p
+    JOIN vcs_connection c ON c.id = p.connection_id
+    WHERE p.workspace_id = $1
+      AND lower(p.repo_owner) = lower(sqlc.arg('repo_owner'))
+      AND lower(p.repo_name) = lower(sqlc.arg('repo_name'))
+      AND c.instance_url LIKE 'cli://%'
+) AS has_cli;
+
 -- name: GetVCSConnectionByID :one
 SELECT * FROM vcs_connection
 WHERE id = $1;
 
 -- name: UpsertVCSConnection :one
--- Reconnecting the same instance rotates the stored token/secret, provider,
--- and identity in place rather than creating a duplicate row.
+-- Reconnecting the same instance, or the same repository when repo_url is set,
+-- rotates the stored token/secret, provider, and identity in place.
+-- repo_url is empty for an instance-wide connection and a repoident key for a
+-- repository-scoped token (GitHub, or a GitLab project token).
 INSERT INTO vcs_connection (
-    workspace_id, provider, instance_url, account_login,
+    workspace_id, provider, instance_url, repo_url, account_login,
     access_token_encrypted, webhook_secret_encrypted, connected_by_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, sqlc.narg('connected_by_id')
+    $1, $2, $3, $4, $5, $6, $7, sqlc.narg('connected_by_id')
 )
-ON CONFLICT (workspace_id, instance_url) DO UPDATE SET
+ON CONFLICT (workspace_id, instance_url, repo_url) DO UPDATE SET
     provider                 = EXCLUDED.provider,
     account_login            = EXCLUDED.account_login,
     access_token_encrypted   = EXCLUDED.access_token_encrypted,
@@ -28,6 +43,32 @@ ON CONFLICT (workspace_id, instance_url) DO UPDATE SET
     connected_by_id          = EXCLUDED.connected_by_id,
     updated_at               = now()
 RETURNING *;
+
+-- name: RecordVCSConnectionLookup :exec
+-- The settings page shows whether the last delivery search against this
+-- connection succeeded. error is empty when ok is true.
+UPDATE vcs_connection
+SET last_lookup_at = now(),
+    last_lookup_ok = $3,
+    last_lookup_error = $4,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: TouchVCSConnectionWebhook :exec
+UPDATE vcs_connection
+SET last_webhook_at = now(),
+    updated_at = now()
+WHERE id = $1;
+
+-- name: UpdateVCSPullRequestGate :exec
+-- Writes the mergeability a live lookup just read. Empty strings clear the
+-- previous verdict: the lookup always has an opinion, unlike a webhook that
+-- simply does not carry one.
+UPDATE vcs_pull_request
+SET mergeable_state = NULLIF(sqlc.arg('mergeable_state'), ''),
+    checks_rollup_state = NULLIF(sqlc.arg('checks_rollup_state'), ''),
+    updated_at = now()
+WHERE id = sqlc.arg('id');
 
 -- name: DeleteVCSConnection :exec
 -- These tables carry no FKs, so the cascade that once removed the connection's

@@ -15,7 +15,7 @@ import { isEditableShortcutTarget } from "@multica/core/shortcuts";
 import { isImeComposing } from "@multica/core/utils";
 import type { InboxItem } from "@multica/core/types";
 import type { InboxView } from "./inbox-view";
-import { InboxListItem } from "./inbox-list-item";
+import { InboxListItem, type InboxRowDecoration } from "./inbox-list-item";
 import { VirtuosoSeed, VIRTUOSO_SEED_COUNT } from "../../common/virtuoso-seed";
 import { useRestoredScrollOffset, useRestoredScrollRef } from "../../platform";
 import { useT } from "../../i18n";
@@ -59,6 +59,7 @@ export function InboxList({
   onOpenArchived,
   emptyLabel,
   emptyAction,
+  decorate,
 }: {
   items: InboxItem[];
   view: InboxView;
@@ -71,6 +72,8 @@ export function InboxList({
   onOpenArchived: () => void;
   emptyLabel?: string;
   emptyAction?: ReactNode;
+  /** Merged inbox only (DENE-1004): lane tag and dimming per row. */
+  decorate?: (item: InboxItem) => InboxRowDecoration | undefined;
 }) {
   const { t } = useT("inbox");
   // Virtuoso's `customScrollParent` wants the actual HTMLElement, not a ref.
@@ -226,6 +229,7 @@ export function InboxList({
       isSelected={(item.issue_id ?? item.id) === selectedKey}
       onClick={() => selectItem(item)}
       onAction={() => onAction(item.id)}
+      decoration={decorate?.(item)}
     />
   );
 
@@ -251,7 +255,7 @@ export function InboxList({
             data={items}
             endReached={loadMore}
             computeItemKey={computeItemKey}
-            initialScrollTop={restoredScrollTop}
+            initialScrollTop={restoredScrollTop ?? 0}
             initialItemCount={Math.min(items.length, VIRTUOSO_SEED_COUNT)}
             defaultItemHeight={INBOX_ROW_ESTIMATED_HEIGHT}
             increaseViewportBy={{ top: 400, bottom: 400 }}

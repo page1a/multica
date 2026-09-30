@@ -1,4 +1,12 @@
 import { z } from "zod";
+import type {
+  CreateRepoLinkResponse,
+  ListRepoLinksResponse,
+  RepoBinding,
+  RepoLink,
+  TestRepoBindingResponse,
+  TestRepoLinkResponse,
+} from "../types/repo-link";
 import { normalizeIssueStatusCategory } from "../issues/config/status";
 import type {
   Agent,
@@ -54,6 +62,7 @@ import type {
   RedeemTelegramBindingTokenResponse,
   GroupedIssuesResponse,
   GitHubConnectResponse,
+  GitHubAppStatus,
   GitHubPullRequest,
   InboxItem,
   InboxWorkspaceUnread,
@@ -382,6 +391,31 @@ export const GitHubConnectResponseSchema = z.object({
 export const EMPTY_GITHUB_CONNECT_RESPONSE: GitHubConnectResponse = {
   configured: false,
 };
+
+export const GitHubAppStatusSchema = z.object({
+  source: z.string().optional().default("none"),
+  configured: z.boolean().optional().default(false),
+  read_only: z.boolean().optional().default(false),
+  can_create: z.boolean().optional().default(false),
+  block_reason: z.string().optional(),
+  app_name: z.string().optional(),
+  slug: z.string().optional(),
+  html_url: z.string().optional(),
+  manage_url: z.string().optional(),
+}).loose();
+
+export const EMPTY_GITHUB_APP_STATUS: GitHubAppStatus = {
+  source: "none",
+  configured: false,
+  read_only: false,
+  can_create: false,
+};
+
+export const GitHubAppSetupSchema = z.object({
+  action_url: z.string(),
+  manifest: z.record(z.string(), z.unknown()),
+  launch_url: z.string(),
+}).loose();
 
 export const GitHubRepositorySchema = z.object({
   id: z.number(),
@@ -4534,4 +4568,103 @@ export const EMPTY_TASK_LOG_EXPORT_PUSH: TaskLogExportPush = {
   size_bytes: 0,
   redaction_complete: null,
   truncated: false,
+};
+
+const RepoSourceProjectSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+}).loose();
+
+export const RepoLinkSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  host: z.string(),
+  owner: z.string(),
+  visibility: z.string(),
+  owner_user_id: z.string().nullable().optional(),
+  health: z.string(),
+  hint: z.string().nullable().optional(),
+  next_command: z.string().nullable().optional(),
+  last_query_ok: z.boolean().nullable().optional(),
+  last_query_at: z.string().nullable().optional(),
+  webhook_ok: z.boolean().nullable().optional(),
+  account_login: z.string().nullable().optional(),
+  install_url: z.string().nullable().optional(),
+  can_manage: z.boolean().optional().default(false),
+}).loose();
+
+export const RepoBindingSchema = z.object({
+  repo_url: z.string(),
+  source_projects: z.array(RepoSourceProjectSchema).optional(),
+  pinned_link_id: z.string().nullable().optional(),
+  resolved_link_id: z.string().nullable().optional(),
+  state: z.string(),
+  hint: z.string().nullable().optional(),
+  next_command: z.string().nullable().optional(),
+  can_configure: z.boolean().optional().default(false),
+}).loose();
+
+export const ListRepoLinksResponseSchema = z.object({
+  links: z.array(RepoLinkSchema).default([]),
+  bindings: z.array(RepoBindingSchema).default([]),
+  can_add_workspace: z.boolean().optional().default(false),
+  can_add_personal: z.boolean().optional().default(false),
+}).loose();
+
+export const EMPTY_LIST_REPO_LINKS_RESPONSE: ListRepoLinksResponse = {
+  links: [],
+  bindings: [],
+  can_add_workspace: false,
+  can_add_personal: false,
+};
+
+export const CreateRepoLinkResponseSchema = z.object({
+  link: RepoLinkSchema,
+  webhook_secret: z.string().optional(),
+  webhook_url: z.string().optional(),
+  install_url: z.string().optional(),
+}).loose();
+
+export const EMPTY_REPO_LINK: RepoLink = {
+  id: "",
+  kind: "github_token",
+  host: "",
+  owner: "",
+  visibility: "workspace",
+  health: "cli",
+  can_manage: false,
+};
+
+export const EMPTY_CREATE_REPO_LINK_RESPONSE: CreateRepoLinkResponse = {
+  link: EMPTY_REPO_LINK,
+};
+
+export const TestRepoLinkResponseSchema = z.object({
+  link: RepoLinkSchema,
+  ok: z.boolean(),
+  hint: z.string().nullable().optional(),
+  next_command: z.string().nullable().optional(),
+}).loose();
+
+export const EMPTY_TEST_REPO_LINK_RESPONSE: TestRepoLinkResponse = {
+  link: EMPTY_REPO_LINK,
+  ok: false,
+};
+
+export const EMPTY_REPO_BINDING: RepoBinding = {
+  repo_url: "",
+  state: "disconnected",
+  can_configure: false,
+};
+
+export const TestRepoBindingResponseSchema = z.object({
+  binding: RepoBindingSchema,
+  ok: z.boolean(),
+  hint: z.string().nullable().optional(),
+  next_command: z.string().nullable().optional(),
+}).loose();
+
+export const EMPTY_TEST_REPO_BINDING_RESPONSE: TestRepoBindingResponse = {
+  binding: EMPTY_REPO_BINDING,
+  ok: false,
 };

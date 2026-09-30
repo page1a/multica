@@ -207,9 +207,13 @@ function captureScrollEntries(
       "[data-tab-scroll-root]",
     );
     els.forEach((el) => {
-      if (el.scrollTop <= 0) return;
+      if (el.scrollTop <= 0 && el.scrollLeft <= 0) return;
       const key = el.getAttribute("data-tab-scroll-root") || "main";
-      entries[key] = { top: el.scrollTop, height: el.scrollHeight };
+      entries[key] = {
+        top: el.scrollTop,
+        height: el.scrollHeight,
+        ...(el.scrollLeft > 0 ? { left: el.scrollLeft } : {}),
+      };
     });
   }
   if (outgoingTabId) {

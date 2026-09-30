@@ -12,10 +12,24 @@ import {
   PropertyPicker,
 } from "../../issues/components/pickers/property-picker";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import type { ShortcutChord } from "@multica/core/shortcuts";
 import type { Agent } from "@multica/core/types";
 import { isAgentRuntimeBound } from "@multica/core/agents";
 import { toast } from "sonner";
+import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { useT } from "../../i18n";
+
+function NewChatTooltipLabel({ shortcut }: { shortcut?: ShortcutChord | null }) {
+  const { t } = useT("chat");
+  const label = t(($) => $.window.new_chat_tooltip);
+  if (!shortcut) return label;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {label}
+      <ShortcutKeycaps shortcut={shortcut} />
+    </span>
+  );
+}
 
 /**
  * Agent picker: a searchable, grouped (My agents / Others) list of agents in a
@@ -163,14 +177,22 @@ export function NewChatButton({
   userId,
   onStart,
   side = "bottom",
+  shortcut = null,
 }: {
   agents: Agent[];
   userId: string | undefined;
   onStart: (agent: Agent | null) => void;
   side?: "top" | "bottom";
+  /**
+   * Shown on the tooltip only when the click itself starts a chat. With
+   * several agents the click opens the picker, and the chord (which skips
+   * the picker) would be a lie on this button.
+   */
+  shortcut?: ShortcutChord | null;
 }) {
   const { t } = useT("chat");
   const label = t(($) => $.window.new_chat_tooltip);
+  const immediateShortcut = agents.length <= 1 ? shortcut : null;
 
   if (agents.length <= 1) {
     const only = agents[0] ?? null;
@@ -195,7 +217,9 @@ export function NewChatButton({
         >
           <Plus />
         </TooltipTrigger>
-        <TooltipContent side={side === "top" ? "top" : "bottom"}>{label}</TooltipContent>
+        <TooltipContent side={side === "top" ? "top" : "bottom"}>
+          <NewChatTooltipLabel shortcut={immediateShortcut} />
+        </TooltipContent>
       </Tooltip>
     );
   }
@@ -217,5 +241,39 @@ export function NewChatButton({
       }
       trigger={<Plus />}
     />
+  );
+}
+
+/** "+" that starts a chat with the agent already in play. The tooltip names the chord. */
+export function DirectNewChatButton({
+  onClick,
+  shortcut,
+  side = "bottom",
+}: {
+  onClick: () => void;
+  shortcut: ShortcutChord | null;
+  side?: "top" | "bottom";
+}) {
+  const { t } = useT("chat");
+  const label = t(($) => $.window.new_chat_tooltip);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="rounded-full text-muted-foreground"
+            aria-label={label}
+            onClick={onClick}
+          />
+        }
+      >
+        <Plus />
+      </TooltipTrigger>
+      <TooltipContent side={side}>
+        <NewChatTooltipLabel shortcut={shortcut} />
+      </TooltipContent>
+    </Tooltip>
   );
 }

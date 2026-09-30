@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -66,8 +67,9 @@ func vcsPullRequestRowToResponse(p db.ListVCSPullRequestsByIssueRow) GitHubPullR
 		ClosedAt:         timestampToPtr(p.ClosedAt),
 		PRCreatedAt:      timestampToString(p.PrCreatedAt),
 		PRUpdatedAt:      timestampToString(p.PrUpdatedAt),
-		MergeableState:   nil,
-		ChecksConclusion: aggregateChecksConclusion(p.ChecksFailed, p.ChecksPassed, p.ChecksPending, p.ChecksTotal),
+		MergeableState:   textToPtr(p.MergeableState),
+		ChecksRollup:     textToPtr(p.ChecksRollupState),
+		ChecksConclusion: firstChecksConclusion(p),
 		ChecksTotal:      p.ChecksTotal,
 		ChecksPassed:     p.ChecksPassed,
 		ChecksFailed:     p.ChecksFailed,
@@ -78,6 +80,27 @@ func vcsPullRequestRowToResponse(p db.ListVCSPullRequestsByIssueRow) GitHubPullR
 		Deletions:        p.Deletions,
 		ChangedFiles:     p.ChangedFiles,
 	}
+}
+
+func firstChecksConclusion(p db.ListVCSPullRequestsByIssueRow) *string {
+	if c := aggregateChecksConclusion(p.ChecksFailed, p.ChecksPassed, p.ChecksPending, p.ChecksTotal); c != nil {
+		return c
+	}
+	if !p.ChecksRollupState.Valid || strings.TrimSpace(p.ChecksRollupState.String) == "" {
+		return nil
+	}
+	var word string
+	switch gateChecks(p.ChecksRollupState.String) {
+	case "success":
+		word = "passed"
+	case "failure":
+		word = "failed"
+	case "pending":
+		word = "pending"
+	default:
+		return nil
+	}
+	return &word
 }
 
 // ── Webhook ─────────────────────────────────────────────────────────────────
@@ -133,6 +156,9 @@ func (h *Handler) HandleVCSWebhook(w http.ResponseWriter, r *http.Request) {
 	if !provider.VerifySignature(secret, r.Header, body) {
 		writeError(w, http.StatusUnauthorized, "invalid signature")
 		return
+	}
+	if err := h.Queries.TouchVCSConnectionWebhook(r.Context(), conn.ID); err != nil {
+		slog.Warn("vcs: stamp webhook failed", "err", err)
 	}
 
 	switch provider.EventKind(r.Header) {

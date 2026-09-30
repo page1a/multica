@@ -353,6 +353,8 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 	// autopilot", never as "Core model".
 	triggerWords := map[string]string{
 		"references/issues.md":          "issue",
+		"references/sub-issues.md":      "sub-issue",
+		"references/github-app.md":      "github app",
 		"references/routing.md":         "routing",
 		"references/close-protocol.md":  "close protocol",
 		"references/mentions.md":        "mention",
@@ -364,6 +366,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 		"references/runtimes.md":        "runtime",
 		"references/skill-import.md":    "skill import",
 		"references/transfer.md":        "transfer",
+		"references/inbox.md":           "inbox",
 	}
 
 	skill, ok := findSkill(t, PlatformSkillName)
@@ -577,6 +580,20 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Reviewer pass, owned checks green, no explicit human hold",
 				"A pass does not stop at `in_review`",
 				"--blocked-by",
+				// DENE-972: the audit rides the same close. It is not an
+				// eighth historical key, and a pull-request heading is not
+				// a second gate.
+				"close.knowledge_audit",
+				"--knowledge-none",
+				// DENE-1002: closing back to backlog / todo / in_progress is
+				// part of the protocol now, and the in_progress path must
+				// say who continues.
+				"--outcome backlog",
+				"--outcome in_progress",
+				"`deferred`",
+				"`continuing`",
+				"who continues",
+				"`clock`",
 			},
 			notWant: []string{
 				// The MUL-6966 / MUL-5442 bans on teaching the generic KV bag

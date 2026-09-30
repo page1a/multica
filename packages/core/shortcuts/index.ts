@@ -2,6 +2,7 @@ export {
   SHORTCUT_ACTIONS,
   SHORTCUT_ACTION_BY_ID,
   createShortcutChord,
+  defaultShortcutFor,
   shortcutFromEvent,
   shortcutChordEquals,
   shortcutMatchesEvent,
@@ -15,7 +16,9 @@ export {
   type ShortcutActionId,
   type ShortcutCategory,
   type ShortcutChord,
+  type ShortcutDefault,
   type ShortcutModifiers,
+  type RuntimeShortcutDefaults,
 } from "./definitions";
 export {
   configureShortcutPlatform,

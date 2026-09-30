@@ -41,7 +41,8 @@ import (
 //     issues manually; an automated system comment is pure noise for them
 //     and there is nothing to "trigger" on a human assignee. Skipping the
 //     comment entirely (Bohan's call on MUL-2538) also sidesteps the
-//     mention question — no comment, no mention, no inbox row.
+//     mention question — no comment, no mention, no inbox row. The project
+//     memory round still records a closed barrier for that parent.
 //   - the completion must close a STAGE barrier (MUL-3508). Sub-issues under
 //     a parent can be grouped into ordered stages via issue.stage; the
 //     notification + wake fire only when every sibling in the lowest
@@ -127,12 +128,6 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if parentStatus == "backlog" {
 		return
 	}
-	// Human-assigned parents read their own timeline; an automated system
-	// comment is just noise and there is no agent task to trigger. Skip the
-	// whole notification (comment + mention + inbox row) — MUL-2538.
-	if parent.AssigneeType.Valid && parent.AssigneeType.String == "member" {
-		return
-	}
 
 	// Stage barrier (MUL-3508 / discussion #4320). The notification + assignee
 	// wake fire only when this completion *closes a stage* — i.e. every sibling
@@ -155,7 +150,15 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 		slog.Warn("child done: failed to resolve sibling statuses", "error", err, "parent_id", uuidToString(parent.ID))
 		return
 	}
-	if !stageBarrierClosed(children, issue, h.realChildTerminalPredicate(ctx, statuses)) {
+	terminal := h.realChildTerminalPredicate(ctx, statuses)
+	if !stageBarrierClosed(children, issue, terminal) {
+		return
+	}
+	// The sediment round follows the barrier, including a parent assigned to a
+	// person. The wake below still skips that parent (MUL-2538); the round is
+	// a project fact, not a ping.
+	h.sedimentClosedBarrier(ctx, parent, issue, children, terminal)
+	if parent.AssigneeType.Valid && parent.AssigneeType.String == "member" {
 		return
 	}
 	staged := siblingsAreStaged(children)
@@ -231,9 +234,6 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		if parentStatus == "backlog" {
 			continue
 		}
-		if parent.AssigneeType.Valid && parent.AssigneeType.String == "member" {
-			continue
-		}
 
 		children, err := h.Queries.ListChildIssues(ctx, parent.ID)
 		if err != nil {
@@ -247,12 +247,18 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 			slog.Warn("batch child done: failed to resolve sibling statuses", "error", err, "parent_id", uuidToString(parent.ID))
 			continue
 		}
+		terminal := h.realChildTerminalPredicate(ctx, statuses)
+		memberParent := parent.AssigneeType.Valid && parent.AssigneeType.String == "member"
 		batch := len(g.children) > 1
 		if !siblingsAreStaged(children) {
 			// Unstaged: one implicit stage. Fire once iff every child is terminal
 			// in the final state. stageBarrierClosed ignores `completed` on the
 			// unstaged path, so any completed child stands in for the barrier check.
-			if !stageBarrierClosed(children, g.children[0], h.realChildTerminalPredicate(ctx, statuses)) {
+			if !stageBarrierClosed(children, g.children[0], terminal) {
+				continue
+			}
+			h.sedimentClosedBarrier(ctx, parent, g.children[0], children, terminal)
+			if memberParent {
 				continue
 			}
 			h.postChildDoneComment(ctx, parent, g.children[0], children, false, 0, batch, statuses, g.children)
@@ -267,8 +273,12 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		// reality rather than a mid-batch snapshot. A lower closed stage would
 		// re-introduce the stale "advance the next stage" instruction the bug was
 		// about.
-		rep, found := highestClosedBatchStage(children, g.children, h.realChildTerminalPredicate(ctx, statuses))
+		rep, found := highestClosedBatchStage(children, g.children, terminal)
 		if !found {
+			continue
+		}
+		h.sedimentClosedBarrier(ctx, parent, rep, children, terminal)
+		if memberParent {
 			continue
 		}
 		h.postChildDoneComment(ctx, parent, rep, children, true, rep.Stage.Int32, batch, statuses, g.children)

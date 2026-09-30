@@ -1,5 +1,8 @@
 // Package closeprotocol is the Stage 2 (DENE-231) close record: eight flat
-// issue-metadata keys, the §6.1 checks, and the four closing scenes.
+// issue-metadata keys, the §6.1 checks, and the closing scenes. DENE-1002
+// added two outcomes that deliberately leave the ticket open — deferred
+// (backlog/todo) and continuing (in_progress) — so closing is no longer only
+// a terminal event.
 //
 // It does not enqueue, mutate issue status, parse mentions for dispatch, or
 // change stage-barrier semantics. Callers write status, the evidence comment,
@@ -37,6 +40,15 @@ const (
 	ConclusionBlocked        = "blocked"
 	ConclusionAwaitingReview = "awaiting_review"
 	ConclusionAwaitingHuman  = "awaiting_human"
+	// ConclusionDeferred is `issue close --outcome backlog|todo` (DENE-1002):
+	// this turn is over, the ticket goes back to planning or the ready list on
+	// purpose, and the evidence says why. No delivery is claimed and no PR
+	// gate runs.
+	ConclusionDeferred = "deferred"
+	// ConclusionContinuing is `issue close --outcome in_progress` (DENE-1002):
+	// this turn stops, the ticket stays in progress, and the record names who
+	// continues (a wake clock, a wait condition, another ticket, or a person).
+	ConclusionContinuing = "continuing"
 
 	OwnerAgent  = "agent"
 	OwnerSquad  = "squad"
@@ -50,6 +62,11 @@ const (
 	// once per stay, so the executor does not @ the seat and enqueue a second
 	// run. Written by `multica issue close --outcome in_review` (DENE-859).
 	WakeRoute = "route"
+	// WakeClock is the deliberate pause a `--outcome in_progress` close
+	// records (DENE-1002): the ticket stays in progress and the block-wait
+	// patrol wakes the executor when block.wake_at / block.wait_timeout comes
+	// due. Only in_progress closes may write it.
+	WakeClock = "clock"
 	WakeNone  = "none"
 
 	BlockDecision   = "decision"
@@ -86,6 +103,20 @@ func (e *Error) Error() string {
 		return e.Msg
 	}
 	return e.Rule + ": " + e.Msg
+}
+
+// ExplainedPause reports whether a conclusion deliberately leaves a ticket
+// non-terminal with a recorded reason: `deferred` (back to backlog/todo) or
+// `continuing` (stays in_progress). The parking judgement and the completion
+// path read it so a deliberate stop is not reported as "stopped without
+// saying why" (DENE-1002).
+func ExplainedPause(conclusion string) bool {
+	switch conclusion {
+	case ConclusionDeferred, ConclusionContinuing:
+		return true
+	default:
+		return false
+	}
 }
 
 // Complete reports whether all eight keys are present. A comment-only wrap-up
@@ -208,6 +239,13 @@ func validate(meta map[string]string, issueStatus, evidenceBody string, allowLeg
 		return &Error{Rule: "route", Msg: "wake_action=route requires close.status=in_review"}
 	}
 
+	// wake_action=clock is the deliberate in_progress pause (DENE-1002). The
+	// clock itself lives in the block.* wait record; this key only says the
+	// issue is expected back when that clock comes due.
+	if wake == WakeClock && status != issuestatus.InProgress {
+		return &Error{Rule: "clock", Msg: "wake_action=clock requires close.status=in_progress"}
+	}
+
 	if wake == WakeMention {
 		if ownerType != OwnerAgent && ownerType != OwnerSquad {
 			return &Error{Rule: "mention", Msg: "wake_action=mention requires next_owner_type in {agent,squad}"}
@@ -249,6 +287,20 @@ func validate(meta map[string]string, issueStatus, evidenceBody string, allowLeg
 		if status != issuestatus.Blocked {
 			return &Error{Rule: "blocked", Msg: "conclusion=blocked requires close.status=blocked"}
 		}
+	case ConclusionDeferred:
+		if status != issuestatus.Backlog && status != issuestatus.Todo {
+			return &Error{Rule: "deferred", Msg: "conclusion=deferred requires close.status in {backlog,todo}"}
+		}
+	case ConclusionContinuing:
+		if status != issuestatus.InProgress {
+			return &Error{Rule: "continuing", Msg: "conclusion=continuing requires close.status=in_progress"}
+		}
+		// "Who continues" must be on the record: a concrete next owner or a
+		// ticket this one waits on. A close that names neither says only
+		// "I stopped", which is the state this conclusion exists to avoid.
+		if ownerType == OwnerNone && waitingOn == "" {
+			return &Error{Rule: "continuing", Msg: "conclusion=continuing must record who continues: a next owner or close.waiting_on"}
+		}
 	}
 
 	if waitingOn != "" {
@@ -271,7 +323,8 @@ func StatusMatchesIssue(closeStatus, issueStatus string) bool {
 
 func allowedConclusion(v string) bool {
 	switch v {
-	case ConclusionDelivered, ConclusionBlocked, ConclusionAwaitingReview, ConclusionAwaitingHuman:
+	case ConclusionDelivered, ConclusionBlocked, ConclusionAwaitingReview, ConclusionAwaitingHuman,
+		ConclusionDeferred, ConclusionContinuing:
 		return true
 	}
 	return false
@@ -287,7 +340,7 @@ func allowedOwnerType(v string) bool {
 
 func allowedWake(v string) bool {
 	switch v {
-	case WakeStageDone, WakeMention, WakeRoute, WakeNone:
+	case WakeStageDone, WakeMention, WakeRoute, WakeClock, WakeNone:
 		return true
 	}
 	return false

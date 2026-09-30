@@ -102,6 +102,12 @@ export interface StickToBottom {
    * of the conversation and the next one jumps (MUL-6879).
    */
   hasReachedLiveEnd: boolean;
+  /**
+   * The reader is further than FOLLOW_EDGE_THRESHOLD above the live end — the
+   * same edge the follow latch releases at, so a "jump to latest" affordance
+   * and the auto-follow can never disagree about where "the bottom" is.
+   */
+  awayFromLiveEnd: boolean;
 }
 
 /**
@@ -178,8 +184,10 @@ export function useStickToBottom(
 
   // Content grew or the viewport resized — displacement with no scroll event,
   // so it can never promote staged reader input.
+  const [awayFromLiveEnd, setAwayFromLiveEnd] = useState(false);
   const onResize = useCallback(() => {
     if (!scrollEl) return;
+    setAwayFromLiveEnd(!isAtLiveEnd(scrollEl));
     if (follow.onResize(distanceFromBottom(scrollEl))) pin();
   }, [scrollEl, follow, pin]);
 
@@ -253,6 +261,7 @@ export function useStickToBottom(
     let atEdge = isAtLiveEnd(scrollEl);
     const onScroll = () => {
       const nowAtEdge = isAtLiveEnd(scrollEl);
+      setAwayFromLiveEnd(!nowAtEdge);
       if (nowAtEdge !== atEdge) {
         atEdge = nowAtEdge;
         follow.onAtEdgeChange(nowAtEdge);
@@ -301,7 +310,8 @@ export function useStickToBottom(
       isFollowing: () => follow.isFollowing(),
       onContentHeightChanged: onResize,
       hasReachedLiveEnd,
+      awayFromLiveEnd,
     }),
-    [follow, onResize, hasReachedLiveEnd],
+    [follow, onResize, hasReachedLiveEnd, awayFromLiveEnd],
   );
 }

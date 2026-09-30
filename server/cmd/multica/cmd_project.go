@@ -12,6 +12,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/localdir"
+	"github.com/multica-ai/multica/server/internal/projectmemory"
 )
 
 var projectCmd = &cobra.Command{
@@ -57,6 +58,54 @@ var projectStatusCmd = &cobra.Command{
 	Short: "Change project status",
 	Args:  exactArgs(2),
 	RunE:  runProjectStatus,
+}
+
+var projectMemoryCmd = &cobra.Command{
+	Use:   "memory",
+	Short: "Check project memory locations",
+}
+
+var projectMemoryCheckCmd = &cobra.Command{
+	Use:   "check <id>",
+	Short: "Stat a local project directory and report its memory status",
+	Args:  exactArgs(1),
+	RunE:  runProjectMemoryCheck,
+}
+
+var projectMemoryStatusCmd = &cobra.Command{
+	Use:   "status <id>",
+	Short: "Show the latest project memory status",
+	Args:  exactArgs(1),
+	RunE:  runProjectMemoryStatus,
+}
+
+var projectMemorySeatCmd = &cobra.Command{
+	Use:   "seat",
+	Short: "View or configure the workspace memory sediment agent seat",
+}
+
+var projectMemorySeatGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Show the configured memory sediment agent for the current workspace",
+	Args:  cobra.NoArgs,
+	RunE:  runProjectMemorySeatGet,
+}
+
+var projectMemorySeatSetCmd = &cobra.Command{
+	Use:   "set [<agent>]",
+	Short: "Set or clear the memory sediment agent seat",
+	Long:  "Sets the agent assigned to automatic sediment tickets when project memory is missing. Accepts an agent UUID or name. Pass --clear to unset.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runProjectMemorySeatSet,
+}
+
+var projectMemorySeatClearCmd = &cobra.Command{
+	Use:   "clear",
+	Short: "Clear the memory sediment agent seat",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return runProjectMemorySeatSetAgent(cmd, "", true)
+	},
 }
 
 var projectResourceCmd = &cobra.Command{
@@ -115,6 +164,13 @@ func init() {
 	projectCmd.AddCommand(projectUpdateCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
 	projectCmd.AddCommand(projectStatusCmd)
+	projectCmd.AddCommand(projectMemoryCmd)
+	projectMemoryCmd.AddCommand(projectMemoryCheckCmd)
+	projectMemoryCmd.AddCommand(projectMemoryStatusCmd)
+	projectMemoryCmd.AddCommand(projectMemorySeatCmd)
+	projectMemorySeatCmd.AddCommand(projectMemorySeatGetCmd)
+	projectMemorySeatCmd.AddCommand(projectMemorySeatSetCmd)
+	projectMemorySeatCmd.AddCommand(projectMemorySeatClearCmd)
 	projectCmd.AddCommand(projectResourceCmd)
 
 	projectResourceCmd.AddCommand(projectResourceListCmd)
@@ -192,6 +248,15 @@ func init() {
 
 	// project status
 	projectStatusCmd.Flags().String("output", "table", "Output format: table or json")
+
+	// project memory
+	projectMemoryCheckCmd.Flags().String("path", "", "Local project root to stat (omit to show the latest daemon check)")
+	projectMemoryCheckCmd.Flags().String("output", "json", "Output format: table or json")
+	projectMemoryStatusCmd.Flags().String("output", "json", "Output format: table or json")
+	projectMemorySeatGetCmd.Flags().String("output", "table", "Output format: table or json")
+	projectMemorySeatSetCmd.Flags().Bool("clear", false, "Clear the memory sediment agent")
+	projectMemorySeatSetCmd.Flags().String("output", "table", "Output format: table or json")
+	projectMemorySeatClearCmd.Flags().String("output", "table", "Output format: table or json")
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +585,213 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, result)
 	}
+	return nil
+}
+
+func runProjectMemoryStatus(cmd *cobra.Command, args []string) error {
+	return runProjectMemoryRequest(cmd, args[0], false)
+}
+
+func runProjectMemoryCheck(cmd *cobra.Command, args []string) error {
+	return runProjectMemoryRequest(cmd, args[0], true)
+}
+
+func runProjectMemoryRequest(cmd *cobra.Command, ref string, check bool) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	projectRef, err := resolveProjectID(ctx, client, ref)
+	if err != nil {
+		return fmt.Errorf("resolve project: %w", err)
+	}
+
+	var result map[string]any
+	if check {
+		path, _ := cmd.Flags().GetString("path")
+		path = strings.TrimSpace(path)
+		if path == "" {
+			if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID+"/memory/check", &result); err != nil {
+				return fmt.Errorf("check project memory: %w", err)
+			}
+		} else {
+			if err := client.PostJSON(ctx, "/api/projects/"+projectRef.ID+"/memory/check", map[string]any{
+				"locations": projectmemory.Check(path),
+			}, &result); err != nil {
+				return fmt.Errorf("report project memory: %w", err)
+			}
+		}
+	} else if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID+"/memory/status", &result); err != nil {
+		return fmt.Errorf("get project memory status: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output != "table" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	locations, _ := result["locations"].([]any)
+	rows := make([][]string, 0, len(locations))
+	for _, raw := range locations {
+		location, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		exists, _ := location["exists"].(bool)
+		state := "missing"
+		if exists {
+			state = "present"
+		}
+		rows = append(rows, []string{strVal(location, "key"), strVal(location, "path"), state, strVal(location, "modified_at")})
+	}
+	cli.PrintTable(os.Stdout, []string{"KEY", "PATH", "STATE", "MODIFIED"}, rows)
+	return nil
+}
+
+func runProjectMemorySeatGet(cmd *cobra.Command, _ []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	if client.WorkspaceID == "" {
+		return fmt.Errorf("workspace ID is required; use --workspace-id or set MULTICA_WORKSPACE_ID")
+	}
+
+	var ws map[string]any
+	if err := client.GetJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), &ws); err != nil {
+		return fmt.Errorf("get workspace: %w", err)
+	}
+
+	settings, _ := ws["settings"].(map[string]any)
+	memory, _ := settings["memory"].(map[string]any)
+	agentID := strings.TrimSpace(strVal(memory, "sediment_agent"))
+
+	result := map[string]any{
+		"workspace_id": client.WorkspaceID,
+		"configured":   agentID != "",
+	}
+
+	if agentID != "" {
+		result["sediment_agent_id"] = agentID
+		var agent map[string]any
+		if err := client.GetJSON(ctx, "/api/agents/"+url.PathEscape(agentID), &agent); err == nil {
+			result["sediment_agent_name"] = strVal(agent, "name")
+			result["status"] = strVal(agent, "status")
+			result["work_enabled"] = boolField(agent, "work_enabled")
+			result["runtime_id"] = strVal(agent, "runtime_id")
+		}
+	} else {
+		result["sediment_agent_id"] = nil
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+
+	if agentID == "" {
+		fmt.Fprintf(os.Stdout, "No memory sediment agent configured for workspace %s\n", client.WorkspaceID)
+		return nil
+	}
+	name := strVal(result, "sediment_agent_name")
+	status := strVal(result, "status")
+	cli.PrintTable(os.Stdout, []string{"WORKSPACE ID", "SEDIMENT AGENT ID", "NAME", "STATUS"}, [][]string{
+		{client.WorkspaceID, agentID, name, status},
+	})
+	return nil
+}
+
+func runProjectMemorySeatSet(cmd *cobra.Command, args []string) error {
+	clearFlag, _ := cmd.Flags().GetBool("clear")
+	agentArg := ""
+	if len(args) > 0 {
+		agentArg = strings.TrimSpace(args[0])
+	}
+	if agentArg == "" || agentArg == "none" || agentArg == `""` {
+		clearFlag = true
+	}
+	return runProjectMemorySeatSetAgent(cmd, agentArg, clearFlag)
+}
+
+func runProjectMemorySeatSetAgent(cmd *cobra.Command, agentArg string, clear bool) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	if client.WorkspaceID == "" {
+		return fmt.Errorf("workspace ID is required; use --workspace-id or set MULTICA_WORKSPACE_ID")
+	}
+
+	var targetAgentID string
+	var targetAgentName string
+	if !clear && agentArg != "" {
+		resolvedID, err := resolveAgent(ctx, client, agentArg)
+		if err != nil {
+			return err
+		}
+		targetAgentID = resolvedID
+		var agent map[string]any
+		if err := client.GetJSON(ctx, "/api/agents/"+url.PathEscape(targetAgentID), &agent); err == nil {
+			targetAgentName = strVal(agent, "name")
+		}
+	}
+
+	var ws map[string]any
+	if err := client.GetJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), &ws); err != nil {
+		return fmt.Errorf("get workspace: %w", err)
+	}
+	settings, _ := ws["settings"].(map[string]any)
+	if settings == nil {
+		settings = make(map[string]any)
+	}
+	memory, _ := settings["memory"].(map[string]any)
+	if memory == nil {
+		memory = make(map[string]any)
+	}
+	if clear {
+		memory["sediment_agent"] = ""
+	} else {
+		memory["sediment_agent"] = targetAgentID
+	}
+	settings["memory"] = memory
+
+	var updatedWS map[string]any
+	if err := client.PatchJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), map[string]any{
+		"settings": settings,
+	}, &updatedWS); err != nil {
+		return fmt.Errorf("update sediment agent: %w", err)
+	}
+
+	result := map[string]any{
+		"workspace_id": client.WorkspaceID,
+		"configured":   !clear && targetAgentID != "",
+	}
+	if clear {
+		result["sediment_agent_id"] = nil
+	} else {
+		result["sediment_agent_id"] = targetAgentID
+		if targetAgentName != "" {
+			result["sediment_agent_name"] = targetAgentName
+		}
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+
+	if clear {
+		fmt.Fprintf(os.Stdout, "Cleared memory sediment agent for workspace %s\n", client.WorkspaceID)
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "Configured memory sediment agent %s (%s) for workspace %s\n", targetAgentName, targetAgentID, client.WorkspaceID)
 	return nil
 }
 
@@ -1060,4 +1332,126 @@ func formatLead(project map[string]any, actors actorDisplayLookup) string {
 		return ""
 	}
 	return actors.actor(lType, lID)
+}
+
+var projectRepoCmd = &cobra.Command{
+	Use:   "repo",
+	Short: "Attach repositories to a project",
+	Long: `Registers a Git repository on the workspace and attaches it to one project.
+
+add is idempotent: the same repository URL returns the existing attachment.
+remove detaches that project only; the workspace registry keeps the repository.
+--output json includes repo.mode and repo.next_action.`,
+}
+var projectRepoListCmd = &cobra.Command{
+	Use:   "list <project-id>",
+	Short: "List repositories attached to a project",
+	Args:  exactArgs(1),
+	RunE:  runProjectRepoList,
+}
+var projectRepoAddCmd = &cobra.Command{
+	Use:   "add <project-id>",
+	Short: "Attach a repository to a project",
+	Args:  exactArgs(1),
+	RunE:  runProjectRepoAdd,
+}
+var projectRepoRemoveCmd = &cobra.Command{
+	Use:   "remove <project-id> <repo-id>",
+	Short: "Detach a repository from a project",
+	Args:  exactArgs(2),
+	RunE:  runProjectRepoRemove,
+}
+
+func init() {
+	projectCmd.AddCommand(projectRepoCmd)
+	projectRepoCmd.AddCommand(projectRepoListCmd, projectRepoAddCmd, projectRepoRemoveCmd)
+	for _, c := range []*cobra.Command{projectRepoListCmd, projectRepoAddCmd, projectRepoRemoveCmd} {
+		c.Flags().String("output", "json", "Output format: table or json")
+	}
+	projectRepoAddCmd.Flags().String("url", "", "Git repository URL (required)")
+	projectRepoAddCmd.Flags().String("default-branch-hint", "", "Optional default branch")
+	projectRepoAddCmd.Flags().String("ref", "", "Optional checkout ref")
+}
+func projectRepoProject(cmd *cobra.Command, arg string) (context.Context, *cli.APIClient, string, context.CancelFunc, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	p, err := resolveProjectID(ctx, client, arg)
+	if err != nil {
+		cancel()
+		return nil, nil, "", nil, fmt.Errorf("resolve project: %w", err)
+	}
+	return ctx, client, p.ID, cancel, nil
+}
+func runProjectRepoList(cmd *cobra.Command, args []string) error {
+	ctx, c, id, cancel, err := projectRepoProject(cmd, args[0])
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	var result map[string]any
+	if err := c.GetJSON(ctx, "/api/projects/"+id+"/repos", &result); err != nil {
+		return fmt.Errorf("list project repositories: %w", err)
+	}
+	if out, _ := cmd.Flags().GetString("output"); out == "json" {
+		return cli.PrintJSON(os.Stdout, result["repos"])
+	}
+	cli.PrintTable(os.Stdout, []string{"ID", "URL", "MODE", "NEXT"}, projectRepoRows(result["repos"]))
+	return nil
+}
+func runProjectRepoAdd(cmd *cobra.Command, args []string) error {
+	u, _ := cmd.Flags().GetString("url")
+	if strings.TrimSpace(u) == "" {
+		return fmt.Errorf("--url is required")
+	}
+	ctx, c, id, cancel, err := projectRepoProject(cmd, args[0])
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	body := map[string]any{"repo_url": strings.TrimSpace(u)}
+	if v, _ := cmd.Flags().GetString("default-branch-hint"); v != "" {
+		body["default_branch_hint"] = v
+	}
+	if v, _ := cmd.Flags().GetString("ref"); v != "" {
+		body["ref"] = v
+	}
+	var result map[string]any
+	if err := c.PostJSON(ctx, "/api/projects/"+id+"/repos", body, &result); err != nil {
+		return fmt.Errorf("add project repository: %w", err)
+	}
+	if out, _ := cmd.Flags().GetString("output"); out == "table" {
+		cli.PrintTable(os.Stdout, []string{"ID", "URL", "MODE", "NEXT"}, projectRepoRows([]any{result}))
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+func runProjectRepoRemove(cmd *cobra.Command, args []string) error {
+	ctx, c, id, cancel, err := projectRepoProject(cmd, args[0])
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	if err := c.DeleteJSON(ctx, "/api/projects/"+id+"/repos/"+url.PathEscape(args[1])); err != nil {
+		return fmt.Errorf("remove project repository: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, map[string]any{"id": args[1], "removed": true})
+}
+func projectRepoRows(raw any) [][]string {
+	arr, _ := raw.([]any)
+	rows := make([][]string, 0, len(arr))
+	for _, item := range arr {
+		m, _ := item.(map[string]any)
+		resource, _ := m["resource"].(map[string]any)
+		if resource == nil {
+			resource = m
+		}
+		ref, _ := resource["resource_ref"].(map[string]any)
+		repo, _ := m["repo"].(map[string]any)
+		action, _ := repo["next_action"].(map[string]any)
+		rows = append(rows, []string{strVal(resource, "id"), strVal(ref, "url"), strVal(repo, "mode"), strVal(action, "kind")})
+	}
+	return rows
 }

@@ -37,7 +37,11 @@ describe("useEditorUpload", () => {
   });
 
   it("toasts the filename and reason when an upload fails", async () => {
-    mockUploadFile.mockRejectedValue(new Error("Network unreachable"));
+    // A permanent rejection: transient network errors are retried until the
+    // connection returns (see core/attachments/upload-retry.ts).
+    mockUploadFile.mockRejectedValue(
+      Object.assign(new Error("Unsupported file type"), { status: 415 }),
+    );
     const { result } = renderHook(() => useEditorUpload(), { wrapper });
 
     let returned: unknown;
@@ -50,7 +54,7 @@ describe("useEditorUpload", () => {
     // Null is what tells the editor extension to drop the placeholder.
     expect(returned).toBeNull();
     expect(mockToastError).toHaveBeenCalledWith(
-      "Couldn't upload diagram.png: Network unreachable",
+      "Couldn't upload diagram.png: Unsupported file type",
     );
   });
 

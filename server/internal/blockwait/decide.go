@@ -57,6 +57,11 @@ type PatrolInput struct {
 	// not "none". A quiet in_review round with an empty slot is seated, not
 	// nudged — a nudge would land on the executor, who can only say "请验收".
 	ReviewerEmpty bool
+	// Watched is `block.watched=1`. DENE-1002 only lets an in_progress row act
+	// on a clock when this ticket was deliberately parked there by
+	// `issue close --outcome in_progress`; a leftover failure wake on an
+	// ordinary in_progress row stays invisible.
+	Watched bool
 }
 
 // Decision is what the patrol or the acceptance hook should do, plus the
@@ -70,6 +75,9 @@ type Decision struct {
 	ConsumeBlocker string
 	MarkSegment    bool
 	MarkReview     bool
+	// Unwatch drops block.watched after this decision so a spent pause is no
+	// longer a patrol candidate (DENE-1002's in_progress clock).
+	Unwatch bool
 	// CommentOnly leaves the sentence and does not enqueue a run.
 	CommentOnly bool
 	// Inherited names the red checks a merge decision let through because the
@@ -153,6 +161,36 @@ func DecidePatrol(in PatrolInput) Decision {
 				CommentOnly: in.ReviewerHuman || strings.TrimSpace(in.Record.NeedsHuman) != "",
 			}
 			return d
+		}
+	}
+
+	// Deliberate in_progress pause (DENE-1002): `issue close --outcome
+	// in_progress` leaves the ticket in progress with a clock wait and stamps
+	// it watched. Only a due clock brings it back; the segment marker keeps
+	// this to one wake per pause, and Unwatch drops the stamp so a spent pause
+	// stops being a patrol candidate at all.
+	if in.Status == "in_progress" && in.Watched {
+		if in.Record.HasWakeAt && !in.Now.Before(in.Record.WakeAt) {
+			return Decision{
+				Action:        ActionWake,
+				Reason:        "上一轮把票停在进行中并留了到点复查，现在到点了，叫醒执行人接着做。",
+				ConsumeWakeAt: true,
+				MarkSegment:   true,
+				Unwatch:       true,
+			}
+		}
+		if in.Record.HasWaitTimeout && !in.Now.Before(in.Record.WaitTimeout) {
+			what := in.Record.WaitCondition
+			if what == "" {
+				what = "外部条件"
+			}
+			return Decision{
+				Action:      ActionWake,
+				Reason:      fmt.Sprintf("上一轮把票停在进行中等「%s」，现在过了截止时间，叫醒执行人接着做。", what),
+				ConsumeWait: true,
+				MarkSegment: true,
+				Unwatch:     true,
+			}
 		}
 	}
 	return Decision{Action: ActionHold}
@@ -620,6 +658,9 @@ func (d Decision) FollowUp(now time.Time, blockedBy, waitingOn, woken string) (s
 	}
 	if d.MarkReview {
 		set[KeyReviewNudged] = "1"
+	}
+	if d.Unwatch {
+		drop = append(drop, KeyWatched)
 	}
 	return set, drop
 }

@@ -3,11 +3,19 @@ import { api } from "../api";
 
 export const githubKeys = {
   all: (wsId: string) => ["github", wsId] as const,
+  app: (wsId: string) => [...githubKeys.all(wsId), "app"] as const,
   installations: (wsId: string) => [...githubKeys.all(wsId), "installations"] as const,
   repositories: (wsId: string, installationId: string) =>
     [...githubKeys.all(wsId), "installations", installationId, "repositories"] as const,
   pullRequests: (issueId: string) => ["github", "pull-requests", issueId] as const,
 };
+
+export const githubAppStatusOptions = (wsId: string) =>
+  queryOptions({
+    queryKey: githubKeys.app(wsId),
+    queryFn: () => api.getGitHubApp(wsId),
+    enabled: !!wsId,
+  });
 
 export const githubInstallationsOptions = (wsId: string) =>
   queryOptions({

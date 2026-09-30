@@ -666,7 +666,14 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
-	writeJSON(w, http.StatusOK, resp)
+	sedimentError := ""
+	if prevProject.Status != "completed" && project.Status == "completed" {
+		sedimentError = h.noteMemoryProgress(r.Context(), project.WorkspaceID, project.ID, "项目置为 completed："+project.Title)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		ProjectResponse
+		SedimentError string `json:"sediment_error,omitempty"`
+	}{ProjectResponse: resp, SedimentError: sedimentError})
 }
 
 func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
