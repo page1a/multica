@@ -165,12 +165,12 @@ func createTestShareLink(t *testing.T, workspaceID, role string, maxUses int32, 
 
 // --- Tests ---
 
-func TestCreateShareLink_RequiresOwnerAdmin(t *testing.T) {
+func TestCreateShareLink_RequiresOwner(t *testing.T) {
 	clearShareLinksForTestWorkspace(t)
 
 	r := chi.NewRouter()
 	r.Route("/api/workspaces/{id}", func(r chi.Router) {
-		r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
+		r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner"))
 		r.Post("/share-links", testHandler.CreateShareLink)
 	})
 
@@ -195,13 +195,13 @@ func TestCreateShareLink_RequiresOwnerAdmin(t *testing.T) {
 	}
 }
 
-func TestListShareLinks_RequiresOwnerAdmin(t *testing.T) {
+func TestListShareLinks_RequiresOwner(t *testing.T) {
 	clearShareLinksForTestWorkspace(t)
 	createTestShareLink(t, testWorkspaceID, "member", 0, 0)
 
 	r := chi.NewRouter()
 	r.Route("/api/workspaces/{id}", func(r chi.Router) {
-		r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
+		r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner"))
 		r.Get("/share-links", testHandler.ListShareLinks)
 	})
 
@@ -829,7 +829,7 @@ func TestShareLink_CrossWorkspaceDenied(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Route("/api/workspaces/{id}", func(r chi.Router) {
-		r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
+		r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner"))
 		r.Post("/share-links", testHandler.CreateShareLink)
 	})
 

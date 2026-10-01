@@ -203,7 +203,7 @@ function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
   // are intentional here.
   const { selectedAgentId } = useChatStore.getState();
   const userId = useAuthStore.getState().user?.id ?? null;
-  const memberRole = members.find((m) => m.user_id === userId)?.role ?? null;
+  const memberRole = members.find((m) => m.user_id === userId)?.role || null;
 
   const availableAgents = agents.filter(
     (a) =>

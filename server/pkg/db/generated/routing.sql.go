@@ -42,13 +42,16 @@ const assignIssueIfUnassigned = `-- name: AssignIssueIfUnassigned :one
 UPDATE issue
 SET assignee_type = $1::text,
     assignee_id = $2::uuid,
+    assignee_source = 'router',
+    assignee_source_user_id = NULL,
+    assignee_quote = NULL,
     revision = revision + 1,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND assignee_id IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
 `
 
 type AssignIssueIfUnassignedParams struct {
@@ -110,6 +113,9 @@ func (q *Queries) AssignIssueIfUnassigned(ctx context.Context, arg AssignIssueIf
 		&i.ReviewerType,
 		&i.ReviewerID,
 		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
 	)
 	return i, err
 }
@@ -151,7 +157,7 @@ SET status = 'done',
 WHERE id = $1::uuid
   AND workspace_id = $2::uuid
   AND status = ANY($3::text[])
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
 `
 
 type CompleteIssueFromReviewParams struct {
@@ -200,6 +206,9 @@ func (q *Queries) CompleteIssueFromReview(ctx context.Context, arg CompleteIssue
 		&i.ReviewerType,
 		&i.ReviewerID,
 		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
 	)
 	return i, err
 }
@@ -385,7 +394,7 @@ func (q *Queries) LastEnteredReviewAt(ctx context.Context, arg LastEnteredReview
 }
 
 const listIssuesRelayedFromReviewer = `-- name: ListIssuesRelayedFromReviewer :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote FROM issue
 WHERE workspace_id = $1
   AND status = 'in_review'
   AND metadata @> jsonb_build_object(
@@ -444,6 +453,9 @@ func (q *Queries) ListIssuesRelayedFromReviewer(ctx context.Context, arg ListIss
 			&i.ReviewerType,
 			&i.ReviewerID,
 			&i.Visibility,
+			&i.AssigneeSource,
+			&i.AssigneeSourceUserID,
+			&i.AssigneeQuote,
 		); err != nil {
 			return nil, err
 		}
@@ -687,12 +699,15 @@ const reassignIssue = `-- name: ReassignIssue :one
 UPDATE issue
 SET assignee_type = $1::text,
     assignee_id = $2::uuid,
+    assignee_source = 'router',
+    assignee_source_user_id = NULL,
+    assignee_quote = NULL,
     revision = revision + 1,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
 `
 
 type ReassignIssueParams struct {
@@ -751,6 +766,9 @@ func (q *Queries) ReassignIssue(ctx context.Context, arg ReassignIssueParams) (I
 		&i.ReviewerType,
 		&i.ReviewerID,
 		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
 	)
 	return i, err
 }
@@ -766,7 +784,7 @@ WHERE id = $2::uuid
   AND workspace_id = $3::uuid
   AND reviewer_type = 'agent'
   AND reviewer_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
 `
 
 type ReplaceIssueReviewerIfCurrentParams struct {
@@ -820,6 +838,79 @@ func (q *Queries) ReplaceIssueReviewerIfCurrent(ctx context.Context, arg Replace
 		&i.ReviewerType,
 		&i.ReviewerID,
 		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
+	)
+	return i, err
+}
+
+const setIssueAssigneeSource = `-- name: SetIssueAssigneeSource :one
+UPDATE issue
+SET assignee_source = $1::text,
+    assignee_source_user_id = $2::uuid,
+    assignee_quote = $3::text
+WHERE id = $4::uuid
+  AND workspace_id = $5::uuid
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+`
+
+type SetIssueAssigneeSourceParams struct {
+	AssigneeSource       pgtype.Text `json:"assignee_source"`
+	AssigneeSourceUserID pgtype.UUID `json:"assignee_source_user_id"`
+	AssigneeQuote        pgtype.Text `json:"assignee_quote"`
+	ID                   pgtype.UUID `json:"id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+}
+
+// Stamps whose decision the current executor is (DENE-1033). Written in the
+// same request as the assignment it describes; the routing writes above stamp
+// 'router' themselves. Passing a NULL source clears the record.
+func (q *Queries) SetIssueAssigneeSource(ctx context.Context, arg SetIssueAssigneeSourceParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, setIssueAssigneeSource,
+		arg.AssigneeSource,
+		arg.AssigneeSourceUserID,
+		arg.AssigneeQuote,
+		arg.ID,
+		arg.WorkspaceID,
+	)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
 	)
 	return i, err
 }
@@ -833,7 +924,7 @@ SET properties = jsonb_set(properties, ARRAY[$1::text], $2::jsonb, true),
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND NOT (properties ? $1::text)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
 `
 
 type SetIssuePropertyValueIfUnsetParams struct {
@@ -887,6 +978,9 @@ func (q *Queries) SetIssuePropertyValueIfUnset(ctx context.Context, arg SetIssue
 		&i.ReviewerType,
 		&i.ReviewerID,
 		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
 	)
 	return i, err
 }
@@ -901,7 +995,7 @@ SET reviewer_type = $1::text,
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND reviewer_type IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
 `
 
 type SetIssueReviewerIfUnsetParams struct {
@@ -956,6 +1050,9 @@ func (q *Queries) SetIssueReviewerIfUnset(ctx context.Context, arg SetIssueRevie
 		&i.ReviewerType,
 		&i.ReviewerID,
 		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
 	)
 	return i, err
 }

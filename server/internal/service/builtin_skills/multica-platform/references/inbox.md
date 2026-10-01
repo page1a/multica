@@ -34,6 +34,17 @@ These row fields carry the answer:
 | `next_name` (`next`) | Who holds the next move. On a running row, who is on it |
 | `unread` | Unread inbox rows on it |
 
+### One project only
+
+    multica inbox board --project <project id, id prefix or exact name> --output json
+
+The board narrows to that project's tickets, by the same visibility rules as
+the unfiltered one. A project the user cannot see gives an empty board; say
+so rather than trying another route. When the prompt names a project (the
+page's "让 AI 讲讲这个项目" button does), read the board with `--project` and
+tell only that project's tickets, so what you say matches what the user sees.
+The five parts below stay the same; open with which project this is.
+
 ## Whose inbox it is
 
 A person running the CLI gets their own board. An agent gets the board of

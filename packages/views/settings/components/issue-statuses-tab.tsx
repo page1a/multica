@@ -152,7 +152,7 @@ export function IssueStatusesTab() {
   const currentUser = useAuthStore((s) => s.user);
   const myRole = useMemo(() => {
     if (!currentUser) return null;
-    return members.find((m) => m.user_id === currentUser.id)?.role ?? null;
+    return members.find((m) => m.user_id === currentUser.id)?.role || null;
   }, [members, currentUser]);
   const isAdmin = myRole === "owner" || myRole === "admin";
 

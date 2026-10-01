@@ -22,6 +22,7 @@ import type {
   Workspace,
 } from "../types";
 import { projectKeys } from "../projects/queries";
+import { repoReachKeys } from "../repo-reach/queries";
 import {
   applyIssueInvalidatedToCache,
   applyChatCancelFinalizedToCache,
@@ -32,6 +33,7 @@ import {
   applyWorkspaceUpdatedToCache,
   handleInboxNew,
   invalidateChatMessageQueries,
+  invalidateGitHubInstallationQueries,
   refetchPendingChatAggregate,
   resolveInboxSourceSlug,
 } from "./use-realtime-sync";
@@ -1436,5 +1438,18 @@ describe("applyIssueInvalidatedToCache", () => {
       JSON.stringify(arg?.queryKey),
     );
     expect(invalidated).toContain(JSON.stringify(inboxKeys.unreadSummary()));
+  });
+});
+
+describe("invalidateGitHubInstallationQueries", () => {
+  it("refreshes repository reach so a new install shows as App-connected", () => {
+    const qc = createQueryClient();
+    qc.setQueryData(repoReachKeys.connections("ws-1"), { repos: [] });
+    qc.setQueryData(repoReachKeys.projectRepos("ws-1", "p-1"), { repos: [] });
+
+    invalidateGitHubInstallationQueries(qc, "ws-1");
+
+    expect(qc.getQueryState(repoReachKeys.connections("ws-1"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(repoReachKeys.projectRepos("ws-1", "p-1"))?.isInvalidated).toBe(true);
   });
 });

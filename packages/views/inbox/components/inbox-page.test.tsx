@@ -192,6 +192,7 @@ vi.mock("@multica/core/home", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/home")>();
   return {
     ...actual,
+    useBoardProject: () => ({ projectId: null, project: null, projects: [], setProjectId: vi.fn() }),
     useInboxBoard: (_wsId: string, opts?: { autoRead?: boolean }) => {
       boardReads.push(opts);
       return { board: boardData.board, isLoading: false, isError: false };
@@ -200,7 +201,7 @@ vi.mock("@multica/core/home", async (importOriginal) => {
 });
 vi.mock("../../home/components/home-page", () => ({
   LANE_TAG_CLASS: { waiting: "w", stalled: "s", running: "r", todo: "t", fresh: "f", done: "d" },
-  BoardAskAiButton: () => null,
+  BoardProjectControls: () => null,
   InboxBoardLanes: ({
     board,
     linking,

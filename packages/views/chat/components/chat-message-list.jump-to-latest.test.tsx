@@ -12,6 +12,10 @@ import enCommon from "../../locales/en/common.json";
 // and clears once they are back. Virtuoso is stubbed (jsdom has no viewport);
 // scrolling is driven through the real container's scroll events.
 const scrollToIndex = vi.fn();
+// Every render of the list body. The reader crossing the live-end edge must not
+// add one: the host re-rendering mid-scroll is what pulled readers back down
+// (DENE-1040).
+let listRenders = 0;
 
 vi.mock("react-virtuoso", () => ({
   Virtuoso: ({
@@ -25,6 +29,7 @@ vi.mock("react-virtuoso", () => ({
     itemContent: (i: number, item: unknown) => ReactElement;
     computeItemKey: (i: number, item: unknown) => string;
   }) => {
+    listRenders++;
     const handle = { scrollToIndex };
     if (typeof ref === "function") ref(handle);
     else if (ref) ref.current = handle;
@@ -85,6 +90,7 @@ const isShown = () => button().getAttribute("aria-hidden") === "false";
 beforeEach(() => {
   vi.useFakeTimers();
   scrollToIndex.mockClear();
+  listRenders = 0;
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -164,5 +170,24 @@ describe("ChatMessageList jump-to-latest", () => {
       align: "end",
       behavior: "smooth",
     });
+  });
+
+  // DENE-1040: the away flag flips in the middle of the reader's first scroll
+  // up. If that re-rendered the list host, the reflow of the rows under them
+  // (a wide table) would land on the follow latch at the worst moment.
+  it("does not re-render the list when the reader crosses the live-end edge", () => {
+    const { el } = mount([msg("m1", "user", "hi"), msg("m2", "assistant", "hello")]);
+    // Off the very bottom first, so the scroll-edge fade has settled and only
+    // the away flag is left to move.
+    scrollTo(el, 300);
+    expect(isShown()).toBe(true);
+    const before = listRenders;
+
+    scrollTo(el, 20);
+    expect(isShown()).toBe(false);
+    scrollTo(el, 300);
+    expect(isShown()).toBe(true);
+
+    expect(listRenders).toBe(before);
   });
 });

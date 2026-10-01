@@ -14,6 +14,7 @@
     "all": "すべて",
     "more": "⋯ その他 ({{count}})",
     "menu_title": "プロジェクト",
+    "collapsed": "折りたたまれたプロジェクト",
     "done": "完了",
     "search": "プロジェクトを検索…",
     "pinned": "ピン留め（ドラッグで並べ替え）",
@@ -29,6 +30,17 @@
     "switch": "プロジェクトを切り替え",
     "switch_search": "プロジェクトを検索…",
     "switch_empty": "一致するプロジェクトはありません"
+  },
+  "list_resize": {
+    "label": "チャットリストの幅を調整",
+    "hint": "ドラッグで幅を調整 · ダブルクリックで全プロジェクトを表示",
+    "width": "{{width}}px",
+    "width_at_max": "{{width}}px · 上限に達しました",
+    "width_at_fit": "{{width}}px · 全プロジェクトが収まります",
+    "width_default": "{{width}}px · 既定の幅に戻しました",
+    "width_max_rest_in_more": "{{width}}px · 上限に達しました。残りは「その他」にあります",
+    "limit_reason": "上限：会話には最低 {{min}}px 必要です",
+    "fit_guide": "全プロジェクトが収まる幅"
   },
   "project_nudge": {
     "bind": "プロジェクトに紐づける",
@@ -202,7 +214,8 @@
     "customize": "開始例をカスタマイズ",
     "inbox": {
       "label": "受信トレイをざっと説明して",
-      "prompt": "受信トレイをざっと説明して"
+      "prompt": "受信トレイをざっと説明して",
+      "prompt_project": "受信トレイをざっと説明して。ただし「{{name}}」プロジェクトだけ。`multica inbox board --project {{id}}` でボードを読み、そのプロジェクトのチケットだけ説明して。"
     }
   },
   "onboarding_cards": {

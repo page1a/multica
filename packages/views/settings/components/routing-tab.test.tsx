@@ -13,6 +13,7 @@ const getRoutingHealth = vi.hoisted(() => vi.fn());
 const checkRoutingHealth = vi.hoisted(() => vi.fn());
 const listRoutingModels = vi.hoisted(() => vi.fn());
 const listAgents = vi.hoisted(() => vi.fn());
+const listRuntimes = vi.hoisted(() => vi.fn());
 const member = vi.hoisted(() => ({ role: "owner" as "owner" | "admin" | "member" }));
 const workspace = vi.hoisted(() => ({
   current: {
@@ -33,6 +34,7 @@ vi.mock("@multica/core/api", async (importOriginal) => {
       checkRoutingHealth,
       listRoutingModels,
       listAgents,
+      listRuntimes,
     },
   };
 });
@@ -49,6 +51,7 @@ vi.mock("@multica/core/permissions", () => ({
 import { parseRoutingHealth } from "@multica/core/workspace/routing-health";
 import { DEFAULT_ROUTING_POLICY_PROMPT } from "@multica/core/workspace/routing-policy-prompt";
 import { workspaceKeys } from "@multica/core/workspace/queries";
+import { runtimeKeys } from "@multica/core/runtimes";
 import { RoutingTab } from "./routing-tab";
 
 function render() {
@@ -128,6 +131,22 @@ function chip() {
 }
 
 describe("RoutingTab", () => {
+  // The runtime lookup once ran above the state it reads; with an empty list
+  // the lookup never fires, so only a mount with a runtime present crashed.
+  it("mounts when the workspace has runtimes", async () => {
+    listRuntimes.mockResolvedValue([
+      { id: "rt-1", name: "Mac", status: "online", provider: "claude" },
+    ]);
+    workspace.current.settings = {
+      routing: { analysis: { enabled: true, runtime_id: "rt-1" } },
+    };
+    const { qc } = render();
+    await waitFor(() =>
+      expect(qc.getQueryData(runtimeKeys.list("ws-1"))).toBeDefined(),
+    );
+    expect(chip()).not.toBeNull();
+  });
+
   it("shows the off state for a workspace that has never configured routing", () => {
     render();
     expect(chip()?.getAttribute("data-state")).toBe("off");

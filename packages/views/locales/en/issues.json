@@ -133,6 +133,16 @@
     "blocking": "Blocking",
     "queued": "Queued"
   },
+  "assignee_source": {
+    "human": "Picked by {{name}}",
+    "human_unknown": "Picked by a person",
+    "quote": "On {{name}}'s word",
+    "quote_unknown": "On a person's word",
+    "automation": "Set by an automation",
+    "agent": "An agent's own pick",
+    "router": "Picked by routing",
+    "quote_text": "“{{quote}}”"
+  },
   "close_protocol": {
     "missing": "No close record",
     "status_drift": "close.status ≠ {{issueStatus}}",

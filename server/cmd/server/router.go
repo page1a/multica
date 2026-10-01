@@ -1711,7 +1711,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
-					r.Get("/invitations", h.ListWorkspaceInvitations)
 					// Listing GitHub installations is member-visible so the
 					// integrations tab no longer renders blank for non-admins;
 					// the handler strips the management handle and adds a
@@ -1774,21 +1773,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/transfer/attachments/chunk", h.ImportWorkspaceTransferAttachmentChunk)
 					r.Post("/transfer/attachments/commit", h.ImportWorkspaceTransferAttachmentCommit)
 					r.Post("/transfer/bind-runtimes", h.BindWorkspaceTransferRuntimes)
-					r.Post("/members", h.CreateInvitation)
-					r.Route("/members/{memberId}", func(r chi.Router) {
-						r.Patch("/", h.UpdateMember)
-						r.Delete("/", h.DeleteMember)
-					})
-					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
 					// Curating the shared MCP library is an admin action.
 					// Creating an entry binds it to no agent; an agent owner
 					// adds it to their own agent through the agent routes.
 					r.Post("/mcp-servers", h.CreateWorkspaceMcpServer)
 					r.Put("/mcp-servers/{serverId}", h.UpdateWorkspaceMcpServer)
 					r.Delete("/mcp-servers/{serverId}", h.DeleteWorkspaceMcpServer)
-					r.Post("/share-links", h.CreateShareLink)
-					r.Delete("/share-links/{linkId}", h.RevokeShareLink)
-					r.Get("/share-links", h.ListShareLinks)
 					// Custom runtime profile mutations (admin-only).
 					r.Post("/runtime-profiles", h.CreateRuntimeProfile)
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
@@ -1824,6 +1814,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
+				// Member management is owner-only (DENE-1022): the pending
+				// invitation list, inviting, revoking, changing a tier and
+				// removing a member. The roster read at GET /members stays
+				// member-level and redacts management fields for non-owners.
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+					r.Get("/invitations", h.ListWorkspaceInvitations)
+					r.Post("/members", h.CreateInvitation)
+					r.Route("/members/{memberId}", func(r chi.Router) {
+						r.Patch("/", h.UpdateMember)
+						r.Delete("/", h.DeleteMember)
+					})
+					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
+					// An invite link adds members just like an invitation does.
+					r.Post("/share-links", h.CreateShareLink)
+					r.Delete("/share-links/{linkId}", h.RevokeShareLink)
+					r.Get("/share-links", h.ListShareLinks)
+				})
 
 				// GitHub integration — connect / disconnect remain admin-only;
 				// the read-only list endpoint lives in the member-level group
@@ -2103,6 +2111,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// and with the outcome in the response — `multica issue
 					// route` is this endpoint.
 					r.Post("/route", h.RouteIssue)
+					// "Too hard" mid-flight: a reason only, routing re-judges
+					// (DENE-1033) — `multica issue escalate`.
+					r.Post("/escalate", h.EscalateIssue)
 					// One-shot close protocol (DENE-859): evidence comment,
 					// status and close.* keys in one transaction, checked by
 					// closeprotocol.Validate — `multica issue close`.

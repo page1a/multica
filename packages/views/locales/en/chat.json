@@ -14,6 +14,7 @@
     "all": "All",
     "more": "⋯ More ({{count}})",
     "menu_title": "Projects",
+    "collapsed": "Collapsed projects",
     "done": "Done",
     "search": "Search projects…",
     "pinned": "Pinned — drag to reorder",
@@ -30,6 +31,17 @@
     "switch": "Switch project",
     "switch_search": "Search projects…",
     "switch_empty": "No matching projects"
+  },
+  "list_resize": {
+    "label": "Resize chat list",
+    "hint": "Drag to resize · double-click to fit every project",
+    "width": "{{width}}px",
+    "width_at_max": "{{width}}px · limit reached",
+    "width_at_fit": "{{width}}px · fits every project",
+    "width_default": "{{width}}px · back to default",
+    "width_max_rest_in_more": "{{width}}px · limit reached, the rest stay in More",
+    "limit_reason": "Limit: the conversation keeps at least {{min}}px",
+    "fit_guide": "Fits every project"
   },
   "project_nudge": {
     "bind": "Bind to a project",
@@ -207,7 +219,8 @@
     "customize": "Customize starters",
     "inbox": {
       "label": "Walk me through my inbox",
-      "prompt": "Walk me through my inbox"
+      "prompt": "Walk me through my inbox",
+      "prompt_project": "Walk me through my inbox, but only the project \"{{name}}\". Read the board with `multica inbox board --project {{id}}` and tell only that project's tickets."
     }
   },
   "onboarding_cards": {

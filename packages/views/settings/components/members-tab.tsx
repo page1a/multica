@@ -9,6 +9,7 @@ import {
   Eye,
   Link,
   Loader2,
+  Lock,
   Mail,
   MoreHorizontal,
   Plus,
@@ -491,7 +492,11 @@ export function MembersTab() {
   const { data: members = [], isPending: membersLoading } = useQuery(
     memberListOptions(wsId),
   );
-  const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
+  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
+  // Member management is owner-only (DENE-1022): the page, the pending
+  // invitation list and the invite links all belong to the owner.
+  const isOwner = currentMember?.role === "owner";
+  const { data: invitations = [] } = useQuery(invitationListOptions(wsId, isOwner));
 
   const [inviteEmail, setInviteEmail] = useState("");
   const inviteEmailRef = useRef<HTMLInputElement>(null);
@@ -527,9 +532,7 @@ export function MembersTab() {
       inviteSeatPurchase?.phase === "waiting" ? 2_000 : false,
   });
 
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
-  const isOwner = currentMember?.role === "owner";
+  const canManageWorkspace = isOwner;
   const ownerCount = members.filter((m) => m.role === "owner").length;
   // "No members" as a person experiences it: the roster holds nobody but
   // them. A literally empty roster carries no evidence about the reader's
@@ -962,6 +965,23 @@ export function MembersTab() {
   };
 
   if (!workspace) return null;
+
+  if (!membersLoading && !isOwner) {
+    return (
+      <SettingsTab title={t(($) => $.page.tabs.members)}>
+        <div
+          role="status"
+          className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-12 text-center"
+        >
+          <Lock className="size-5 text-muted-foreground" aria-hidden="true" />
+          <h3 className="text-body font-medium">{t(($) => $.members.owner_only_title)}</h3>
+          <p className="max-w-md text-caption text-muted-foreground">
+            {t(($) => $.members.owner_only_description)}
+          </p>
+        </div>
+      </SettingsTab>
+    );
+  }
 
   return (
     <SettingsTab title={t(($) => $.page.tabs.members)}>

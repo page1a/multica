@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, History, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderKanban, History, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -10,9 +10,11 @@ import { useCreateComment } from "@multica/core/issues/mutations";
 import {
   BOARD_LANES,
   splitSeenDone,
+  useBoardProject,
   useDoneSeenStore,
   useInboxBoard,
   type BoardLane,
+  type BoardProject,
   type BoardRow,
   type InboxBoard,
 } from "@multica/core/home";
@@ -23,6 +25,8 @@ import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, resolveClickIntent, useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
+import { PickerItem, PropertyPicker, PICKER_TRIGGER_CLASS } from "../../issues/components/pickers/property-picker";
+import { ProjectIcon } from "../../projects/components/project-icon";
 import { useTimeAgo } from "../../inbox/components/inbox-list-item";
 import { ACTIVITY_LAYER_PARAM, LAYER_PARAM } from "../../inbox/components/inbox-view";
 
@@ -485,14 +489,14 @@ export function HomePage() {
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const copy = useBoardCopy();
-  const { t: tChat } = useT("chat");
-  const { board, isLoading, isError } = useInboxBoard(wsId);
+  const project = useBoardProject(wsId);
+  const { board, isLoading, isError } = useInboxBoard(wsId, { projectId: project.projectId });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader>
         <h1 className="flex-1 text-body font-semibold">{copy.t(($) => $.board.title)}</h1>
-        <BoardAskAiButton prompt={tChat(($) => $.conversation_starters.inbox.prompt)} label={copy.t(($) => $.board.ask_ai)} />
+        <BoardProjectControls project={project} />
         <Button
           variant="ghost"
           size="sm"
@@ -510,6 +514,72 @@ export function HomePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The board's project dropdown and the "walk me through it" button beside it
+ * (DENE-1019). The button follows the dropdown: with a project picked it sends
+ * the chat there, and the prompt names the project so the agent reads the board
+ * with `--project` and tells the same tickets the page shows.
+ */
+export function BoardProjectControls({ project }: { project: BoardProject }) {
+  const { t } = useT("inbox");
+  const { t: tChat } = useT("chat");
+  const { projects, project: current } = project;
+  const [open, setOpen] = useState(false);
+  const pick = (id: string | null) => {
+    project.setProjectId(id);
+    setOpen(false);
+  };
+  const prompt = current
+    ? tChat(($) => $.conversation_starters.inbox.prompt_project, { name: current.title, id: current.id })
+    : tChat(($) => $.conversation_starters.inbox.prompt);
+  return (
+    <>
+      <div className="inline-flex min-w-0" data-testid="board-project-filter">
+        <PropertyPicker
+          open={open}
+          onOpenChange={setOpen}
+          width="w-56"
+          align="end"
+          searchable={projects.length > 8}
+          triggerRender={
+            <button
+              type="button"
+              aria-label={t(($) => $.board.project_filter_aria)}
+              className={cn(PICKER_TRIGGER_CLASS, "h-7 max-w-48 rounded-md border px-2 text-caption")}
+            />
+          }
+          trigger={
+            <>
+              {current ? (
+                <ProjectIcon project={current} size="sm" />
+              ) : (
+                <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="truncate">{current?.title ?? t(($) => $.board.project_all)}</span>
+              <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+            </>
+          }
+        >
+          <PickerItem emptyValue selected={!current} onClick={() => pick(null)}>
+            <FolderKanban className="size-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground">{t(($) => $.board.project_all)}</span>
+          </PickerItem>
+          {projects.map((p) => (
+            <PickerItem key={p.id} selected={p.id === current?.id} onClick={() => pick(p.id)}>
+              <ProjectIcon project={p} size="sm" />
+              <span className="truncate">{p.title}</span>
+            </PickerItem>
+          ))}
+        </PropertyPicker>
+      </div>
+      <BoardAskAiButton
+        prompt={prompt}
+        label={current ? t(($) => $.board.ask_ai_project) : t(($) => $.board.ask_ai)}
+      />
+    </>
   );
 }
 

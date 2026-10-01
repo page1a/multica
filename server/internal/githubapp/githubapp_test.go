@@ -19,7 +19,7 @@ func TestBuildManifestMatchesOnboarding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ActionURL != "https://github.com/settings/apps/new" {
+	if got.ActionURL != "https://github.com/settings/apps/new?state=state-1" {
 		t.Fatalf("action = %s", got.ActionURL)
 	}
 	if got.Fields["public"] != true {
@@ -32,9 +32,10 @@ func TestBuildManifestMatchesOnboarding(t *testing.T) {
 	if got.Fields["setup_url"] != "https://ai.example/api/github/setup" || got.Fields["setup_on_update"] != true {
 		t.Fatalf("setup = %#v %#v", got.Fields["setup_url"], got.Fields["setup_on_update"])
 	}
-	redirect, _ := got.Fields["redirect_url"].(string)
-	if !strings.Contains(redirect, "https://ai.example/api/github/app/callback?state=") {
-		t.Fatalf("redirect = %s", redirect)
+	// GitHub rejects a redirect_url long enough to carry the signed state;
+	// state travels on the form action and GitHub echoes it to the callback.
+	if got.Fields["redirect_url"] != "https://ai.example/api/github/app/callback" {
+		t.Fatalf("redirect = %#v", got.Fields["redirect_url"])
 	}
 	perms, _ := got.Fields["default_permissions"].(map[string]string)
 	for _, key := range []string{"metadata", "contents", "pull_requests", "checks", "statuses"} {
@@ -53,7 +54,7 @@ func TestBuildOrgActionAndRejectsBadOrg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ActionURL != "https://github.com/organizations/Acme-Org/settings/apps/new" {
+	if got.ActionURL != "https://github.com/organizations/Acme-Org/settings/apps/new?state=s" {
 		t.Fatalf("action = %s", got.ActionURL)
 	}
 	if _, err := Build("https://ai.example", "", "s", "bad org"); !errors.Is(err, ErrInvalidOrg) {

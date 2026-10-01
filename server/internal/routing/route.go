@@ -91,6 +91,15 @@ func (r *Router) log() *slog.Logger {
 	return slog.Default()
 }
 
+// Active reports whether routing will act on this workspace's tickets. A
+// caller deciding whether an agent's executor pick can be dropped (DENE-1033)
+// asks this first: with routing off nobody would fill the slot afterwards, so
+// the pick stays as it always was. An unreadable setting counts as off.
+func (r *Router) Active(ctx context.Context, workspaceID string) bool {
+	settings, err := r.Store.Settings(ctx, workspaceID)
+	return err == nil && settings.State().Active()
+}
+
 // Route answers "given this status, who should be holding this ticket", and
 // applies the answer. It is called on issue creation and on every status
 // change, and it is the only entry point: adding behaviour for a status is a
@@ -290,7 +299,20 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	// filled from it and the judge is never asked about strength. A dead
 	// labelled seat is not an answer — the judge chooses among the seats
 	// that are still eligible.
-	requestedTier, labelled := r.Ladder.RequestedTier(issue.Labels)
+	//
+	// Only a person's label counts. A tier label an agent attached is the same
+	// guess as an agent naming a seat, and is set aside for the same reason
+	// (DENE-1033).
+	requestedTier, labelled := r.Ladder.RequestedTier(issue.HumanLabels())
+	var ignored []string
+	if issue.IgnoredAgentPick() {
+		ignored = append(ignored, NoticeAgentPickIgnored)
+	}
+	if !labelled && len(issue.AgentLabels) > 0 {
+		if _, agentTier := r.Ladder.RequestedTier(issue.AgentLabels); agentTier {
+			ignored = append(ignored, NoticeAgentTierLabelIgnored)
+		}
+	}
 	labelSeat, labelSeatOK := Seat{}, false
 	if labelled {
 		labelSeat, labelSeatOK = SeatByTier(eligible, requestedTier)
@@ -431,7 +453,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	notify := stillUnassigned && mode != fillParked
 	body := r.assignmentComment(issue, match, candidates, verdict, threshold,
 		executor, executorSource, reviewer, reviewerFallback, fallbackWhy, humanSignoff,
-		needExecutor, needReviewer, notify, mode, dec, settings)
+		needExecutor, needReviewer, notify, mode, dec, settings, ignored)
 	if note := DemotionFootnote(ladder, roster, executor); note != "" {
 		body += "\n\n" + note
 	}

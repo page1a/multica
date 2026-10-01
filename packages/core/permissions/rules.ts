@@ -224,19 +224,20 @@ export function canDeleteWorkspace(ctx: PermissionContext): Decision {
   );
 }
 
+/** Member management (roster details, invitations, tiers, removal) is
+ *  owner-only (DENE-1022); admins no longer manage people. */
 export function canManageMembers(ctx: PermissionContext): Decision {
-  if (isAdminLike(ctx.role)) return ALLOW;
+  if (ctx.role === "owner") return ALLOW;
   return deny(
-    "not_admin_role",
-    "Only workspace owners and admins can manage members.",
+    "not_owner_role",
+    "Only the workspace owner can manage members.",
   );
 }
 
 /**
  * Encodes the role-change matrix from `workspace.go:458-530`:
- *   - admins cannot touch the owner role (neither demote owners nor promote)
+ *   - only owners change roles (DENE-1022)
  *   - the last owner cannot be demoted
- *   - non-managers cannot change roles at all
  *
  * `ownerCount` is the number of workspace members currently with role=owner.
  * Caller derives it locally from the cached member list.

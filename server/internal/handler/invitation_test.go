@@ -725,7 +725,7 @@ func TestInvitationAdmission_AllowsBoundedOvershootWhenBackendFailsAfterChecks(t
 	}
 }
 
-func TestCreateInvitation_RouteRequiresAdminRole(t *testing.T) {
+func TestCreateInvitation_RouteRequiresOwnerRole(t *testing.T) {
 	clearInvitationsForTestWorkspace(t)
 	ctx := context.Background()
 	const memberEmail = "invitation-route-member@multica.ai"
@@ -745,7 +745,7 @@ func TestCreateInvitation_RouteRequiresAdminRole(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/api/workspaces/{id}", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
+			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner"))
 			r.Post("/members", testHandler.CreateInvitation)
 		})
 	})

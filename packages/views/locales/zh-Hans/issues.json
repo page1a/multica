@@ -131,6 +131,16 @@
     "blocking": "挡路中",
     "queued": "排队中"
   },
+  "assignee_source": {
+    "human": "{{name}} 亲自选的",
+    "human_unknown": "有人亲自选的",
+    "quote": "按 {{name}} 原话指派",
+    "quote_unknown": "按某位成员的原话指派",
+    "automation": "自动化指派",
+    "agent": "智能体自己点的名",
+    "router": "路由选的",
+    "quote_text": "“{{quote}}”"
+  },
   "close_protocol": {
     "missing": "无收口记录",
     "status_drift": "close.status ≠ {{issueStatus}}",

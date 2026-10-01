@@ -6,8 +6,8 @@ import { boardFromResponse, type InboxBoard } from "./board";
 
 export const homeKeys = {
   all: (wsId: string) => ["workspaces", wsId, "home"] as const,
-  board: (wsId: string, tz: string, unreadSince: string | null) =>
-    [...homeKeys.all(wsId), "board", tz, unreadSince ?? "live"] as const,
+  board: (wsId: string, tz: string, unreadSince: string | null, projectId: string | null = null) =>
+    [...homeKeys.all(wsId), "board", tz, unreadSince ?? "live", projectId ?? "all"] as const,
 };
 
 // Server verdicts change at a run's end and on replies; WS events invalidate
@@ -29,10 +29,16 @@ export function browserTimeZone(): string {
  * unread markers are live; with it, rows read at or after that moment still
  * count, which replays a visit's markers after the visit marked all read.
  */
-export function inboxBoardOptions(wsId: string, tz: string, unreadSince: string | null) {
+export function inboxBoardOptions(
+  wsId: string,
+  tz: string,
+  unreadSince: string | null,
+  projectId: string | null = null,
+) {
   return queryOptions({
-    queryKey: homeKeys.board(wsId, tz, unreadSince),
-    queryFn: () => api.getInboxBoard({ tz, unread_since: unreadSince ?? undefined }),
+    queryKey: homeKeys.board(wsId, tz, unreadSince, projectId),
+    queryFn: () =>
+      api.getInboxBoard({ tz, unread_since: unreadSince ?? undefined, project_id: projectId ?? undefined }),
     staleTime: HOME_STALE_TIME,
     refetchOnWindowFocus: true,
   });
@@ -54,6 +60,10 @@ const EMPTY_BOARD: InboxBoard = { waiting: [], stalled: [], running: [], todo: [
  * survive the read itself and every later refetch; rows an open call hangs on
  * are skipped by the server and stay unread.
  *
+ * `projectId` narrows the board to one project (DENE-1019). The arrival read
+ * marks everything read, including other projects' rows the viewer is not
+ * looking at, so a narrowed board never reads on arrival.
+ *
  * The mark is the server's clock, not this device's, so a skewed clock cannot
  * drop or double the markers. The ref keeps StrictMode's double effect from
  * reading twice.
@@ -65,7 +75,7 @@ const EMPTY_BOARD: InboxBoard = { waiting: [], stalled: [], running: [], todo: [
  */
 export function useInboxBoard(
   wsId: string,
-  { autoRead = true }: { autoRead?: boolean } = {},
+  { autoRead = true, projectId = null }: { autoRead?: boolean; projectId?: string | null } = {},
 ): InboxBoardResult {
   const qc = useQueryClient();
   const tz = useMemo(browserTimeZone, []);
@@ -73,7 +83,7 @@ export function useInboxBoard(
   const since = visit?.wsId === wsId ? visit.since : null;
 
   const query = useQuery({
-    ...inboxBoardOptions(wsId, tz, since),
+    ...inboxBoardOptions(wsId, tz, since, projectId),
     // The arrival read must be fresh: a cached board from an earlier visit
     // would mark the wrong things read.
     ...(since === null ? { staleTime: 0, refetchOnMount: "always" as const } : {}),
@@ -82,7 +92,7 @@ export function useInboxBoard(
   });
 
   const marked = useRef<string | null>(null);
-  const arrival = autoRead && since === null && query.isFetchedAfterMount && !query.isFetching && !query.isPlaceholderData
+  const arrival = autoRead && !projectId && since === null && query.isFetchedAfterMount && !query.isFetching && !query.isPlaceholderData
     ? query.data
     : undefined;
   useEffect(() => {

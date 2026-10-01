@@ -14,6 +14,7 @@
     "all": "전체",
     "more": "⋯ 더보기 ({{count}})",
     "menu_title": "프로젝트",
+    "collapsed": "접힌 프로젝트",
     "done": "완료",
     "search": "프로젝트 검색…",
     "pinned": "고정 (끌어 순서 변경)",
@@ -29,6 +30,17 @@
     "switch": "프로젝트 전환",
     "switch_search": "프로젝트 검색…",
     "switch_empty": "일치하는 프로젝트가 없습니다"
+  },
+  "list_resize": {
+    "label": "채팅 목록 너비 조정",
+    "hint": "드래그하여 너비 조정 · 더블클릭하면 모든 프로젝트 표시",
+    "width": "{{width}}px",
+    "width_at_max": "{{width}}px · 한도 도달",
+    "width_at_fit": "{{width}}px · 모든 프로젝트가 들어갑니다",
+    "width_default": "{{width}}px · 기본 너비로 복원",
+    "width_max_rest_in_more": "{{width}}px · 한도 도달, 나머지는 더보기에 있습니다",
+    "limit_reason": "한도: 대화 영역은 최소 {{min}}px를 유지합니다",
+    "fit_guide": "모든 프로젝트가 들어가는 너비"
   },
   "project_nudge": {
     "bind": "프로젝트에 연결",
@@ -202,7 +214,8 @@
     "customize": "시작 예시 편집",
     "inbox": {
       "label": "받은편지함 훑어 주기",
-      "prompt": "받은편지함을 훑어 줘"
+      "prompt": "받은편지함을 훑어 줘",
+      "prompt_project": "받은편지함을 훑어 줘. 단 \"{{name}}\" 프로젝트만. `multica inbox board --project {{id}}`로 보드를 읽고 그 프로젝트의 티켓만 알려 줘."
     }
   },
   "onboarding_cards": {

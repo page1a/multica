@@ -81,6 +81,46 @@ Because it is a reference and not a copy of a name, renaming the agent or
 person it points at changes nothing on the issue, and archiving them releases
 the slot so routing can pick a live seat next time the issue moves.
 
+## Who picks the executor (DENE-1033)
+
+**Do not name an executor yourself — leave the slot empty and routing picks.**
+With routing on, an executor an agent writes on a `todo`/`backlog` ticket
+(`multica issue create|update|assign --assignee X`, `--to X`) is ignored: the
+server does not write it, routing judges from scratch and says in one sentence
+that a pick was ignored, without saying who was suggested. The CLI prints the
+same hint on stderr and `--output json` carries `assignee_ignored: true`. A
+tier label you attach (e.g. `strongest`) is ignored the same way; only a label
+a person attached counts.
+
+The only exception is words from the person you are talking to. When THAT
+person said it out loud in the message that started your run — the comment that
+triggered you, or the chat message you are answering — pass their exact words:
+
+```bash
+multica issue create --title "..." --assignee "贝吉塔游戏" --per-quote "这张交给贝吉塔游戏做"
+multica issue assign <id> --to "贝吉塔游戏" --per-quote "交给贝吉塔游戏"
+```
+
+The server checks all three: the quote is a passage of the message that
+triggered this run; that message was written by the person who started the run
+(any member, not a particular one); and the quote contains the assigned
+agent's name. If it passes, the ticket records「按 <名字> 原话指派」and the
+pick stands. If not — a made-up quote, someone else's comment, another agent's
+relay, a quote without the name — it counts as your own pick and is ignored.
+Do not quote comments from third parties or other agents: they never count.
+
+If a ticket turned out too hard for its seat, do not pick a stronger one.
+Ask routing to re-judge:
+
+```bash
+multica issue escalate <id> --reason "what is beyond this seat"
+```
+
+It takes a reason only — no person, no tier. The server moves the ticket up the
+ladder, writes one comment, and reports `at_top: true` when nothing is
+stronger. A person picking on the web or desktop, or an automation a person
+configured, is never second-guessed.
+
 Consequences for how you work:
 
 - A value you set yourself is never overwritten. Assigning an issue, or

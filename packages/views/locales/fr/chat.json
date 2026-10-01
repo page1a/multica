@@ -14,6 +14,7 @@
     "all": "Tout",
     "more": "⋯ Plus ({{count}})",
     "menu_title": "Projets",
+    "collapsed": "Projets masqués",
     "done": "Terminé",
     "search": "Rechercher un projet…",
     "pinned": "Épinglés — glisser pour réordonner",
@@ -30,6 +31,17 @@
     "switch": "Changer de projet",
     "switch_search": "Rechercher un projet…",
     "switch_empty": "Aucun projet ne correspond"
+  },
+  "list_resize": {
+    "label": "Redimensionner la liste des discussions",
+    "hint": "Glisser pour redimensionner · double-clic pour afficher tous les projets",
+    "width": "{{width}}px",
+    "width_at_max": "{{width}}px · limite atteinte",
+    "width_at_fit": "{{width}}px · tous les projets tiennent",
+    "width_default": "{{width}}px · retour à la largeur par défaut",
+    "width_max_rest_in_more": "{{width}}px · limite atteinte, le reste est dans Plus",
+    "limit_reason": "Limite : la conversation garde au moins {{min}}px",
+    "fit_guide": "Tous les projets tiennent"
   },
   "project_nudge": {
     "bind": "Lier à un projet",
@@ -207,7 +219,8 @@
     "customize": "Personnaliser les amorces",
     "inbox": {
       "label": "Résume ma boîte de réception",
-      "prompt": "Résume-moi ma boîte de réception"
+      "prompt": "Résume-moi ma boîte de réception",
+      "prompt_project": "Résume-moi ma boîte de réception, mais seulement le projet « {{name}} ». Lis le tableau avec `multica inbox board --project {{id}}` et ne parle que des tickets de ce projet."
     }
   },
   "onboarding_cards": {

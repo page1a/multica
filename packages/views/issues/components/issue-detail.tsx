@@ -83,6 +83,7 @@ import { StagePicker, maxSiblingStage } from "./pickers/stage-picker";
 import { StartDatePicker } from "./pickers/start-date-picker";
 import { DueDatePicker } from "./pickers/due-date-picker";
 import { AssigneePicker } from "./pickers/assignee-picker";
+import { AssigneeSourceNote } from "./assignee-source-note";
 import { ReviewerPicker } from "./pickers/reviewer-picker";
 import { LabelPicker } from "./pickers/label-picker";
 import { CustomPropertyValueEditor, CustomPropertyValueDisplay } from "./pickers/custom-property-picker";
@@ -1184,7 +1185,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // (mirrors backend `comment.go:507-512`). Computed here so per-comment
   // rendering doesn't have to re-derive it for every row.
   const currentUserRole =
-    members.find((m) => m.user_id === user?.id)?.role ?? null;
+    members.find((m) => m.user_id === user?.id)?.role || null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
   const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
@@ -2445,6 +2446,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
           </PropRow>
+          {issue.assignee_source && issue.assignee_id && (
+            <div className="col-span-2">
+              <AssigneeSourceNote issue={issue} />
+            </div>
+          )}
           {/* 验收席 is parent-scoped: acceptance belongs to the top-level
               issue, and a sub-issue is execution-only. An empty slot on a
               sub-issue is therefore not a requirement — offering one would

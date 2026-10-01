@@ -66,6 +66,19 @@ type IssueResponse struct {
 	Priority     string  `json:"priority"`
 	AssigneeType *string `json:"assignee_type"`
 	AssigneeID   *string `json:"assignee_id"`
+	// AssigneeSource is whose decision the executor is: human / automation /
+	// quote / agent / router (DENE-1033). Omitted for a ticket that predates
+	// the record and by the list endpoints, which do not select it, so a
+	// client merging a list row keeps what the detail read told it.
+	// AssigneeSourceUserID is the person behind "quote" and AssigneeQuote the
+	// words the server found in their message.
+	AssigneeSource       *string `json:"assignee_source,omitempty"`
+	AssigneeSourceUserID *string `json:"assignee_source_user_id,omitempty"`
+	AssigneeQuote        *string `json:"assignee_quote,omitempty"`
+	// AssigneeIgnored is set on the response of a create or update that
+	// named an executor the server did not apply, so the caller sees it now
+	// instead of finding the slot empty later.
+	AssigneeIgnored bool `json:"assignee_ignored,omitempty"`
 	// ReviewerType / ReviewerID are the acceptance slot, shaped exactly like
 	// the assignee pair: a REFERENCE to an agent or a member, not a copy of a
 	// name, so renaming or archiving the target cannot leave stale text behind.
@@ -395,6 +408,10 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
+
+		AssigneeSource:       textToPtr(i.AssigneeSource),
+		AssigneeSourceUserID: uuidToPtr(i.AssigneeSourceUserID),
+		AssigneeQuote:        textToPtr(i.AssigneeQuote),
 	}
 }
 
@@ -3052,12 +3069,16 @@ func (h *Handler) visibleProjectInWorkspace(w http.ResponseWriter, r *http.Reque
 }
 
 type CreateIssueRequest struct {
-	Title         string   `json:"title"`
-	Description   *string  `json:"description"`
-	Status        string   `json:"status"`
-	Priority      string   `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
+	Title        string  `json:"title"`
+	Description  *string `json:"description"`
+	Status       string  `json:"status"`
+	Priority     string  `json:"priority"`
+	AssigneeType *string `json:"assignee_type"`
+	AssigneeID   *string `json:"assignee_id"`
+	// AssigneeQuote is, for an agent naming an executor, the words the person
+	// who started this run said naming that agent (DENE-1033). The server finds
+	// them in the triggering message or does not honour the pick.
+	AssigneeQuote *string  `json:"assignee_quote,omitempty"`
 	ParentIssueID *string  `json:"parent_issue_id"`
 	ProjectID     *string  `json:"project_id"`
 	Stage         *int32   `json:"stage,omitempty"`
@@ -3294,6 +3315,20 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Whose pick is the executor (DENE-1033). A person's own hand stands; an
+	// agent's stands only with a quote the server can verify, and on a ticket
+	// routing will judge an unverified one is dropped so routing decides.
+	var ruling assignmentRuling
+	assigneeIgnored := false
+	if assigneeType.Valid {
+		ruling = h.rulePick(r, workspaceID, creatorType, actualCreatorID, assigneeType, assigneeID, deref(req.AssigneeQuote), status)
+		if !ruling.Apply {
+			assigneeType, assigneeID = pgtype.Text{}, pgtype.UUID{}
+			assigneeIgnored = true
+			ruling.Source = routing.SourceAgent
+		}
+	}
+
 	// Prefix is workspace-level; pre-compute once so both the broadcast
 	// payload builder and the HTTP response share the same value.
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
@@ -3347,6 +3382,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		AttachmentIDs:  attachmentIDs,
 		LabelIDs:       labelIDs,
 		AllowDuplicate: req.AllowDuplicate,
+
+		AssigneeSource:       ruling.Source,
+		AssigneeSourceUserID: ruling.SourceUser,
+		AssigneeQuote:        ruling.Quote,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
@@ -3417,6 +3456,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)
+	resp.AssigneeIgnored = assigneeIgnored
 	fillCreated(&resp)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	// Echo the authoritative labels attached in the create transaction. Always
@@ -3464,6 +3504,8 @@ type UpdateIssueRequest struct {
 	Priority        *string `json:"priority"`
 	AssigneeType    *string `json:"assignee_type"`
 	AssigneeID      *string `json:"assignee_id"`
+	// AssigneeQuote: see CreateIssueRequest.AssigneeQuote.
+	AssigneeQuote *string `json:"assignee_quote,omitempty"`
 	// ReviewerType / ReviewerID set the acceptance slot. Sending the pair as
 	// explicit nulls clears it back to "undecided"; sending reviewer_type
 	// "none" with a null id records "this issue needs no acceptance pass",
@@ -4012,6 +4054,38 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// the identical lineage was accepted on the create path.
 	_, touchedType := rawFields["assignee_type"]
 	_, touchedID := rawFields["assignee_id"]
+
+	// Whose pick is the executor (DENE-1033): see rulePick. A dropped pick
+	// leaves the slot as it was; the caller is told through assignee_ignored.
+	var (
+		stampRuling    *assignmentRuling
+		assigneeIgnore bool
+	)
+	if touchedType || touchedID {
+		if params.AssigneeType.Valid && params.AssigneeID.Valid {
+			actorType, actorID := h.resolveActor(r, userID, workspaceID)
+			resulting := prevIssue.Status
+			if params.Status.Valid {
+				resulting = params.Status.String
+			}
+			ruling := h.rulePick(r, workspaceID, actorType, actorID, params.AssigneeType, params.AssigneeID, deref(req.AssigneeQuote), resulting)
+			if ruling.Apply {
+				stampRuling = &ruling
+			} else {
+				assigneeIgnore = true
+				params.AssigneeType, params.AssigneeID = prevIssue.AssigneeType, prevIssue.AssigneeID
+				touchedType, touchedID = false, false
+				if !prevIssue.AssigneeType.Valid {
+					// Nothing holds the slot: remember that an agent tried, so
+					// routing can say so in its one comment.
+					stampRuling = &assignmentRuling{Source: routing.SourceAgent}
+				}
+			}
+		} else if !params.AssigneeID.Valid {
+			// Cleared: the record of who chose goes with the executor.
+			stampRuling = &assignmentRuling{}
+		}
+	}
 	if touchedType || touchedID {
 		if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
 			// DENE-808: a member refused for lack of invoke permission rings
@@ -4107,12 +4181,16 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if tr.noCode != "" {
 		h.setIssueMetaString(r.Context(), issue, "close.no_code_reason", tr.noCode)
 	}
+	if stampRuling != nil {
+		issue = h.stampAssignee(r.Context(), issue, *stampRuling)
+	}
 
 	// Determine actor identity: agent (via X-Agent-ID header) or member.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	resp.AssigneeIgnored = assigneeIgnore
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
@@ -4914,6 +4992,29 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// resolveActor still classifies the caller as an agent (MUL-6691).
 		_, batchTouchedType := rawUpdates["assignee_type"]
 		_, batchTouchedID := rawUpdates["assignee_id"]
+		// Whose pick is the executor (DENE-1033); same ruling as UpdateIssue.
+		var batchStamp *assignmentRuling
+		if batchTouchedType || batchTouchedID {
+			if params.AssigneeType.Valid && params.AssigneeID.Valid {
+				pickActorType, pickActorID := h.resolveActor(r, userID, workspaceID)
+				resulting := prevIssue.Status
+				if params.Status.Valid {
+					resulting = params.Status.String
+				}
+				ruling := h.rulePick(r, workspaceID, pickActorType, pickActorID, params.AssigneeType, params.AssigneeID, deref(req.Updates.AssigneeQuote), resulting)
+				if ruling.Apply {
+					batchStamp = &ruling
+				} else {
+					params.AssigneeType, params.AssigneeID = prevIssue.AssigneeType, prevIssue.AssigneeID
+					batchTouchedType, batchTouchedID = false, false
+					if !prevIssue.AssigneeType.Valid {
+						batchStamp = &assignmentRuling{Source: routing.SourceAgent}
+					}
+				}
+			} else if !params.AssigneeID.Valid {
+				batchStamp = &assignmentRuling{}
+			}
+		}
 		if batchTouchedType || batchTouchedID {
 			if status, _ := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
 				continue
@@ -4968,6 +5069,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		issue = h.finishStatusTransition(r.Context(), issue, batchTransition)
 		if batchTransition.persistBlock {
 			h.persistBlockRecord(r.Context(), issue, batchTransition.block)
+		}
+		if batchStamp != nil {
+			issue = h.stampAssignee(r.Context(), issue, *batchStamp)
 		}
 
 		prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)

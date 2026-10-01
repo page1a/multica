@@ -37,6 +37,10 @@ vi.mock("./config-transfer-tab", stub("ConfigTransferTab"));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme" }),
 }));
+const me = vi.hoisted(() => ({ role: "owner" as string | null }));
+vi.mock("@multica/core/permissions", () => ({
+  useCurrentMember: () => ({ role: me.role }),
+}));
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-query")>();
   return { ...actual, useQuery: () => ({ data: undefined }) };
@@ -79,6 +83,7 @@ beforeEach(() => {
   layout.compact = true;
   navigationState.search = "";
   configStore.getState().setFeatureFlags({});
+  me.role = "owner";
   replace.mockClear();
 });
 
@@ -238,4 +243,33 @@ describe("SettingsPage information architecture", () => {
     );
     expect(push).toHaveBeenCalledWith("/acme/settings?tab=preferences&keep=1");
   });
+});
+
+// DENE-1022: member management is owner-only.
+describe("SettingsPage members entry", () => {
+  it("lists Members for an owner", () => {
+    layout.compact = false;
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.getByRole("link", { name: "Members" })).toBeInTheDocument();
+  });
+
+  it.each(["admin", "member", "guest"])(
+    "hides Members from a %s but keeps the direct link on the members page",
+    (role) => {
+      me.role = role;
+      layout.compact = false;
+      navigationState.search = "tab=members";
+
+      renderWithI18n(<SettingsPage />);
+
+      expect(
+        screen.queryByRole("link", { name: "Members" }),
+      ).not.toBeInTheDocument();
+      // The direct link still resolves to the members tab (which explains
+      // itself) rather than bouncing to the profile tab.
+      expect(screen.getByText("MembersTab")).toBeInTheDocument();
+      expect(screen.queryByText("AccountTab")).not.toBeInTheDocument();
+    },
+  );
 });

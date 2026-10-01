@@ -760,6 +760,16 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	if err != nil {
 		return fmt.Errorf("create issue: %w", err)
 	}
+	// The executor here is what a person configured on the autopilot: it is
+	// theirs, not an agent's pick, and routing leaves it alone (DENE-1033).
+	if issue, err = qtx.SetIssueAssigneeSource(ctx, db.SetIssueAssigneeSourceParams{
+		ID:                   issue.ID,
+		WorkspaceID:          ap.WorkspaceID,
+		AssigneeSource:       pgtype.Text{String: "automation", Valid: true},
+		AssigneeSourceUserID: actorUserID,
+	}); err != nil {
+		return fmt.Errorf("record assignee source: %w", err)
+	}
 
 	// Fan out the default subscriber template inside the same tx as the
 	// issue insert, before EventIssueCreated fires — so notification

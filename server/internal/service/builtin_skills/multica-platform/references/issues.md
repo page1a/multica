@@ -218,7 +218,8 @@ multica issue property unset <issue-id> --name Environment
 
 - A validation error lists the legal options — fix the value and retry.
 - `actor` / `multi_actor` properties (Reviewer, Escalation contact, ...) hold
-  workspace members only. `--value` takes a member name, email, UUID, short id,
+  workspace members only. `--value` takes a member name, email (email only resolves when the caller is a
+  workspace owner), UUID, short id,
   or an explicit `member:<uuid>`; `multi_actor` takes a comma-separated list
   (duplicates dropped, order kept, max 20).
 - Definitions may include an optional catalog icon for visual identification;
@@ -349,6 +350,11 @@ archived statuses remain readable via an explicit status filter.
 Routing fills the assignee and 验收席 slots on creation and on status changes,
 and never writes a status. Its rules, the 验收席 field, and what a `route`
 result means are in `references/routing.md`.
+
+Do not name another agent as executor on your own: with routing on the server
+ignores it. Only the words of the person you are talking to, passed as
+`--per-quote "<原话>"`, carry a pick through; ask for a stronger seat with
+`multica issue escalate <id> --reason "..."`. See `references/routing.md`.
 
 ## Claim ownership without duplicating a run
 

@@ -49,7 +49,12 @@ import { OnboardingStarterCards } from "./onboarding-starter-cards";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
-import { LIVE_END_ROW_ATTR, useStickToBottom } from "./stick-to-bottom";
+import {
+  type AwayStore,
+  LIVE_END_ROW_ATTR,
+  useAwayFromLiveEnd,
+  useStickToBottom,
+} from "./stick-to-bottom";
 import { formatElapsedMs } from "../lib/format";
 import {
   canonicalAnswerText,
@@ -290,16 +295,12 @@ export function ChatMessageList({
 
   const firstIndex = renderItems.length > 0 ? firstItemIndex : 0;
 
-  // Jump-to-latest button. Shown only once the list has landed on the newest
-  // message (before that it is hidden and "away" is just Virtuoso settling).
-  // The badge counts replies that landed while the reader was scrolled up —
-  // the reader's own sends are not news to them.
-  const showJumpToLatest = hasReachedLiveEnd && awayFromLiveEnd;
+  // The reader's own sends are not news to them, so only replies count toward
+  // the jump-to-latest badge.
   const incomingKeys = useMemo(
     () => renderItems.filter((i) => i.kind === "message" && i.message.role !== "user").map((i) => i.key),
     [renderItems],
   );
-  const newSinceAway = useUnseenCount(incomingKeys, showJumpToLatest);
   const liveEndKey = renderItems[renderItems.length - 1]?.key ?? null;
 
   const listContext: ChatListContext = {
@@ -418,12 +419,11 @@ export function ChatMessageList({
       </RichContentScrollRootProvider>
       )}
     </div>
-    <ScrollToBottomButton
-      visible={showJumpToLatest}
-      newCount={newSinceAway}
-      unit="messages"
+    <JumpToLatest
+      awayFromLiveEnd={awayFromLiveEnd}
+      ready={hasReachedLiveEnd}
+      incomingKeys={incomingKeys}
       onClick={scrollToLiveEnd}
-      className="bottom-3 right-3"
     />
     </div>
     </ImageSequenceProvider>
@@ -496,6 +496,39 @@ function MessageAuthor({
 // stable for unchanged messages and isPending is a boolean, so a shallow
 // memo skips reconciling rows the stream didn't touch — the persisted
 // history stays inert while only the live footer updates.
+/**
+ * Jump-to-latest button. Shown only once the list has landed on the newest
+ * message (before that it is hidden and "away" is just Virtuoso settling).
+ * The badge counts replies that landed while the reader was scrolled up.
+ *
+ * Owns the away subscription so the list host never re-renders when the
+ * reader crosses the live-end edge (see `StickToBottom.awayFromLiveEnd`).
+ */
+function JumpToLatest({
+  awayFromLiveEnd,
+  ready,
+  incomingKeys,
+  onClick,
+}: {
+  awayFromLiveEnd: AwayStore;
+  ready: boolean;
+  incomingKeys: readonly string[];
+  onClick: () => void;
+}) {
+  const away = useAwayFromLiveEnd(awayFromLiveEnd);
+  const visible = ready && away;
+  const newCount = useUnseenCount(incomingKeys, visible);
+  return (
+    <ScrollToBottomButton
+      visible={visible}
+      newCount={newCount}
+      unit="messages"
+      onClick={onClick}
+      className="bottom-3 right-3"
+    />
+  );
+}
+
 const MessageBubble = memo(function MessageBubble({
   item,
   isPending,

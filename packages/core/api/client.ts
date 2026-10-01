@@ -3429,10 +3429,11 @@ export class ApiClient {
 
   // The inbox lanes, built server-side (DENE-975). `unread_since` replays the
   // unread markers of a visit that has since marked everything read.
-  async getInboxBoard(params: { tz?: string; unread_since?: string } = {}): Promise<InboxBoardResponse> {
+  async getInboxBoard(params: { tz?: string; unread_since?: string; project_id?: string } = {}): Promise<InboxBoardResponse> {
     const search = new URLSearchParams();
     if (params.tz) search.set("tz", params.tz);
     if (params.unread_since) search.set("unread_since", params.unread_since);
+    if (params.project_id) search.set("project_id", params.project_id);
     const query = search.toString();
     return this.fetch(`/api/inbox/board${query ? `?${query}` : ""}`);
   }

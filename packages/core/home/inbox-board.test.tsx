@@ -49,7 +49,7 @@ function response(over: Partial<InboxBoardResponse> = {}): InboxBoardResponse {
   };
 }
 
-function mount(api: Record<string, unknown>) {
+function mount(api: Record<string, unknown>, opts?: Parameters<typeof useInboxBoard>[1]) {
   setApiInstance({
     listInbox: vi.fn().mockResolvedValue([]),
     getInboxUnreadSummary: vi.fn().mockResolvedValue([]),
@@ -61,10 +61,21 @@ function mount(api: Record<string, unknown>) {
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     </StrictMode>
   );
-  return renderHook(() => useInboxBoard("ws-1"), { wrapper });
+  return renderHook(() => useInboxBoard("ws-1", opts), { wrapper });
 }
 
 describe("useInboxBoard (DENE-975)", () => {
+  it("narrowed to a project, asks for that project and never reads on arrival (DENE-1019)", async () => {
+    const getInboxBoard = vi.fn().mockResolvedValue(response());
+    const markAllInboxRead = vi.fn().mockResolvedValue({ count: 1 });
+    const { result } = mount({ getInboxBoard, markAllInboxRead }, { projectId: "p-1" });
+
+    await waitFor(() => expect(result.current.board.fresh).toHaveLength(1));
+    expect(getInboxBoard).toHaveBeenCalledWith(expect.objectContaining({ project_id: "p-1" }));
+    // Reading everything would also clear unread rows of projects not on screen.
+    expect(markAllInboxRead).not.toHaveBeenCalled();
+  });
+
   it("reads live, marks all read once, then replays from the server's mark", async () => {
     const getInboxBoard = vi.fn().mockResolvedValue(response());
     const markAllInboxRead = vi.fn().mockResolvedValue({ count: 1 });

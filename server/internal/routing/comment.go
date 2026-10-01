@@ -33,6 +33,23 @@ func directionLine(issue Issue, match DirectionMatch) string {
 	return fmt.Sprintf("- **方向**：%s（来自 project「%s」）", match.Direction, issue.ProjectName)
 }
 
+// heldExecutorLine says whose decision an executor already in the slot is.
+func heldExecutorLine(issue Issue) string {
+	switch issue.AssigneeSource {
+	case SourceQuote:
+		who := issue.AssigneeSourceUser
+		if who == "" {
+			who = "对话发起人"
+		}
+		return "按 " + who + " 原话指派"
+	case SourceAutomation:
+		return "由自动化按配置指定"
+	case SourceRouter:
+		return "路由已经选过"
+	}
+	return "由你指定"
+}
+
 // assignmentComment is the todo-row decision comment: what went into each
 // slot, where the direction came from, the confidence against the threshold,
 // and the verdict.
@@ -53,9 +70,16 @@ func (r *Router) assignmentComment(
 	mode fillMode,
 	dec decision,
 	settings Settings,
+	ignored []string,
 ) string {
 	var b strings.Builder
 	b.WriteString("## 自动选派\n\n")
+	for _, note := range ignored {
+		b.WriteString("> " + note + "\n")
+	}
+	if len(ignored) > 0 {
+		b.WriteString("\n")
+	}
 
 	// What the written seat does next. Only the todo row starts a run.
 	next := "已派出，run 已启动"
@@ -69,7 +93,7 @@ func (r *Router) assignmentComment(
 	// Executor slot.
 	switch {
 	case !needExecutor:
-		b.WriteString("- **执行席**：由你指定，未改动\n")
+		b.WriteString("- **执行席**：" + heldExecutorLine(issue) + "，未改动\n")
 	case executor != nil && executorSource == pickLabel:
 		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，按票上的「%s」标签选的，没问模型）→ %s\n",
 			executor.Name, executor.TierLabel, executor.TierLabel, next))

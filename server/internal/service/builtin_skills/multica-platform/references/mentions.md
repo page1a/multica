@@ -43,6 +43,8 @@ at a project; everything else in this document is about the four types (plus
 A name is not a UUID. Look the UUID up first, from the matching list command:
 
 - a person → `multica workspace member list --output json` → use `user_id`
+  (email, role and join time in that list are for the workspace owner only;
+  everyone else gets them empty, so match a person by name)
 - an agent → `multica agent list --output json` → use `id`
 - a squad  → `multica squad list --output json` → use `id`
 

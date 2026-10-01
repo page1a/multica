@@ -396,9 +396,12 @@ describe("workspace-level rules", () => {
       canUpdateWorkspaceSettings({ userId: ALICE, role: "member" }).allowed,
     ).toBe(false);
   });
-  it("manage members same gate as settings", () => {
-    expect(canManageMembers({ userId: ALICE, role: "admin" }).allowed).toBe(
+  it("manage members is owner-only", () => {
+    expect(canManageMembers({ userId: ALICE, role: "owner" }).allowed).toBe(
       true,
+    );
+    expect(canManageMembers({ userId: ALICE, role: "admin" }).allowed).toBe(
+      false,
     );
     expect(canManageMembers({ userId: ALICE, role: "member" }).allowed).toBe(
       false,
@@ -418,14 +421,16 @@ describe("canChangeMemberRole", () => {
   it("non-managers cannot change roles", () => {
     expect(canChangeMemberRole(targetMember, 2, ctxMember).allowed).toBe(false);
   });
-  it("admin cannot change owner's role", () => {
-    const d = canChangeMemberRole(targetOwner, 2, ctxAdmin);
-    expect(d.allowed).toBe(false);
-    expect(d.reason).toBe("not_owner_role");
+  it("admin cannot change anyone's role", () => {
+    for (const target of [targetOwner, targetAdmin, targetMember]) {
+      const d = canChangeMemberRole(target, 2, ctxAdmin);
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toBe("not_owner_role");
+    }
   });
-  it("admin can change admin/member roles", () => {
-    expect(canChangeMemberRole(targetAdmin, 1, ctxAdmin).allowed).toBe(true);
-    expect(canChangeMemberRole(targetMember, 1, ctxAdmin).allowed).toBe(true);
+  it("owner can change admin/member roles", () => {
+    expect(canChangeMemberRole(targetAdmin, 1, ctxOwner).allowed).toBe(true);
+    expect(canChangeMemberRole(targetMember, 1, ctxOwner).allowed).toBe(true);
   });
   it("owner cannot demote the last owner", () => {
     const d = canChangeMemberRole(targetOwner, 1, ctxOwner);

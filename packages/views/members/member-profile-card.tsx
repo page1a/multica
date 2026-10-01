@@ -88,11 +88,13 @@ export function MemberProfileCard({ userId }: MemberProfileCardProps) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="truncate text-body font-semibold">{member.name}</p>
-            <RoleBadge role={member.role} />
+            {member.role && <RoleBadge role={member.role} />}
           </div>
-          <p className="mt-0.5 truncate text-caption text-muted-foreground">
-            {member.email}
-          </p>
+          {member.email && (
+            <p className="mt-0.5 truncate text-caption text-muted-foreground">
+              {member.email}
+            </p>
+          )}
         </div>
       </div>
 

@@ -1,16 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useDefaultLayout } from "react-resizable-panels";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@multica/ui/components/ui/resizable";
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useChatStore } from "@multica/core/chat";
@@ -57,6 +51,7 @@ import { ChatInput } from "./components/chat-input";
 import { ChatQueue } from "./components/chat-queue";
 import { ChatThreadList } from "./components/chat-thread-list";
 import { ChatProjectBar } from "./components/chat-project-bar";
+import { ChatListSplit } from "./components/chat-list-split";
 import { ChatProjectSwitcher } from "./components/chat-project-switcher";
 import { ChatProjectNudge } from "./components/chat-project-nudge";
 import { ChatSessionHeader } from "./components/chat-session-header";
@@ -260,9 +255,9 @@ export function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react to store only
   }, [c.activeSessionId]);
 
-  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: "multica_chat_layout",
-  });
+  // How wide the project bar needs to be for every chip to fit on its two
+  // rows; the divider snaps to it and double-click expands to it.
+  const [projectBarFitWidth, setProjectBarFitWidth] = useState<number | null>(null);
 
   // `?agent=` intent bookkeeping. The ref holds the param value already
   // consumed (or superseded) so the effect below fires at most once per deep
@@ -569,6 +564,7 @@ export function ChatPage() {
       filter={projectFilter}
       onFilterChange={changeProjectFilter}
       onOpenSwitcher={() => setSwitcherOpen(true)}
+      onFitWidthChange={setProjectBarFitWidth}
     />
   );
 
@@ -803,43 +799,31 @@ export function ChatPage() {
     );
   }
 
-  // -- Desktop: resizable two-panel. The conversation pane appears only once
-  // there is a chat target — an open thread or a new chat whose agent was just
-  // picked via ⊕. With nothing selected there is no agent, so we show a neutral
-  // prompt instead of an orphaned compose box. -------------------------------
+  // -- Desktop: two panes with a freely draggable divider. The conversation
+  // pane appears only once there is a chat target — an open thread or a new
+  // chat whose agent was just picked via ⊕. With nothing selected there is no
+  // agent, so we show a neutral prompt instead of an orphaned compose box. ----
   const hasTarget = !!c.activeSessionId || composingNew;
   return (
     <>
-    <ResizablePanelGroup
-      orientation="horizontal"
-      className="flex-1 min-h-0"
-      defaultLayout={defaultLayout}
-      onLayoutChanged={onLayoutChanged}
-    >
-      <ResizablePanel
-        id="list"
-        defaultSize={260}
-        minSize={240}
-        maxSize={480}
-        groupResizeBehavior="preserve-pixel-size"
-      >
-        <div className="flex flex-col border-r h-full">
-          {listHeader}
-          {searchBox}
-          {projectBar}
-          <div
-          ref={restoreListScroll}
-          data-tab-scroll-root="chat-list"
-          className="flex-1 min-h-0 overflow-y-auto"
-        >
-          {listBody}
-        </div>
-        </div>
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel id="detail" minSize="40%">
-        <div className="flex flex-col min-h-0 h-full">
-          {hasTarget ? (
+      <ChatListSplit
+        fitContentWidth={projectBarFitWidth}
+        list={
+          <>
+            {listHeader}
+            {searchBox}
+            {projectBar}
+            <div
+              ref={restoreListScroll}
+              data-tab-scroll-root="chat-list"
+              className="flex-1 min-h-0 overflow-y-auto"
+            >
+              {listBody}
+            </div>
+          </>
+        }
+        detail={
+          hasTarget ? (
             conversation
           ) : (
             <div className="flex h-full min-h-0 flex-col">
@@ -854,11 +838,10 @@ export function ChatPage() {
                 )}
               </div>
             </div>
-          )}
-        </div>
-      </ResizablePanel>
-    </ResizablePanelGroup>
-    {projectSwitcher}
+          )
+        }
+      />
+      {projectSwitcher}
     </>
   );
 }

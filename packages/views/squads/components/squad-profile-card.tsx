@@ -151,7 +151,7 @@ function MembersList({
               : p.memberDetail(m.member_id);
           const memberRole =
             m.member_type === "member"
-              ? wsMembers.find((u) => u.user_id === m.member_id)?.role ?? null
+              ? wsMembers.find((u) => u.user_id === m.member_id)?.role || null
               : null;
 
           return (

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -265,6 +267,242 @@ func TestAgentRoutingUsageAndBulk(t *testing.T) {
 			if code, _ := bulk(t, body); code != http.StatusBadRequest {
 				t.Errorf("%s: code=%d, want 400", name, code)
 			}
+		}
+	})
+}
+
+// Following specialisations take their base role's routing tier and usage
+// (DENE-1016). The pair is copied at create, when follow is turned on, and
+// whenever the base role's pair changes — and a follower cannot set its own.
+func TestAgentRoutingFollowsParent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaudeProviderRuntime(t)
+	t.Cleanup(func() {
+		testPool.Exec(ctx,
+			`DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'follow-route-%'`,
+			testWorkspaceID,
+		)
+	})
+
+	create := func(t *testing.T, name string, body map[string]any) AgentResponse {
+		t.Helper()
+		body["name"] = name
+		body["runtime_id"] = runtimeID
+		body["visibility"] = "private"
+		body["max_concurrent_tasks"] = 1
+		w := httptest.NewRecorder()
+		testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create %s: %d %s", name, w.Code, w.Body.String())
+		}
+		var resp AgentResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode create response: %v", err)
+		}
+		return resp
+	}
+	put := func(t *testing.T, id string, body map[string]any) (int, string, AgentResponse) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPut, "/api/agents/"+id, body)
+		testHandler.UpdateAgent(w, withURLParam(req, "id", id))
+		var resp AgentResponse
+		if w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode update response: %v", err)
+			}
+		}
+		return w.Code, w.Body.String(), resp
+	}
+	bulk := func(t *testing.T, body map[string]any) (int, string, BulkUpdateAgentRoutingResponse) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.BulkUpdateAgentRouting(w, newRequest(http.MethodPut, "/api/agents/routing", body))
+		var resp BulkUpdateAgentRoutingResponse
+		if w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode bulk response: %v", err)
+			}
+		}
+		return w.Code, w.Body.String(), resp
+	}
+	readBack := func(t *testing.T, id string) (tier *string, usage string) {
+		t.Helper()
+		if err := testPool.QueryRow(ctx,
+			`SELECT routing_tier, routing_usage FROM agent WHERE id = $1`, id,
+		).Scan(&tier, &usage); err != nil {
+			t.Fatalf("read back %s: %v", id, err)
+		}
+		return tier, usage
+	}
+
+	t.Run("a following specialisation is born with the base role's tier", func(t *testing.T) {
+		base := create(t, "follow-route-born-base", map[string]any{"routing_tier": "weak"})
+		// An explicit rung on the create is not an override while following.
+		child := create(t, "follow-route-born-child", map[string]any{
+			"parent_agent_id": base.ID,
+			"routing_tier":    "strongest",
+		})
+		if child.RoutingTier != "weak" || child.RoutingUsage != "normal" {
+			t.Fatalf("child tier=%q usage=%q, want the base role's weak/normal", child.RoutingTier, child.RoutingUsage)
+		}
+	})
+
+	t.Run("changing the base role copies onto followers", func(t *testing.T) {
+		base := create(t, "follow-route-sync-base", map[string]any{"routing_tier": "weak"})
+		if code, body, _ := put(t, base.ID, map[string]any{"routing_usage": "tight"}); code != http.StatusOK {
+			t.Fatalf("tag base usage: %d %s", code, body)
+		}
+		child := create(t, "follow-route-sync-child", map[string]any{"parent_agent_id": base.ID})
+		own := create(t, "follow-route-sync-own", map[string]any{
+			"parent_agent_id":   base.ID,
+			"runtime_inherited": false,
+			"routing_tier":      "medium",
+		})
+		if code, body, _ := put(t, own.ID, map[string]any{"routing_usage": "ample"}); code != http.StatusOK {
+			t.Fatalf("tag independent child: %d %s", code, body)
+		}
+
+		if code, body, _ := put(t, base.ID, map[string]any{"routing_tier": "strong", "routing_usage": "ample"}); code != http.StatusOK {
+			t.Fatalf("update base: %d %s", code, body)
+		}
+		if tier, usage := readBack(t, child.ID); tier == nil || *tier != "strong" || usage != "ample" {
+			t.Fatalf("follower after parent patch: tier=%v usage=%q, want strong/ample", tier, usage)
+		}
+		if tier, usage := readBack(t, own.ID); tier == nil || *tier != "medium" || usage != "ample" {
+			t.Fatalf("independent child after parent patch: tier=%v usage=%q, want medium/ample", tier, usage)
+		}
+
+		code, body, resp := bulk(t, map[string]any{
+			"agent_ids":     []string{base.ID},
+			"routing_tier":  "",
+			"routing_usage": "tight",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("bulk base: %d %s", code, body)
+		}
+		if tier, usage := readBack(t, child.ID); tier != nil || usage != "tight" {
+			t.Fatalf("follower after parent bulk clear: tier=%v usage=%q, want NULL/tight", tier, usage)
+		}
+		var childInBulk bool
+		for _, agent := range resp.Agents {
+			if agent.ID == child.ID {
+				childInBulk = true
+			}
+		}
+		if !childInBulk {
+			t.Fatal("bulk response did not include the follower whose routing was copied")
+		}
+		if tier, usage := readBack(t, own.ID); tier == nil || *tier != "medium" || usage != "ample" {
+			t.Fatalf("independent child after parent bulk: tier=%v usage=%q, want medium/ample", tier, usage)
+		}
+	})
+
+	t.Run("a follower cannot set its own tier or usage", func(t *testing.T) {
+		base := create(t, "follow-route-孙悟空", map[string]any{"routing_tier": "strong"})
+		// Usage is copied at create; set it explicitly on the base first.
+		if code, body, _ := put(t, base.ID, map[string]any{"routing_usage": "tight"}); code != http.StatusOK {
+			t.Fatalf("tag base: %d %s", code, body)
+		}
+		child := create(t, "follow-route-refuse-child", map[string]any{"parent_agent_id": base.ID})
+		for _, body := range []map[string]any{
+			{"routing_tier": "weak"},
+			{"routing_usage": "ample"},
+			{"routing_tier": "", "routing_usage": "normal"},
+		} {
+			code, raw, _ := put(t, child.ID, body)
+			if code != http.StatusBadRequest || !strings.Contains(raw, "跟随 follow-route-孙悟空，先关掉跟随") {
+				t.Fatalf("follower write %v: code=%d body=%s", body, code, raw)
+			}
+		}
+		code, raw, _ := bulk(t, map[string]any{"agent_ids": []string{child.ID}, "routing_usage": "ample"})
+		if code != http.StatusBadRequest || !strings.Contains(raw, "跟随 follow-route-孙悟空，先关掉跟随") {
+			t.Fatalf("follower bulk: code=%d body=%s", code, raw)
+		}
+		// A batch that mixes the base role with a follower is refused whole.
+		code, _, _ = bulk(t, map[string]any{
+			"agent_ids":    []string{base.ID, child.ID},
+			"routing_tier": "weak",
+		})
+		if code != http.StatusBadRequest {
+			t.Fatalf("mixed bulk: code=%d, want 400", code)
+		}
+		if tier, usage := readBack(t, base.ID); tier == nil || *tier != "strong" || usage != "tight" {
+			t.Fatalf("base role changed by a refused batch: tier=%v usage=%q", tier, usage)
+		}
+		if tier, usage := readBack(t, child.ID); tier == nil || *tier != "strong" || usage != "tight" {
+			t.Fatalf("follower changed by a refused write: tier=%v usage=%q", tier, usage)
+		}
+	})
+
+	t.Run("turning follow off allows an own pair, turning it on copies", func(t *testing.T) {
+		base := create(t, "follow-route-toggle-base", map[string]any{"routing_tier": "strongest"})
+		if code, body, _ := put(t, base.ID, map[string]any{"routing_usage": "tight"}); code != http.StatusOK {
+			t.Fatalf("tag base: %d %s", code, body)
+		}
+		child := create(t, "follow-route-toggle-child", map[string]any{
+			"parent_agent_id":   base.ID,
+			"runtime_inherited": false,
+			"routing_tier":      "weak",
+		})
+		if code, body, got := put(t, child.ID, map[string]any{"routing_usage": "ample"}); code != http.StatusOK || got.RoutingUsage != "ample" {
+			t.Fatalf("own usage while not following: code=%d usage=%q body=%s", code, got.RoutingUsage, body)
+		}
+		code, body, got := put(t, child.ID, map[string]any{"runtime_inherited": true})
+		if code != http.StatusOK || !got.RuntimeInherited || got.RoutingTier != "strongest" || got.RoutingUsage != "tight" {
+			t.Fatalf("turn follow on: code=%d inherited=%v tier=%q usage=%q body=%s",
+				code, got.RuntimeInherited, got.RoutingTier, got.RoutingUsage, body)
+		}
+		code, body, _ = put(t, child.ID, map[string]any{"runtime_inherited": false})
+		if code != http.StatusOK {
+			t.Fatalf("turn follow off: %d %s", code, body)
+		}
+		code, body, got = put(t, child.ID, map[string]any{"routing_tier": "medium", "routing_usage": "normal"})
+		if code != http.StatusOK || got.RoutingTier != "medium" || got.RoutingUsage != "normal" {
+			t.Fatalf("own pair after opting out: code=%d tier=%q usage=%q body=%s", code, got.RoutingTier, got.RoutingUsage, body)
+		}
+		if code, body, _ := put(t, base.ID, map[string]any{"routing_tier": "weak", "routing_usage": "ample"}); code != http.StatusOK {
+			t.Fatalf("parent edit after opt-out: %d %s", code, body)
+		}
+		if tier, usage := readBack(t, child.ID); tier == nil || *tier != "medium" || usage != "normal" {
+			t.Fatalf("opted-out child followed a parent edit: tier=%v usage=%q", tier, usage)
+		}
+	})
+
+	t.Run("backfill aligns followers and leaves the rest", func(t *testing.T) {
+		base := create(t, "follow-route-backfill-base", map[string]any{"routing_tier": "strong"})
+		if code, body, _ := put(t, base.ID, map[string]any{"routing_usage": "tight"}); code != http.StatusOK {
+			t.Fatalf("tag base: %d %s", code, body)
+		}
+		child := create(t, "follow-route-backfill-child", map[string]any{"parent_agent_id": base.ID})
+		own := create(t, "follow-route-backfill-own", map[string]any{
+			"parent_agent_id":   base.ID,
+			"runtime_inherited": false,
+			"routing_tier":      "weak",
+		})
+		if _, err := testPool.Exec(ctx,
+			`UPDATE agent SET routing_tier = 'medium', routing_usage = 'ample' WHERE id = $1`, child.ID,
+		); err != nil {
+			t.Fatalf("drift follower: %v", err)
+		}
+		sql, err := os.ReadFile("../../migrations/561_agent_routing_follow_parent.up.sql")
+		if err != nil {
+			t.Fatalf("read migration: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("run backfill: %v", err)
+		}
+		if tier, usage := readBack(t, child.ID); tier == nil || *tier != "strong" || usage != "tight" {
+			t.Fatalf("backfill follower: tier=%v usage=%q, want strong/tight", tier, usage)
+		}
+		// Usage is copied at birth even for a specialisation that does not
+		// follow; the backfill must not move it afterwards.
+		if tier, usage := readBack(t, own.ID); tier == nil || *tier != "weak" || usage != "tight" {
+			t.Fatalf("backfill touched an independent child: tier=%v usage=%q, want weak/tight", tier, usage)
 		}
 	})
 }

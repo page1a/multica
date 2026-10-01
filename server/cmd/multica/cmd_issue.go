@@ -654,6 +654,7 @@ func init() {
 	issueCreateCmd.Flags().String("status", "", "Issue status")
 	issueCreateCmd.Flags().String("priority", "", "Issue priority")
 	issueCreateCmd.Flags().String("assignee", "", "Assignee name (member, agent, or squad; fuzzy match)")
+	issueCreateCmd.Flags().String("per-quote", "", "Only when you are an agent: the words the person talking to you said naming this assignee, copied exactly from the message that started this run. The server checks them; without a verified quote your pick is ignored and routing chooses")
 	issueCreateCmd.Flags().String("assignee-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueCreateCmd.Flags().String("parent", "", "Parent issue ID")
 	issueCreateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) grouping this sub-issue into an ordered barrier group under its parent; omit for unstaged. The parent assignee is woken only when every sub-issue in a stage finishes.")
@@ -675,6 +676,7 @@ func init() {
 	issueUpdateCmd.Flags().String("status", "", "New status")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
+	issueUpdateCmd.Flags().String("per-quote", "", "Only when you are an agent: the words the person talking to you said naming this assignee, copied exactly from the message that started this run. The server checks them; without a verified quote your pick is ignored and routing chooses")
 	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueUpdateCmd.Flags().String("reviewer", "", "验收席 — who accepts this issue: a member or agent name, \"none\" for no acceptance pass, or \"\" to clear the slot")
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
@@ -707,6 +709,7 @@ func init() {
 	issueAssignCmd.Flags().String("to", "", "Assignee name (member, agent, or squad; fuzzy match)")
 	issueAssignCmd.Flags().String("to-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --to)")
 	issueAssignCmd.Flags().Bool("unassign", false, "Remove current assignee")
+	issueAssignCmd.Flags().String("per-quote", "", "Only when you are an agent: the words the person talking to you said naming this assignee, copied exactly from the message that started this run. The server checks them; without a verified quote your pick is ignored and routing chooses")
 	issueAssignCmd.Flags().Bool("no-start", false, "Assign ownership without starting an agent run")
 	issueAssignCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -1541,6 +1544,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if hasAssignee {
 		body["assignee_type"] = aType
 		body["assignee_id"] = aID
+		addPerQuote(cmd, body)
 	}
 
 	// Quick-create stamp: when the daemon sets MULTICA_QUICK_CREATE_TASK_ID
@@ -1596,6 +1600,8 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
+
+	noteIgnoredAssignee(result)
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
@@ -1717,6 +1723,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		if hasAssignee {
 			body["assignee_type"] = aType
 			body["assignee_id"] = aID
+			addPerQuote(cmd, body)
 		}
 	}
 	if cmd.Flags().Changed("reviewer") {
@@ -1774,6 +1781,8 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
 		return fmt.Errorf("update issue: %w", err)
 	}
+
+	noteIgnoredAssignee(result)
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
@@ -1833,6 +1842,7 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 		}
 		body["assignee_type"] = aType
 		body["assignee_id"] = aID
+		addPerQuote(cmd, body)
 		if displayTarget == "" {
 			displayTarget = loadActorDisplayLookup(ctx, client).actor(aType, aID)
 		}
@@ -1846,9 +1856,12 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("assign issue: %w", err)
 	}
 
-	if unassign {
+	switch {
+	case unassign:
 		fmt.Fprintf(os.Stderr, "Issue %s unassigned.\n", issueDisplayKey(result))
-	} else {
+	case noteIgnoredAssignee(result):
+		// The hint says what happened; there is no "assigned to" to claim.
+	default:
 		fmt.Fprintf(os.Stderr, "Issue %s assigned to %s.\n", issueDisplayKey(result), displayTarget)
 	}
 
@@ -3754,4 +3767,25 @@ func compactComments(comments []map[string]any) {
 			}
 		}
 	}
+}
+
+// addPerQuote adds --per-quote to a request that names an assignee. The server
+// decides whether it counts; the CLI only carries it.
+func addPerQuote(cmd *cobra.Command, body map[string]any) {
+	if v, _ := cmd.Flags().GetString("per-quote"); v != "" {
+		body["assignee_quote"] = v
+	}
+}
+
+// noteIgnoredAssignee tells an agent, on stderr, that the server did not apply
+// the executor it named, and reports whether that happened. Silence here would
+// leave the caller finding an empty slot later with no idea why.
+func noteIgnoredAssignee(result map[string]any) bool {
+	if ignored, _ := result["assignee_ignored"].(bool); !ignored {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "Issue %s: the assignee you named was NOT applied. Routing will choose the executor. "+
+		"Only pass --per-quote when the person talking to you named the agent in the message that started this run.\n",
+		issueDisplayKey(result))
+	return true
 }

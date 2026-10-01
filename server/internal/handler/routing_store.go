@@ -121,6 +121,31 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 		for _, l := range labels {
 			out.Labels = append(out.Labels, l.Name)
 		}
+		// Which of them an agent attached. Read as the complement of the
+		// person-attached ones, so a failed read leaves every label counted as
+		// a person's — the state before this record existed — rather than
+		// silently dropping a real tier request.
+		if human, err := s.h.Queries.ListIssueLabelNamesNotByAgent(ctx, db.ListIssueLabelNamesNotByAgentParams{
+			IssueID: row.ID, WorkspaceID: row.WorkspaceID,
+		}); err == nil {
+			isHuman := make(map[string]bool, len(human))
+			for _, n := range human {
+				isHuman[n] = true
+			}
+			for _, n := range out.Labels {
+				if !isHuman[n] {
+					out.AgentLabels = append(out.AgentLabels, n)
+				}
+			}
+		}
+	}
+	if row.AssigneeSource.Valid {
+		out.AssigneeSource = row.AssigneeSource.String
+		if row.AssigneeSourceUserID.Valid {
+			if u, err := s.h.Queries.GetUser(ctx, row.AssigneeSourceUserID); err == nil {
+				out.AssigneeSourceUser = u.Name
+			}
+		}
 	}
 	if row.ParentIssueID.Valid {
 		if parent, err := s.h.Queries.GetIssue(ctx, row.ParentIssueID); err == nil &&

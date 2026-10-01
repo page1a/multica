@@ -395,6 +395,39 @@ function renderStreamingChat({ contentHeight = 2000 } = {}) {
 }
 
 describe("ChatMessageList auto-scroll", () => {
+  // DENE-1040: scrolling up through a reply with a large table moves the
+  // content under the reader (rows measured, table reflowed) while the list
+  // re-renders. None of that may pin the reader back to the live end once
+  // they have scrolled away.
+  it("does not re-pin a reader who scrolled up when the list re-renders and reflows", () => {
+    const { view, scroll } = renderStreamingChat();
+
+    // Past the 120px follow edge in two notches, re-rendering in between.
+    scroll.readerScrollsUp(80);
+    scroll.readerScrollsUp(120);
+    expect(scroll.pinCalls()).toEqual([]);
+    const held = scroll.scrollTop;
+
+    view.rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[]}
+            pendingTask={{ task_id: TASK_ID, status: "running" }}
+            availability={undefined}
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    scroll.grow(600);
+    scroll.readerScrollsUp(150);
+    scroll.grow(300);
+    scroll.shrinkContent(200);
+
+    expect(scroll.pinCalls()).toEqual([]);
+    expect(scroll.scrollTop).toBeLessThan(held);
+  });
+
   it("follows a streaming reply whose row count never changes", () => {
     const { scroll, streamChunk, rowCount } = renderStreamingChat();
 

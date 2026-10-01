@@ -131,6 +131,16 @@
     "blocking": "進行を阻止",
     "queued": "待機中"
   },
+  "assignee_source": {
+    "human": "{{name}} が選択",
+    "human_unknown": "人が選択",
+    "quote": "{{name}} の発言どおりに指名",
+    "quote_unknown": "メンバーの発言どおりに指名",
+    "automation": "自動化による指名",
+    "agent": "エージェント自身の指名",
+    "router": "ルーティングが選択",
+    "quote_text": "「{{quote}}」"
+  },
   "close_protocol": {
     "missing": "クローズ記録なし",
     "status_drift": "close.status ≠ {{issueStatus}}",

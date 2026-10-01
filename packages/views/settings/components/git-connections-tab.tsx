@@ -285,6 +285,19 @@ export function GitConnectionsTab() {
           }
         }
       }
+      // Servers without the repo-links catalog have no per-link test route;
+      // listing what the installation can see is the App's own reachability check.
+      if (catalog.source === "legacy" && link.id.startsWith("github:")) {
+        const response = await api.listGitHubInstallationRepositories(
+          wsId,
+          link.id.slice("github:".length),
+          { per_page: 1 },
+        );
+        toast.success(
+          t(($) => $.repo_links.toast_app_ok, { count: response.total_count }),
+        );
+        return;
+      }
       const result = await api.testRepoLink(wsId, link.id);
       await refresh();
       const text = outcomeText(

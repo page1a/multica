@@ -168,7 +168,7 @@ export function MentionSuggestionBar({
     // A private agent shown in the suggestion list would create a mention the
     // assignee can never act on; web hides them, mobile must too.
     const myRole =
-      members.find((m) => m.user_id === userId)?.role ?? null;
+      members.find((m) => m.user_id === userId)?.role || null;
     const runnableAgentIds = new Set(
       agents
         .filter(

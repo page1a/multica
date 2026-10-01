@@ -14,6 +14,8 @@ const listMembers = vi.hoisted(() => vi.fn());
 const listInvitations = vi.hoisted(() => vi.fn());
 const listShareLinks = vi.hoisted(() => vi.fn());
 const toastSuccess = vi.hoisted(() => vi.fn());
+/** Who is looking at the tab; the owner unless a test says otherwise. */
+const viewer = vi.hoisted(() => ({ id: "user-owner" }));
 
 vi.mock("@multica/core/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/api")>();
@@ -46,8 +48,8 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector: (s: { user: { id: string } }) => unknown) =>
-      selector({ user: { id: "user-owner" } }),
-    { getState: () => ({ user: { id: "user-owner" } }) },
+      selector({ user: { id: viewer.id } }),
+    { getState: () => ({ user: { id: viewer.id } }) },
   ),
 }));
 
@@ -142,6 +144,7 @@ let roster: MemberWithUser[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  viewer.id = "user-owner";
   roster = [OWNER, TEAMMATE];
   listMembers.mockImplementation(async () => roster);
   listInvitations.mockResolvedValue([]);
@@ -193,6 +196,36 @@ describe("MembersTab roster states", () => {
     await screen.findByText("Cy Future");
     expect(screen.getByText("Unknown tier")).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: /Tier for Cy Future/ })).toBeNull();
+  });
+});
+
+// DENE-1022: the page is the owner's. Everyone else is told why, and the
+// pending-invitation and invite-link requests (owner-only on the server) are
+// never sent.
+describe("MembersTab is owner-only", () => {
+  it.each([
+    ["admin", "user-admin"],
+    ["member", "user-teammate"],
+  ])("tells a %s the page is closed and shows no management data", async (role, userId) => {
+    viewer.id = userId;
+    const self = member({ id: `m-${role}`, user_id: userId, role, name: "Viewer" });
+    // What the server sends a non-owner: everyone else without role / email.
+    const redactedOwner = member({ ...OWNER, role: "", email: "", created_at: "" });
+    renderTab([redactedOwner, self]);
+
+    await screen.findByText("Only the workspace owner can manage members");
+    expect(screen.queryByText("ada@example.test")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Invite/i })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /Tier for/ })).toBeNull();
+    expect(listShareLinks).not.toHaveBeenCalled();
+  });
+
+  it("shows the roster to the owner", async () => {
+    renderTab();
+
+    await screen.findByText("Bo Member");
+    expect(screen.queryByText("Only the workspace owner can manage members")).toBeNull();
+    expect(screen.getByText("bo@example.test")).toBeInTheDocument();
   });
 });
 

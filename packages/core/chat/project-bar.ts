@@ -53,7 +53,7 @@ export function rankChatProjects(
   /** Unpinned projects, most recent chat first. Includes empty ones. */
   rest: RankedChatProject[];
   /**
-   * What the one-row bar is allowed to show, before width fitting: every
+   * What the bar is allowed to show, before width fitting: every
    * pin, then unpinned projects that have at least one chat.
    */
   bar: RankedChatProject[];
@@ -96,66 +96,126 @@ export function rankChatProjects(
   };
 }
 
+/** The bar wraps onto this many rows before anything goes into More. */
+export const CHAT_PROJECT_BAR_ROWS = 2;
+
 /**
- * How many leading chip widths fit in `available` px with `gap` px between
- * them. A chip that would pass the end of the row is not counted — the row
- * never keeps a partial chip. Widths that are not yet measured (`<= 0`)
- * stop the scan.
+ * How many leading chips fit when the bar wraps onto `rows` rows of
+ * `available` px with `gap` px between chips. `lead` px is already taken at
+ * the start of the first row (the All chip). A chip that would start a row
+ * past the last one is not counted — the bar never keeps a partial chip. A
+ * chip wider than a whole row takes a row to itself (it is painted clipped).
+ * Widths that are not yet measured (`<= 0`) stop the scan.
  */
-export function leadingFitCount(
+export function wrappedFitCount(
   widths: readonly number[],
   available: number,
   gap: number,
+  rows: number,
+  lead = 0,
 ): number {
-  if (!(available > 0)) return 0;
-  let used = 0;
+  if (!(available > 0) || rows < 1) return 0;
+  let row = 1;
+  let used = lead > 0 ? Math.min(lead, available) : 0;
+  let rowHasChip = lead > 0;
   let count = 0;
   for (let i = 0; i < widths.length; i++) {
-    const width = widths[i] ?? 0;
-    if (!(width > 0)) break;
-    const next = used + (count > 0 ? gap : 0) + width;
-    if (next > available) break;
-    used = next;
+    const measured = widths[i] ?? 0;
+    if (!(measured > 0)) break;
+    const width = Math.min(measured, available);
+    const next = used + (rowHasChip ? gap : 0) + width;
+    if (next <= available) {
+      used = next;
+    } else {
+      row += 1;
+      if (row > rows) break;
+      used = width;
+    }
+    rowHasChip = true;
     count += 1;
   }
   return count;
 }
 
 /**
- * Chips to paint for this row width, in the person's pin order.
- * Overflow comes off the end. `promotedId` is the current filter: when its
- * own width fits, it stays on the row (taking the last slot and pushing the
- * previous tail into overflow). When it cannot fit even by itself, it is
- * left off the row so the caller can mark the overflow trigger selected
- * instead of clipping the chip.
+ * Chips to paint for this bar width. `ids` is the bar order: the first
+ * `pinnedCount` are the person's pins, which is what keeps them on the bar
+ * when space runs out — overflow comes off the end.
  *
- * `widths` lines up with `ids`. `promotedWidth` is only used when
- * `promotedId` is not one of `ids` (the "no project" chip, or a project
- * opened from the menu that is not otherwise on the bar).
+ * `promotedId` is the current filter. When it would fall into More it moves
+ * to the slot right after the pins; if the pins alone fill the bar it takes
+ * the last slot instead. When it cannot fit even by itself it is left off so
+ * the caller can mark the More trigger selected instead of clipping the chip.
+ * It does not have to be one of `ids` (the "no project" chip, or a project
+ * with no chats opened from the menu) as long as `widthById` knows it.
  */
-export function visibleBarProjectIdsForWidths(
-  ids: readonly string[],
-  widths: readonly number[],
-  available: number,
-  gap: number,
-  promotedId: string | null,
-  promotedWidth?: number,
-): string[] {
-  const fitted = ids.slice(0, leadingFitCount(widths, available, gap));
+export function visibleBarProjectIds({
+  ids,
+  pinnedCount,
+  widthById,
+  available,
+  gap,
+  rows,
+  lead = 0,
+  promotedId,
+}: {
+  ids: readonly string[];
+  pinnedCount: number;
+  widthById: ReadonlyMap<string, number>;
+  available: number;
+  gap: number;
+  rows: number;
+  lead?: number;
+  promotedId: string | null;
+}): string[] {
+  const fit = (order: readonly string[]) =>
+    order.slice(
+      0,
+      wrappedFitCount(
+        order.map((id) => widthById.get(id) ?? 0),
+        available,
+        gap,
+        rows,
+        lead,
+      ),
+    );
+
+  const fitted = fit(ids);
   if (!promotedId || fitted.includes(promotedId)) return fitted;
+  if (!((widthById.get(promotedId) ?? 0) > 0)) return fitted;
 
-  const index = ids.indexOf(promotedId);
-  const width = index >= 0 ? (widths[index] ?? 0) : (promotedWidth ?? 0);
-  if (!(width > 0) || width > available) return fitted;
+  const others = ids.filter((id) => id !== promotedId);
+  const pins = Math.min(pinnedCount, others.length);
+  const afterPins = fit([...others.slice(0, pins), promotedId, ...others.slice(pins)]);
+  if (afterPins.includes(promotedId)) return afterPins;
 
-  let used = 0;
-  const kept: string[] = [];
-  for (let i = 0; i < fitted.length; i++) {
-    const chip = widths[i] ?? 0;
-    const next = used + (kept.length > 0 ? gap : 0) + chip;
-    if (next + gap + width > available) break;
-    used = next;
-    kept.push(fitted[i]!);
+  for (let keep = fitted.length - 1; keep >= 0; keep--) {
+    const order = [...fitted.slice(0, keep), promotedId];
+    if (fit(order).length === order.length) return order;
   }
-  return [...kept, promotedId];
+  return fitted;
+}
+
+/**
+ * The narrowest bar width at which every chip fits in `rows` rows without
+ * clipping any of them, or null while a chip is still unmeasured.
+ */
+export function narrowestWidthFittingAll(
+  widths: readonly number[],
+  gap: number,
+  rows: number,
+  lead = 0,
+): number | null {
+  if (widths.some((width) => !(width > 0))) return null;
+  let low = Math.max(lead, ...widths);
+  let high = widths.reduce((sum, width) => sum + gap + width, lead);
+  const fitsAll = (available: number) =>
+    wrappedFitCount(widths, available, gap, rows, lead) === widths.length;
+  if (fitsAll(low)) return low;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (fitsAll(middle)) high = middle;
+    else low = middle;
+  }
+  return high;
 }

@@ -14,6 +14,7 @@
     "all": "全部",
     "more": "⋯ 更多 ({{count}})",
     "menu_title": "项目栏",
+    "collapsed": "收起的项目",
     "done": "完成",
     "search": "搜项目…",
     "pinned": "置顶（拖动调整顺序）",
@@ -29,6 +30,17 @@
     "switch": "切换项目",
     "switch_search": "搜项目…",
     "switch_empty": "没有匹配的项目"
+  },
+  "list_resize": {
+    "label": "调整聊天列表宽度",
+    "hint": "拖动调宽度 · 双击刚好放下全部项目",
+    "width": "{{width}}px",
+    "width_at_max": "{{width}}px · 已到上限",
+    "width_at_fit": "{{width}}px · 刚好放下全部",
+    "width_default": "{{width}}px · 收回默认",
+    "width_max_rest_in_more": "{{width}}px · 已到上限，其余在「更多」",
+    "limit_reason": "上限：右边对话至少留 {{min}}px",
+    "fit_guide": "刚好放下全部项目"
   },
   "project_nudge": {
     "bind": "绑定到项目",
@@ -202,7 +214,8 @@
     "customize": "自定义开场建议",
     "inbox": {
       "label": "帮我过一遍收件箱",
-      "prompt": "帮我过一遍收件箱"
+      "prompt": "帮我过一遍收件箱",
+      "prompt_project": "帮我过一遍收件箱，只讲「{{name}}」这个项目。用 `multica inbox board --project {{id}}` 读看板，只讲这个项目的票。"
     }
   },
   "onboarding_cards": {

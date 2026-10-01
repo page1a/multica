@@ -360,7 +360,7 @@ func TestGitHubAppLaunchLinkIsSingleUse(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &setup); err != nil {
 			t.Fatal(err)
 		}
-		if setup.ActionURL != "https://github.com/organizations/acme/settings/apps/new" {
+		if !strings.HasPrefix(setup.ActionURL, "https://github.com/organizations/acme/settings/apps/new?state=") {
 			t.Fatalf("action = %s", setup.ActionURL)
 		}
 		if !strings.HasPrefix(setup.LaunchURL, "https://api.example.test/api/github/app/launch?token=") {
@@ -389,7 +389,7 @@ func TestGitHubAppLaunchLinkIsSingleUse(t *testing.T) {
 	if first.Code != http.StatusOK {
 		t.Fatalf("first open = %d body %s", first.Code, first.Body.String())
 	}
-	if !strings.Contains(first.Body.String(), `action="https://github.com/organizations/acme/settings/apps/new"`) {
+	if !strings.Contains(first.Body.String(), `action="https://github.com/organizations/acme/settings/apps/new?state=`) {
 		t.Fatalf("first open page = %s", first.Body.String())
 	}
 	// The success page replaces the site-wide CSP: one header, allowing the

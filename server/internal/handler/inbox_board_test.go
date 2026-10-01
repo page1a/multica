@@ -229,10 +229,78 @@ func TestInboxBoard_BadParams(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	for _, q := range []string{"tz=Mars/Olympus", "unread_since=yesterday"} {
+	for _, q := range []string{"tz=Mars/Olympus", "unread_since=yesterday", "project_id=not-a-uuid"} {
 		w, _ := getInboxBoard(t, boardRequestAs(t, testUserID, http.MethodGet, "/api/inbox/board?"+q))
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: %d, want 400", q, w.Code)
+		}
+	}
+}
+
+// DENE-1019: project_id narrows the board to one project's issues, through
+// the same visibility check as the unfiltered board.
+func TestInboxBoard_ProjectFilter(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	projA := dbfx.Project(t, "board filter A")
+	projB := dbfx.Project(t, "board filter B")
+	inA := createIssueHTTP(t, "board: in project A", "in_progress")
+	inB := createIssueHTTP(t, "board: in project B", "in_progress")
+	noProject := createIssueHTTP(t, "board: in no project", "in_progress")
+	boardCleanup(t, inA.ID, inB.ID, noProject.ID)
+	testPool.Exec(ctx, `UPDATE issue SET project_id = $2 WHERE id = $1`, inA.ID, projA)
+	testPool.Exec(ctx, `UPDATE issue SET project_id = $2 WHERE id = $1`, inB.ID, projB)
+	for _, id := range []string{inA.ID, inB.ID, noProject.ID} {
+		insertInboxRowFor(t, testUserID, id)
+	}
+
+	read := func(query string) InboxBoardResponse {
+		t.Helper()
+		w, board := getInboxBoard(t, boardRequestAs(t, testUserID, http.MethodGet, "/api/inbox/board"+query))
+		if w.Code != http.StatusOK {
+			t.Fatalf("board%s: %d %s", query, w.Code, w.Body.String())
+		}
+		return board
+	}
+
+	all := read("")
+	for _, id := range []string{inA.ID, inB.ID, noProject.ID} {
+		if boardRow(all, id) == nil {
+			t.Fatalf("unfiltered board is missing %s", id)
+		}
+	}
+
+	onlyA := read("?project_id=" + projA)
+	if boardRow(onlyA, inA.ID) == nil {
+		t.Fatalf("project A's ticket is missing from project A's board")
+	}
+	if boardRow(onlyA, inB.ID) != nil || boardRow(onlyA, noProject.ID) != nil {
+		t.Fatalf("project A's board shows tickets from elsewhere: %+v", onlyA)
+	}
+	if onlyA.UnreadMarkable != 1 {
+		t.Fatalf("unread_markable = %d, want only project A's 1", onlyA.UnreadMarkable)
+	}
+
+	// A project the viewer cannot see: its tickets are private to someone else,
+	// so filtering by it must not bring them onto this viewer's board. An
+	// unknown project gives the same empty board.
+	other := dbfx.User(t, "Board other", "board-project-filter-other@example.test")
+	dbfx.Member(t, testWorkspaceID, other, "member")
+	projHidden := dbfx.Project(t, "board filter hidden")
+	secret := createIssueHTTP(t, "board: secret in hidden project", "in_progress")
+	boardCleanup(t, secret.ID)
+	testPool.Exec(ctx, `UPDATE issue SET project_id = $2, visibility = 'private', creator_type = 'member', creator_id = $3
+		WHERE id = $1`, secret.ID, projHidden, other)
+	insertInboxRowFor(t, testUserID, secret.ID)
+	if boardRow(read(""), secret.ID) != nil {
+		t.Fatalf("a private ticket of someone else is on the unfiltered board")
+	}
+	for _, id := range []string{projHidden, "00000000-0000-0000-0000-000000000001"} {
+		b := read("?project_id=" + id)
+		if boardRow(b, secret.ID) != nil || len(b.Fresh)+len(b.Running)+len(b.Todo)+len(b.Waiting)+len(b.Stalled)+len(b.Done) != 0 {
+			t.Fatalf("project %s leaked tickets the viewer cannot see: %+v", id, b)
 		}
 	}
 }

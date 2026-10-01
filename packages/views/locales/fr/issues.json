@@ -979,6 +979,16 @@
     "surface_unavailable": "{{name}} n'a pas pu charger son interface. La version installée ne la contient peut-être pas.",
     "surface_navigated": "{{name}} a tenté de remplacer son panneau par une page chargée depuis une autre source. Il a été arrêté et déconnecté : prévenez l'administrateur de votre espace de travail."
   },
+  "assignee_source": {
+    "human": "Choisi par {{name}}",
+    "human_unknown": "Choisi par une personne",
+    "quote": "Sur la parole de {{name}}",
+    "quote_unknown": "Sur la parole d'un membre",
+    "automation": "Défini par une automatisation",
+    "agent": "Choix propre d'un agent",
+    "router": "Choisi par le routage",
+    "quote_text": "« {{quote}} »"
+  },
   "close_protocol": {
     "missing": "Aucun enregistrement de clôture",
     "status_drift": "close.status ≠ {{issueStatus}}",

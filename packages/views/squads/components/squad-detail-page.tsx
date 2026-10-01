@@ -104,7 +104,7 @@ export function SquadDetailPage() {
   const currentUser = useAuthStore((s) => s.user);
   const myRole = useMemo(() => {
     if (!currentUser) return null;
-    return wsMembers.find((m) => m.user_id === currentUser.id)?.role ?? null;
+    return wsMembers.find((m) => m.user_id === currentUser.id)?.role || null;
   }, [wsMembers, currentUser]);
   const isWorkspaceAdmin = myRole === "owner" || myRole === "admin";
   // Per-squad management gate: workspace owner/admin manage every squad; the

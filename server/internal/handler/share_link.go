@@ -63,11 +63,11 @@ func generateShareCode() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// CreateShareLink — admin creates a shareable invite link.
+// CreateShareLink — owner creates a shareable invite link.
 // POST /api/workspaces/{id}/share-links
 func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	requester, ok := h.requireOwnerMember(w, r, workspaceID)
 	if !ok {
 		return
 	}
@@ -169,10 +169,13 @@ func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// ListShareLinks — list active share links for a workspace (admin view).
+// ListShareLinks — list active share links for a workspace (owner view).
 // GET /api/workspaces/{id}/share-links
 func (h *Handler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
+	if _, ok := h.requireOwnerMember(w, r, workspaceID); !ok {
+		return
+	}
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -195,10 +198,13 @@ func (h *Handler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RevokeShareLink — admin revokes a share link.
+// RevokeShareLink — owner revokes a share link.
 // DELETE /api/workspaces/{id}/share-links/{linkId}
 func (h *Handler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
+	if _, ok := h.requireOwnerMember(w, r, workspaceID); !ok {
+		return
+	}
 	linkID := chi.URLParam(r, "linkId")
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
@@ -437,7 +443,7 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 
 	memberResp := h.memberWithUserResponse(member, user)
 	h.publish(protocol.EventMemberAdded, wsID, "member", userID, map[string]any{
-		"member": memberResp,
+		"member": memberResp.redactedForRoster(),
 	})
 	if settledInvitationID.Valid {
 		// Same signal the accept path sends: workspace admins refresh their

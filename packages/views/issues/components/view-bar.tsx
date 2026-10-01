@@ -214,7 +214,7 @@ export function ViewBar({
   // owner/admin for shared views. Members load from cache in one query.
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const myRole = useMemo(
-    () => members.find((m) => m.user_id === currentUserId)?.role ?? null,
+    () => members.find((m) => m.user_id === currentUserId)?.role || null,
     [members, currentUserId],
   );
 

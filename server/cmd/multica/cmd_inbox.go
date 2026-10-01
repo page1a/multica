@@ -33,6 +33,9 @@ var inboxBoardCmd = &cobra.Command{
 		"Whose inbox: run by a person, their own. Run by an agent, the inbox of the\n" +
 		"person who started this run by hand (a chat message, comment, @ or assignment); a run\n" +
 		"an automation or another agent started is refused, since no person is behind it.\n\n" +
+		"--project <id, id prefix or name> narrows the board to that project's tickets\n" +
+		"(DENE-1019), the same set the page shows once a project is picked. A project the\n" +
+		"person cannot see gives an empty board.\n\n" +
 		"Read-only: it never marks anything read, so the page still shows what is new.\n" +
 		"To act on a row, reply on that ticket with `multica issue comment add`.",
 	Args: cobra.NoArgs,
@@ -42,6 +45,7 @@ var inboxBoardCmd = &cobra.Command{
 func init() {
 	inboxCmd.AddCommand(inboxBoardCmd)
 	inboxBoardCmd.Flags().String("tz", "", "IANA time zone \"done today\" is counted in (default: this machine's)")
+	inboxBoardCmd.Flags().String("project", "", "Only this project's tickets: project id, id prefix or exact name")
 	inboxBoardCmd.Flags().String("output", "table", "Output format: table or json")
 }
 
@@ -106,6 +110,13 @@ func runInboxBoard(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 	path := "/api/inbox/board?tz=" + url.QueryEscape(tz)
+	if ref, _ := cmd.Flags().GetString("project"); strings.TrimSpace(ref) != "" {
+		projectID, err := resolveInboxProject(ctx, client, ref)
+		if err != nil {
+			return fmt.Errorf("inbox board: %w", err)
+		}
+		path += "&project_id=" + url.QueryEscape(projectID)
+	}
 	if format, _ := cmd.Flags().GetString("output"); format == "json" {
 		var out map[string]any
 		if err := client.GetJSON(ctx, path, &out); err != nil {
@@ -119,6 +130,42 @@ func runInboxBoard(cmd *cobra.Command, _ []string) error {
 	}
 	printInboxBoard(os.Stdout, board)
 	return nil
+}
+
+// resolveInboxProject turns --project into a project id: a full id as is,
+// else an exact (case-insensitive) name, else an id prefix.
+func resolveInboxProject(ctx context.Context, client *cli.APIClient, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if uuidRegexp.MatchString(ref) {
+		return ref, nil
+	}
+	candidates, err := fetchProjectCandidates(ctx, client)
+	if err != nil {
+		return "", fmt.Errorf("resolve project: %w", err)
+	}
+	var named []idCandidate
+	for _, c := range candidates {
+		if strings.EqualFold(strings.TrimSpace(c.Display), ref) {
+			named = append(named, c)
+		}
+	}
+	switch len(named) {
+	case 1:
+		return named[0].ID, nil
+	case 0:
+		found, err := resolveIDByPrefix(ctx, client, "project", ref, func(context.Context, *cli.APIClient) ([]idCandidate, error) {
+			return candidates, nil
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "ambiguous") {
+				return "", err
+			}
+			return "", fmt.Errorf("no project named %q, and it is not an id prefix of one", ref)
+		}
+		return found.ID, nil
+	default:
+		return "", ambiguousIDPrefixError("project name", ref, named)
+	}
 }
 
 func printInboxBoard(w io.Writer, b inboxBoardView) {

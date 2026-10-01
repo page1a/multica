@@ -52,6 +52,9 @@ type InboxBoardResponse struct {
 //   - tz: IANA zone "done today" is counted in (default UTC).
 //   - unread_since: RFC3339; rows read at or after it still count as unread,
 //     so a page that marked everything read keeps its arrival markers.
+//   - project_id: only that project's issues (DENE-1019), through the same
+//     visibility check as the rest; a project the viewer cannot see, or that
+//     is not in this workspace, gives an empty board rather than an error.
 //
 // Read-only: it never changes read state. An agent caller reads the inbox of
 // the person who started its run, with that person's visibility; a run no
@@ -82,6 +85,16 @@ func (h *Handler) GetInboxBoard(w http.ResponseWriter, r *http.Request) {
 		unreadSince = pgtype.Timestamptz{Time: t, Valid: true}
 	}
 
+	var projectFilter pgtype.UUID
+	if raw := strings.TrimSpace(q.Get("project_id")); raw != "" {
+		id, err := util.ParseUUID(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "project_id must be a project id")
+			return
+		}
+		projectFilter = id
+	}
+
 	userUUID, ok := h.inboxBoardPerson(w, r, wsUUID)
 	if !ok {
 		return
@@ -107,7 +120,7 @@ func (h *Handler) GetInboxBoard(w http.ResponseWriter, r *http.Request) {
 	}
 	dayStart := time.Date(asOf.In(loc).Year(), asOf.In(loc).Month(), asOf.In(loc).Day(), 0, 0, 0, 0, loc)
 
-	in, markable, err := h.gatherInboxBoard(ctx, wsUUID, userUUID, member.Role, viewer, unreadSince, dayStart)
+	in, markable, err := h.gatherInboxBoard(ctx, wsUUID, userUUID, member.Role, viewer, unreadSince, dayStart, projectFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -173,8 +186,14 @@ func (h *Handler) gatherInboxBoard(
 	viewer visibilityViewer,
 	unreadSince pgtype.Timestamptz,
 	dayStart time.Time,
+	project pgtype.UUID,
 ) (inboxboard.Input, int64, error) {
 	in := inboxboard.Input{UserID: uuidToString(userUUID)}
+	// inProject: every source below carries its issue's project, so the
+	// filter is one comparison next to the visibility check, not a second rule.
+	inProject := func(issueProject pgtype.UUID) bool {
+		return !project.Valid || (issueProject.Valid && issueProject.Bytes == project.Bytes)
+	}
 	prefix := h.getIssuePrefix(ctx, wsUUID)
 
 	summons, err := h.Queries.ListOpenIssueSummonsForRecipient(ctx, db.ListOpenIssueSummonsForRecipientParams{
@@ -184,7 +203,7 @@ func (h *Handler) gatherInboxBoard(
 		return in, 0, fmt.Errorf("failed to list summons")
 	}
 	for _, s := range summons {
-		if !viewer.canSeeIssueFields(s.IssueID, s.IssueVisibility, s.IssueCreatorType, s.IssueCreatorID,
+		if !inProject(s.IssueProjectID) || !viewer.canSeeIssueFields(s.IssueID, s.IssueVisibility, s.IssueCreatorType, s.IssueCreatorID,
 			s.IssueProjectID, s.IssueAssigneeType, s.IssueAssigneeID) {
 			continue
 		}
@@ -250,7 +269,7 @@ func (h *Handler) gatherInboxBoard(
 			return in, 0, fmt.Errorf("failed to list issues")
 		}
 		for _, row := range rows {
-			if viewer.canSeeIssueFields(row.ID, row.Visibility, row.CreatorType, row.CreatorID,
+			if inProject(row.ProjectID) && viewer.canSeeIssueFields(row.ID, row.Visibility, row.CreatorType, row.CreatorID,
 				row.ProjectID, row.AssigneeType, row.AssigneeID) {
 				visible[uuidToString(row.ID)] = row
 			}
@@ -302,7 +321,7 @@ func (h *Handler) gatherInboxBoard(
 		if len(in.TodoIssues) >= inboxBoardTodoLimit {
 			break
 		}
-		if !viewer.canSeeIssueFields(row.ID, row.Visibility, row.CreatorType, row.CreatorID,
+		if !inProject(row.ProjectID) || !viewer.canSeeIssueFields(row.ID, row.Visibility, row.CreatorType, row.CreatorID,
 			row.ProjectID, row.AssigneeType, row.AssigneeID) {
 			continue
 		}
@@ -330,7 +349,7 @@ func (h *Handler) gatherInboxBoard(
 		if len(in.DoneIssues) >= inboxBoardDoneLimit {
 			break
 		}
-		if !viewer.canSeeIssueFields(row.ID, row.Visibility, row.CreatorType, row.CreatorID,
+		if !inProject(row.ProjectID) || !viewer.canSeeIssueFields(row.ID, row.Visibility, row.CreatorType, row.CreatorID,
 			row.ProjectID, row.AssigneeType, row.AssigneeID) {
 			continue
 		}
@@ -352,6 +371,9 @@ func (h *Handler) gatherInboxBoard(
 	}
 	var markable int64
 	for _, u := range unread {
+		if !inProject(u.IssueProjectID) {
+			continue
+		}
 		if !u.PersonalOnly && !viewer.canSeeIssueFields(u.IssueID, u.IssueVisibility, u.IssueCreatorType,
 			u.IssueCreatorID, u.IssueProjectID, u.IssueAssigneeType, u.IssueAssigneeID) {
 			continue

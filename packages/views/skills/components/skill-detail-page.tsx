@@ -791,7 +791,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   // Context for the shared "Add to agent" dialog (also used by the skills
   // list). Members see their own agents; workspace owners/admins see all.
   const myRole = useMemo(
-    () => members.find((m) => m.user_id === currentUserId)?.role ?? null,
+    () => members.find((m) => m.user_id === currentUserId)?.role || null,
     [members, currentUserId],
   );
   const actionsCtx: SkillActionsContext = {

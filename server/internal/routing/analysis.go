@@ -213,6 +213,8 @@ Routing:
 2. reviewer: "seat" (an agent checks it), "human" (acceptance needs a conversation with a person), or "none" (small, self-evident work).
 3. reviewer_tier: when reviewer is "seat", which tier checks it. Choose from candidate_tiers exactly.
 
+When escalation_reason is present, the seat now holding the ticket reported that the work is too hard for it: choose again, weighing that report, and do not choose a weaker tier than the one that reported it.
+
 Report calibrated confidence in [0,1] separately for the executor choice and the reviewer choice; below-threshold answers are discarded rather than used, so do not inflate them. Follow policy_prompt in the user payload when choosing tiers.
 
 Respond with a JSON object with keys: scope, clarity, risk, needs_human, summary, executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. You do not change status, assignee, or any other ticket field, and you do not take an action.`

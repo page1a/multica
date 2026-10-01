@@ -131,6 +131,16 @@
     "blocking": "진행 차단",
     "queued": "대기 중"
   },
+  "assignee_source": {
+    "human": "{{name}}님이 직접 선택",
+    "human_unknown": "사람이 직접 선택",
+    "quote": "{{name}}님의 말 그대로 지정",
+    "quote_unknown": "멤버의 말 그대로 지정",
+    "automation": "자동화가 지정",
+    "agent": "에이전트가 스스로 지정",
+    "router": "라우팅이 선택",
+    "quote_text": "“{{quote}}”"
+  },
   "close_protocol": {
     "missing": "종료 기록 없음",
     "status_drift": "close.status ≠ {{issueStatus}}",

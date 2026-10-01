@@ -104,6 +104,9 @@ type JudgeState struct {
 	// Stuck is the analysis model's summary of where a blocked ticket is
 	// stuck. Blocked row only.
 	Stuck string `json:"stuck,omitempty"`
+	// EscalationReason is the executor's own account of why the work is too
+	// hard for its seat (DENE-1033). Escalation row only.
+	EscalationReason string `json:"escalation_reason,omitempty"`
 }
 
 // Judge answers the two questions Route cannot answer deterministically.

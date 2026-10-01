@@ -49,7 +49,7 @@ import {
   useInboxFilters,
   useInboxFilterStore,
 } from "@multica/core/inbox/filter-store";
-import { boardLaneByIssue, useInboxBoard, type BoardLane } from "@multica/core/home";
+import { boardLaneByIssue, useBoardProject, useInboxBoard, type BoardLane } from "@multica/core/home";
 
 import { IssueDetail, issueHighlightMementoKey } from "../../issues/components/issue-detail";
 import { useViewStateWriter } from "../../platform";
@@ -106,7 +106,7 @@ import {
 import { AutopilotQuotaNotice } from "./autopilot-quota-notice";
 import { AgentAccessRequestNotice, isAgentAccessRequestNotice } from "./agent-access-request-notice";
 import { useT } from "../../i18n";
-import { BoardAskAiButton, InboxBoardLanes, LANE_TAG_CLASS } from "../../home/components/home-page";
+import { BoardProjectControls, InboxBoardLanes, LANE_TAG_CLASS } from "../../home/components/home-page";
 import type { InboxRowDecoration } from "./inbox-list-item";
 import { useIssueLimitUpgradePrompt } from "../../modals/use-issue-limit-upgrade-prompt";
 
@@ -121,7 +121,6 @@ const INBOX_LIST_MAX_SIZE = 400;
  */
 export function InboxActivityPage({ merged = false }: { merged?: boolean } = {}) {
   const { t } = useT("inbox");
-  const { t: tChat } = useT("chat");
   const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
   const showAutopilotQuotaRecoveryPrompt = useIssueLimitUpgradePrompt(
     "autopilot_quota",
@@ -171,7 +170,8 @@ export function InboxActivityPage({ merged = false }: { merged?: boolean } = {})
   // The merged inbox's board. It does not read everything on arrival the way
   // the stand-alone board does: the list beside it is where unread is shown
   // and cleared, row by row.
-  const inboxBoard = useInboxBoard(wsId, { autoRead: false });
+  const boardProject = useBoardProject(wsId);
+  const inboxBoard = useInboxBoard(wsId, { autoRead: false, projectId: boardProject.projectId });
   const laneByIssue = useMemo(() => boardLaneByIssue(inboxBoard.board), [inboxBoard.board]);
   const [laneFilter, setLaneFilter] = useState<BoardLane | null>(null);
   const toggleLane = useCallback((lane: BoardLane) => setLaneFilter((cur) => (cur === lane ? null : lane)), []);
@@ -1050,10 +1050,7 @@ export function InboxActivityPage({ merged = false }: { merged?: boolean } = {})
           <PageHeader>
             <h2 className="text-body font-semibold">{t(($) => $.board.panel_title)}</h2>
             <span className="flex-1 truncate text-caption text-muted-foreground">{t(($) => $.board.panel_hint)}</span>
-            <BoardAskAiButton
-              prompt={tChat(($) => $.conversation_starters.inbox.prompt)}
-              label={t(($) => $.board.ask_ai)}
-            />
+            <BoardProjectControls project={boardProject} />
           </PageHeader>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto w-full max-w-4xl space-y-6 px-6 py-6">

@@ -27,6 +27,7 @@ import {
   agentTasksKeys,
 } from "../agents/queries";
 import { githubKeys } from "../github/queries";
+import { vcsKeys } from "../vcs/queries";
 import { larkKeys } from "../lark/queries";
 import { slackKeys } from "../slack/queries";
 import { dingtalkKeys } from "../dingtalk/queries";
@@ -138,6 +139,15 @@ const chatWsLogger = createLogger("chat.ws");
 const TASK_MESSAGE_FLUSH_MS = 100;
 
 const logger = createLogger("realtime-sync");
+
+/**
+ * An install changes which repositories the App covers, so the per-repo reach
+ * on Repositories and project pages (all under the "vcs" prefix) goes stale too.
+ */
+export function invalidateGitHubInstallationQueries(qc: QueryClient, wsId: string) {
+  qc.invalidateQueries({ queryKey: githubKeys.installations(wsId) });
+  qc.invalidateQueries({ queryKey: vcsKeys.all(wsId) });
+}
 
 export function invalidateChatMessageQueries(
   qc: QueryClient,
@@ -921,7 +931,7 @@ export function useRealtimeSync(
       },
       github_installation: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: githubKeys.installations(wsId) });
+        if (wsId) invalidateGitHubInstallationQueries(qc, wsId);
       },
       lark_installation: () => {
         const wsId = getCurrentWsId();

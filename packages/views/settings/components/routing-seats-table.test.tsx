@@ -137,4 +137,74 @@ describe("RoutingSeatsTable", () => {
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.getByRole("combobox", { name: "Goku · Tier" })).toBeDisabled();
   });
+
+  it("nests a specialisation under its base role", async () => {
+    listAgents.mockResolvedValue([
+      ...ROSTER,
+      agent("a-gohan", "Gohan", {
+        parent_agent_id: "a-strong",
+        parent_agent_name: "Goku",
+        runtime_inherited: false,
+        routing_tier: "weak",
+        routing_usage: "normal",
+      }),
+      agent("a-orphan", "Pan", {
+        parent_agent_id: "missing-parent",
+        routing_tier: "medium",
+      }),
+    ]);
+    render();
+    const names = (await rows()).map((row) => within(row).getAllByRole("cell")[1]?.textContent);
+    // Gohan sits under Goku even though Gohan's own rung is weak.
+    // Pan's base role is not in the list, so she stays a root on her rung.
+    expect(names).toEqual(["Goku", "Gohan", "Pan", "Krillin", "Bulma"]);
+    const gohan = screen.getByText("Gohan").closest("tr");
+    expect(gohan).toHaveAttribute("data-seat-depth", "1");
+    expect(screen.getByText("Goku").closest("tr")).toHaveAttribute("data-seat-depth", "0");
+  });
+
+  it("keeps a follower's tier and usage read-only", async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValue([
+      agent("a-goku", "Goku", { routing_tier: "strong", routing_usage: "tight" }),
+      agent("a-gohan", "Gohan", {
+        parent_agent_id: "a-goku",
+        parent_agent_name: "Goku",
+        runtime_inherited: true,
+        routing_tier: "strong",
+        routing_usage: "tight",
+      }),
+      agent("a-own", "Trunks", {
+        parent_agent_id: "a-goku",
+        parent_agent_name: "Goku",
+        runtime_inherited: false,
+        routing_tier: "weak",
+        routing_usage: "ample",
+      }),
+    ]);
+    render();
+    await screen.findByText("Gohan");
+    expect(screen.getByRole("combobox", { name: "Gohan · Tier" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Gohan · Usage" })).toBeDisabled();
+    expect(screen.getByText("Follows Goku")).toBeInTheDocument();
+    // This checkbox is a Base UI span: disabled shows up as aria-disabled,
+    // which is what a screen reader and the pointer both honor.
+    expect(screen.getByRole("checkbox", { name: "Select Gohan" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByRole("toolbar")).toHaveTextContent("2 selected");
+
+    expect(screen.getByRole("combobox", { name: "Trunks · Tier" })).toBeEnabled();
+    await user.click(screen.getByRole("combobox", { name: "Trunks · Usage" }));
+    await user.click(await screen.findByRole("option", { name: "Normal" }));
+    await waitFor(() =>
+      expect(bulkUpdateAgentRouting).toHaveBeenCalledWith({
+        agent_ids: ["a-own"],
+        routing_usage: "normal",
+      }),
+    );
+  });
 });

@@ -25,7 +25,8 @@ export function useCurrentMember(wsId: string): {
   const member = members?.find((m) => m.user_id === userId) ?? null;
   return {
     userId,
-    role: member?.role ?? null,
+    // A tier the server withheld ("") reads as unknown, never as a role.
+    role: member?.role || null,
     member,
     isLoading,
   };

@@ -205,10 +205,13 @@ export function selectSkillAssignments(
   return map;
 }
 
-export function invitationListOptions(wsId: string) {
+/** The pending-invitation list is owner-only (DENE-1022); callers pass
+ *  `enabled` so a non-owner never sends a request the server would 403. */
+export function invitationListOptions(wsId: string, enabled = true) {
   return queryOptions({
     queryKey: workspaceKeys.invitations(wsId),
     queryFn: () => api.listWorkspaceInvitations(wsId),
+    enabled: enabled && !!wsId,
   });
 }
 

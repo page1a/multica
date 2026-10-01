@@ -60,7 +60,7 @@ func invitationToResponse(inv db.WorkspaceInvitation) InvitationResponse {
 
 func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	requester, ok := h.requireOwnerMember(w, r, workspaceID)
 	if !ok {
 		return
 	}
@@ -255,6 +255,9 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ListWorkspaceInvitations(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
+	if _, ok := h.requireOwnerMember(w, r, workspaceID); !ok {
+		return
+	}
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -294,6 +297,9 @@ func (h *Handler) ListWorkspaceInvitations(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
+	if _, ok := h.requireOwnerMember(w, r, workspaceID); !ok {
+		return
+	}
 	invitationID := chi.URLParam(r, "invitationId")
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
@@ -590,7 +596,7 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	memberResp := h.memberWithUserResponse(member, user)
 
 	// Broadcast member:added so existing clients update their member lists.
-	eventPayload := map[string]any{"member": memberResp}
+	eventPayload := map[string]any{"member": memberResp.redactedForRoster()}
 	if ws, err := h.Queries.GetWorkspace(r.Context(), accepted.WorkspaceID); err == nil {
 		eventPayload["workspace_name"] = ws.Name
 	}

@@ -61,6 +61,47 @@ function seatOrder(a: Agent, b: Agent): number {
   return rank(a) - rank(b) || a.name.localeCompare(b.name);
 }
 
+type SeatRow = { agent: Agent; depth: 0 | 1 };
+
+/**
+ * Base roles in ladder order, each followed by its specialisations. A
+ * specialisation whose base role is not in the live list stays a root, so
+ * archiving the parent does not hide it.
+ */
+function nestSeats(agents: Agent[]): SeatRow[] {
+  const live = agents.filter((agent) => !agent.archived_at);
+  const liveIds = new Set(live.map((agent) => agent.id));
+  const children = new Map<string, Agent[]>();
+  const roots: Agent[] = [];
+  for (const agent of live) {
+    const parentId = agent.parent_agent_id;
+    if (parentId && liveIds.has(parentId)) {
+      const list = children.get(parentId);
+      if (list) list.push(agent);
+      else children.set(parentId, [agent]);
+    } else {
+      roots.push(agent);
+    }
+  }
+  roots.sort(seatOrder);
+  for (const list of children.values()) {
+    list.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  const rows: SeatRow[] = [];
+  for (const root of roots) {
+    rows.push({ agent: root, depth: 0 });
+    for (const child of children.get(root.id) ?? []) {
+      rows.push({ agent: child, depth: 1 });
+    }
+  }
+  return rows;
+}
+
+/** Open follow: tier and usage are the base role's, and this row cannot edit them. */
+function followsParent(agent: Agent): boolean {
+  return agent.runtime_inherited === true;
+}
+
 /**
  * The routing seats table (DENE-922): every live agent with its tier and
  * usage, editable in place, and a checkbox selection that applies one tier or
@@ -80,17 +121,17 @@ export function RoutingSeatsTable({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   const seats = useMemo(
-    () =>
-      (agentsQuery.data ?? [])
-        .filter((agent) => !agent.archived_at)
-        .sort(seatOrder),
+    () => nestSeats(agentsQuery.data ?? []),
     [agentsQuery.data],
   );
+  // Followers are read-only, so they never join a bulk write: the server
+  // would refuse the whole batch.
+  const editable = seats.filter((row) => !followsParent(row.agent));
   // Drop ids that left the list (archived elsewhere) so the count stays true.
-  const selectedIds = seats
-    .filter((seat) => selected.has(seat.id))
-    .map((seat) => seat.id);
-  const allSelected = seats.length > 0 && selectedIds.length === seats.length;
+  const selectedIds = editable
+    .filter((row) => selected.has(row.agent.id))
+    .map((row) => row.agent.id);
+  const allSelected = editable.length > 0 && selectedIds.length === editable.length;
 
   const toggle = (id: string, on: boolean) =>
     setSelected((prev) => {
@@ -206,7 +247,9 @@ export function RoutingSeatsTable({
                   checked={allSelected}
                   indeterminate={selectedIds.length > 0 && !allSelected}
                   onCheckedChange={(on) =>
-                    setSelected(on ? new Set(seats.map((s) => s.id)) : new Set())
+                    setSelected(
+                      on ? new Set(editable.map((row) => row.agent.id)) : new Set(),
+                    )
                   }
                   aria-label={t(($) => $.routing.seats_select_all)}
                 />
@@ -221,18 +264,27 @@ export function RoutingSeatsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {seats.map((seat) => {
+          {seats.map(({ agent: seat, depth }) => {
             const tier = tierChoiceOf(seat);
             const usage = routingUsageKeyOf(seat.routing_usage);
+            const follows = followsParent(seat);
+            const followLabel = follows
+              ? seat.parent_agent_name
+                ? t(($) => $.routing.seats_follows, { name: seat.parent_agent_name })
+                : t(($) => $.routing.seats_follows_base)
+              : "";
+            const locked = !canManage || follows || write.isPending;
             return (
               <TableRow
                 key={seat.id}
                 data-state={selected.has(seat.id) ? "selected" : undefined}
+                data-seat-depth={depth}
               >
                 {canManage ? (
                   <TableCell className="pl-4">
                     <Checkbox
                       checked={selected.has(seat.id)}
+                      disabled={follows}
                       onCheckedChange={(on) => toggle(seat.id, on)}
                       aria-label={t(($) => $.routing.seats_select_row, {
                         name: seat.name,
@@ -242,8 +294,9 @@ export function RoutingSeatsTable({
                 ) : null}
                 <TableCell
                   className={cn(
-                    "max-w-48 truncate font-medium",
-                    !canManage && "pl-4",
+                    "max-w-56 truncate font-medium",
+                    !canManage && depth === 0 && "pl-4",
+                    depth === 1 && "pl-10",
                     tier === TIER_OFF && "text-muted-foreground",
                   )}
                 >
@@ -256,7 +309,7 @@ export function RoutingSeatsTable({
                   <Select
                     items={tierItems}
                     value={tier}
-                    disabled={!canManage || write.isPending}
+                    disabled={locked}
                     onValueChange={(value) => {
                       if (value && value !== tier)
                         write.mutate({
@@ -282,33 +335,40 @@ export function RoutingSeatsTable({
                   </Select>
                 </TableCell>
                 <TableCell className="pr-4">
-                  <Select
-                    items={usageItems}
-                    value={usage}
-                    disabled={!canManage || write.isPending}
-                    onValueChange={(value) => {
-                      if (value && value !== usage)
-                        write.mutate({
-                          agent_ids: [seat.id],
-                          routing_usage: value as RoutingUsageKey,
-                        });
-                    }}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      className="w-24"
-                      aria-label={`${seat.name} · ${usageHeading}`}
+                  <div className="flex items-center gap-2">
+                    <Select
+                      items={usageItems}
+                      value={usage}
+                      disabled={locked}
+                      onValueChange={(value) => {
+                        if (value && value !== usage)
+                          write.mutate({
+                            agent_ids: [seat.id],
+                            routing_usage: value as RoutingUsageKey,
+                          });
+                      }}
                     >
-                      <SelectValue>{() => routingUsageLabel(ta, usage)}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {usageItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      <SelectTrigger
+                        size="sm"
+                        className="w-24"
+                        aria-label={`${seat.name} · ${usageHeading}`}
+                      >
+                        <SelectValue>{() => routingUsageLabel(ta, usage)}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {usageItems.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {follows ? (
+                      <span className="whitespace-nowrap text-caption text-muted-foreground">
+                        {followLabel}
+                      </span>
+                    ) : null}
+                  </div>
                 </TableCell>
               </TableRow>
             );

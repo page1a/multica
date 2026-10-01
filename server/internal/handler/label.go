@@ -458,10 +458,14 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	attachActorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(issue.WorkspaceID))
 	attached, err := h.Queries.AttachLabelToIssue(r.Context(), db.AttachLabelToIssueParams{
 		IssueID:     issue.ID,
 		LabelID:     labelID,
 		WorkspaceID: issue.WorkspaceID,
+		// An agent's label is a suggestion to the judge, never a tier request
+		// (DENE-1033).
+		AttachedByType: pgtype.Text{String: attachActorType, Valid: true},
 	})
 	if err != nil {
 		slog.Warn("AttachLabelToIssue failed", append(logger.RequestAttrs(r), "error", err)...)

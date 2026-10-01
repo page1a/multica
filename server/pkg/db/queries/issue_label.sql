@@ -91,15 +91,15 @@ WITH touched_issue AS (
       )
     RETURNING issue.id
 )
-INSERT INTO issue_to_label (issue_id, label_id)
-SELECT sqlc.arg('issue_id')::uuid, sqlc.arg('label_id')::uuid
+INSERT INTO issue_to_label (issue_id, label_id, attached_by_type)
+SELECT sqlc.arg('issue_id')::uuid, sqlc.arg('label_id')::uuid, sqlc.narg('attached_by_type')::text
 WHERE EXISTS (SELECT 1 FROM touched_issue)
 ON CONFLICT DO NOTHING;
 
 -- name: AttachLabelToIssue :one
 WITH inserted AS (
-    INSERT INTO issue_to_label (issue_id, label_id)
-    SELECT sqlc.arg('issue_id')::uuid, sqlc.arg('label_id')::uuid
+    INSERT INTO issue_to_label (issue_id, label_id, attached_by_type)
+    SELECT sqlc.arg('issue_id')::uuid, sqlc.arg('label_id')::uuid, sqlc.narg('attached_by_type')::text
     WHERE EXISTS (
         SELECT 1 FROM issue i
         WHERE i.id = sqlc.arg('issue_id')::uuid
@@ -155,6 +155,20 @@ JOIN issue_to_label il ON il.label_id = l.id
 WHERE il.issue_id = sqlc.arg('issue_id')::uuid
   AND l.workspace_id = sqlc.arg('workspace_id')::uuid
   AND l.resource_type = 'issue'
+ORDER BY LOWER(l.name) ASC;
+
+-- name: ListIssueLabelNamesNotByAgent :many
+-- The labels routing may read as instructions: everything except what an agent
+-- attached. A tier label is a person's answer to "how strong should the
+-- executor be"; the same label from an agent is a guess and must not steer the
+-- pick (DENE-1033).
+SELECT l.name
+FROM issue_label l
+JOIN issue_to_label il ON il.label_id = l.id
+WHERE il.issue_id = sqlc.arg('issue_id')::uuid
+  AND l.workspace_id = sqlc.arg('workspace_id')::uuid
+  AND l.resource_type = 'issue'
+  AND il.attached_by_type IS DISTINCT FROM 'agent'
 ORDER BY LOWER(l.name) ASC;
 
 -- name: ListLabelsForIssues :many

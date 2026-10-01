@@ -25,7 +25,7 @@ export function useCanEditSkill(
   const { data: members = [] } = useQuery(memberListOptions(wsId));
 
   if (!skill) return false;
-  const myRole = members.find((m) => m.user_id === userId)?.role ?? null;
+  const myRole = members.find((m) => m.user_id === userId)?.role || null;
   return canEditSkill(skill, { userId, role: myRole });
 }
 

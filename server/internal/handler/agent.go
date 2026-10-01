@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -515,9 +516,20 @@ func (h *Handler) attachAgentInheritance(ctx context.Context, resp *AgentRespons
 	return nil
 }
 
+// routingFollowError is the refusal a following specialisation gets when a
+// caller tries to set its own routing tier or usage (DENE-1016). The parent
+// name is the one the person sees on the seats table.
+func routingFollowError(parentName string) string {
+	if parentName == "" {
+		parentName = "父角色"
+	}
+	return fmt.Sprintf("跟随 %s，先关掉跟随", parentName)
+}
+
 // syncInheritedAgentRuntimeProfiles copies a base role's runtime profile onto
 // the specialisations that follow it (DENE-505) and returns the rows that
-// actually changed. One statement, so the copy cannot land halfway.
+// actually changed. One statement, so the copy cannot land halfway. Routing
+// tier and usage ride the same copy (DENE-1016).
 //
 // A failure is logged rather than returned: the caller's own write has already
 // committed by the time this runs, so failing the request would tell the user
@@ -2202,11 +2214,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	createdRoutingTier := pgtype.Text{String: routingTierKey, Valid: routingTierKey != ""}
-	if parentAgent.ID.Valid && routingTierKey == "" {
-		// A specialisation with no rung of its own sits on its base role's
-		// rung. Strength follows the runtime profile it was cloned from, so
-		// leaving the 16 direction seats untagged would take them all off the
-		// ladder the moment tags become how rungs are decided.
+	if parentAgent.ID.Valid && (inheritRuntime || routingTierKey == "") {
+		// A following specialisation takes its base role's rung even when the
+		// request names one (DENE-1016): follow means the request is not an
+		// override, same as runtime fields. A specialisation that owns its
+		// runtime still sits on the base role's rung when it names none, so
+		// leaving a direction seat untagged does not take it off the ladder.
 		createdRoutingTier = parentAgent.RoutingTier
 	}
 	// Usage is the account's headroom, and a specialisation runs on its base
@@ -3042,6 +3055,19 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		params.RoutingUsage = pgtype.Text{String: key, Valid: true}
 	}
+	// A following specialisation does not own its rung or its usage
+	// (DENE-1016). Turning follow off in this same request is the opt-out, so
+	// inheritRuntime is already false there and the write is the child's own.
+	routingTouched := req.RoutingTier != nil || req.RoutingUsage != nil
+	if routingTouched && inheritRuntime && parentAfter.Valid {
+		parent, parentErr := h.Queries.GetAgent(r.Context(), parentAfter)
+		parentName := ""
+		if parentErr == nil {
+			parentName = parent.Name
+		}
+		writeError(w, http.StatusBadRequest, routingFollowError(parentName))
+		return
+	}
 
 	shouldClearServiceTier := false
 	if req.ServiceTier != nil {
@@ -3120,7 +3146,24 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.Queries.UpdateAgent(r.Context(), params)
+	// A base role's routing edit and the copy onto the specialisations that
+	// follow it commit together (DENE-1016). Anything else stays on the
+	// request-scoped queries, one statement at a time, as before.
+	q := h.Queries
+	var routingTx pgx.Tx
+	if routingTouched && !parentAfter.Valid {
+		var beginErr error
+		routingTx, beginErr = h.TxStarter.Begin(r.Context())
+		if beginErr != nil {
+			slog.Warn("update agent: begin routing transaction failed", append(logger.RequestAttrs(r), "error", beginErr, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update agent")
+			return
+		}
+		defer routingTx.Rollback(r.Context())
+		q = h.Queries.WithTx(routingTx)
+	}
+
+	updated, err := q.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
 		// return a clear conflict instead of a 500 that leaks the raw
@@ -3146,7 +3189,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// it off or on sets every specialisation to the same value.
 	var toggledSpecialisations []db.Agent
 	if req.WorkEnabled != nil && !updated.ParentAgentID.Valid {
-		toggledSpecialisations, err = h.Queries.SetAgentSpecialisationsWorkEnabled(r.Context(), db.SetAgentSpecialisationsWorkEnabledParams{
+		toggledSpecialisations, err = q.SetAgentSpecialisationsWorkEnabled(r.Context(), db.SetAgentSpecialisationsWorkEnabledParams{
 			WorkEnabled:   *req.WorkEnabled,
 			ParentAgentID: updated.ID,
 		})
@@ -3158,14 +3201,20 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// A balance breaker has no timer: a person turning the seat back on after
 	// topping up is its recovery. Tickets it handed to other seats stay there.
-	if req.WorkEnabled != nil && *req.WorkEnabled && !existing.WorkEnabled {
+	// Reclaim reads the seat after the update is visible, so the routing
+	// transaction runs it only once that transaction has committed.
+	recoverTurnedOnSeats := func() {
+		if req.WorkEnabled == nil || !*req.WorkEnabled || existing.WorkEnabled {
+			return
+		}
 		for _, seatID := range append([]pgtype.UUID{updated.ID}, agentIDs(toggledSpecialisations)...) {
 			if _, err := h.Queries.CloseManualQuotaBreakers(r.Context(), seatID); err != nil {
 				slog.Warn("close balance breaker failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(seatID))...)
 			}
 		}
-	}
-	if req.WorkEnabled != nil && *req.WorkEnabled && !existing.WorkEnabled && h.TaskService != nil {
+		if h.TaskService == nil {
+			return
+		}
 		if err := h.TaskService.ReclaimDesignatedReviews(r.Context(), updated.ID); err != nil {
 			slog.Warn("reclaim designated reviewer failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		}
@@ -3175,12 +3224,15 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if routingTx == nil {
+		recoverTurnedOnSeats()
+	}
 
 	// Nullable runtime overrides: null/empty in the request means explicitly
 	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL, so
 	// mcp_config, thinking_level, and service_tier use dedicated clear queries.
 	if shouldClearMcpConfig {
-		updated, err = h.Queries.ClearAgentMcpConfig(r.Context(), updated.ID)
+		updated, err = q.ClearAgentMcpConfig(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config: "+err.Error())
@@ -3188,7 +3240,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearThinkingLevel {
-		updated, err = h.Queries.ClearAgentThinkingLevel(r.Context(), updated.ID)
+		updated, err = q.ClearAgentThinkingLevel(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level: "+err.Error())
@@ -3196,7 +3248,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearServiceTier {
-		updated, err = h.Queries.ClearAgentServiceTier(r.Context(), updated.ID)
+		updated, err = q.ClearAgentServiceTier(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent service_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear service_tier: "+err.Error())
@@ -3204,7 +3256,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearRoutingTier {
-		updated, err = h.Queries.ClearAgentRoutingTier(r.Context(), updated.ID)
+		updated, err = q.ClearAgentRoutingTier(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent routing_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear routing_tier: "+err.Error())
@@ -3212,7 +3264,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearComposioAllowlist {
-		updated, err = h.Queries.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
+		updated, err = q.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent composio_toolkit_allowlist failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist: "+err.Error())
@@ -3224,7 +3276,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// all (see SetAgentParentAgent). Applied after the metadata update so the
 	// response reflects both in one payload.
 	if sentParent {
-		updated, err = h.Queries.SetAgentParentAgent(r.Context(), db.SetAgentParentAgentParams{
+		updated, err = q.SetAgentParentAgent(r.Context(), db.SetAgentParentAgentParams{
 			ID:               updated.ID,
 			ParentAgentID:    parentAgentID,
 			RuntimeInherited: params.RuntimeInherited,
@@ -3242,9 +3294,12 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// exclusive by construction, because a row with a parent is not a base role.
 	//
 	// Run after the parent/flag writes so the copy is taken from the row this
-	// request just committed. Only a touched runtime or execution-config field can
-	// have moved a base role's profile, so an unrelated edit (a rename, a
-	// prompt) does not walk the children.
+	// request just wrote. Only a touched runtime, execution-config, or routing
+	// field can have moved a base role's profile, so an unrelated edit (a
+	// rename, a prompt) does not walk the children. A base-role routing edit
+	// runs the copy inside the same transaction as the write (DENE-1016);
+	// turning follow on uses the same statement, best-effort, like the runtime
+	// copy it rides with.
 	var syncedChildren []db.Agent
 	switch {
 	case updated.RuntimeInherited && updated.ParentAgentID.Valid:
@@ -3257,8 +3312,25 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 				updated = child
 			}
 		}
-	case !updated.ParentAgentID.Valid && (runtimeFieldsTouched || executionConfigTouched):
-		syncedChildren = h.syncInheritedAgentRuntimeProfiles(r.Context(), updated.ID, r)
+	case !updated.ParentAgentID.Valid && (runtimeFieldsTouched || executionConfigTouched || routingTouched):
+		if routingTx != nil {
+			syncedChildren, err = q.SyncInheritedAgentRuntimeProfiles(r.Context(), updated.ID)
+			if err != nil {
+				slog.Warn("sync following agent routing failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+				writeError(w, http.StatusInternalServerError, "failed to update following specialisations")
+				return
+			}
+		} else {
+			syncedChildren = h.syncInheritedAgentRuntimeProfiles(r.Context(), updated.ID, r)
+		}
+	}
+	if routingTx != nil {
+		if err := routingTx.Commit(r.Context()); err != nil {
+			slog.Warn("update agent: commit routing transaction failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update agent")
+			return
+		}
+		recoverTurnedOnSeats()
 	}
 
 	// Invocation targets (MUL-3963): replace wholesale when the owner touched

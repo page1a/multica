@@ -8632,6 +8632,16 @@ func IssueToMap(issue db.Issue, issuePrefix string) map[string]any {
 	// a row with no origin must lose the keys in BOTH renderings, or a client
 	// reading one of them sees a field the other never sends. Conditional
 	// insertion, not a nil value, is what keeps the two key sets equal.
+	// Mirrors handler.IssueResponse.AssigneeSource & co, omitempty there.
+	if issue.AssigneeSource.Valid {
+		m["assignee_source"] = issue.AssigneeSource.String
+	}
+	if issue.AssigneeSourceUserID.Valid {
+		m["assignee_source_user_id"] = util.UUIDToString(issue.AssigneeSourceUserID)
+	}
+	if issue.AssigneeQuote.Valid {
+		m["assignee_quote"] = issue.AssigneeQuote.String
+	}
 	if issue.OriginType.Valid {
 		m["origin_type"] = issue.OriginType.String
 	}

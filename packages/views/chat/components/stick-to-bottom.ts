@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   createLiveEndFollow,
   FOLLOW_EDGE_THRESHOLD,
@@ -103,11 +103,29 @@ export interface StickToBottom {
    */
   hasReachedLiveEnd: boolean;
   /**
-   * The reader is further than FOLLOW_EDGE_THRESHOLD above the live end — the
-   * same edge the follow latch releases at, so a "jump to latest" affordance
-   * and the auto-follow can never disagree about where "the bottom" is.
+   * Whether the reader is further than FOLLOW_EDGE_THRESHOLD above the live
+   * end — the same edge the follow latch releases at, so a "jump to latest"
+   * affordance and the auto-follow can never disagree about where "the
+   * bottom" is.
+   *
+   * A store, not state: it flips in the middle of the reader's first scroll
+   * away, and a re-render of the list host at that instant lands on the
+   * reflow of the rows (a wide table) the reader is scrolling through, which
+   * the latch reads as displacement no input accounts for and pins back. Read
+   * it with `useAwayFromLiveEnd` in a component that owns nothing but the
+   * affordance.
    */
-  awayFromLiveEnd: boolean;
+  awayFromLiveEnd: AwayStore;
+}
+
+export interface AwayStore {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): boolean;
+}
+
+/** Subscribes the calling component — and only it — to the away flag. */
+export function useAwayFromLiveEnd(store: AwayStore): boolean {
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, () => false);
 }
 
 /**
@@ -184,12 +202,32 @@ export function useStickToBottom(
 
   // Content grew or the viewport resized — displacement with no scroll event,
   // so it can never promote staged reader input.
-  const [awayFromLiveEnd, setAwayFromLiveEnd] = useState(false);
+  const awayStore = useMemo(() => {
+    let away = false;
+    const listeners = new Set<() => void>();
+    return {
+      set(next: boolean) {
+        if (next === away) return;
+        away = next;
+        listeners.forEach((l) => l());
+      },
+      store: {
+        subscribe(listener: () => void) {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+        getSnapshot: () => away,
+      } satisfies AwayStore,
+    };
+  }, []);
+  const setAwayFromLiveEnd = awayStore.set;
   const onResize = useCallback(() => {
     if (!scrollEl) return;
     setAwayFromLiveEnd(!isAtLiveEnd(scrollEl));
     if (follow.onResize(distanceFromBottom(scrollEl))) pin();
-  }, [scrollEl, follow, pin]);
+  }, [scrollEl, follow, pin, setAwayFromLiveEnd]);
 
   useEffect(() => {
     if (!scrollEl) return;
@@ -303,15 +341,15 @@ export function useStickToBottom(
       follow.pointerUp();
       follow.touchEnd();
     };
-  }, [scrollEl, follow, pin, onResize]);
+  }, [scrollEl, follow, pin, onResize, setAwayFromLiveEnd]);
 
   return useMemo(
     () => ({
       isFollowing: () => follow.isFollowing(),
       onContentHeightChanged: onResize,
       hasReachedLiveEnd,
-      awayFromLiveEnd,
+      awayFromLiveEnd: awayStore.store,
     }),
-    [follow, onResize, hasReachedLiveEnd, awayFromLiveEnd],
+    [follow, onResize, hasReachedLiveEnd, awayStore],
   );
 }

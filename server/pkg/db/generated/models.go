@@ -930,38 +930,41 @@ type InstanceTelemetryState struct {
 }
 
 type Issue struct {
-	ID                 pgtype.UUID        `json:"id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	Title              string             `json:"title"`
-	Description        pgtype.Text        `json:"description"`
-	Status             string             `json:"status"`
-	Priority           string             `json:"priority"`
-	AssigneeType       pgtype.Text        `json:"assignee_type"`
-	AssigneeID         pgtype.UUID        `json:"assignee_id"`
-	CreatorType        string             `json:"creator_type"`
-	CreatorID          pgtype.UUID        `json:"creator_id"`
-	ParentIssueID      pgtype.UUID        `json:"parent_issue_id"`
-	AcceptanceCriteria []byte             `json:"acceptance_criteria"`
-	ContextRefs        []byte             `json:"context_refs"`
-	Position           float64            `json:"position"`
-	DueDate            pgtype.Date        `json:"due_date"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	Number             int32              `json:"number"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	OriginType         pgtype.Text        `json:"origin_type"`
-	OriginID           pgtype.UUID        `json:"origin_id"`
-	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
-	StartDate          pgtype.Date        `json:"start_date"`
-	Metadata           []byte             `json:"metadata"`
-	Stage              pgtype.Int4        `json:"stage"`
-	Properties         []byte             `json:"properties"`
-	Revision           int64              `json:"revision"`
-	LastActivityAt     pgtype.Timestamptz `json:"last_activity_at"`
-	TriageState        pgtype.Text        `json:"triage_state"`
-	ReviewerType       pgtype.Text        `json:"reviewer_type"`
-	ReviewerID         pgtype.UUID        `json:"reviewer_id"`
-	Visibility         string             `json:"visibility"`
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Title                string             `json:"title"`
+	Description          pgtype.Text        `json:"description"`
+	Status               string             `json:"status"`
+	Priority             string             `json:"priority"`
+	AssigneeType         pgtype.Text        `json:"assignee_type"`
+	AssigneeID           pgtype.UUID        `json:"assignee_id"`
+	CreatorType          string             `json:"creator_type"`
+	CreatorID            pgtype.UUID        `json:"creator_id"`
+	ParentIssueID        pgtype.UUID        `json:"parent_issue_id"`
+	AcceptanceCriteria   []byte             `json:"acceptance_criteria"`
+	ContextRefs          []byte             `json:"context_refs"`
+	Position             float64            `json:"position"`
+	DueDate              pgtype.Date        `json:"due_date"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	Number               int32              `json:"number"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	OriginType           pgtype.Text        `json:"origin_type"`
+	OriginID             pgtype.UUID        `json:"origin_id"`
+	FirstExecutedAt      pgtype.Timestamptz `json:"first_executed_at"`
+	StartDate            pgtype.Date        `json:"start_date"`
+	Metadata             []byte             `json:"metadata"`
+	Stage                pgtype.Int4        `json:"stage"`
+	Properties           []byte             `json:"properties"`
+	Revision             int64              `json:"revision"`
+	LastActivityAt       pgtype.Timestamptz `json:"last_activity_at"`
+	TriageState          pgtype.Text        `json:"triage_state"`
+	ReviewerType         pgtype.Text        `json:"reviewer_type"`
+	ReviewerID           pgtype.UUID        `json:"reviewer_id"`
+	Visibility           string             `json:"visibility"`
+	AssigneeSource       pgtype.Text        `json:"assignee_source"`
+	AssigneeSourceUserID pgtype.UUID        `json:"assignee_source_user_id"`
+	AssigneeQuote        pgtype.Text        `json:"assignee_quote"`
 }
 
 type IssueDeliveryBranch struct {
@@ -1151,8 +1154,9 @@ type IssueSummon struct {
 }
 
 type IssueToLabel struct {
-	IssueID pgtype.UUID `json:"issue_id"`
-	LabelID pgtype.UUID `json:"label_id"`
+	IssueID        pgtype.UUID `json:"issue_id"`
+	LabelID        pgtype.UUID `json:"label_id"`
+	AttachedByType pgtype.Text `json:"attached_by_type"`
 }
 
 type IssueVcsPullRequest struct {

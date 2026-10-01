@@ -30,8 +30,16 @@ type Issue struct {
 
 	AssigneeType string // "", "member", "agent", "squad"
 	AssigneeID   string
-	CreatorType  string // "member" or "agent"
-	CreatorID    string
+	// AssigneeSource is whose decision the executor is (Source* in origin.go);
+	// empty for a ticket that predates the record. AssigneeSourceUser names the
+	// person behind SourceQuote, resolved by the store for the comment.
+	AssigneeSource     string
+	AssigneeSourceUser string
+	// AgentLabels are the labels on this ticket that an agent attached. They
+	// stay in Labels for the judge but never count as a tier request.
+	AgentLabels []string
+	CreatorType string // "member" or "agent"
+	CreatorID   string
 
 	ProjectID   string
 	ProjectName string

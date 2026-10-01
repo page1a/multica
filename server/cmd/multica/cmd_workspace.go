@@ -57,8 +57,15 @@ var workspaceMemberCmd = &cobra.Command{
 var workspaceMemberListCmd = &cobra.Command{
 	Use:   "list [workspace-id|slug|prefix]",
 	Short: "List workspace members",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runWorkspaceMembers,
+	Long: "Lists the workspace roster. Every member gets each person's user ID, " +
+		"name and avatar (enough to assign, @mention and read comment authors).\n\n" +
+		"Email, role and join time are member management data: only a workspace " +
+		"owner sees them for other people. Anyone else gets them empty (shown as " +
+		"'-' in the table) apart from their own row. Inviting, revoking invitations, " +
+		"changing a member's role and removing a member are owner-only as well. " +
+		"An agent acts with the permissions of the person who started its task.",
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorkspaceMembers,
 }
 
 var workspaceMemberInviteCmd = &cobra.Command{
@@ -71,7 +78,8 @@ var workspaceMemberInviteCmd = &cobra.Command{
 		"'workspace list'; if omitted the current default workspace is used " +
 		"(--workspace-id / MULTICA_WORKSPACE_ID / profile default).\n\n" +
 		"Role defaults to 'member'; pass '--role admin' to invite an admin. " +
-		"Owners cannot be invited.",
+		"Owners cannot be invited.\n\n" +
+		"Only a workspace owner can invite; anyone else gets a permission error.",
 	Args: cobra.RangeArgs(1, 2),
 	RunE: runWorkspaceMemberInvite,
 }
@@ -812,15 +820,23 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 
 	headers := []string{"USER ID", "NAME", "EMAIL", "ROLE"}
 	rows := make([][]string, 0, len(members))
+	hidden := false
 	for _, m := range members {
+		email, role := strVal(m, "email"), strVal(m, "role")
+		if email == "" || role == "" {
+			hidden = true
+		}
 		rows = append(rows, []string{
 			strVal(m, "user_id"),
 			strVal(m, "name"),
-			strVal(m, "email"),
-			strVal(m, "role"),
+			dashIfEmpty(email),
+			dashIfEmpty(role),
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
+	if hidden {
+		fmt.Fprintln(os.Stderr, "note: email and role of other members are visible to the workspace owner only.")
+	}
 	return nil
 }
 
@@ -876,4 +892,13 @@ func runWorkspaceMemberInvite(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "Invitation sent to %s (role: %s, status: %s)\n",
 		strVal(inv, "invitee_email"), strVal(inv, "role"), strVal(inv, "status"))
 	return nil
+}
+
+// dashIfEmpty marks a field the server withheld, so an empty cell reads as
+// "not visible to you" rather than "not set".
+func dashIfEmpty(v string) string {
+	if v == "" {
+		return "-"
+	}
+	return v
 }

@@ -1035,6 +1035,23 @@ func (h *Handler) workspaceMember(w http.ResponseWriter, r *http.Request, worksp
 	return h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
 }
 
+// requireOwnerMember gates member management (roster fields, invitations,
+// tiers, removal) to workspace owners (DENE-1022). The router already applies
+// the same rule; this is the handler-level backstop. The member comes from
+// the request's user id, which for an agent task token is the run's
+// originator, so an agent never holds more than the person who started it.
+func (h *Handler) requireOwnerMember(w http.ResponseWriter, r *http.Request, workspaceID string) (db.Member, bool) {
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return db.Member{}, false
+	}
+	if member.Role != "owner" {
+		writeError(w, http.StatusForbidden, "only the workspace owner can manage members")
+		return db.Member{}, false
+	}
+	return member, true
+}
+
 func roleAllowed(role string, roles ...string) bool {
 	for _, candidate := range roles {
 		if role == candidate {

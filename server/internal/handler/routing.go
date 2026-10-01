@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -170,6 +172,57 @@ func (h *Handler) RouteIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// EscalateIssue is the one thing an executor may say mid-flight about who
+// should be working on its ticket: "this is too hard", with a reason
+// (DENE-1033). The body carries a reason and nothing else — a person, an
+// agent or a tier in it is a 400, not a hint — and routing re-judges from
+// scratch. `multica issue escalate` is this endpoint.
+func (h *Handler) EscalateIssue(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "escalate takes a reason and nothing else: "+err.Error())
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required: say what makes the work too hard")
+		return
+	}
+	if h.Routing == nil {
+		writeError(w, http.StatusConflict, "routing is not enabled for this workspace")
+		return
+	}
+	esc, err := h.Routing.Escalate(r.Context(), util.UUIDToString(issue.WorkspaceID), util.UUIDToString(issue.ID), req.Reason)
+	switch {
+	case errors.Is(err, routing.ErrNotEnabled):
+		writeError(w, http.StatusConflict, "routing is not enabled for this workspace")
+		return
+	case errors.Is(err, routing.ErrNotEscalatable):
+		writeError(w, http.StatusConflict, "this ticket has no agent executor to escalate from")
+		return
+	case err != nil:
+		slog.Warn("escalation failed",
+			append(logger.RequestAttrs(r), "issue_id", util.UUIDToString(issue.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "escalation failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"changed":   esc.Changed,
+		"from":      esc.From,
+		"to":        esc.To,
+		"at_top":    esc.AtTop,
+		"commented": esc.Commented,
+	})
 }
 
 // routingHealthResponse is the read-only health report the settings section

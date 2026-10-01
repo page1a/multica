@@ -645,6 +645,12 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// MemberWithUserResponse is one row of the workspace roster. id / user_id /
+// name / avatar_url are the collaboration fields every member gets (assignee
+// pickers, @mentions, comment authors). role / email / created_at are member
+// management data: only an owner sees them for other people (DENE-1022). A
+// redacted row carries empty strings for them so clients that parse the old
+// shape keep working.
 type MemberWithUserResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -656,9 +662,26 @@ type MemberWithUserResponse struct {
 	AvatarURL   *string `json:"avatar_url"`
 }
 
+// redactedForRoster drops the management fields, keeping name-and-avatar.
+func (m MemberWithUserResponse) redactedForRoster() MemberWithUserResponse {
+	m.Role = ""
+	m.Email = ""
+	m.CreatedAt = ""
+	return m
+}
+
+// ListMembersWithUser serves the roster to every workspace member. An owner
+// gets the full rows; anyone else gets their own row in full (their own role
+// drives which buttons they see) and everyone else's without role / email /
+// join time. The route stays member-level on purpose — assignee pickers,
+// @mentions and comment authors all read it.
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	requester, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
 		return
 	}
@@ -669,9 +692,10 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isOwner := requester.Role == "owner"
 	resp := make([]MemberWithUserResponse, len(members))
 	for i, m := range members {
-		resp[i] = MemberWithUserResponse{
+		row := MemberWithUserResponse{
 			ID:          uuidToString(m.ID),
 			WorkspaceID: uuidToString(m.WorkspaceID),
 			UserID:      uuidToString(m.UserID),
@@ -681,6 +705,10 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 			Email:       m.UserEmail,
 			AvatarURL:   h.resolveAvatarURLPtr(textToPtr(m.UserAvatarUrl)),
 		}
+		if !isOwner && m.UserID != requester.UserID {
+			row = row.redactedForRoster()
+		}
+		resp[i] = row
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -728,7 +756,7 @@ type UpdateMemberRequest struct {
 
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	requester, ok := h.requireOwnerMember(w, r, workspaceID)
 	if !ok {
 		return
 	}
@@ -795,8 +823,9 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := requestUserID(r)
+	// The workspace-wide frame is the roster row without management fields.
 	h.publish(protocol.EventMemberUpdated, uuidToString(requester.WorkspaceID), "member", userID, map[string]any{
-		"member": h.memberWithUserResponse(updatedMember, user),
+		"member": h.memberWithUserResponse(updatedMember, user).redactedForRoster(),
 	})
 
 	writeJSON(w, http.StatusOK, h.memberWithUserResponse(updatedMember, user))
@@ -804,7 +833,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	requester, ok := h.requireOwnerMember(w, r, workspaceID)
 	if !ok {
 		return
 	}

@@ -112,7 +112,12 @@ export interface MemberWithUser {
   id: string;
   workspace_id: string;
   user_id: string;
-  role: MemberRole;
+  /**
+   * Member management data — role, email and created_at — is owner-only
+   * (DENE-1022). For a non-owner viewer, everyone but themselves comes back
+   * with these empty ("" here), keeping only id / name / avatar.
+   */
+  role: MemberRole | "";
   created_at: string;
   name: string;
   email: string;

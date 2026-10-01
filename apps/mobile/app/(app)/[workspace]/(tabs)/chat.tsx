@@ -156,7 +156,7 @@ export default function ChatTab() {
 
   // ── Derived ────────────────────────────────────────────────────────────
   const memberRole = useMemo(
-    () => members.find((m) => m.user_id === userId)?.role ?? null,
+    () => members.find((m) => m.user_id === userId)?.role || null,
     [members, userId],
   );
 

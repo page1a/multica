@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useCurrentWorkspace } from "@multica/core/paths";
+import { useCurrentMember } from "@multica/core/permissions";
 import { moduleVisibilityOptions } from "@multica/core/workspace/queries";
 import { canAccessModule } from "@multica/core/workspace";
 import { useFeatureEnabled } from "@multica/core/config";
@@ -82,6 +83,9 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
     enabled: !!workspace?.id,
   });
   const reposAllowed = canAccessModule(moduleAccess, "repos");
+  // Member management is owner-only (DENE-1022): only owners get the nav entry.
+  const { role: myRole } = useCurrentMember(workspace?.id ?? "");
+  const isOwner = myRole === "owner";
   const navigation = useNavigation();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const billingEnabled = useFeatureEnabled(
@@ -95,6 +99,12 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
     content: React.ReactNode,
     wide = false,
   ): SettingsEntry => ({ value, label, icon, content, wide });
+  const membersEntry = entry(
+    "members",
+    t(($) => $.page.tabs.members),
+    Users,
+    <MembersTab />,
+  );
   const groups = [
     {
       key: "personal",
@@ -144,12 +154,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
           Settings,
           <WorkspaceTab />,
         ),
-        entry(
-          "members",
-          t(($) => $.page.tabs.members),
-          Users,
-          <MembersTab />,
-        ),
+        ...(isOwner ? [membersEntry] : []),
         entry(
           "project-sharing",
           t(($) => $.page.tabs.project_sharing),
@@ -278,11 +283,15 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
   const location = resolveSettingsLocation(navigation.searchParams);
   const candidate =
     location.tab === "billing" && !billingEnabled ? "workspace" : location.tab;
+  // A non-owner who opens the members link directly still lands on it and is
+  // told why it is closed, instead of being bounced to another tab unexplained.
   const active =
-    groups
-      .flatMap((group) => group.entries)
-      .find((item) => item.value === candidate) ?? groups[0]!.entries[0]!;
-  const activeGroup = groups.find((group) => group.entries.includes(active))!;
+    [...groups.flatMap((group) => group.entries), membersEntry].find(
+      (item) => item.value === candidate,
+    ) ?? groups[0]!.entries[0]!;
+  const activeGroup =
+    groups.find((group) => group.entries.includes(active)) ??
+    groups.find((group) => group.key === "workspace")!;
   const href = (value: string) =>
     settingsHref(navigation.pathname, navigation.searchParams, value);
 

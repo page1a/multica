@@ -78,6 +78,8 @@
     "./chat/project-switch": "./chat/project-switch.ts",
     "./chat/project-open-store": "./chat/project-open-store.ts",
     "./chat/list-view-store": "./chat/list-view-store.ts",
+    "./chat/list-width": "./chat/list-width.ts",
+    "./chat/list-width-store": "./chat/list-width-store.ts",
     "./chat/chat-page-shortcuts": "./chat/chat-page-shortcuts.ts",
     "./chat/project-follow": "./chat/project-follow.ts",
     "./chat/pending": "./chat/pending.ts",

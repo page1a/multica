@@ -98,7 +98,6 @@ export function RoutingTab() {
     runtimeListOptions(workspace?.id ?? ""),
   );
   const { data: members = [] } = useQuery(memberListOptions(workspace?.id ?? ""));
-  const analysisRuntime = runtimes.find((runtime) => runtime.id === analysisRuntimeId) ?? null;
 
   const saved = useMemo(
     () => parseRoutingSettings(workspace?.settings),
@@ -113,6 +112,7 @@ export function RoutingTab() {
   const [analysisBaseUrl, setAnalysisBaseUrl] = useState(saved.analysis.base_url);
   const [analysisSource, setAnalysisSource] = useState(saved.analysis.source ?? "api_gateway");
   const [analysisRuntimeId, setAnalysisRuntimeId] = useState(saved.analysis.runtime_id ?? "");
+  const analysisRuntime = runtimes.find((runtime) => runtime.id === analysisRuntimeId) ?? null;
   const [analysisThinkingLevel, setAnalysisThinkingLevel] = useState(saved.analysis.thinking_level ?? "low");
   const [threshold, setThreshold] = useState(String(saved.confidence_threshold));
   const [staleHours, setStaleHours] = useState(String(saved.stale_review_hours));

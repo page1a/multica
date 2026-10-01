@@ -412,6 +412,35 @@ describe("RepositoriesTab — automatic updates", () => {
     expect(button.getAttribute("title")).toContain("GITHUB_APP_ID");
   });
 
+  it("sends the owner to Connections when the server has no GitHub App", async () => {
+    githubRef.current = {
+      installations: [],
+      configured: false,
+      repository_browse_configured: false,
+      can_manage: true,
+    };
+    const user = setupUser();
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText(/Create it on the Connections tab/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create GitHub App" }));
+    expect(mockNavPush).toHaveBeenCalledWith(expect.stringContaining("tab=git-connections"));
+  });
+
+  it("tells an admin that the owner must create the missing GitHub App", () => {
+    membersRef.current = [{ user_id: "user-1", role: "admin" }];
+    githubRef.current = {
+      installations: [],
+      configured: false,
+      repository_browse_configured: false,
+      can_manage: true,
+    };
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByRole("button", { name: "Create GitHub App" })).toBeDisabled();
+    expect(screen.getByText(/Ask a workspace owner/)).toBeInTheDocument();
+  });
+
   it("imports selected GitHub repositories and deduplicates HTTPS against SSH", async () => {
     workspaceRef.current = {
       ...workspaceRef.current,

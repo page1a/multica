@@ -774,7 +774,7 @@ export function createMentionSuggestion(
     // don't see (or auto-complete) agents they couldn't assign anyway.
     const userId = useAuthStore.getState().user?.id ?? null;
     const myRole =
-      members.find((m) => m.user_id === userId)?.role ?? null;
+      members.find((m) => m.user_id === userId)?.role || null;
 
     const q = query.toLowerCase();
 

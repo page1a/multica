@@ -10,6 +10,12 @@ let board: InboxBoard;
 let seenAt: string | null = null;
 const markSeen = vi.fn();
 const readBoard = vi.fn();
+const PROJECTS = [
+  { id: "p-1", title: "Multica 魔改" },
+  { id: "p-2", title: "AI100" },
+] as unknown as import("@multica/core/types").Project[];
+let boardProjectId: string | null = null;
+const setBoardProject = vi.fn();
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/auth", () => ({
@@ -37,8 +43,14 @@ vi.mock("@multica/core/home", async (importOriginal) => {
   );
   return {
     ...actual,
-    useInboxBoard: (wsId: string) => {
-      readBoard(wsId);
+    useBoardProject: () => ({
+      projectId: boardProjectId,
+      project: PROJECTS.find((p) => p.id === boardProjectId) ?? null,
+      projects: PROJECTS,
+      setProjectId: setBoardProject,
+    }),
+    useInboxBoard: (wsId: string, opts?: { projectId?: string | null }) => {
+      readBoard(wsId, opts?.projectId ?? null);
       return { board, isLoading: false, isError: false };
     },
     useDoneSeenStore: store,
@@ -87,6 +99,8 @@ function row(over: Partial<BoardRow> & { issueId: string; lane: BoardRow["lane"]
 }
 
 beforeEach(() => {
+  boardProjectId = null;
+  setBoardProject.mockClear();
   push.mockReset();
   mutate.mockReset();
   markSeen.mockReset();
@@ -125,6 +139,36 @@ beforeEach(() => {
   };
 });
 
+describe("HomePage project filter (DENE-1019)", () => {
+  it("with every project shown, asks the AI about the whole inbox", () => {
+    renderWithI18n(<HomePage />);
+    expect(readBoard).toHaveBeenCalledWith("ws-1", null);
+    expect(screen.getByTestId("board-project-filter")).toHaveTextContent("All projects");
+    const ask = screen.getByTestId("board-ask-ai");
+    expect(ask).toHaveTextContent("Walk me through it");
+    expect(decodeURIComponent(ask.getAttribute("href") ?? "")).not.toContain("--project");
+  });
+
+  it("picking a project narrows the board and remembers the choice", () => {
+    renderWithI18n(<HomePage />);
+    fireEvent.click(within(screen.getByTestId("board-project-filter")).getByRole("button"));
+    fireEvent.click(screen.getByText("AI100"));
+    expect(setBoardProject).toHaveBeenCalledWith("p-2");
+  });
+
+  it("with a project picked, reads that project and sends the AI to the same one", () => {
+    boardProjectId = "p-1";
+    renderWithI18n(<HomePage />);
+    expect(readBoard).toHaveBeenCalledWith("ws-1", "p-1");
+    expect(screen.getByTestId("board-project-filter")).toHaveTextContent("Multica 魔改");
+    const ask = screen.getByTestId("board-ask-ai");
+    expect(ask).toHaveTextContent("Walk me through this project");
+    const prompt = decodeURIComponent(ask.getAttribute("href") ?? "");
+    expect(prompt).toContain("multica inbox board --project p-1");
+    expect(prompt).toContain("Multica 魔改");
+  });
+});
+
 describe("HomePage", () => {
   it("shows one row per issue in the five lanes", () => {
     renderWithI18n(<HomePage />);
@@ -154,7 +198,7 @@ describe("HomePage", () => {
     board.running[0] = { ...board.running[0]!, unread: 2 };
     board.fresh = [row({ issueId: "900", lane: "fresh", unread: 1 })];
     renderWithI18n(<HomePage />);
-    expect(readBoard).toHaveBeenCalledWith("ws-1");
+    expect(readBoard).toHaveBeenCalledWith("ws-1", null);
     expect(within(screen.getByTestId("board-lane-running")).getByText("2 new")).toBeInTheDocument();
     const fresh = screen.getByTestId("board-lane-fresh");
     expect(within(fresh).getByText("title 900")).toBeInTheDocument();

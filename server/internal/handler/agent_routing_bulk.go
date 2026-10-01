@@ -114,7 +114,8 @@ func (h *Handler) BulkUpdateAgentRouting(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback(r.Context())
-	updated, err := h.Queries.WithTx(tx).SetAgentsRouting(r.Context(), params)
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.SetAgentsRouting(r.Context(), params)
 	if err != nil {
 		slog.Warn("bulk update agent routing failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to update agents")
@@ -126,15 +127,53 @@ func (h *Handler) BulkUpdateAgentRouting(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "one or more agents not found")
 		return
 	}
+	// A following specialisation does not own its rung or usage (DENE-1016).
+	// Refuse the whole batch: a half-applied selection would be the thing
+	// this endpoint exists to avoid. The rollback drops the rows above.
+	for _, agent := range updated {
+		if agent.RuntimeInherited && agent.ParentAgentID.Valid {
+			parent, parentErr := qtx.GetAgent(r.Context(), agent.ParentAgentID)
+			parentName := ""
+			if parentErr == nil {
+				parentName = parent.Name
+			}
+			writeError(w, http.StatusBadRequest, routingFollowError(parentName))
+			return
+		}
+	}
+	// Base roles in the batch copy the new pair onto the specialisations
+	// that follow them, in this same transaction.
+	var cascaded []db.Agent
+	seenParent := make(map[pgtype.UUID]bool, len(updated))
+	for _, agent := range updated {
+		if agent.ParentAgentID.Valid || seenParent[agent.ID] {
+			continue
+		}
+		seenParent[agent.ID] = true
+		children, syncErr := qtx.SyncInheritedAgentRuntimeProfiles(r.Context(), agent.ID)
+		if syncErr != nil {
+			slog.Warn("bulk sync following agent routing failed", append(logger.RequestAttrs(r), "error", syncErr)...)
+			writeError(w, http.StatusInternalServerError, "failed to update following specialisations")
+			return
+		}
+		cascaded = append(cascaded, children...)
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update agents")
 		return
 	}
 
-	resp := BulkUpdateAgentRoutingResponse{Agents: make([]AgentResponse, 0, len(updated))}
+	resp := BulkUpdateAgentRoutingResponse{Agents: make([]AgentResponse, 0, len(updated)+len(cascaded))}
 	for _, agent := range updated {
 		h.publishAgentUpdate(r, agent)
 		resp.Agents = append(resp.Agents, h.agentToResponse(agent))
+	}
+	// Followers were not in the request, but their rows changed. Publishing
+	// them (and returning them) is what lets the seats table paint the copy
+	// without waiting for a reload.
+	for _, child := range cascaded {
+		h.publishAgentUpdate(r, child)
+		resp.Agents = append(resp.Agents, h.agentToResponse(child))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

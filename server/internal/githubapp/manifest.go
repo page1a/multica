@@ -32,8 +32,9 @@ type Manifest struct {
 }
 
 // Build matches the self-host manifest: public install, read-only permissions,
-// setup and webhook URLs on this instance. redirect_url carries state so the
-// callback can recover the workspace without a browser session.
+// setup and webhook URLs on this instance. state rides on the form action, not
+// redirect_url: GitHub echoes it back to the callback, while a redirect_url
+// carrying the signed state is too long for GitHub to accept.
 func Build(publicAPI, appURL, state, org string) (Manifest, error) {
 	api := strings.TrimRight(strings.TrimSpace(publicAPI), "/")
 	if api == "" {
@@ -47,7 +48,6 @@ func Build(publicAPI, appURL, state, org string) (Manifest, error) {
 	if org != "" && !validOrgLogin(org) {
 		return Manifest{}, ErrInvalidOrg
 	}
-	redirect := api + "/api/github/app/callback?state=" + url.QueryEscape(state)
 	fields := map[string]any{
 		"name":        appName(api),
 		"url":         home,
@@ -57,7 +57,7 @@ func Build(publicAPI, appURL, state, org string) (Manifest, error) {
 			"url":    api + "/api/webhooks/github",
 			"active": true,
 		},
-		"redirect_url":    redirect,
+		"redirect_url":    api + "/api/github/app/callback",
 		"setup_url":       api + "/api/github/setup",
 		"setup_on_update": true,
 		"default_permissions": map[string]string{
@@ -73,7 +73,7 @@ func Build(publicAPI, appURL, state, org string) (Manifest, error) {
 	if org != "" {
 		action = "https://github.com/organizations/" + url.PathEscape(org) + "/settings/apps/new"
 	}
-	return Manifest{ActionURL: action, Fields: fields}, nil
+	return Manifest{ActionURL: action + "?state=" + url.QueryEscape(state), Fields: fields}, nil
 }
 
 func appName(publicAPI string) string {

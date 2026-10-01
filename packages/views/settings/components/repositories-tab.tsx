@@ -151,6 +151,14 @@ export function RepositoriesTab() {
   const githubConnectConfigured = githubData?.configured === true;
   const githubBrowseConfigured =
     githubData?.repository_browse_configured === true;
+  // No App on this server yet: the owner creates it on the Connections tab,
+  // so the button leads there instead of sitting disabled with no way out.
+  const githubAppMissing =
+    githubData !== undefined &&
+    !githubConnectConfigured &&
+    !githubBrowseConfigured &&
+    githubInstallations.length === 0;
+  const isWorkspaceOwner = currentMember?.role === "owner";
   const githubRepositoriesQuery = useInfiniteQuery({
     ...githubInstallationRepositoriesOptions(wsId, selectedInstallationID),
     enabled:
@@ -575,34 +583,59 @@ export function RepositoriesTab() {
                   <Plus className="size-3.5" />
                   {t(($) => $.repositories.add)}
                 </Button>
-                <Button
-                  size="sm"
-                  onClick={handleGitHubAction}
-                  disabled={
-                    connectingGitHub ||
-                    !githubBrowseConfigured ||
-                    (!githubConnectConfigured &&
-                      githubInstallations.length === 0)
-                  }
-                  title={
-                    !githubBrowseConfigured
-                      ? t(($) => $.repositories.github_browse_not_configured)
-                      : undefined
-                  }
-                >
-                  {connectingGitHub ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
+                {githubAppMissing ? (
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      navigation.push(
+                        settingsHref(
+                          navigation.pathname,
+                          navigation.searchParams,
+                          "git-connections",
+                        ),
+                      )
+                    }
+                    disabled={!isWorkspaceOwner}
+                  >
                     <GitHubMark className="size-3.5" />
-                  )}
-                  {githubInstallations.length > 0
-                    ? t(($) => $.repositories.choose_from_github)
-                    : t(($) => $.repositories.connect_github)}
-                </Button>
+                    {t(($) => $.repositories.github_app_create)}
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={handleGitHubAction}
+                    disabled={
+                      connectingGitHub ||
+                      !githubBrowseConfigured ||
+                      (!githubConnectConfigured &&
+                        githubInstallations.length === 0)
+                    }
+                    title={
+                      !githubBrowseConfigured
+                        ? t(($) => $.repositories.github_browse_not_configured)
+                        : undefined
+                    }
+                  >
+                    {connectingGitHub ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : (
+                      <GitHubMark className="size-3.5" />
+                    )}
+                    {githubInstallations.length > 0
+                      ? t(($) => $.repositories.choose_from_github)
+                      : t(($) => $.repositories.connect_github)}
+                  </Button>
+                )}
               </div>
               {!allUrlsValid ? (
                 <span className="text-caption text-muted-foreground">
                   {t(($) => $.repositories.url_empty)}
+                </span>
+              ) : githubAppMissing ? (
+                <span className="text-caption text-muted-foreground">
+                  {isWorkspaceOwner
+                    ? t(($) => $.repositories.github_app_missing_owner)
+                    : t(($) => $.repositories.github_app_missing_member)}
                 </span>
               ) : null}
             </div>

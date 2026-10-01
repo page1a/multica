@@ -14,6 +14,9 @@
 UPDATE issue
 SET assignee_type = sqlc.arg('assignee_type')::text,
     assignee_id = sqlc.arg('assignee_id')::uuid,
+    assignee_source = 'router',
+    assignee_source_user_id = NULL,
+    assignee_quote = NULL,
     revision = revision + 1,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
@@ -117,9 +120,24 @@ RETURNING *;
 UPDATE issue
 SET assignee_type = sqlc.arg('assignee_type')::text,
     assignee_id = sqlc.arg('assignee_id')::uuid,
+    assignee_source = 'router',
+    assignee_source_user_id = NULL,
+    assignee_quote = NULL,
     revision = revision + 1,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
+WHERE id = sqlc.arg('id')::uuid
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+RETURNING *;
+
+-- name: SetIssueAssigneeSource :one
+-- Stamps whose decision the current executor is (DENE-1033). Written in the
+-- same request as the assignment it describes; the routing writes above stamp
+-- 'router' themselves. Passing a NULL source clears the record.
+UPDATE issue
+SET assignee_source = sqlc.narg('assignee_source')::text,
+    assignee_source_user_id = sqlc.narg('assignee_source_user_id')::uuid,
+    assignee_quote = sqlc.narg('assignee_quote')::text
 WHERE id = sqlc.arg('id')::uuid
   AND workspace_id = sqlc.arg('workspace_id')::uuid
 RETURNING *;

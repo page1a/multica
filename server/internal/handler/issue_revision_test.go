@@ -830,11 +830,11 @@ func TestAuxiliaryVisibleMutationsAdvanceOwnerRevisionExactlyOnce(t *testing.T) 
 	if err := json.Unmarshal(labelsResponse.Body.Bytes(), &labelPayload); err != nil || labelPayload.IssueRevision != 2 {
 		t.Fatalf("list issue labels revision = (%d, %v), want 2", labelPayload.IssueRevision, err)
 	}
-	detached, err := testHandler.Queries.DetachLabelFromIssue(ctx, db.DetachLabelFromIssueParams(labelParams))
+	detached, err := testHandler.Queries.DetachLabelFromIssue(ctx, db.DetachLabelFromIssueParams{IssueID: labelParams.IssueID, LabelID: labelParams.LabelID, WorkspaceID: labelParams.WorkspaceID})
 	if err != nil || !detached.Changed || detached.IssueRevision != 3 {
 		t.Fatalf("detach label = (%+v, %v), want changed revision 3", detached, err)
 	}
-	detached, err = testHandler.Queries.DetachLabelFromIssue(ctx, db.DetachLabelFromIssueParams(labelParams))
+	detached, err = testHandler.Queries.DetachLabelFromIssue(ctx, db.DetachLabelFromIssueParams{IssueID: labelParams.IssueID, LabelID: labelParams.LabelID, WorkspaceID: labelParams.WorkspaceID})
 	if err != nil || detached.Changed || detached.IssueRevision != 0 {
 		t.Fatalf("duplicate label detach = (%+v, %v), want no-op", detached, err)
 	}

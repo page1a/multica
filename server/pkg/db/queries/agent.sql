@@ -302,6 +302,11 @@ RETURNING *;
 -- would hand that member the secrets through their own env reveal. Across
 -- owners the specialisation keeps its own execution config; everything else
 -- still follows.
+--
+-- Routing tier and usage (DENE-1016) follow for every owner: they are not
+-- secrets, and a following seat that kept its own rung would route as a
+-- different person. The same statement is the copy used when a base role's
+-- routing changes, so that write and this one commit together.
 UPDATE agent AS child
 SET runtime_id = parent.runtime_id,
     runtime_mode = parent.runtime_mode,
@@ -309,6 +314,8 @@ SET runtime_id = parent.runtime_id,
     model = parent.model,
     thinking_level = parent.thinking_level,
     service_tier = parent.service_tier,
+    routing_tier = parent.routing_tier,
+    routing_usage = parent.routing_usage,
     custom_env = CASE WHEN child.owner_id = parent.owner_id THEN parent.custom_env ELSE child.custom_env END,
     custom_args = CASE WHEN child.owner_id = parent.owner_id THEN parent.custom_args ELSE child.custom_args END,
     mcp_config = CASE WHEN child.owner_id = parent.owner_id THEN parent.mcp_config ELSE child.mcp_config END,
@@ -324,6 +331,8 @@ WHERE child.parent_agent_id = parent.id
     OR child.model IS DISTINCT FROM parent.model
     OR child.thinking_level IS DISTINCT FROM parent.thinking_level
     OR child.service_tier IS DISTINCT FROM parent.service_tier
+    OR child.routing_tier IS DISTINCT FROM parent.routing_tier
+    OR child.routing_usage IS DISTINCT FROM parent.routing_usage
     OR (child.owner_id = parent.owner_id
       AND (child.custom_env IS DISTINCT FROM parent.custom_env
         OR child.custom_args IS DISTINCT FROM parent.custom_args

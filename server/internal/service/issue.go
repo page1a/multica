@@ -88,6 +88,13 @@ type IssueCreateParams struct {
 	// ErrIssueLabelNotFound rather than being silently dropped.
 	LabelIDs       []pgtype.UUID
 	AllowDuplicate bool
+	// AssigneeSource & co record whose decision the executor is (DENE-1033;
+	// routing.Source*). Written in the create transaction, so the executor is
+	// never visible unlabelled. Empty leaves the record unset. SourceAgent with
+	// no assignee records an ignored attempt.
+	AssigneeSource       string
+	AssigneeSourceUserID pgtype.UUID
+	AssigneeQuote        string
 	// Stage groups this issue into an ordered barrier group under its parent
 	// (NULL = unstaged). See issue_child_done.go for the staged-barrier wake.
 	Stage pgtype.Int4
@@ -501,6 +508,18 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 	if err != nil {
 		return issueCreateTxOutcome{}, fmt.Errorf("create issue: %w", err)
 	}
+	if p.AssigneeSource != "" {
+		issue, err = qtx.SetIssueAssigneeSource(ctx, db.SetIssueAssigneeSourceParams{
+			ID:                   issue.ID,
+			WorkspaceID:          p.WorkspaceID,
+			AssigneeSource:       pgtype.Text{String: p.AssigneeSource, Valid: true},
+			AssigneeSourceUserID: p.AssigneeSourceUserID,
+			AssigneeQuote:        pgtype.Text{String: p.AssigneeQuote, Valid: p.AssigneeQuote != ""},
+		})
+		if err != nil {
+			return issueCreateTxOutcome{}, fmt.Errorf("record assignee source: %w", err)
+		}
+	}
 
 	if p.SourceContext != nil {
 		if _, err := PersistSourceContext(ctx, qtx, *p.SourceContext, issue.ID, pgtype.UUID{}); err != nil {
@@ -570,6 +589,9 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 			IssueID:     issue.ID,
 			LabelID:     label.ID,
 			WorkspaceID: p.WorkspaceID,
+			// Who attached it decides whether routing may read it as a tier
+			// request (DENE-1033).
+			AttachedByType: pgtype.Text{String: p.CreatorType, Valid: p.CreatorType != ""},
 		}); err != nil {
 			return issueCreateTxOutcome{}, fmt.Errorf("attach issue label: %w", err)
 		}

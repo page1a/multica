@@ -41,17 +41,17 @@ func (q *Queries) AttachLabelToAgent(ctx context.Context, arg AttachLabelToAgent
 
 const attachLabelToIssue = `-- name: AttachLabelToIssue :one
 WITH inserted AS (
-    INSERT INTO issue_to_label (issue_id, label_id)
-    SELECT $1::uuid, $2::uuid
+    INSERT INTO issue_to_label (issue_id, label_id, attached_by_type)
+    SELECT $1::uuid, $2::uuid, $3::text
     WHERE EXISTS (
         SELECT 1 FROM issue i
         WHERE i.id = $1::uuid
-          AND i.workspace_id = $3::uuid
+          AND i.workspace_id = $4::uuid
     )
       AND EXISTS (
         SELECT 1 FROM issue_label l
         WHERE l.id = $2::uuid
-          AND l.workspace_id = $3::uuid
+          AND l.workspace_id = $4::uuid
           AND l.resource_type = 'issue'
     )
     ON CONFLICT DO NOTHING
@@ -68,9 +68,10 @@ SELECT EXISTS(SELECT 1 FROM inserted) AS changed,
 `
 
 type AttachLabelToIssueParams struct {
-	IssueID     pgtype.UUID `json:"issue_id"`
-	LabelID     pgtype.UUID `json:"label_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID        pgtype.UUID `json:"issue_id"`
+	LabelID        pgtype.UUID `json:"label_id"`
+	AttachedByType pgtype.Text `json:"attached_by_type"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 }
 
 type AttachLabelToIssueRow struct {
@@ -79,7 +80,12 @@ type AttachLabelToIssueRow struct {
 }
 
 func (q *Queries) AttachLabelToIssue(ctx context.Context, arg AttachLabelToIssueParams) (AttachLabelToIssueRow, error) {
-	row := q.db.QueryRow(ctx, attachLabelToIssue, arg.IssueID, arg.LabelID, arg.WorkspaceID)
+	row := q.db.QueryRow(ctx, attachLabelToIssue,
+		arg.IssueID,
+		arg.LabelID,
+		arg.AttachedByType,
+		arg.WorkspaceID,
+	)
 	var i AttachLabelToIssueRow
 	err := row.Scan(&i.Changed, &i.IssueRevision)
 	return i, err
@@ -90,7 +96,7 @@ WITH touched_issue AS (
     UPDATE issue
     SET last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now())
     WHERE issue.id = $1::uuid
-      AND issue.workspace_id = $3::uuid
+      AND issue.workspace_id = $4::uuid
       AND NOT EXISTS (
           SELECT 1 FROM issue_to_label
           WHERE issue_to_label.issue_id = $1::uuid
@@ -99,28 +105,34 @@ WITH touched_issue AS (
       AND EXISTS (
           SELECT 1 FROM issue_label
           WHERE issue_label.id = $2::uuid
-            AND issue_label.workspace_id = $3::uuid
+            AND issue_label.workspace_id = $4::uuid
             AND issue_label.resource_type = 'issue'
       )
     RETURNING issue.id
 )
-INSERT INTO issue_to_label (issue_id, label_id)
-SELECT $1::uuid, $2::uuid
+INSERT INTO issue_to_label (issue_id, label_id, attached_by_type)
+SELECT $1::uuid, $2::uuid, $3::text
 WHERE EXISTS (SELECT 1 FROM touched_issue)
 ON CONFLICT DO NOTHING
 `
 
 type AttachLabelToIssueOnCreateParams struct {
-	IssueID     pgtype.UUID `json:"issue_id"`
-	LabelID     pgtype.UUID `json:"label_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID        pgtype.UUID `json:"issue_id"`
+	LabelID        pgtype.UUID `json:"label_id"`
+	AttachedByType pgtype.Text `json:"attached_by_type"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 }
 
 // Workspace-guarded INSERT: the WHERE EXISTS clauses ensure both the issue
 // and the label belong to the given workspace. A future caller that forgets
 // handler-level prechecks still cannot attach labels across workspaces.
 func (q *Queries) AttachLabelToIssueOnCreate(ctx context.Context, arg AttachLabelToIssueOnCreateParams) error {
-	_, err := q.db.Exec(ctx, attachLabelToIssueOnCreate, arg.IssueID, arg.LabelID, arg.WorkspaceID)
+	_, err := q.db.Exec(ctx, attachLabelToIssueOnCreate,
+		arg.IssueID,
+		arg.LabelID,
+		arg.AttachedByType,
+		arg.WorkspaceID,
+	)
 	return err
 }
 
@@ -387,6 +399,46 @@ func (q *Queries) GetLabel(ctx context.Context, arg GetLabelParams) (IssueLabel,
 		&i.Description,
 	)
 	return i, err
+}
+
+const listIssueLabelNamesNotByAgent = `-- name: ListIssueLabelNamesNotByAgent :many
+SELECT l.name
+FROM issue_label l
+JOIN issue_to_label il ON il.label_id = l.id
+WHERE il.issue_id = $1::uuid
+  AND l.workspace_id = $2::uuid
+  AND l.resource_type = 'issue'
+  AND il.attached_by_type IS DISTINCT FROM 'agent'
+ORDER BY LOWER(l.name) ASC
+`
+
+type ListIssueLabelNamesNotByAgentParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// The labels routing may read as instructions: everything except what an agent
+// attached. A tier label is a person's answer to "how strong should the
+// executor be"; the same label from an agent is a guess and must not steer the
+// pick (DENE-1033).
+func (q *Queries) ListIssueLabelNamesNotByAgent(ctx context.Context, arg ListIssueLabelNamesNotByAgentParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listIssueLabelNamesNotByAgent, arg.IssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLabels = `-- name: ListLabels :many

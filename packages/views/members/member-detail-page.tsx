@@ -64,11 +64,13 @@ export function MemberDetailPage({ userId }: { userId: string }) {
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <h1 className="truncate text-title-sm font-semibold">{member.name}</h1>
-            <RoleBadge role={member.role} />
+            {member.role && <RoleBadge role={member.role} />}
           </div>
-          <p className="mt-0.5 truncate text-body text-muted-foreground">
-            {member.email}
-          </p>
+          {member.email && (
+            <p className="mt-0.5 truncate text-body text-muted-foreground">
+              {member.email}
+            </p>
+          )}
         </div>
       </div>
 

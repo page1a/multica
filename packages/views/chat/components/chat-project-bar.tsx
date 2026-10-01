@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronsUpDown, GripVertical, Pin } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
@@ -15,8 +15,10 @@ import { useShortcut } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { chatSessionProjectIds } from "@multica/core/chat/project-context";
 import {
+  CHAT_PROJECT_BAR_ROWS,
+  narrowestWidthFittingAll,
   rankChatProjects,
-  visibleBarProjectIdsForWidths,
+  visibleBarProjectIds,
   type ChatProjectFilter,
 } from "@multica/core/chat/project-bar";
 import {
@@ -29,12 +31,23 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 
 const CHIP_GAP = 6;
+/** Chip height (`h-7`). With the gap it caps the chip area at the allowed rows. */
+const CHIP_HEIGHT = 28;
+const CHIPS_MAX_HEIGHT =
+  CHAT_PROJECT_BAR_ROWS * CHIP_HEIGHT + (CHAT_PROJECT_BAR_ROWS - 1) * CHIP_GAP;
+/** Added to the reported fit width so a rounding pixel cannot wrap the last chip. */
+const FIT_WIDTH_SLACK = 2;
+// Tabular digits keep the trigger from getting wider as its count drops: a
+// proportional "(6)" → "(7)" can differ by a pixel, which takes that pixel
+// from the chips, which drops a chip, which changes the count back — forever.
+const MORE_TRIGGER_CLASS = "h-7 shrink-0 rounded-full px-2.5 text-caption tabular-nums";
+const MORE_GHOST_STYLE: CSSProperties = { position: "absolute", visibility: "hidden", whiteSpace: "nowrap" };
 /** Not a project id. Stands in for the "no project" filter when it is promoted onto the bar. */
 const NONE_CHIP = "\0none";
 
-// Natural chip width. A mirror stretched to the row makes every chip measure
-// as wide as the row, so the fit stays at one chip and the painted chip
-// leaves an empty gap.
+// Natural chip width. A mirror stretched to the bar makes every chip measure
+// as wide as the bar, so the fit stays at one chip per row and the painted
+// chip leaves an empty gap.
 const MIRROR_STYLE: CSSProperties = {
   position: "absolute",
   left: 0,
@@ -52,11 +65,16 @@ const CHIP_SLOT_STYLE: CSSProperties = {
   flex: "none",
   width: "max-content",
 };
+// On the bar a chip wider than the whole row is clipped instead of pushing
+// the row wider than the list.
+const PAINTED_SLOT_STYLE: CSSProperties = { ...CHIP_SLOT_STYLE, maxWidth: "100%" };
 
 /**
- * One row above the chat list: All, then the person's pinned projects, then
- * projects they have chatted in recently. Whatever does not fit goes into
- * More, where every project can be searched, pinned, and — for pins — reordered.
+ * Above the chat list, on up to two rows: All, then the person's pinned
+ * projects, then projects they have chatted in recently. The second row only
+ * appears when the first is full. Whatever still does not fit goes into More,
+ * which lists those collapsed projects first and is also where every project
+ * can be searched, pinned, and — for pins — reordered.
  */
 export function ChatProjectBar({
   projects,
@@ -65,6 +83,7 @@ export function ChatProjectBar({
   filter,
   onFilterChange,
   onOpenSwitcher,
+  onFitWidthChange,
 }: {
   projects: Project[];
   sessions: ChatSession[];
@@ -73,6 +92,12 @@ export function ChatProjectBar({
   onFilterChange: (filter: ChatProjectFilter) => void;
   /** Opens the searchable jump list. Omitted on surfaces that don't switch. */
   onOpenSwitcher?: () => void;
+  /**
+   * Reports how wide this bar has to be for every chip to fit on its rows
+   * (null until measured). The chat page turns it into the divider's
+   * "fits every project" width.
+   */
+  onFitWidthChange?: (width: number | null) => void;
 }) {
   const { t } = useT("chat");
   const projectSwitchChord = useShortcut("switchChatProject");
@@ -118,19 +143,59 @@ export function ChatProjectBar({
     if (!promotedId || orderedIds.includes(promotedId)) return orderedIds;
     return [...orderedIds, promotedId];
   }, [orderedIds, promotedId]);
+  // The mirror holds the All chip first, then one chip per `measureIds`.
   const { containerRef, measureRef, available, widths } = useMeasuredRow();
-  const visibleIds = visibleBarProjectIdsForWidths(
-    orderedIds,
-    widths.slice(0, orderedIds.length),
+  const leadWidth = widths[0] ?? 0;
+  const widthById = new Map(measureIds.map((id, index) => [id, widths[index + 1] ?? 0]));
+  const visibleIds = visibleBarProjectIds({
+    ids: orderedIds,
+    pinnedCount: ranked.pinned.length,
+    widthById,
     available,
-    CHIP_GAP,
+    gap: CHIP_GAP,
+    rows: CHAT_PROJECT_BAR_ROWS,
+    lead: leadWidth,
     promotedId,
-    promotedId == null ? undefined : widths[measureIds.indexOf(promotedId)],
-  );
+  });
+  const fitAvailable =
+    widths.length === measureIds.length + 1
+      ? narrowestWidthFittingAll(widths.slice(1), CHIP_GAP, CHAT_PROJECT_BAR_ROWS, leadWidth)
+      : null;
+
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const moreWhenAllFitRef = useRef<HTMLButtonElement | null>(null);
+  const reportedFitWidth = useRef<number | null>(null);
+  // After every commit, like the measurement itself: the chrome beside the
+  // chips (padding, switcher, More) is read off the painted bar, live from
+  // the DOM in one pass. More is counted at the width it has once every chip
+  // fits — its label changes with the overflow count, and a fit width that
+  // moved with the painted label would send the divider's snap chasing it
+  // (snap → all fit → shorter label → narrower fit → one chip drops → ...).
+  useLayoutEffect(() => {
+    if (!onFitWidthChange) return;
+    const root = rootRef.current;
+    const chips = containerRef.current;
+    const more = moreRef.current;
+    const moreWhenAllFit = moreWhenAllFitRef.current;
+    let next: number | null = null;
+    if (fitAvailable != null && root && chips && chips.clientWidth > 0) {
+      const chrome = root.offsetWidth - Math.floor(chips.clientWidth);
+      const moreDelta = more && moreWhenAllFit ? moreWhenAllFit.offsetWidth - more.offsetWidth : 0;
+      next = fitAvailable + chrome + moreDelta + FIT_WIDTH_SLACK;
+    }
+    if (reportedFitWidth.current === next) return;
+    reportedFitWidth.current = next;
+    onFitWidthChange(next);
+  });
   const visibleProjectCount = visibleIds.filter(
     (id) => id !== NONE_CHIP && titleById.has(id),
   ).length;
   const overflowCount = Math.max(0, projects.length - visibleProjectCount);
+  const overflowCountWhenAllFit = Math.max(
+    0,
+    projects.length - orderedIds.filter((id) => titleById.has(id)).length,
+  );
   const menuOwnsSelection =
     (filter.type === "project" && !visibleIds.includes(filter.id)) ||
     (filter.type === "none" && !visibleIds.includes(NONE_CHIP));
@@ -159,13 +224,23 @@ export function ChatProjectBar({
     matchesPinyin(label, queryText);
 
   const noneLabel = t(($) => $.project_bar.none);
+  // Bar projects that did not fit. Collapsed pins stay under Pinned, where
+  // they can also be reordered, so no project is listed twice.
+  const collapsedIds = new Set(
+    orderedIds.filter((id) => !visibleIds.includes(id) && !pinnedIds.includes(id)),
+  );
+  const collapsedRows = ranked.bar.filter(
+    (row) => collapsedIds.has(row.id) && matches(titleById.get(row.id) ?? ""),
+  );
   const pinnedRows = ranked.pinned.filter((row) => matches(titleById.get(row.id) ?? ""));
-  const restRows = ranked.rest.filter((row) => matches(titleById.get(row.id) ?? ""));
+  const restRows = ranked.rest.filter(
+    (row) => !collapsedIds.has(row.id) && matches(titleById.get(row.id) ?? ""),
+  );
   const showNone = matches(noneLabel);
 
   const chipClass = (active: boolean) =>
     cn(
-      "h-7 shrink-0 gap-1 rounded-full px-2.5 text-caption",
+      "h-7 max-w-full shrink-0 gap-1 rounded-full px-2.5 text-caption",
       active &&
         "border-foreground bg-foreground text-background hover:bg-foreground/90 hover:text-background",
     );
@@ -190,7 +265,7 @@ export function ChatProjectBar({
             className={cn("size-1.5 shrink-0 rounded-full", active ? "bg-background" : "bg-brand")}
           />
         )}
-        <span className="max-w-32 truncate">{title}</span>
+        <span className="min-w-0 max-w-32 truncate">{title}</span>
         <span className={cn("tabular-nums", active ? "text-background/70" : "text-muted-foreground")}>
           {row?.chatCount ?? 0}
         </span>
@@ -214,26 +289,30 @@ export function ChatProjectBar({
       renderProjectChip(id)
     );
 
-  return (
-    <div className="relative flex items-center gap-1.5 border-b px-2 pb-2">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        aria-pressed={filter.type === "all"}
-        className={chipClass(filter.type === "all")}
-        onClick={() => select({ type: "all" })}
-      >
-        {t(($) => $.project_bar.all)}
-      </Button>
+  const allChip = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      aria-pressed={filter.type === "all"}
+      className={chipClass(filter.type === "all")}
+      onClick={() => select({ type: "all" })}
+    >
+      {t(($) => $.project_bar.all)}
+    </Button>
+  );
 
+  return (
+    <div ref={rootRef} className="relative flex items-start gap-1.5 border-b px-2 pb-2">
       <div
         ref={containerRef}
-        className="flex h-7 min-w-0 flex-1 flex-nowrap items-center overflow-hidden"
-        style={{ gap: CHIP_GAP }}
+        data-slot="chat-project-chips"
+        className="flex min-w-0 flex-1 flex-wrap content-start items-center overflow-hidden"
+        style={{ gap: CHIP_GAP, maxHeight: CHIPS_MAX_HEIGHT }}
       >
+        <span style={PAINTED_SLOT_STYLE}>{allChip}</span>
         {visibleIds.map((id) => (
-          <span key={id} style={CHIP_SLOT_STYLE}>
+          <span key={id} style={PAINTED_SLOT_STYLE}>
             {renderSlot(id)}
           </span>
         ))}
@@ -274,12 +353,13 @@ export function ChatProjectBar({
         <PopoverTrigger
           render={
             <Button
+              ref={moreRef}
               type="button"
               variant="outline"
               size="sm"
               aria-pressed={menuOwnsSelection}
               className={cn(
-                "h-7 shrink-0 rounded-full px-2.5 text-caption",
+                MORE_TRIGGER_CLASS,
                 menuOwnsSelection &&
                   "border-foreground bg-foreground text-background hover:bg-foreground/90 hover:text-background",
               )}
@@ -314,6 +394,23 @@ export function ChatProjectBar({
             />
           </div>
           <div className="max-h-80 overflow-y-auto pb-2">
+            {collapsedRows.length > 0 && (
+              <div role="group" aria-label={t(($) => $.project_bar.collapsed)}>
+                <SectionLabel>{t(($) => $.project_bar.collapsed)}</SectionLabel>
+                {collapsedRows.map((row) => (
+                  <ProjectRow
+                    key={row.id}
+                    title={titleById.get(row.id) ?? ""}
+                    countLabel={t(($) => $.project_bar.chat_count, { count: row.chatCount })}
+                    pinned={false}
+                    pinLabel={t(($) => $.project_bar.pin)}
+                    onSelect={() => select({ type: "project", id: row.id })}
+                    onTogglePin={() => togglePin(row.id)}
+                  />
+                ))}
+              </div>
+            )}
+
             <SectionLabel>{t(($) => $.project_bar.pinned)}</SectionLabel>
             {pinnedRows.length === 0 ? (
               <p className="px-3 py-1.5 text-caption text-muted-foreground">
@@ -387,7 +484,20 @@ export function ChatProjectBar({
       </Popover>
       {/* Zero box so the max-content mirror cannot widen the page. */}
       <div className="pointer-events-none absolute size-0 overflow-hidden" aria-hidden>
+        {/* More as it reads once every chip fits; only its width is used. */}
+        <Button
+          ref={moreWhenAllFitRef}
+          type="button"
+          variant="outline"
+          size="sm"
+          tabIndex={-1}
+          className={MORE_TRIGGER_CLASS}
+          style={MORE_GHOST_STYLE}
+        >
+          {t(($) => $.project_bar.more, { count: overflowCountWhenAllFit })}
+        </Button>
         <div ref={measureRef} style={MIRROR_STYLE}>
+          <span style={CHIP_SLOT_STYLE}>{allChip}</span>
           {measureIds.map((id) => (
             <span key={id} style={CHIP_SLOT_STYLE}>
               {renderSlot(id)}
