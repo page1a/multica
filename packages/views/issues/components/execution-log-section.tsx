@@ -19,7 +19,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
 import { TranscriptButton } from "../../common/task-transcript";
 import { cancellationActorLabel, cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
-import { useT } from "../../i18n";
+import { useLocale, useT } from "../../i18n";
 import { compareActiveIssueTasks } from "./active-task-order";
 import {
   formatTokens,
@@ -427,8 +427,21 @@ export function ActiveTaskRow({
   const { t } = useT("issues");
   const [cancelling, setCancelling] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const locale = useLocale();
   const tone = STATUS_TONE[task.status];
-  const label = useStatusLabel(task.status);
+  const statusLabel = useStatusLabel(task.status);
+  // A deferred retry after a full model says which retry it is and when it
+  // fires (DENE-1093); the seat stays open, so this is a wait, not a failure.
+  const capacityRetry = task.status === "deferred" ? task.capacity_retry : undefined;
+  const label = capacityRetry
+    ? t(($) => $.execution_log.status_capacity_retry, {
+        retry: capacityRetry.retry,
+        time: new Date(capacityRetry.next_at).toLocaleTimeString(locale, {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      })
+    : statusLabel;
   const trigger = useTriggerText(task);
 
   // Running rows show a live-ticking elapsed timer (the ticking digits carry

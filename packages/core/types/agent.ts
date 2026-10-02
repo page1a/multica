@@ -380,6 +380,16 @@ export interface CodeDecision {
   reason?: string;
 }
 
+/**
+ * A run waiting to retry in place after its model was at capacity
+ * (DENE-1093). `retry` counts retries, starting at 1; `next_at` is RFC3339.
+ */
+export interface CapacityRetry {
+  task_id: string;
+  retry: number;
+  next_at: string;
+}
+
 export interface AgentTask {
   id: string;
   agent_id: string;
@@ -430,6 +440,8 @@ export interface AgentTask {
   // coarse values; `string & {}` admits the rest without collapsing the
   // hints.
   failure_reason?: TaskFailureReason | (string & {}) | "";
+  /** Set on a deferred in-place retry waiting out a full model (DENE-1093). */
+  capacity_retry?: CapacityRetry;
   /** The input comment was edited or deleted, invalidating this run. */
   cancelled_by_comment_change?: boolean;
   /** Present on cancellations recorded by a backend with actor provenance. */

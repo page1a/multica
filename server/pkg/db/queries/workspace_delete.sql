@@ -337,6 +337,13 @@ deleted_visibility_audits AS (
 deleted_chat_session_link_read_audits AS (
     DELETE FROM chat_session_link_read_audit WHERE workspace_id = $1
 ),
+-- Progress history (DENE-1037) is workspace-keyed with no foreign key.
+deleted_chat_session_progress AS (
+    DELETE FROM chat_session_progress WHERE workspace_id = $1
+),
+deleted_issue_progress AS (
+    DELETE FROM issue_progress WHERE workspace_id = $1
+),
 -- Module-level sharing (DENE-699) is workspace-keyed with no foreign key.
 deleted_module_visibility AS (
     DELETE FROM workspace_module_visibility WHERE workspace_id = $1

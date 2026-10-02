@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hans">
+<meta charset="utf-8" />
+<title>补全完成线 · DENE-1053</title>
+<style>
+  :root { color-scheme: dark; font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; background: #101216; color: #f5f7fb; }
+  body { margin: 0; padding: 48px 24px; display: grid; place-items: center; }
+  main { width: min(680px, 100%); }
+  .eyebrow { color: #9da6b6; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { margin: 8px 0 6px; font-size: 28px; letter-spacing: -.03em; }
+  .hint { color: #aeb6c4; margin: 0 0 24px; }
+  .card { border: 1px solid #303642; background: #181b21; border-radius: 16px; padding: 20px; box-shadow: 0 18px 60px #0005; }
+  .question-head { display: flex; align-items: center; justify-content: space-between; color: #c6cedb; font-weight: 600; }
+  .tabs { display: flex; gap: 6px; }
+  .tab { width: 28px; height: 28px; border: 0; border-radius: 999px; background: #292e38; color: #aeb6c4; }
+  .tab.active { background: #7c5cff; color: white; }
+  .prompt { margin: 18px 0 12px; font-size: 17px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; border: 1px solid #3b4351; border-radius: 9px; padding: 12px; color: white; background: #111318; }
+  .other { margin: 8px 0 0; color: #909aaa; font-size: 12px; }
+  .add { display: inline-flex; margin-top: 18px; border: 0; background: none; color: #a795ff; padding: 0; }
+  .lock { margin: 18px 0; border-radius: 9px; padding: 10px 12px; color: #abb4c3; background: #20252e; font-size: 12px; }
+  .lock b { color: #7be0a1; }
+  .confirm { width: 100%; border: 0; border-radius: 9px; padding: 12px; background: #7c5cff; color: white; font-weight: 700; }
+</style>
+<main>
+  <div class="eyebrow">目标 · 统一补全页</div>
+  <h1>补全完成线</h1>
+  <p class="hint">保留任务已经做完的部分，补齐“怎么算做完”，确认后锁定并开始推进。</p>
+  <section class="card">
+    <div class="question-head"><span>◉　完成检查</span><div class="tabs"><button class="tab active">1</button><button class="tab">2</button></div></div>
+    <div class="prompt">怎么算做完？</div>
+    <input value="Web 四个入口都能进入同一完成线页面" aria-label="完成检查" />
+    <div class="other">其他，我自己说</div>
+    <button class="add">＋ 再加一条检查</button>
+    <div class="lock"><b>✓</b>　确认后完成线会锁定；想改只能停下来问 Kun。</div>
+    <button class="confirm">确认并开始</button>
+  </section>
+</main>
+</html>

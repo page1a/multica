@@ -3,6 +3,8 @@ import type { IssuePriority, IssueStatus } from "./issue";
 export type InboxSeverity = "action_required" | "attention" | "info";
 
 export type InboxItemType =
+  | "needs_you"
+  | "ask_answered"
   | "issue_assigned"
   | "issue_subscribed"
   | "unassigned"

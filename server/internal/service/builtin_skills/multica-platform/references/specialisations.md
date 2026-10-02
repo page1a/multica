@@ -100,11 +100,11 @@ and invocation permissions are set separately on the child and are NOT
 inherited from the parent, and the child does not override the parent's values
 either.
 
-`work_enabled` is the one exception, and only in one direction. Turning a base
-role off also turns off its direct specialisations. Turning the base role back
-on does not turn them back on; each specialisation keeps its own switch after
-that and can be turned on by itself. Turning a specialisation off does not
-turn off its base role or its siblings.
+`work_enabled` is the one exception. Turning a base role off or on
+(`multica agent update <id> --work-enabled=false|true`) sets every direct
+specialisation to the same value. Turning a specialisation off does not turn
+off its base role or its siblings, and a specialisation can still be turned on
+again by itself.
 
 The prompt and skills are recomputed on every claim, so a change on either side
 of the relationship lands on the specialisation's next task with no re-attach

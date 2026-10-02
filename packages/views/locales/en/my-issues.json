@@ -6,6 +6,7 @@
     "empty_description": "Issues you create or are assigned to will appear here."
   },
   "header": {
+    "set_as_goal": "Set as goal",
     "scope": {
       "all_label": "All",
       "all_description": "Assigned to me, created by me, or involving my agents and squads",

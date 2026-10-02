@@ -13,6 +13,7 @@ type ModalType =
   | "issue-delete-confirm"
   | "issue-close"
   | "issue-run-confirm"
+  | "goal-completion"
   | null;
 
 export type IssueLimitRecoveryReason = "issue_limit" | "autopilot_quota";

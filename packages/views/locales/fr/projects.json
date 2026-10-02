@@ -87,6 +87,11 @@
     "empty_issues_hint": "Vous pouvez aussi ajouter des tâches existantes à ce projet.",
     "empty_issues_new_button": "Nouvelle tâche",
     "no_issues_yet": "Aucune tâche pour l'instant",
+    "chat_tab": "Discussions",
+    "chat_empty": "Aucune discussion visible dans ce projet.",
+    "chat_unnamed": "Discussion sans titre",
+    "chat_no_summary": "Pas encore de résumé.",
+    "chat_unknown_agent": "Agent",
     "toast_link_copied": "Lien copié",
     "toast_project_deleted": "Projet supprimé",
     "toast_move_issue_failed": "Échec du déplacement de la tâche"

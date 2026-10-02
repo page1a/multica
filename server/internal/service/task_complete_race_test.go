@@ -261,9 +261,10 @@ func retryDisabledAgent() db.Agent {
 }
 
 // TestProviderCapacityRetrySchedule locks in the backoff schedule for a
-// provider capacity miss (DENE-210): first run + two deferred retries. Unlike
-// provider_network, every retry waits — a limit that just fired will not
-// clear on the next millisecond. max_attempts<=1 still disables retry.
+// provider capacity miss (DENE-1093): 30s, 1m, 2m, then 5m on every later
+// retry. Every retry waits — a limit that just fired will not clear on the
+// next millisecond. The pure ceiling stays at three for chains that are not
+// open (chat, non-assignee runs); max_attempts<=1 still disables retry.
 func TestProviderCapacityRetrySchedule(t *testing.T) {
 	const capReason = "agent_error.provider_capacity_or_rate_limit"
 
@@ -286,15 +287,16 @@ func TestProviderCapacityRetrySchedule(t *testing.T) {
 		failedAttempt int32
 		want          time.Duration
 	}{
-		{1, providerCapacityRetryWait},
-		{2, providerCapacityRetryWait},
+		{1, 30 * time.Second},
+		{2, time.Minute},
+		{3, 2 * time.Minute},
+		{4, 5 * time.Minute},
+		{5, 5 * time.Minute},
+		{40, 5 * time.Minute},
 	}
 	for _, tc := range delayCases {
 		if got := retryDelayForAttempt(capReason, tc.failedAttempt); got != tc.want {
 			t.Errorf("retryDelayForAttempt(%q, %d) = %s, want %s", capReason, tc.failedAttempt, got, tc.want)
-		}
-		if got := retryDelayForAttempt(capReason, tc.failedAttempt); got <= 0 {
-			t.Errorf("retryDelayForAttempt(%q, %d) must be a positive backoff, got %s", capReason, tc.failedAttempt, got)
 		}
 	}
 
@@ -313,13 +315,26 @@ func TestProviderCapacityRetrySchedule(t *testing.T) {
 	}{
 		{"capacity first run retries", 1, 2, true},
 		{"capacity second run still retries", 2, 2, true},
-		{"capacity third run is the ceiling", 3, 2, false},
+		{"capacity third run is the bounded ceiling", 3, 2, false},
 		{"capacity with retry disabled (max_attempts=1) never retries", 1, 1, false},
 	}
 	for _, tc := range eligCases {
 		if got := retryEligible(capReason, mkTask(tc.attempt, tc.max), retryEnabledAgent()); got != tc.want {
 			t.Errorf("%s: retryEligible(%q, attempt=%d/max=%d) = %v, want %v", tc.name, capReason, tc.attempt, tc.max, got, tc.want)
 		}
+	}
+	// An open chain ignores the ceiling but keeps every other gate.
+	if !retryGatesOpen(capReason, mkTask(9, 9), retryEnabledAgent()) {
+		t.Error("retryGatesOpen must allow attempt 9 of an open capacity chain")
+	}
+	if retryGatesOpen(capReason, mkTask(1, 1), retryEnabledAgent()) {
+		t.Error("max_attempts=1 must keep auto-retry off even on an open chain")
+	}
+	if retryGatesOpen(capReason, mkTask(9, 9), retryDisabledAgent()) {
+		t.Error("auto_retry_enabled=false must keep auto-retry off even on an open chain")
+	}
+	if got := retryChildMaxAttempts(capReason, mkTask(7, 7)); got != 8 {
+		t.Errorf("retryChildMaxAttempts past the ceiling = %d, want 8 (attempt never exceeds max)", got)
 	}
 }
 

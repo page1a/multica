@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
 import enChat from "../../locales/en/chat.json";
+import enIssues from "../../locales/en/issues.json";
 import { NavigationProvider } from "../../navigation";
 import type { NavigationAdapter } from "../../navigation";
 
@@ -32,16 +33,21 @@ const adapter = (): NavigationAdapter => ({
   getShareableUrl: (path: string) => `https://app.test${path}`,
 });
 
-function renderEmptyState(value: Agent, customizeHref: string | null = null) {
+function renderEmptyState(
+  value: Agent,
+  customizeHref: string | null = null,
+  onStartAlignment?: () => void,
+) {
   const onPickPrompt = vi.fn();
   render(
-    <I18nProvider locale="en" resources={{ en: { chat: enChat } }}>
+    <I18nProvider locale="en" resources={{ en: { chat: enChat, issues: enIssues } }}>
       <NavigationProvider value={adapter()}>
         <EmptyState
           agent={value}
           hasSessions={false}
           onPickPrompt={onPickPrompt}
           customizeHref={customizeHref}
+          onStartAlignment={onStartAlignment}
         />
       </NavigationProvider>
     </I18nProvider>,
@@ -92,6 +98,15 @@ describe("chat empty-state conversation starters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Walk me through my inbox" }));
 
     expect(onPickPrompt).toHaveBeenCalledWith("Walk me through my inbox");
+  });
+
+  it("offers the alignment path from a new chat", () => {
+    const onStartAlignment = vi.fn();
+    renderEmptyState(agent(), null, onStartAlignment);
+
+    fireEvent.click(screen.getByRole("button", { name: "Align first" }));
+
+    expect(onStartAlignment).toHaveBeenCalledOnce();
   });
 });
 

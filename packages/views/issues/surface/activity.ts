@@ -55,6 +55,41 @@ export function selectIssueTasks(
   return { running, queued };
 }
 
+/**
+ * Live state shown in front of an issue's progress line (DENE-1037): an agent
+ * running beats one queued; with neither, a failed latest run counts when it
+ * ended after `since` (the progress line's time) — a newer report means the
+ * failure was already dealt with. Returns primitives so the row-level
+ * `select` stays referentially stable.
+ */
+export type IssueLiveState = "running" | "queued" | "failed" | null;
+
+export function selectIssueLiveState(
+  snapshot: readonly AgentTask[],
+  issueId: string,
+  since?: string | null,
+): IssueLiveState {
+  let queued = false;
+  let latestTerminal: AgentTask | null = null;
+  let latestAt = 0;
+  for (const task of snapshot) {
+    if (task.issue_id !== issueId) continue;
+    if (task.status === "running") return "running";
+    if (isQueuedTaskStatus(task.status)) queued = true;
+    else if (task.completed_at) {
+      const at = Date.parse(task.completed_at);
+      if (at > latestAt) {
+        latestAt = at;
+        latestTerminal = task;
+      }
+    }
+  }
+  if (queued) return "queued";
+  if (latestTerminal?.status !== "failed") return null;
+  if (since && latestAt <= Date.parse(since)) return null;
+  return "failed";
+}
+
 export function deriveIssueSurfaceActivity(
   tasks: readonly AgentTask[],
 ): IssueSurfaceActivity {

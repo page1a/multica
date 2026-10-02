@@ -10,6 +10,10 @@
     "new_chat_in_project": "새 채팅은 「{{title}}」에 남습니다",
     "new_chat_unbound": "새 채팅은 프로젝트에 묶이지 않습니다"
   },
+  "goal_flow": {
+    "hint": "이슈를 만들기 전에 먼저 정리하세요.",
+    "action": "먼저 정렬하기"
+  },
   "project_bar": {
     "all": "전체",
     "more": "⋯ 더보기 ({{count}})",
@@ -339,5 +343,6 @@
     "body": "프로젝트 멤버가 볼 수 있는 채팅이 {{count}}개 있습니다.",
     "make_private": "선택한 항목을 비공개로",
     "dismiss": "알겠습니다"
-  }
+  },
+  "title_locked": "제목 잠김 — 에이전트가 이름을 바꾸지 않습니다"
 }

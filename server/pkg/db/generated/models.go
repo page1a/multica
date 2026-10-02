@@ -92,6 +92,21 @@ type AgentAccessRequest struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type AgentAsk struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	AskerType   string             `json:"asker_type"`
+	AskerID     pgtype.UUID        `json:"asker_id"`
+	Title       string             `json:"title"`
+	Questions   []byte             `json:"questions"`
+	Answers     []byte             `json:"answers"`
+	Mode        string             `json:"mode"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	AnsweredAt  pgtype.Timestamptz `json:"answered_at"`
+}
+
 type AgentBuilderDraft struct {
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -609,6 +624,13 @@ type ChatSession struct {
 	ExplicitlyCreatedAt     pgtype.Timestamptz `json:"explicitly_created_at"`
 	ProjectNudgeDismissedAt pgtype.Timestamptz `json:"project_nudge_dismissed_at"`
 	Visibility              string             `json:"visibility"`
+	TitleLocked             bool               `json:"title_locked"`
+	ProgressText            string             `json:"progress_text"`
+	ProgressSource          string             `json:"progress_source"`
+	ProgressTone            string             `json:"progress_tone"`
+	ProgressAuthorType      string             `json:"progress_author_type"`
+	ProgressAuthorID        pgtype.UUID        `json:"progress_author_id"`
+	ProgressUpdatedAt       pgtype.Timestamptz `json:"progress_updated_at"`
 }
 
 type ChatSessionLinkReadAudit struct {
@@ -620,6 +642,18 @@ type ChatSessionLinkReadAudit struct {
 	ReaderAgentID     pgtype.UUID        `json:"reader_agent_id"`
 	ReaderTaskID      pgtype.UUID        `json:"reader_task_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type ChatSessionProgress struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	Text          string             `json:"text"`
+	Source        string             `json:"source"`
+	Tone          string             `json:"tone"`
+	AuthorType    string             `json:"author_type"`
+	AuthorID      pgtype.UUID        `json:"author_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type ChatSessionProject struct {
@@ -965,6 +999,12 @@ type Issue struct {
 	AssigneeSource       pgtype.Text        `json:"assignee_source"`
 	AssigneeSourceUserID pgtype.UUID        `json:"assignee_source_user_id"`
 	AssigneeQuote        pgtype.Text        `json:"assignee_quote"`
+	ProgressText         string             `json:"progress_text"`
+	ProgressSource       string             `json:"progress_source"`
+	ProgressTone         string             `json:"progress_tone"`
+	ProgressAuthorType   string             `json:"progress_author_type"`
+	ProgressAuthorID     pgtype.UUID        `json:"progress_author_id"`
+	ProgressUpdatedAt    pgtype.Timestamptz `json:"progress_updated_at"`
 }
 
 type IssueDeliveryBranch struct {
@@ -1007,6 +1047,44 @@ type IssueDraft struct {
 	CapabilityVersion string             `json:"capability_version"`
 }
 
+type IssueGoal struct {
+	ID                     pgtype.UUID        `json:"id"`
+	IssueID                pgtype.UUID        `json:"issue_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	Status                 string             `json:"status"`
+	Round                  int32              `json:"round"`
+	TokenLimit             int64              `json:"token_limit"`
+	RunLimit               int32              `json:"run_limit"`
+	DurationSeconds        int64              `json:"duration_seconds"`
+	TokensUsed             int64              `json:"tokens_used"`
+	RunsUsed               int32              `json:"runs_used"`
+	DurationSecondsUsed    int64              `json:"duration_seconds_used"`
+	Evidence               []byte             `json:"evidence"`
+	CreatedByType          string             `json:"created_by_type"`
+	CreatedByID            pgtype.UUID        `json:"created_by_id"`
+	LockedAt               pgtype.Timestamptz `json:"locked_at"`
+	StoppedAt              pgtype.Timestamptz `json:"stopped_at"`
+	AchievedAt             pgtype.Timestamptz `json:"achieved_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	NoProgressRounds       int32              `json:"no_progress_rounds"`
+	MaxNoProgressRounds    int32              `json:"max_no_progress_rounds"`
+	BudgetWarningAt        pgtype.Timestamptz `json:"budget_warning_at"`
+	LastContinuationTaskID pgtype.UUID        `json:"last_continuation_task_id"`
+}
+
+type IssueGoalCheck struct {
+	ID          pgtype.UUID        `json:"id"`
+	GoalID      pgtype.UUID        `json:"goal_id"`
+	Position    int32              `json:"position"`
+	Description string             `json:"description"`
+	Method      string             `json:"method"`
+	Status      string             `json:"status"`
+	Evidence    []byte             `json:"evidence"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IssueLabel struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
@@ -1033,6 +1111,18 @@ type IssueParkingRecord struct {
 	TaskID        pgtype.UUID        `json:"task_id"`
 	Timeline      []byte             `json:"timeline"`
 	EvaluatedAt   pgtype.Timestamptz `json:"evaluated_at"`
+}
+
+type IssueProgress struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	Text        string             `json:"text"`
+	Source      string             `json:"source"`
+	Tone        string             `json:"tone"`
+	AuthorType  string             `json:"author_type"`
+	AuthorID    pgtype.UUID        `json:"author_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type IssueProperty struct {

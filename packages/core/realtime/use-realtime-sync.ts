@@ -120,6 +120,7 @@ import type {
   ChatPendingTask,
   ChatMessagesPage,
   ChatSession,
+  Progress,
   ChatSessionCreatedPayload,
   InvitationCreatedPayload,
   DaemonHeartbeatPayload,
@@ -357,6 +358,8 @@ export async function applyChatQuickActionsToCache(
 type ChatSessionUpdatedPayload = {
   chat_session_id: string;
   title?: string;
+  title_locked?: boolean;
+  progress?: Progress | null;
   project_id?: string | null;
   /** The session's full project set, sent on the same events that carry
    *  `project_id` (DENE-522). Absent on rename/pin/archive. */
@@ -397,6 +400,8 @@ export function applyChatSessionUpdatedToCache(
         ? {
             ...s,
             title: payload.title ?? s.title,
+            title_locked: payload.title_locked ?? s.title_locked,
+            ...("progress" in payload ? { progress: payload.progress } : {}),
             ...("project_id" in payload ? { project_id: payload.project_id } : {}),
             // Same `in` rule as project_id: an explicit empty array clears the
             // set, while an absent field leaves this tab's set alone. A server
@@ -1118,6 +1123,9 @@ export function useRealtimeSync(
         }
         if (payload.status_changed) {
           qc.invalidateQueries({ queryKey: homeKeys.all(wsId) });
+        }
+        if (payload.progress_changed) {
+          qc.invalidateQueries({ queryKey: issueKeys.progress(wsId, issue.id) });
         }
       }
     });

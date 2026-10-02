@@ -84,6 +84,7 @@ import { ChatQueue } from "./chat-queue";
 import { EmptyState } from "./chat-empty-state";
 import { SessionRenameInput } from "./session-rename-input";
 import { ChatResizeHandles } from "./chat-resize-handles";
+import { AskPromptList } from "../../common/ask-prompt";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
 import { useVisualViewportKeyboard } from "./use-visual-viewport-keyboard";
@@ -988,6 +989,8 @@ export function ChatWindow() {
           dismissing={dismissProjectNudge.isPending}
         />
       )}
+
+      <AskPromptList className="shrink-0 px-3 pt-2" />
 
       {/* Messages / skeleton / empty state */}
       {showSkeleton ? (

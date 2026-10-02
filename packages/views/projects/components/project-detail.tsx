@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { Check, ChevronRight, Link2, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
+import { Check, ChevronRight, Link2, MessageSquare, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -16,7 +16,7 @@ import { useCreatePin, useDeletePin } from "@multica/core/pins";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssuesScope } from "@multica/core/issues/stores";
-import { useRecentContextStore } from "@multica/core/chat";
+import { chatDirectoryOptions, useRecentContextStore } from "@multica/core/chat";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
@@ -128,6 +128,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     }
   }, [project?.id, project?.title, project?.description, project?.icon, project?.status, recordRecentContext, wsId]);
   const issueTab = useIssuesScope(`project:${projectId}`);
+  const [activeTab, setActiveTab] = useState<"issues" | "chats">("issues");
+  const { data: projectChats = [] } = useQuery(chatDirectoryOptions(wsId, projectId));
   const issueScope = useMemo(
     () => ({ type: "project" as const, projectId, actorKind: issueTab }),
     [projectId, issueTab],
@@ -592,10 +594,50 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             }
           />
 
-          <IssueSurface
-            scope={issueScope}
-            modes={["board", "list", "table", "swimlane", "gantt"]}
-          />
+          <div className="flex items-center gap-1 border-b px-4 py-1.5">
+            <button
+              type="button"
+              className={cn("rounded-md px-2.5 py-1 text-caption font-medium", activeTab === "issues" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+              onClick={() => setActiveTab("issues")}
+            >
+              {t(($) => $.table.issues)}
+            </button>
+            <button
+              type="button"
+              className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-caption font-medium", activeTab === "chats" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+              onClick={() => setActiveTab("chats")}
+            >
+              <MessageSquare className="size-3.5" />
+              {t(($) => $.detail.chat_tab)}
+            </button>
+          </div>
+          {activeTab === "issues" ? (
+            <IssueSurface scope={issueScope} modes={["board", "list", "table", "swimlane", "gantt"]} />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {projectChats.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-8 text-center text-body text-muted-foreground">{t(($) => $.detail.chat_empty)}</div>
+              ) : (
+                <div className="space-y-2">
+                  {projectChats.map((chat) => (
+                    <button
+                      type="button"
+                      key={chat.id}
+                      className="block w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/50"
+                      onClick={() => router.push(wsPaths.chatSession(chat.id))}
+                    >
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="size-4 text-muted-foreground" />
+                        <span className="truncate text-body font-medium">{chat.title || t(($) => $.detail.chat_unnamed)}</span>
+                        <span className="ml-auto shrink-0 text-caption text-muted-foreground">{chat.agent_name || t(($) => $.detail.chat_unknown_agent)}</span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-caption text-muted-foreground">{chat.summary || t(($) => $.detail.chat_no_summary)}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           </div>
         </ResizablePanel>
         {!isCompact && <ResizableHandle />}

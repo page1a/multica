@@ -1,4 +1,5 @@
 import type { AgentTask } from "./agent";
+import type { Progress } from "./progress";
 
 /** A user's pinned "quick agent" for the Chat list top bar. */
 export interface ChatPinnedAgent {
@@ -100,6 +101,8 @@ export interface ChatSession {
    *  normalises that back to the single `project_id`. */
   project_ids?: string[];
   title: string;
+  title_locked?: boolean;
+  progress?: Progress | null;
   status: "active" | "archived";
   /** True when the session has any unread assistant replies. List-only.
    *  Convenience for `unread_count > 0`. */
@@ -132,6 +135,23 @@ export interface ChatSession {
   is_current_channel_route?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** Compact read-only chat directory row used by project pages and agents. */
+export interface ChatDirectoryItem {
+  id: string;
+  title: string;
+  project_id?: string;
+  project_title?: string;
+  agent_id: string;
+  agent_name?: string;
+  originator_id: string;
+  originator?: string;
+  status: string;
+  visibility: string;
+  last_active_at: string;
+  message_count: number;
+  summary?: string;
 }
 
 export interface PendingChatTaskItem {

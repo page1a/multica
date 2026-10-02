@@ -35,14 +35,31 @@ binds it again. Unbound is orthogonal to archived.
 An agent can also be **disabled** (`work_enabled: false`): it stays on the
 agents list, keeps its routing tag and specialisations, and does not cancel
 running tasks, but routing will not pick it, assignment will not wake it, and
-the daemon will not claim a new run. `PUT /api/agents/{id}` with
-`work_enabled: false` turns it off; `true` turns it back on. Omitted on update
-preserves the stored value. Turning a base role off also turns off its direct
-specialisations; turning that base role back on leaves each specialisation
-off, so a specialisation can be turned on again by itself. Turning a
-specialisation off does not turn off its base role or its siblings. Distinct
-from archive — archive is the delete path. Disabled is orthogonal to unbound
-and archived.
+the daemon will not claim a new run. From the CLI:
+
+```bash
+multica agent update <agent-id> --work-enabled=false --output json   # close the seat
+multica agent update <agent-id> --work-enabled=true --output json    # open it again
+multica agent get <agent-id> --output json                           # read work_enabled back
+```
+
+Same as `PUT /api/agents/{id}` with `work_enabled`; omitted on update preserves
+the stored value. A base role carries its direct specialisations both ways:
+turning it off or on sets every specialisation to the same value. Turning a
+specialisation off does not turn off its base role or its siblings. Turning a
+seat back on (by hand or when a quota breaker expires) also requeues the
+`todo` / `in_progress` issues it still owns that have no run, except halted
+ones. Distinct from archive — archive is the delete path. Disabled is
+orthogonal to unbound and archived.
+
+A full model is not a closed seat (DENE-1093). A run that fails with
+`agent_error.provider_capacity_or_rate_limit` keeps the seat open and retries
+in place on the same agent, resuming the same session, after 30s, 1m, 2m, 5m
+and then every 5m with no attempt cap. The chain stops when the issue is
+done, cancelled, halted, or reassigned. While it waits, `multica issue get`
+and `multica issue runs` (`--output json`) carry `capacity_retry`
+(`{task_id, retry, next_at}`). Only real quota exhaustion (weekly / model
+limits, `402` / balance) closes the seat and relays the issue.
 
 `agent get` returns the persisted agent including `runtime_id`, `model`,
 `thinking_level`, `service_tier`, `custom_args`, `has_custom_env`,
@@ -162,7 +179,7 @@ the child own its runtime instead of following the base role's.
 | `mcp_config` | `mcp_config` (raw JSON) | CLI checks it is a JSON object or `null`; server stores as-is. At create, literal `null` is dropped (no-op); at update, `null` clears the field | daemon → provider (provider-specific MCP handling); redacted on read |
 | `visibility` | `visibility` | — | access control; defaults to `private`; gates who can read/route a private agent (e.g. a private squad leader) — NOT the runtime prompt |
 | `max_concurrent_tasks` | `max_concurrent_tasks` | integer from 1 through 50; out-of-range values return 400 | scheduler task cap; defaults to `6` |
-| `work_enabled` | `work_enabled` | boolean; omitted on update preserves | reversible seat gate (DENE-714). Default `true`. `false` keeps the seat in the list but routing will not pick it, assignment will not wake it, and claim will not take a new run. Running tasks are not cancelled. Turning a base role off also turns its direct specialisations off; turning the base role back on does not turn them back on. Distinct from archive |
+| `work_enabled` | `work_enabled` | boolean; omitted on update preserves | reversible seat gate (DENE-714). Default `true`. `false` keeps the seat in the list but routing will not pick it, assignment will not wake it, and claim will not take a new run. Running tasks are not cancelled. A base role sets its direct specialisations to the same value, both off and on. Turning a seat on requeues its stranded `todo` / `in_progress` issues. CLI: `agent update --work-enabled=true\|false`. Distinct from archive |
 
 Defaults when omitted or explicitly `null`: `max_concurrent_tasks` → `6`.
 Other defaults when omitted: `runtime_config` → `{}`, `custom_env` → `{}`,

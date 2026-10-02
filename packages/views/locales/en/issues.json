@@ -478,6 +478,32 @@
     "prop_created": "Created",
     "prop_updated": "Updated",
     "activity_section": "Activity",
+    "goal": {
+      "title": "Goal",
+      "completion_title": "Complete the finish line",
+      "completion_hint": "Choose the checks that must pass before this task is done.",
+      "question_label": "Completion checks",
+      "question_tabs": "Completion check questions",
+      "question_number": "Question {{n}}",
+      "question_prompt": "What will count as done?",
+      "other_option": "Other — describe your own check",
+      "add_question": "Add another check",
+      "lock_hint": "After confirmation, the finish line is locked. Changes require asking Kun.",
+      "confirm": "Confirm and start",
+      "confirming": "Locking and starting…",
+      "set_as_goal": "Set as goal",
+      "set_as_goal_hint": "Keep the work already done and define what will count as finished.",
+      "progress": "{{completed}} of {{total}} checks complete",
+      "round": "Round",
+      "tokens": "Tokens",
+      "runs": "Runs",
+      "duration": "Time",
+      "budget_warning": "This goal has used at least 80% of its budget. It will pause at the limit and ask what to do next.",
+      "stopped_hint": "This goal is paused. Answer the option question in your inbox to add budget, change the completion line, or stop.",
+      "evidence_item": "Evidence",
+      "open_evidence": "Open evidence",
+      "status": { "draft": "Needs confirmation", "locked": "In progress", "active": "In progress", "stopped": "Stopped", "achieved": "Achieved" }
+    },
     "subscribe": "Subscribe",
     "unsubscribe": "Unsubscribe",
     "delegated_subscription_badge": "Watching via agent",
@@ -753,6 +779,7 @@
     },
     "usage_total_tooltip": "Token usage for this issue — click for the per-run breakdown",
     "status_deferred": "Retrying",
+    "status_capacity_retry": "Model at capacity · retry {{retry}}, next at {{time}}",
     "usage_label": "Token cost"
   },
   "usage_detail": {
@@ -1058,6 +1085,10 @@
   },
   "alignment": {
     "title": "Align a new issue",
+    "goal_flow_aria": "Goal flow",
+    "goal_flow_chat": "Chat",
+    "goal_flow_align": "Align",
+    "goal_flow_issue": "Issue",
     "subtitle": "Nothing is created until you confirm.",
     "back": "Back to issues",
     "stage_aligning": "Aligning",
@@ -1153,6 +1184,8 @@
     "entry_placeholder": "What do you want done?",
     "entry_runtime": "Where it runs",
     "entry_submit": "Start aligning",
+    "entry_create_start": "Create and start",
+    "goal_toggle": "Keep going until it meets the finish line",
     "entry_submitting": "Starting…",
     "entry_cancel": "Cancel",
     "entry_no_runtime": "No online runtime is available, so the alignment agent cannot run.",
@@ -1242,5 +1275,20 @@
   },
   "row": {
     "pinned_label": "Pinned"
+  },
+  "progress_line": {
+    "label": "Progress",
+    "live_running": "Agent is working",
+    "live_queued": "Waiting for an agent",
+    "live_failed": "Last run failed",
+    "history_show": "History",
+    "history_hide": "Hide history",
+    "history_empty": "No earlier updates",
+    "history_loading": "Loading…",
+    "source_agent": "reported",
+    "source_close": "close summary",
+    "source_parking": "stall patrol",
+    "source_model": "summary",
+    "source_reply": "from reply"
   }
 }

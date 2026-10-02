@@ -473,6 +473,32 @@
     "prop_created": "생성일",
     "prop_updated": "수정일",
     "activity_section": "활동",
+    "goal": {
+      "title": "목표",
+      "completion_title": "완료 기준 정하기",
+      "completion_hint": "이 태스크가 완료되기 전에 통과해야 할 확인 항목을 선택하세요.",
+      "question_label": "완료 확인",
+      "question_tabs": "완료 확인 질문",
+      "question_number": "질문 {{n}}",
+      "question_prompt": "무엇을 하면 완료로 볼까요?",
+      "other_option": "기타 — 직접 확인 기준 작성",
+      "add_question": "확인 기준 추가",
+      "lock_hint": "확인하면 완료 기준이 잠깁니다. 변경하려면 Kun에게 물어봐야 합니다.",
+      "confirm": "확인하고 시작",
+      "confirming": "잠그고 시작하는 중…",
+      "set_as_goal": "목표로 설정",
+      "set_as_goal_hint": "이미 완료한 작업은 유지하고, 앞으로 완료로 볼 기준을 정합니다.",
+      "progress": "{{total}}개 중 {{completed}}개 확인 완료",
+      "round": "라운드",
+      "tokens": "토큰",
+      "runs": "실행 횟수",
+      "duration": "시간",
+      "budget_warning": "이 목표는 예산의 80% 이상을 사용했습니다. 한도에 도달하면 일시 중지되고 다음 작업을 묻습니다.",
+      "stopped_hint": "이 목표는 일시 중지되었습니다. 받은 편지함의 선택 질문에 답해 예산 추가, 완료 기준 변경 또는 종료를 선택하세요.",
+      "evidence_item": "증거",
+      "open_evidence": "증거 열기",
+      "status": { "draft": "확인 필요", "locked": "진행 중", "active": "진행 중", "stopped": "중지됨", "achieved": "달성" }
+    },
     "subscribe": "구독",
     "unsubscribe": "구독 해제",
     "delegated_subscription_badge": "에이전트를 통해 구독 중",
@@ -729,6 +755,7 @@
     },
     "usage_total_tooltip": "이 태스크의 토큰 사용량 — 클릭하면 실행별 내역",
     "status_deferred": "재시도 중",
+    "status_capacity_retry": "모델 포화 · {{retry}}번째 재시도, 다음 {{time}}",
     "usage_label": "토큰 비용"
   },
   "usage_detail": {
@@ -1027,6 +1054,12 @@
   },
   "alignment": {
     "title": "새 이슈 정렬",
+    "goal_flow_aria": "목표 흐름",
+    "goal_flow_chat": "채팅",
+    "goal_flow_align": "정렬",
+    "goal_flow_issue": "이슈",
+    "entry_create_start": "생성하고 시작",
+    "goal_toggle": "완료 기준을 충족할 때까지 계속하기",
     "subtitle": "확인하기 전에는 아무것도 만들어지지 않습니다.",
     "back": "이슈 목록으로",
     "stage_aligning": "정렬 중",
@@ -1206,5 +1239,20 @@
   },
   "row": {
     "pinned_label": "고정됨"
+  },
+  "progress_line": {
+    "label": "진행 상황",
+    "live_running": "에이전트 작업 중",
+    "live_queued": "에이전트 대기 중",
+    "live_failed": "마지막 실행 실패",
+    "history_show": "기록",
+    "history_hide": "기록 숨기기",
+    "history_empty": "이전 업데이트 없음",
+    "history_loading": "불러오는 중…",
+    "source_agent": "보고",
+    "source_close": "마감 요약",
+    "source_parking": "점검 요약",
+    "source_model": "요약",
+    "source_reply": "답변에서"
   }
 }

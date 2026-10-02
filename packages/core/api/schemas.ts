@@ -23,6 +23,7 @@ import type {
   BillingTransactionsPage,
   CancelTaskResponse,
   ChatMessage,
+  ChatDirectoryItem,
   ChatDraftRestoresResponse,
   ChatPendingTask,
   ChatSession,
@@ -1318,12 +1319,28 @@ export const CommentSubIssueTaskResponseSchema = z.object({
   task_id: z.string().min(1),
 }).loose();
 
+// Goal + progress subtitle (DENE-1037). An unknown tone degrades to "" (the
+// source-based fallback colour) rather than dropping the line.
+export const ProgressSchema = z.object({
+  text: z.string(),
+  source: z.string().default(""),
+  tone: z.enum(["working", "waiting", "stuck", "done", ""]).catch(""),
+  author_type: z.string().default(""),
+  author_id: z.string().optional(),
+  updated_at: z.string().default(""),
+});
+
+export const ProgressHistorySchema = z.object({
+  progress: z.array(ProgressSchema).default([]),
+});
+
 export const IssueSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   number: z.number(),
   identifier: z.string(),
   title: z.string(),
+  progress: ProgressSchema.nullable().optional().catch(undefined),
   description: z.string().nullable(),
   status: z.string(),
   // The canonical status whose platform behavior `status` carries — equal to
@@ -2361,6 +2378,8 @@ export const ChatSessionSchema: z.ZodType<ChatSession> = z.object({
   project_id: z.string().nullable().optional(),
   project_ids: z.array(z.string()).optional().catch(undefined),
   title: z.string().default(""),
+  title_locked: z.boolean().optional().catch(undefined),
+  progress: ProgressSchema.nullable().optional().catch(undefined),
   status: z.enum(["active", "archived"]).catch("active"),
   has_unread: z.boolean().default(false),
   unread_count: z.number().optional(),
@@ -2410,6 +2429,24 @@ export const ChatMessageSearchHitListSchema = z
   .transform((hits) => hits.filter((hit): hit is ChatMessageSearchHit => hit !== null))
   .default([]);
 export const EMPTY_CHAT_MESSAGE_SEARCH_HITS: ChatMessageSearchHit[] = [];
+
+export const ChatDirectoryItemSchema: z.ZodType<ChatDirectoryItem> = z.object({
+  id: z.string(),
+  title: z.string().catch(""),
+  project_id: z.string().optional(),
+  project_title: z.string().optional(),
+  agent_id: z.string(),
+  agent_name: z.string().optional(),
+  originator_id: z.string(),
+  originator: z.string().optional(),
+  status: z.string().catch("active"),
+  visibility: z.string().catch("private"),
+  last_active_at: z.string().catch(""),
+  message_count: z.number().int().nonnegative().catch(0),
+  summary: z.string().optional(),
+}).loose();
+export const ChatDirectoryListSchema = z.array(ChatDirectoryItemSchema).default([]);
+export const EMPTY_CHAT_DIRECTORY: ChatDirectoryItem[] = [];
 
 // Deferred-cancellation draft restores
 // (`GET /api/chat/sessions/{id}/draft-restores`, #5219) feed the composer

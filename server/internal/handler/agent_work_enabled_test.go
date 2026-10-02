@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestAgentWorkEnabledGetAndUpdate(t *testing.T) {
@@ -154,4 +156,57 @@ func TestRoutingRosterOmitsDisabledSeats(t *testing.T) {
 		t.Error("disabled seat must not be a routing candidate")
 	}
 	_ = liveID
+}
+
+// DENE-1093 (the DENE-1066 gap): turning a seat back on by hand requeues the
+// issues it and its synced specialisations still own but have no run for.
+func TestAgentWorkEnabledTurnOnRequeuesStrandedIssues(t *testing.T) {
+	if testHandler == nil || testHandler.TaskService == nil {
+		t.Skip("database not available")
+	}
+
+	parentID, childID := specializationFixture(t, "work-enabled-requeue")
+	update := func(agentID string, enabled bool) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{
+			"work_enabled": enabled,
+		}), "id", agentID)
+		testHandler.UpdateAgent(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT work_enabled=%v: expected 200, got %d: %s", enabled, w.Code, w.Body.String())
+		}
+	}
+	queued := func(issueID, agentID string) int {
+		t.Helper()
+		var n int
+		if err := testPool.QueryRow(t.Context(), `
+			SELECT count(*) FROM agent_task_queue
+			WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`, issueID, agentID).Scan(&n); err != nil {
+			t.Fatalf("count queued: %v", err)
+		}
+		return n
+	}
+
+	update(parentID, false)
+	parentIssue := dbfx.Issue(t, "stranded on the base role", testutil.Cols{
+		"status": "in_progress", "assignee_type": "agent", "assignee_id": parentID,
+	})
+	childIssue := dbfx.Issue(t, "stranded on the specialisation", testutil.Cols{
+		"status": "todo", "assignee_type": "agent", "assignee_id": childID,
+	})
+	update(parentID, true)
+
+	if got := queued(parentIssue, parentID); got != 1 {
+		t.Fatalf("base role issue has %d queued runs, want 1", got)
+	}
+	if got := queued(childIssue, childID); got != 1 {
+		t.Fatalf("specialisation issue has %d queued runs, want 1", got)
+	}
+
+	// Turning on a seat that was already on is not a recovery: nothing new.
+	update(parentID, true)
+	if got := queued(parentIssue, parentID); got != 1 {
+		t.Fatalf("re-sending true queued again: %d runs", got)
+	}
 }

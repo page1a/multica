@@ -109,6 +109,7 @@ import { useT } from "../../i18n";
 import { BoardProjectControls, InboxBoardLanes, LANE_TAG_CLASS } from "../../home/components/home-page";
 import type { InboxRowDecoration } from "./inbox-list-item";
 import { useIssueLimitUpgradePrompt } from "../../modals/use-issue-limit-upgrade-prompt";
+import { AskPrompt } from "../../common/ask-prompt";
 
 const INBOX_LIST_DEFAULT_SIZE = 320;
 const INBOX_LIST_MIN_SIZE = 240;
@@ -846,6 +847,11 @@ export function InboxActivityPage({ merged = false }: { merged?: boolean } = {})
           {detailItem.body}
         </div>
       ) : null}
+      {detailItem.details?.ask_id && (
+        <div className="mt-4">
+          <AskPrompt askId={detailItem.details.ask_id} />
+        </div>
+      )}
       {isQuickCreateOutcome(detailItem.type) && detailItem.details?.original_prompt && (
         <div className="mt-4 rounded-md border bg-muted/40 p-3">
           <p className="text-caption font-medium text-muted-foreground">

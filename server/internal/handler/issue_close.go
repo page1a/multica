@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/progress"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -353,9 +354,25 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	// Each is best-effort on its own; the close itself is already durable.
 	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
 	identifier := issueToResponse(updated, prefix).Identifier
+	// The close summary becomes the progress line (DENE-1037). An agent line
+	// and a close summary are both explicit, so the latest wins: a close
+	// always writes, otherwise "做完" could never replace an older report.
+	progressed := false
+	if summary != "" {
+		if p, err := h.recordIssueProgress(ctx, updated, progressEntry{
+			Text: progress.Clip(summary), Source: progress.SourceClose, Tone: closeProgressTone(outcome),
+			AuthorType: actorType, AuthorID: actorID,
+		}); err == nil {
+			updated, progressed = p, true
+		} else {
+			slog.Warn("close: write progress failed", "issue_id", uuidToString(updated.ID), "error", err)
+		}
+	}
 	if resp.StatusChanged {
 		h.publishCloseStatus(r, prev, updated, prefix, actorType, actorID)
 		h.syncBlockWait(ctx, prev, updated)
+	} else if progressed {
+		h.publishIssueProgress(ctx, updated, actorType, actorID)
 	}
 	if outcome == issuestatus.Blocked {
 		h.persistBlockRecord(ctx, updated, rec.block)
@@ -1014,4 +1031,11 @@ func closeSummonReason(summary, evidence string) string {
 		return truncateRunes(s, 200)
 	}
 	return truncateRunes(strings.TrimSpace(evidence), 200)
+}
+
+// closeProgressTone colours the close summary by the outcome the caller
+// claimed, not by a later status: blocked is stuck, in_review waits for a
+// person, done and cancelled are finished, anything else continues.
+func closeProgressTone(outcome string) string {
+	return progress.ForStatus(outcome)
 }

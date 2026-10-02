@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Multica platform actions the runtime brief omits: inbox, issue and PR contracts, routing, close protocol, mentions, agents, specialisations, squads, autopilots, projects, runtimes, skill import, workspace transfer, sub-issues, GitHub App. Not for the product code you are working on."
+description: "Use for Multica platform actions: asks, goals, inbox, issues, sub-issues, routing, close protocol, mentions, agents, specialisations, squads, autopilots, projects, runtimes, progress, skill import, transfers, GitHub App. Not product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -20,11 +20,13 @@ Read the invariants below, then open the reference(s) your task actually needs
 | Open | When the task is about |
 |---|---|
 | `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, who else is running |
+| `references/goals.md` | Task goals: draft a completion line, confirm the human lock, track budget, and finish a goal |
 | `references/sub-issues.md` | Sub-issues: todo vs backlog at create time, stages as barrier groups, promoting parked children |
 | `references/routing.md` | Automatic routing: which slots it fills at which status, the 验收席 field, who may pick an executor (`--per-quote`, `issue escalate`), what an `issue route` result means, why dispatch stopped |
 | `references/close-protocol.md` | Closing an issue: the eight `close.*` keys, conclusion / status / next owner / wake decision tables, blocked-close fields, dispatcher stage promotion |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |
+| `references/asks.md` | Option questions raised and answered by agents |
 | `references/specialisations.md` | Base roles and specialisations: what a child inherits, the two-level cap, runtime following, solidify, the archive guard |
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
 | `references/autopilots.md` | Autopilots: schedule / webhook / manual triggers, `create_issue` vs `run_only`, why one did not fire |
@@ -79,6 +81,19 @@ suppressing the assignment alone does not suppress a later status update.
 Custom statuses do not inherit built-in automation behavior. For status side
 effects and API field meanings, read `references/issues.md`.
 
+## Chats
+
+Use the read-only chat directory before opening a transcript:
+
+- `multica chat list [--project <id>] [--all-projects] [--since <RFC3339>] [--output json|table]`
+- `multica chat search <词> [--project <id>] [--all-projects] [--since <RFC3339>] [--output json|table]`
+
+Task-scoped commands default to the current project. Use `--all-projects` to
+opt in to a workspace-wide directory. Visibility follows the person who
+started the task, so another member's private chats stay hidden. Listing and
+reading chats never changes unread state. Use `multica chat history` for a
+bounded transcript after choosing a session.
+
 **Comment reads stay bounded.** Scan the threads cheaply
 (`--roots-only --summary --compact`), then expand only what matters
 (`--thread <thread-id> --tail 30`). Never one unbounded pull — a wide read on a
@@ -98,3 +113,8 @@ the user, say so and propose a scoped change.
 Do not silently alter routing, briefing, or trigger behavior to make a complaint
 go away. Those are product contracts, and changing one without confirmation
 moves the surprise to somebody else.
+
+
+## Progress
+
+Use `multica issue progress` and `multica chat progress` to report a concise current update. See `references/progress.md`.

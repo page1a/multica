@@ -34,6 +34,7 @@ export const chatKeys = {
   all: (wsId: string) => ["chat", wsId] as const,
   /** Full sessions list (active + archived); the dropdown splits locally. */
   sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
+  directory: (wsId: string, projectId?: string) => [...chatKeys.all(wsId), "directory", projectId ?? "all"] as const,
   messageSearch: (wsId: string, q: string) =>
     [...chatKeys.all(wsId), "message-search", q] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
@@ -69,6 +70,14 @@ export const chatKeys = {
   taskMessagesAll: () => ["task-messages"] as const,
   taskMessages: (taskId: string) => [...chatKeys.taskMessagesAll(), taskId] as const,
 };
+
+export function chatDirectoryOptions(wsId: string, projectId?: string) {
+  return queryOptions({
+    queryKey: chatKeys.directory(wsId, projectId),
+    queryFn: () => api.listChatDirectory(projectId ? { project: projectId } : { allProjects: true }),
+    staleTime: 30_000,
+  });
+}
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

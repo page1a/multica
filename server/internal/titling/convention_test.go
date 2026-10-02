@@ -6,59 +6,77 @@ import (
 	"unicode"
 )
 
-func TestChatTitleSystemPromptHasNoCJK(t *testing.T) {
-	for _, r := range ChatTitleSystemPrompt {
-		if unicode.Is(unicode.Han, r) || unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Hangul) {
-			t.Fatalf("system prompt contains CJK %q; that pulls non-Chinese chats into that language", string(r))
+func TestRecapSystemPromptsHaveNoCJK(t *testing.T) {
+	for name, prompt := range map[string]string{
+		"title":    ChatRecapTitleSystemPrompt,
+		"topic":    ChatTopicSystemPrompt,
+		"progress": ChatProgressSystemPrompt,
+	} {
+		for _, r := range prompt {
+			if unicode.Is(unicode.Han, r) || unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Hangul) {
+				t.Fatalf("%s prompt contains CJK %q; that pulls non-Chinese chats into that language", name, string(r))
+			}
 		}
 	}
 	for _, want := range []string{
 		"{project} · {topic}",
-		"SAME language as the user's message",
+		"SAME language as the user's opening message",
 		"Do NOT prefix it with a label",
+		"take over this: <link>",
 	} {
-		if !strings.Contains(ChatTitleSystemPrompt, want) {
-			t.Errorf("system prompt missing %q", want)
+		if !strings.Contains(ChatRecapTitleSystemPrompt, want) {
+			t.Errorf("recap title prompt missing %q", want)
 		}
+	}
+	if !strings.Contains(ChatTopicSystemPrompt, TopicKeep) {
+		t.Errorf("topic prompt must name the %q answer", TopicKeep)
 	}
 }
 
-func TestChatTitleUserPromptRoutesThreeOpenings(t *testing.T) {
+func TestChatRecapTitleUserPrompt(t *testing.T) {
 	cases := []struct {
 		name     string
 		projects []string
-		source   string
+		opening  string
+		reply    string
+		linked   []LinkedIssue
 		want     []string
 		ban      []string
 	}{
 		{
-			name:   "english, no project — message only",
-			source: "why does login bounce between pages",
-			want:   []string{"why does login bounce between pages"},
-			ban:    []string{"Project:", "任务", "Opening message:"},
+			name:    "english, no project",
+			opening: "why does login bounce between pages",
+			reply:   "The session cookie is dropped on redirect.",
+			want: []string{
+				"Opening message:\nwhy does login bounce between pages",
+				"Assistant's first reply:\nThe session cookie is dropped on redirect.",
+			},
+			ban: []string{"Project:", "任务", "Linked issues:"},
 		},
 		{
 			name:     "chinese, one project — project plus glossary",
 			projects: []string{"Multica 魔改"},
-			source:   "登录之后一直在几个页面之间来回跳",
-			want: []string{
-				"Project: Multica 魔改",
-				"issue → 任务",
-				"agent → 智能体",
-				"Opening message:\n登录之后一直在几个页面之间来回跳",
-			},
+			opening:  "登录之后一直在几个页面之间来回跳",
+			reply:    "我先查重定向链路。",
+			want:     []string{"Project: Multica 魔改", "issue → 任务", "agent → 智能体"},
 		},
 		{
-			name:     "english, one project — project, no Chinese glossary",
-			projects: []string{"Billing"},
-			source:   "retry the failed invoices",
-			want:     []string{"Project: Billing", "Opening message:\nretry the failed invoices"},
-			ban:      []string{"任务", "智能体"},
+			name:    "bare hand-over link — linked issue named",
+			opening: "接管这个：mention://issue/0000",
+			reply:   "收到，我来接。",
+			linked:  []LinkedIssue{{Identifier: "DENE-12", Title: "登录跳转修复"}},
+			want:    []string{"Linked issues:\n- DENE-12 登录跳转修复"},
+		},
+		{
+			name:    "japanese — no chinese glossary",
+			opening: "ログインが失敗する",
+			reply:   "確認します",
+			ban:     []string{"任务"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ChatTitleUserPrompt(tc.projects, tc.source)
+			got := ChatRecapTitleUserPrompt(tc.projects, tc.opening, tc.reply, tc.linked)
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Errorf("prompt missing %q\n---\n%s", want, got)
@@ -73,13 +91,12 @@ func TestChatTitleUserPromptRoutesThreeOpenings(t *testing.T) {
 	}
 }
 
-func TestChatTitleUserPromptJapaneseSkipsChineseGlossary(t *testing.T) {
-	got := ChatTitleUserPrompt(nil, "ログインが失敗する")
-	if strings.Contains(got, "任务") {
-		t.Fatalf("Japanese opening received the Chinese glossary:\n%s", got)
-	}
-	if got != "ログインが失敗する" {
-		t.Fatalf("prompt = %q, want the message unchanged", got)
+func TestRecapTurnPromptsOrderTurns(t *testing.T) {
+	turns := []RecapTurn{{Role: "user", Content: "first"}, {Role: "assistant", Content: "second"}}
+	for _, got := range []string{ChatTopicUserPrompt("T", turns), ChatProgressUserPrompt("T", turns)} {
+		if !strings.Contains(got, "User: first\nAssistant: second") {
+			t.Errorf("turns not rendered oldest first:\n%s", got)
+		}
 	}
 }
 

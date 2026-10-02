@@ -5124,6 +5124,35 @@ func (q *Queries) GetCommentThreadRootID(ctx context.Context, commentID pgtype.U
 	return id, err
 }
 
+const getIssueCapacityRetry = `-- name: GetIssueCapacityRetry :one
+SELECT c.id, c.attempt, c.fire_at
+FROM agent_task_queue c
+JOIN agent_task_queue p ON p.id = c.parent_task_id
+WHERE c.issue_id = $1
+  AND c.status = 'deferred'
+  AND c.fire_at IS NOT NULL
+  AND p.failure_reason = 'agent_error.provider_capacity_or_rate_limit'
+ORDER BY c.created_at DESC
+LIMIT 1
+`
+
+type GetIssueCapacityRetryRow struct {
+	ID      pgtype.UUID        `json:"id"`
+	Attempt int32              `json:"attempt"`
+	FireAt  pgtype.Timestamptz `json:"fire_at"`
+}
+
+// The waiting in-place retry after a model-at-capacity failure (DENE-1093):
+// a deferred child whose parent failed with provider_capacity_or_rate_limit.
+// Issue detail shows it as "model full, retry N, next at HH:MM"; the newest
+// one wins when a stale row survived.
+func (q *Queries) GetIssueCapacityRetry(ctx context.Context, issueID pgtype.UUID) (GetIssueCapacityRetryRow, error) {
+	row := q.db.QueryRow(ctx, getIssueCapacityRetry, issueID)
+	var i GetIssueCapacityRetryRow
+	err := row.Scan(&i.ID, &i.Attempt, &i.FireAt)
+	return i, err
+}
+
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
@@ -7185,6 +7214,88 @@ func (q *Queries) ListQueuedClaimCandidatesByRuntimes(ctx context.Context, runti
 			&i.ContextMessageLimit,
 			&i.ContextTokenBudget,
 			&i.ContinuityBreakReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStrandedAgentIssues = `-- name: ListStrandedAgentIssues :many
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.reviewer_type, i.reviewer_id, i.visibility, i.assignee_source, i.assignee_source_user_id, i.assignee_quote, i.progress_text, i.progress_source, i.progress_tone, i.progress_author_type, i.progress_author_id, i.progress_updated_at FROM issue i
+WHERE i.assignee_type = 'agent'
+  AND i.assignee_id = $1
+  AND i.status IN ('todo', 'in_progress')
+  AND COALESCE(i.metadata -> 'agent_halted', 'false'::jsonb) <> 'true'::jsonb
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = i.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  )
+ORDER BY i.updated_at
+LIMIT 200
+`
+
+// Issues a seat still owns but nothing is running for (DENE-1093, the
+// DENE-1066 gap): todo / in_progress, assigned to this agent, and no run of
+// any seat queued, dispatched, running, waiting, or deferred. A seat that was
+// switched off left these behind; turning it back on requeues them. Halted
+// issues stay halted.
+func (q *Queries) ListStrandedAgentIssues(ctx context.Context, assigneeID pgtype.UUID) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, listStrandedAgentIssues, assigneeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.Revision,
+			&i.LastActivityAt,
+			&i.TriageState,
+			&i.ReviewerType,
+			&i.ReviewerID,
+			&i.Visibility,
+			&i.AssigneeSource,
+			&i.AssigneeSourceUserID,
+			&i.AssigneeQuote,
+			&i.ProgressText,
+			&i.ProgressSource,
+			&i.ProgressTone,
+			&i.ProgressAuthorType,
+			&i.ProgressAuthorID,
+			&i.ProgressUpdatedAt,
 		); err != nil {
 			return nil, err
 		}

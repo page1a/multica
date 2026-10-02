@@ -42,6 +42,10 @@ func (h *Handler) GetChatSessionHandoff(w http.ResponseWriter, r *http.Request) 
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
+	userID, ok = h.chatReaderID(w, r, userID)
+	if !ok {
+		return
+	}
 	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
@@ -77,7 +81,11 @@ func (h *Handler) GetChatSessionLinkRead(w http.ResponseWriter, r *http.Request)
 	}
 	callerWorkspace := ctxWorkspaceID(r.Context())
 	if callerWorkspace == "" || callerWorkspace == uuidToString(target.ID) {
-		access, err := h.chatAccessFor(r.Context(), session, userID)
+		readerID, ok := h.chatReaderID(w, r, userID)
+		if !ok {
+			return
+		}
+		access, err := h.chatAccessFor(r.Context(), session, readerID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check chat access")
 			return
@@ -221,4 +229,25 @@ func handoffExcerpt(content string) string {
 		return content
 	}
 	return string(runes[:handoffExcerptRunes]) + "…"
+}
+
+// chatReaderID is the person whose visibility a chat read is checked against.
+// A task token is an agent credential, not a visibility principal: it reads as
+// the human who started the task, the same viewer `chat list` uses, so an agent
+// can open what it was shown and nothing of the runtime owner's beyond that. A
+// task without an originator fails closed with the same 404 as a hidden chat.
+func (h *Handler) chatReaderID(w http.ResponseWriter, r *http.Request, userID string) (string, bool) {
+	if r.Header.Get("X-Actor-Source") != "task_token" {
+		return userID, true
+	}
+	taskID, ok := parseUUIDOrBadRequest(w, r.Header.Get("X-Task-ID"), "task id")
+	if !ok {
+		return "", false
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), taskID)
+	if err != nil || !task.OriginatorUserID.Valid {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return "", false
+	}
+	return uuidToString(task.OriginatorUserID), true
 }

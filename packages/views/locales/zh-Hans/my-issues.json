@@ -6,6 +6,7 @@
     "empty_description": "你创建或被分配到的任务会显示在这里。"
   },
   "header": {
+    "set_as_goal": "设为目标",
     "scope": {
       "all_label": "全部",
       "all_description": "分给我的、我创建的、或我的智能体和小队相关的",

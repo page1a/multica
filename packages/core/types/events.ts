@@ -120,6 +120,8 @@ export interface IssueUpdatedPayload {
   assignee_changed?: boolean;
   status_changed?: boolean;
   project_changed?: boolean;
+  /** The progress line changed (DENE-1037): refresh its history. */
+  progress_changed?: boolean;
 }
 
 export interface IssueDeletedPayload {

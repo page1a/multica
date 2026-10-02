@@ -87,6 +87,11 @@
     "empty_issues_hint": "You can also add existing issues to this project.",
     "empty_issues_new_button": "New Issue",
     "no_issues_yet": "No issues yet",
+    "chat_tab": "Chats",
+    "chat_empty": "No visible chats in this project.",
+    "chat_unnamed": "Untitled chat",
+    "chat_no_summary": "No summary yet.",
+    "chat_unknown_agent": "Agent",
     "toast_link_copied": "Link copied",
     "toast_project_deleted": "Project deleted",
     "toast_move_issue_failed": "Failed to move issue"

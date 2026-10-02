@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTask } from "@multica/core/types";
-import { deriveIssueSurfaceActivity, selectIssueTasks } from "./activity";
+import { deriveIssueSurfaceActivity, selectIssueLiveState, selectIssueTasks } from "./activity";
 
 function task(overrides: Partial<AgentTask>): AgentTask {
   return {
@@ -94,5 +94,33 @@ describe("selectIssueTasks", () => {
     expect(groups.queued.map((t) => t.id)).not.toContain("done-1");
     const noMatch = selectIssueTasks(snapshot, "does-not-exist");
     expect(noMatch).toEqual({ running: [], queued: [] });
+  });
+});
+
+describe("selectIssueLiveState", () => {
+  const failed = (at: string) => task({ id: `f-${at}`, issue_id: "i-1", status: "failed", completed_at: at });
+  const done = (at: string) => task({ id: `d-${at}`, issue_id: "i-1", status: "completed", completed_at: at });
+
+  it("prefers running over queued over a failure", () => {
+    const snapshot = [
+      failed("2026-01-02T00:00:00Z"),
+      task({ id: "q", issue_id: "i-1", status: "queued" }),
+      task({ id: "r", issue_id: "i-1", status: "running" }),
+    ];
+    expect(selectIssueLiveState(snapshot, "i-1")).toBe("running");
+    expect(selectIssueLiveState(snapshot.slice(0, 2), "i-1")).toBe("queued");
+    expect(selectIssueLiveState(snapshot.slice(0, 1), "i-1")).toBe("failed");
+  });
+
+  it("only reports a failure when it is the latest finished run", () => {
+    expect(selectIssueLiveState([failed("2026-01-01T00:00:00Z"), done("2026-01-02T00:00:00Z")], "i-1")).toBeNull();
+    expect(selectIssueLiveState([done("2026-01-01T00:00:00Z"), failed("2026-01-02T00:00:00Z")], "i-1")).toBe("failed");
+  });
+
+  it("drops a failure that a newer progress line already answered", () => {
+    const snapshot = [failed("2026-01-02T00:00:00.5Z")];
+    expect(selectIssueLiveState(snapshot, "i-1", "2026-01-02T00:00:01Z")).toBeNull();
+    expect(selectIssueLiveState(snapshot, "i-1", "2026-01-02T00:00:00Z")).toBe("failed");
+    expect(selectIssueLiveState(snapshot, "other")).toBeNull();
   });
 });

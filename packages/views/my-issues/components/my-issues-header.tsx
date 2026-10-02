@@ -24,6 +24,8 @@ import {
   IssueDisplayControls,
 } from "../../issues/components/issues-header";
 import { cn } from "@multica/ui/lib/utils";
+import { issueBehavesAs } from "@multica/core/issues";
+import { openGoalCompletion } from "@multica/core/modals";
 import { PAGE_GUTTER } from "../../layout/page-header";
 import { FilterChipsBar } from "../../issues/components/filter-chips-bar";
 import { toast } from "sonner";
@@ -94,6 +96,7 @@ export function MyIssuesHeader({
     (s) => s.toggleAgentRunningFilter,
   );
   const scopeLabel = SCOPES.find((s) => s.value === scope)?.label ?? SCOPES[0]?.label;
+  const activeIssue = allIssues.find((issue) => issueBehavesAs(issue, "started"));
 
   return (
     <>
@@ -166,6 +169,16 @@ export function MyIssuesHeader({
             onToggle={toggleAgentRunningFilter}
             agents={workingAgents}
           />
+          {activeIssue ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden gap-1 md:inline-flex"
+              onClick={() => openGoalCompletion({ issueId: activeIssue.id, title: activeIssue.title })}
+            >
+              {t(($) => $.header.set_as_goal)}
+            </Button>
+          ) : null}
           <IssueDisplayControls
             scopedIssues={allIssues}
             facetCountsExact={facetCountsExact}

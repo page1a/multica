@@ -70,6 +70,7 @@ import { PageSearchInput } from "../common/page-search-input";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { useDebouncedValue } from "../common/use-debounced-value";
 import { useRestoredScrollRef } from "../platform";
+import { openAlignIssue } from "@multica/core/issues/stores/create-mode-store";
 
 /**
  * Title half of the chat page search: every word in the title, or the whole
@@ -687,6 +688,11 @@ export function ChatPage() {
           hasSessions={c.sessions.length > 0}
           onPickPrompt={c.prefillConversationStarter}
           customizeHref={c.customizeConversationStartersHref}
+          onStartAlignment={() =>
+            openAlignIssue(
+              c.activeProjectIds[0] ? { project_id: c.activeProjectIds[0] } : undefined,
+            )
+          }
         />
       )}
 

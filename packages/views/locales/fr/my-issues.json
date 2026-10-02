@@ -6,6 +6,7 @@
     "empty_description": "Les tâches que vous créez ou qui vous sont assignées apparaîtront ici."
   },
   "header": {
+    "set_as_goal": "Définir comme objectif",
     "scope": {
       "all_label": "Toutes",
       "all_description": "Qui me sont assignées, que j'ai créées, ou qui impliquent mes agents et mes squads",

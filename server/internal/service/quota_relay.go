@@ -30,9 +30,9 @@ const quotaRelayPendingBatch = 50
 // tier down. The bool tells HandleFailedTasks not to reset the issue to todo:
 // a replacement is queued, or the issue was marked blocked on purpose.
 //
-// A capacity or rate-limit failure uses the same path only after the in-place
-// retry budget is spent. While retryEligible is still true, this returns
-// false and changes nothing. Other transient errors stay out.
+// A capacity or rate-limit failure never enters (DENE-1093): it is retried
+// in place on the same seat, which stays open. Other transient errors stay
+// out too.
 func (s *TaskService) RelayQuotaFailure(ctx context.Context, task db.AgentTaskQueue) (bool, error) {
 	if s == nil || s.Queries == nil || !quotaFailureWorthRelay(task) {
 		return false, nil
@@ -138,6 +138,7 @@ func (s *TaskService) RecoverExpiredQuotaBreakers(ctx context.Context) (int, err
 				"error", recErr,
 			)
 		}
+		s.RequeueStrandedIssues(ctx, agentID)
 	}
 	return released, nil
 }
@@ -213,11 +214,6 @@ func (s *TaskService) prepareQuotaRelay(ctx context.Context, task db.AgentTaskQu
 				return nil
 			}
 			return err
-		}
-		// Same predicate the in-place retry uses. A capacity miss that can
-		// still spawn a child must not open a breaker or move the issue.
-		if capacityRetriesRemain(locked, agent) {
-			return nil
 		}
 		plan, ok := quotarelay.PlanFor(quotaReason(locked), quotaError(locked), quotaModelBinding(agent), time.Now())
 		if !ok {
@@ -650,30 +646,19 @@ func suppressQuotaSeat(ctx context.Context, qtx *db.Queries, agent db.Agent) (pg
 	return updated, nil
 }
 
-func capacityRetriesRemain(task db.AgentTaskQueue, agent db.Agent) bool {
-	reason := quotaReason(task)
-	if !quotarelay.IsCapacityFailure(reason, quotaError(task)) {
-		return false
-	}
-	return retryEligible(reason, task, agent)
-}
-
-// relayCapacityIfRetriesSpent is the daemon fail path. HandleFailedTasks
-// already calls RelayQuotaFailure after MaybeRetryFailedTask declines; a
-// failure the daemon reported itself never reaches that sweeper, so the
-// exhausted capacity attempt has to enter the relay here or the issue stays
-// in progress with the provider's English sentence.
-//
-// A quota exhaustion the daemon reported takes the same path (DENE-870):
-// before this, a 402 that never reached the sweeper left the seat enabled,
-// and every wake handed the issue back to the same empty account.
-func (s *TaskService) relayCapacityIfRetriesSpent(ctx context.Context, task db.AgentTaskQueue, failureReason, errMsg string) bool {
+// relayQuotaExhaustion is the daemon fail path. HandleFailedTasks already
+// calls RelayQuotaFailure after MaybeRetryFailedTask declines; a quota
+// exhaustion the daemon reported itself never reaches that sweeper, so it
+// enters the relay here (DENE-870): before this, a 402 that never reached the
+// sweeper left the seat enabled, and every wake handed the issue back to the
+// same empty account. Capacity failures do not qualify (DENE-1093).
+func (s *TaskService) relayQuotaExhaustion(ctx context.Context, task db.AgentTaskQueue, failureReason, errMsg string) bool {
 	if s == nil || !quotarelay.ShouldInspect(failureReason, errMsg) {
 		return false
 	}
 	hold, err := s.RelayQuotaFailure(ctx, task)
 	if err != nil {
-		slog.Warn("fail task: capacity relay failed",
+		slog.Warn("fail task: quota relay failed",
 			"task_id", util.UUIDToString(task.ID),
 			"error", err,
 		)
@@ -910,15 +895,14 @@ func planSeatTier(agent db.Agent) string {
 }
 
 func capacityAvoidHouse(task db.AgentTaskQueue, name string) string {
-	// A seat whose account ran out of money leaves its house too: Grok
-	// goes to Claude or GPT, GPT to Claude or Grok (DENE-870).
-	if !quotarelay.IsCapacityFailure(quotaReason(task), quotaError(task)) && !balanceFailure(task) {
+	// A seat whose account ran out of money leaves its house: Grok goes to
+	// Claude or GPT, GPT to Claude or Grok (DENE-870). Capacity no longer
+	// relays at all (DENE-1093), so balance is the only caller left.
+	if !balanceFailure(task) {
 		return ""
 	}
-	// Any house, not only GPT. A Claude seat that is full should not hand
-	// the work to another Claude seat either: the same provider is usually
-	// full together. One tier down still may land on the same house when
-	// the rung has nobody else.
+	// Any house, not only GPT. One tier down still may land on the same
+	// house when the rung has nobody else.
 	provider, ok := routing.DefaultLadder.ProviderOf(name)
 	if !ok || provider == "" {
 		return ""
@@ -1318,4 +1302,37 @@ func quotaAcceptanceText(raw []byte) string {
 	}
 	rs := []rune(s)
 	return string(rs[:500]) + "…"
+}
+
+// RequeueStrandedIssues gives a seat that has just been switched back on the
+// issues it still owns but has no run for (DENE-1093). While the seat was
+// off, a trigger on those issues was refused, so nothing would ever pick them
+// up again. Each one gets one ordinary run; an issue that cannot be enqueued
+// (triage, archived seat) is skipped and logged, never fatal.
+func (s *TaskService) RequeueStrandedIssues(ctx context.Context, agentID pgtype.UUID) int {
+	if s == nil || s.Queries == nil || !agentID.Valid {
+		return 0
+	}
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if err != nil || !agent.WorkEnabled || agent.ArchivedAt.Valid {
+		return 0
+	}
+	issues, err := s.Queries.ListStrandedAgentIssues(ctx, agentID)
+	if err != nil {
+		slog.Warn("requeue stranded issues: list failed", "agent_id", util.UUIDToString(agentID), "error", err)
+		return 0
+	}
+	queued := 0
+	for _, issue := range issues {
+		if _, err := s.EnqueueTaskForIssue(ctx, issue); err != nil {
+			slog.Warn("requeue stranded issues: enqueue failed",
+				"agent_id", util.UUIDToString(agentID),
+				"issue_id", util.UUIDToString(issue.ID),
+				"error", err,
+			)
+			continue
+		}
+		queued++
+	}
+	return queued
 }

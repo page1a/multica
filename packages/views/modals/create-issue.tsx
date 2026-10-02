@@ -5,6 +5,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppLink, resolveClickIntent, useNavigation } from "../navigation";
 import { UnfinishedIssueDraftsBanner } from "../issues/draft/unfinished-issue-drafts";
+import { GoalFlowSteps } from "../issues/draft/goal-flow-steps";
 import {
   AlertTriangle,
   ArrowDown,
@@ -105,6 +106,7 @@ import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
+import { openGoalCompletion } from "@multica/core/modals";
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -261,6 +263,8 @@ export function ManualCreatePanel({
 
   const sendShortcut = useShortcut("send");
   const [title, setTitle] = useState(draft.manual.title);
+  const [goalMode, setGoalMode] = useState(data?.goal_mode === true);
+  const createdGoalIssueRef = useRef<Issue | null>(null);
   const [formResetKey, setFormResetKey] = useState(0);
   const titleEditorRef = useRef<TitleEditorRef>(null);
   const descEditorRef = useRef<ContentEditorRef>(null);
@@ -657,6 +661,7 @@ export function ManualCreatePanel({
       // a passive inline hint now warns before submit (MUL-3375). The draft
       // reset + close/keep-open happens in onAccepted once we report success.
       {
+        if (goalMode) createdGoalIssueRef.current = issue;
         toast.custom((toastId) => (
           <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px] max-w-full">
             <div className="flex items-center gap-2 mb-2">
@@ -775,6 +780,7 @@ export function ManualCreatePanel({
       // draft — an issue was created, so record them regardless of the guard.
       setLastAssignee(assigneeType, assigneeId);
       setLastMode("manual");
+      const goalIssue = createdGoalIssueRef.current;
       // Success may only consume the draft it submitted (MUL-5181 P0): any
       // edit after the submit snapshot — typing while the request is in
       // flight, or a reopened dialog — survives, and the dialog then stays
@@ -791,6 +797,9 @@ export function ManualCreatePanel({
         resetForNextIssue();
       } else {
         onClose();
+        if (goalIssue) {
+          openGoalCompletion({ issueId: goalIssue.id, title: goalIssue.title });
+        }
       }
     },
   });
@@ -991,6 +1000,8 @@ export function ManualCreatePanel({
                 </Tooltip>
               </div>
             </div>
+
+            <GoalFlowSteps active="issue" className="px-5 pb-1" />
 
             {unfinishedDrafts.length > 0 && (
               <div className="px-5 shrink-0">
@@ -1485,6 +1496,10 @@ export function ManualCreatePanel({
                   {t(($) => $.create_issue.switch_to_align)}
                 </button>
               )}
+              <label className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground cursor-pointer select-none">
+                <Switch size="sm" checked={goalMode} onCheckedChange={setGoalMode} />
+                {tIssues(($) => $.detail.goal.set_as_goal)}
+              </label>
               <label className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground cursor-pointer select-none">
                 <Switch
                   size="sm"

@@ -21,6 +21,10 @@ const (
 	KeyWaitCondition = "block.wait_condition"
 	KeyWaitProbe     = "block.wait_probe"
 	KeyWaitTimeout   = "block.wait_timeout"
+	KeyProbeStatus   = "block.wait_probe_status"
+	KeyProbeAt       = "block.wait_probe_at"
+	KeyProbeOutput   = "block.wait_probe_output"
+	KeyProbeNotified = "block.wait_probe_notified"
 	KeyNeedsHuman    = "block.needs_human"
 	KeyWokenBy       = "block.woken_by"
 	KeyPatrolAt      = "block.patrol_at"
@@ -53,6 +57,10 @@ func WaitKeys() []string {
 		KeyWaitCondition,
 		KeyWaitProbe,
 		KeyWaitTimeout,
+		KeyProbeStatus,
+		KeyProbeAt,
+		KeyProbeOutput,
+		KeyProbeNotified,
 		KeyNeedsHuman,
 		KeyWokenBy,
 		KeyPatrolAt,
@@ -61,10 +69,41 @@ func WaitKeys() []string {
 	}
 }
 
+// Probe exit code convention shared by the daemon and the platform. A probe
+// is deliberately just a command: zero means the awaited condition is ready,
+// ten means it is still pending, and every other exit code is a failure worth
+// showing to the executor.
+const (
+	ProbeReadyExitCode   = 0
+	ProbePendingExitCode = 10
+	// gh pr checks uses 8 for checks that are still pending. Treat it as
+	// pending here so the documented one-line probe can be used directly.
+	ProbePendingGitHubExitCode = 8
+)
+
+type ProbeStatus string
+
+const (
+	ProbeReady   ProbeStatus = "ready"
+	ProbePending ProbeStatus = "pending"
+	ProbeFailed  ProbeStatus = "failed"
+)
+
+func ProbeStatusForExitCode(code int) ProbeStatus {
+	switch code {
+	case ProbeReadyExitCode:
+		return ProbeReady
+	case ProbePendingExitCode, ProbePendingGitHubExitCode:
+		return ProbePending
+	default:
+		return ProbeFailed
+	}
+}
+
 // ClockKeys are execution clocks. Entering in_review drops them so a leftover
 // failure wake cannot keep paging the reviewer.
 func ClockKeys() []string {
-	return []string{KeyWakeAt, KeyWaitCondition, KeyWaitProbe, KeyWaitTimeout}
+	return []string{KeyWakeAt, KeyWaitCondition, KeyWaitProbe, KeyWaitTimeout, KeyProbeStatus, KeyProbeAt, KeyProbeOutput, KeyProbeNotified}
 }
 
 // Record is the wait written when an issue becomes blocked. At least one of

@@ -33,12 +33,10 @@ func TestPlanForSeparatesBalanceFromCapacity(t *testing.T) {
 		}
 	}
 
-	capacity, ok := PlanFor(string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "429 Too Many Requests", Binding{}, now)
-	if !ok || capacity.Kind != KindProviderCapacity || IsManualRecovery(capacity.Kind) {
-		t.Fatalf("429 = %+v ok=%v, want a self-recovering capacity plan", capacity, ok)
-	}
-	if !capacity.RecoverAt.Before(now.Add(24 * time.Hour)) {
-		t.Fatalf("capacity recover_at = %v, want within the day", capacity.RecoverAt)
+	// DENE-1093: a 429 is a busy provider. It opens no breaker at all; the
+	// issue is retried in place on the same open seat.
+	if capacity, ok := PlanFor(string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "429 Too Many Requests", Binding{}, now); ok {
+		t.Fatalf("429 = %+v, want no breaker", capacity)
 	}
 
 	weekly, ok := PlanFor(quota, "You've hit your weekly limit. resets Monday", Binding{}, now)

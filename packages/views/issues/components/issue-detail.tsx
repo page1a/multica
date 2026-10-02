@@ -66,6 +66,7 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
+import { IssueProgressBar } from "./issue-progress-line";
 import { PropertyIcon } from "../../common/property-icon";
 import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
@@ -123,7 +124,7 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useModalStore } from "@multica/core/modals";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, childIssueProgressOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { issueListOptions, issueDetailOptions, childIssuesOptions, childIssueProgressOptions, issueAttachmentsOptions, issueGoalOptions } from "@multica/core/issues/queries";
 import { issueAlignmentDraftId, issueAlignmentHeldByAnother } from "@multica/core/issues";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
@@ -158,9 +159,12 @@ import {
   useViewStateWriter,
 } from "../../platform";
 import { cn } from "@multica/ui/lib/utils";
+import { AskPromptList } from "../../common/ask-prompt";
 import { PAGE_GUTTER } from "../../layout/page-header";
 import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
 import { WorkThreadPanel } from "../../common/work-thread-panel";
+import { GoalSection } from "./goal-section";
+import { openGoalCompletion } from "@multica/core/modals";
 
 import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
@@ -1189,6 +1193,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
   const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const { data: issueGoal } = useQuery(issueGoalOptions(wsId, id));
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // Activity and issue visuals share the catalog's custom geometry and color;
@@ -3149,6 +3154,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
             )
           )}
+          <IssueProgressBar issue={issue} className="mt-2" />
           {titleConflictDraft !== null ? (
             <RevisionConflictCompare
               className="mt-2"
@@ -3357,6 +3363,23 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
             {descDragOver && <FileDropOverlay />}
           </div>
+
+          {!isGuest && !issueGoal && (
+            <div className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-caption font-medium">{t(($) => $.detail.goal.set_as_goal)}</p>
+                <p className="text-micro text-muted-foreground">{t(($) => $.detail.goal.set_as_goal_hint)}</p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => openGoalCompletion({ issueId: issue.id, title: issue.title })}
+              >
+                {t(($) => $.detail.goal.set_as_goal)}
+              </Button>
+            </div>
+          )}
+          <GoalSection wsId={wsId} issueId={issue.id} />
 
           {/* Sub-issues — Linear-style */}
           {childIssues.length === 0 && (
@@ -3607,6 +3630,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
 
             <LocalDirectoryHint projectId={issue?.project_id} />
+
+            <AskPromptList issueId={id} className="mt-4" />
 
             {/* The "agent is working" live signal now lives in the header
                 (IssueAgentHeaderChip) so it stays in one fixed place and

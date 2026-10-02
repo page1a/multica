@@ -45,12 +45,11 @@ func TestPlanForSeparatesWeeklyModelAndTransient(t *testing.T) {
 		t.Fatalf("parsed reset = %s", parsed.RecoverAt)
 	}
 
-	capacity, ok := PlanFor(string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "quota exceeded but API Error: 429 Too Many Requests", own, now)
-	if !ok || capacity.Kind != KindProviderCapacity || capacity.Scope() != ScopeAgent || capacity.ModelKey != "" {
-		t.Fatalf("capacity plan = %+v ok=%v, want a capacity cooldown, not a quota breaker", capacity, ok)
-	}
-	if capacity.Condition != ConditionCapacityCooldown || !capacity.RecoverAt.Equal(now.Add(time.Hour)) {
-		t.Fatalf("capacity recovery = %s %s", capacity.Condition, capacity.RecoverAt)
+	// DENE-1093: a full model or rate limit never opens a breaker, even when
+	// its text also mentions quota. The seat stays open and the platform
+	// retries the issue in place.
+	if plan, ok := PlanFor(string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "quota exceeded but API Error: 429 Too Many Requests", own, now); ok {
+		t.Fatalf("capacity plan = %+v, want no breaker", plan)
 	}
 	if _, ok := PlanFor(string(taskfailure.ReasonAgentProviderNetwork), "connection reset by peer", own, now); ok {
 		t.Fatal("network failure must not open a breaker")
@@ -58,15 +57,14 @@ func TestPlanForSeparatesWeeklyModelAndTransient(t *testing.T) {
 	if ShouldInspect(string(taskfailure.ReasonAgentProviderQuotaLimit), "weekly usage limit") != true {
 		t.Fatal("quota reason must be inspected")
 	}
-	if !ShouldInspect(string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.") {
-		t.Fatal("capacity reason must be inspected")
+	if ShouldInspect(string(taskfailure.ReasonAgentProviderCapacityOrRateLimit), "Selected model is at capacity. Please try a different model.") {
+		t.Fatal("capacity reason must not enter the relay")
 	}
 	if ShouldInspect(string(taskfailure.ReasonTimeout), "weekly usage limit") {
 		t.Fatal("a named non-quota reason must not be inspected")
 	}
-	coarse, ok := PlanFor("agent_error", "Selected model is at capacity. Please try a different model.", own, now)
-	if !ok || coarse.Kind != KindProviderCapacity {
-		t.Fatalf("coarse capacity text = %+v ok=%v", coarse, ok)
+	if coarse, ok := PlanFor("agent_error", "Selected model is at capacity. Please try a different model.", own, now); ok {
+		t.Fatalf("coarse capacity text = %+v, want no breaker", coarse)
 	}
 }
 

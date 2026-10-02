@@ -143,3 +143,86 @@ WHERE cs.workspace_id = sqlc.arg(workspace_id)
     )
   )
 ORDER BY cs.updated_at DESC;
+
+-- name: ListChatDirectory :many
+-- Read-only directory projection for agents. Visibility is evaluated against
+-- the task's human originator (viewer_id), never the runtime owner. This query
+-- deliberately does not touch chat_session_read, so browsing a directory or
+-- reading its summaries cannot clear a person's unread state.
+SELECT cs.id,
+       cs.workspace_id,
+       cs.agent_id,
+       cs.creator_id,
+       cs.title,
+       cs.status,
+       cs.visibility,
+       cs.project_id,
+       COALESCE(p.title, '') AS project_title,
+       COALESCE(ag.name, '') AS agent_name,
+       COALESCE(u.name, '') AS creator_name,
+       COALESCE(lm.created_at, cs.updated_at) AS last_active_at,
+       (SELECT count(*) FROM chat_message m
+          WHERE m.chat_session_id = cs.id
+            AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff'))::int AS message_count,
+       COALESCE(lm.content, '') AS summary
+FROM chat_session cs
+LEFT JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
+LEFT JOIN agent ag ON ag.id = cs.agent_id
+LEFT JOIN "user" u ON u.id = cs.creator_id
+LEFT JOIN LATERAL (
+  SELECT content, created_at
+    FROM chat_message m
+   WHERE m.chat_session_id = cs.id
+     AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+   ORDER BY m.created_at DESC, m.id DESC
+   LIMIT 1
+) lm ON true
+WHERE cs.workspace_id = sqlc.arg(workspace_id)
+  AND (
+    cs.creator_id = sqlc.arg(viewer_id)
+    OR (
+      cs.visibility = 'workspace'
+      AND EXISTS (
+        SELECT 1 FROM member m
+         WHERE m.workspace_id = cs.workspace_id
+           AND m.user_id = sqlc.arg(viewer_id)
+           AND m.role <> 'guest'
+      )
+    )
+    OR (
+      cs.visibility = 'project'
+      AND (
+        EXISTS (
+          SELECT 1 FROM chat_session_project csp
+           WHERE csp.chat_session_id = cs.id
+             AND csp.project_id = ANY(sqlc.arg(project_ids)::uuid[])
+        )
+        OR (cs.project_id IS NOT NULL AND cs.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+        OR EXISTS (
+          SELECT 1 FROM resource_share rs
+           WHERE rs.workspace_id = cs.workspace_id
+             AND rs.resource_type = 'chat_session'
+             AND rs.resource_id = cs.id::text
+             AND rs.member_id = sqlc.arg(viewer_id)
+        )
+      )
+    )
+  )
+  AND (sqlc.arg(all_projects)::bool OR (sqlc.narg(project_id)::uuid IS NOT NULL AND (
+    cs.project_id = sqlc.narg(project_id)::uuid
+    OR EXISTS (
+      SELECT 1 FROM chat_session_project csp
+       WHERE csp.chat_session_id = cs.id
+         AND csp.project_id = sqlc.narg(project_id)::uuid
+    )
+  )))
+  AND (sqlc.narg(since)::timestamptz IS NULL OR COALESCE(lm.created_at, cs.updated_at) >= sqlc.narg(since)::timestamptz)
+  AND (sqlc.narg(keyword)::text IS NULL OR cs.title ILIKE '%' || sqlc.narg(keyword)::text || '%'
+       OR EXISTS (
+         SELECT 1 FROM chat_message sm
+          WHERE sm.chat_session_id = cs.id
+            AND sm.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+            AND sm.content ILIKE '%' || sqlc.narg(keyword)::text || '%'
+       ))
+  AND (cs.explicitly_created_at IS NOT NULL OR lm.created_at IS NOT NULL)
+ORDER BY COALESCE(lm.created_at, cs.updated_at) DESC, cs.id DESC;

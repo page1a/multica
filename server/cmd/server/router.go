@@ -445,6 +445,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		ServerVersion:            normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	// Chat goal title + progress subtitle refresh after each agent reply
+	// (DENE-1037).
+	h.RegisterChatRecap(bus)
 	invitationRateLimits := handler.DefaultInvitationRateLimits()
 	invitationRateLimits.Actor.Limit = envNonNegativeInt("RATE_LIMIT_INVITATION_ACTOR_10M", invitationRateLimits.Actor.Limit)
 	invitationRateLimits.Workspace.Limit = envNonNegativeInt("RATE_LIMIT_INVITATION_WORKSPACE_24H", invitationRateLimits.Workspace.Limit)
@@ -1550,6 +1553,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/workspaces/{workspaceId}/memory", h.GetDaemonProjectMemoryTargets)
 		r.Post("/workspaces/{workspaceId}/memory/check", h.ReportDaemonProjectMemoryCheck)
 		r.Get("/workspaces/{workspaceId}/runtime-profiles", h.DaemonListRuntimeProfiles)
+		r.Get("/workspaces/{workspaceId}/block-waits", h.ListDaemonBlockWaits)
+		r.Post("/issues/{issueId}/wait-probe", h.ReportDaemonBlockWait)
 
 		// Agent-triggered plugin hooks. The daemon's local MCP server calls
 		// this when an agent picks one of its tools; the server makes the
@@ -2080,6 +2085,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/asks", func(w http.ResponseWriter, req *http.Request) {
+						q := req.URL.Query()
+						q.Set("issue_id", chi.URLParam(req, "id"))
+						req.URL.RawQuery = q.Encode()
+						h.ListAsks(w, req)
+					})
+					r.Post("/asks", h.CreateAsk)
 					r.Get("/work-thread", h.GetIssueWorkThread)
 					r.Post("/work-thread/action", h.WorkThreadAction)
 					r.Put("/", h.UpdateIssue)
@@ -2102,6 +2114,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/unsubscribe", h.UnsubscribeFromIssue)
 					r.Post("/unsubscribe/subtree", h.UnsubscribeFromIssueSubtree)
 					r.Get("/active-task", h.GetActiveTaskForIssue)
+					// DENE-1051 goal completion line. One issue owns one goal;
+					// confirmation locks the checks and budget for agent actors.
+					r.Get("/goal", h.GetIssueGoal)
+					r.Post("/goal", h.CreateIssueGoal)
+					r.Post("/goal/confirm", h.ConfirmIssueGoal)
+					r.Post("/goal/budget", h.AppendIssueGoalBudget)
+					r.Post("/goal/finish", h.FinishIssueGoal)
+					r.Post("/goal/check/{check}", h.UpdateIssueGoalCheck)
 					r.Post("/tasks/{taskId}/cancel", h.CancelTask)
 					r.Post("/halt", h.HaltIssue)
 					r.Post("/resume", h.ResumeIssue)
@@ -2118,6 +2138,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// status and close.* keys in one transaction, checked by
 					// closeprotocol.Validate — `multica issue close`.
 					r.Post("/close", h.CloseIssue)
+					r.Post("/progress", h.WriteIssueProgress)
+					r.Get("/progress", h.ListIssueProgress)
 					// PR state from the caller's gh, refreshed by `issue
 					// close` so the done gate sees merges without a GitHub App.
 					r.Post("/pull-requests/report", h.ReportIssuePullRequests)
@@ -2152,6 +2174,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/delivery/canonical", h.SetIssueDeliveryCanonical)
 					r.Post("/delivery/classify", h.ClassifyIssueDeliveryBranch)
 					r.Post("/delivery/cleanup", h.RecordIssueDeliveryCleanup)
+				})
+			})
+
+			// Generic agent questions. The same contract is used by the CLI and
+			// every UI surface (issue activity, chat and inbox).
+			r.Route("/api/asks", func(r chi.Router) {
+				r.Get("/", h.ListAsks)
+				r.Post("/", h.CreateAsk)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetAsk)
+					r.Post("/answer", h.AnswerAsk)
 				})
 			})
 
@@ -2566,6 +2599,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			r.Get("/api/chat/visibility-notice", h.GetChatVisibilityNotice)
 			r.Post("/api/chat/visibility-notice/dismiss", h.DismissChatVisibilityNotice)
+			r.Get("/api/chat/directory", h.ListChatDirectory)
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)
 				r.Get("/", h.ListChatSessions)
@@ -2584,6 +2618,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/archive", h.SetChatSessionArchived)
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
+					r.Post("/progress", h.WriteChatProgress)
+					r.Get("/progress", h.ListChatProgress)
 					r.Post("/onboarding", h.StartMikaOnboarding)
 					// Explicit "refresh" of a turn's quick actions: re-runs the
 					// daemon suggestion pass for the latest assistant reply (MUL-5149).

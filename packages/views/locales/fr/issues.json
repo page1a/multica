@@ -432,6 +432,32 @@
     "prop_created": "Création",
     "prop_updated": "Mise à jour",
     "activity_section": "Activité",
+    "goal": {
+      "title": "Objectif",
+      "completion_title": "Compléter la ligne d'arrivée",
+      "completion_hint": "Choisissez les contrôles qui doivent réussir avant que cette tâche soit terminée.",
+      "question_label": "Contrôles de fin",
+      "question_tabs": "Questions sur les contrôles de fin",
+      "question_number": "Question {{n}}",
+      "question_prompt": "Qu'est-ce qui comptera comme terminé ?",
+      "other_option": "Autre — décrivez votre propre contrôle",
+      "add_question": "Ajouter un autre contrôle",
+      "lock_hint": "Après confirmation, la ligne d'arrivée est verrouillée. Pour la modifier, demandez à Kun.",
+      "confirm": "Confirmer et démarrer",
+      "confirming": "Verrouillage et démarrage…",
+      "set_as_goal": "Définir comme objectif",
+      "set_as_goal_hint": "Conservez le travail déjà terminé et définissez ce qui comptera comme fini.",
+      "progress": "{{completed}} contrôles sur {{total}} terminés",
+      "round": "Tour",
+      "tokens": "Jetons",
+      "runs": "Exécutions",
+      "duration": "Durée",
+      "budget_warning": "Cet objectif a utilisé au moins 80 % de son budget. Il sera mis en pause à la limite et demandera quoi faire ensuite.",
+      "stopped_hint": "Cet objectif est en pause. Répondez à la question à choix dans votre boîte de réception pour ajouter du budget, modifier la ligne de réussite ou arrêter.",
+      "evidence_item": "Preuve",
+      "open_evidence": "Ouvrir la preuve",
+      "status": { "draft": "À confirmer", "locked": "En cours", "active": "En cours", "stopped": "Arrêté", "achieved": "Atteint" }
+    },
     "subscribe": "S'abonner",
     "unsubscribe": "Se désabonner",
     "delegated_subscription_badge": "Suivi via un agent",
@@ -708,6 +734,7 @@
     "halt_failed": "Échec de l'arrêt des exécutions",
     "resume_failed": "Échec de la reprise des exécutions",
     "status_deferred": "Nouvelle tentative",
+    "status_capacity_retry": "Modèle saturé · tentative {{retry}}, prochaine à {{time}}",
     "usage_label": "Coût en tokens"
   },
   "usage_detail": {
@@ -1058,6 +1085,12 @@
   },
   "alignment": {
     "title": "Aligner une nouvelle tâche",
+    "goal_flow_aria": "Parcours de l'objectif",
+    "goal_flow_chat": "Discussion",
+    "goal_flow_align": "Alignement",
+    "goal_flow_issue": "Tâche",
+    "entry_create_start": "Créer et démarrer",
+    "goal_toggle": "Continuer jusqu'à la ligne d'arrivée",
     "subtitle": "Rien n'est créé tant que vous n'avez pas confirmé.",
     "back": "Retour aux tâches",
     "stage_aligning": "Alignement",
@@ -1242,5 +1275,20 @@
   },
   "row": {
     "pinned_label": "Épinglée"
+  },
+  "progress_line": {
+    "label": "Progression",
+    "live_running": "Un agent travaille",
+    "live_queued": "En attente d’un agent",
+    "live_failed": "La dernière exécution a échoué",
+    "history_show": "Historique",
+    "history_hide": "Masquer l’historique",
+    "history_empty": "Aucune mise à jour antérieure",
+    "history_loading": "Chargement…",
+    "source_agent": "rapport",
+    "source_close": "résumé de clôture",
+    "source_parking": "patrouille",
+    "source_model": "résumé",
+    "source_reply": "tiré de la réponse"
   }
 }

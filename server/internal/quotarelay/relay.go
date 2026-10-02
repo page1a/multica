@@ -22,9 +22,11 @@ const (
 	KindNone             Kind = ""
 	KindWeeklyAgent      Kind = "weekly_agent"
 	KindSpecializedModel Kind = "specialized_model"
-	// KindProviderCapacity is an in-place retry budget that ran out, not a
-	// weekly quota. The seat cools down briefly so the same model is not
-	// handed the issue again on the next tick.
+	// KindProviderCapacity is kept only to read breaker rows written before
+	// DENE-1093. A full model or rate limit no longer opens a breaker: the
+	// issue stays on its seat and the platform retries it in place with
+	// backoff (service.providerCapacityRetrySchedule). PlanFor never returns
+	// this kind.
 	KindProviderCapacity Kind = "provider_capacity"
 	// KindBalanceExhausted is a paid account with no money left (402,
 	// insufficient balance, credits exhausted). Unlike a weekly window or a
@@ -83,10 +85,10 @@ func (p Plan) Scope() string {
 	return ScopeAgent
 }
 
-// ShouldInspect reports whether a failed task should enter the relay.
-// Quota exhaustion always does. A capacity or rate-limit failure does too,
-// but the caller must still refuse it while in-place retries remain — this
-// function does not see the attempt counter.
+// ShouldInspect reports whether a failed task should enter the relay. Only
+// quota exhaustion does: weekly windows, a specialisation's own model window,
+// and an empty balance. A capacity or rate-limit failure never does
+// (DENE-1093) — it is retried in place and leaves the seat open.
 func ShouldInspect(failureReason, errorText string) bool {
 	_, ok := PlanFor(failureReason, errorText, Binding{}, time.Time{})
 	return ok
@@ -99,17 +101,13 @@ func IsCapacityFailure(reason, text string) bool {
 }
 
 // PlanFor classifies one failure. ok is false for anything that is not a
-// quota exhaustion or a capacity / rate-limit failure. Network errors stay
-// out. A capacity plan is not a weekly breaker: the seat comes back after
-// the same hour a specialized-model window uses, because the miss is
-// transient and the in-place retries have already waited.
+// quota exhaustion. Network errors stay out, and so does a capacity or
+// rate-limit failure, even when its text also mentions quota: a full model
+// clears in minutes, so the seat stays open and the issue is retried in
+// place (DENE-1093).
 func PlanFor(failureReason, errorText string, binding Binding, now time.Time) (Plan, bool) {
 	if isCapacityFailure(failureReason, errorText) {
-		plan := Plan{Kind: KindProviderCapacity, Condition: ConditionCapacityCooldown}
-		if !now.IsZero() {
-			plan.RecoverAt = now.Add(modelQuotaWindow)
-		}
-		return plan, true
+		return Plan{}, false
 	}
 	if !isQuotaFailure(failureReason, errorText) {
 		return Plan{}, false

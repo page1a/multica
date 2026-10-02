@@ -13,6 +13,7 @@ import { DeleteIssueConfirmModal } from "./delete-issue-confirm";
 import { CloseIssueDialog } from "./close-issue";
 import { RunConfirmModal } from "./run-confirm";
 import { IssueLimitUpgradeDialog } from "./issue-limit-upgrade-dialog";
+import { GoalCompletionModal } from "./goal-completion";
 
 /**
  * Which face the create-issue dialog opens on.
@@ -79,6 +80,9 @@ export function ModalRegistry() {
       break;
     case "issue-run-confirm":
       activeModal = <RunConfirmModal onClose={close} data={data} />;
+      break;
+    case "goal-completion":
+      activeModal = <GoalCompletionModal onClose={close} data={data} />;
       break;
   }
 

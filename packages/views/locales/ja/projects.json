@@ -86,6 +86,11 @@
     "empty_issues_hint": "既存のタスクをこのプロジェクトに追加することもできます。",
     "empty_issues_new_button": "新規タスク",
     "no_issues_yet": "タスクはまだありません",
+    "chat_tab": "チャット",
+    "chat_empty": "このプロジェクトに表示できるチャットはありません。",
+    "chat_unnamed": "無題のチャット",
+    "chat_no_summary": "要約はまだありません。",
+    "chat_unknown_agent": "エージェント",
     "toast_link_copied": "リンクをコピーしました",
     "toast_project_deleted": "プロジェクトを削除しました",
     "toast_move_issue_failed": "タスクを移動できませんでした"

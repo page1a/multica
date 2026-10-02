@@ -73,8 +73,8 @@ clearing browser data or changing ports. All sample edits stay inside the frame.
   fall through to the network. Navigation is limited to issue list/detail.
   This is a visual workbench, not a full backend simulator. Other groupings,
   advanced filter combinations, uploads and agent execution are not supported.
-- `--issue-row-height` is used by the production `ListRow`. Its default remains
-  36px. First-paint spacers use the same token before scroll restoration;
+- `--issue-row-height` is used by the production `ListRow`. Its default is
+  52px (two-line rows: title + progress, DENE-1037). First-paint spacers use the same token before scroll restoration;
   virtualization starts from the rendered seed row height and measures subsequent
   changes. Table and board density are independent. Other design changes still
   export to the shared token file.

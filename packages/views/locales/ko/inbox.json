@@ -73,6 +73,8 @@
     "access_status_expired": "만료됨: 제때 처리되지 않았습니다"
   },
   "types": {
+    "needs_you": "확인이 필요합니다",
+    "ask_answered": "질문에 답변함",
     "issue_assigned": "할당됨",
     "issue_subscribed": "구독됨",
     "unassigned": "할당 해제됨",

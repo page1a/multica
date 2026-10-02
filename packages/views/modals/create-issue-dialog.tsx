@@ -271,6 +271,7 @@ function CreateIssueDialogBody({
           // still do not apply: the conversation decides its own group.
           <AlignCreatePanel
             onClose={onClose}
+            data={effectiveData}
             parentIssueId={alignParentIssueId}
             // Hands the untouched payload back on the way out. The alignment
             // face reads none of it, but the manual face's parent context is

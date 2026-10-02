@@ -73,6 +73,8 @@
     "access_status_expired": "期限切れ：対応されませんでした"
   },
   "types": {
+    "needs_you": "対応が必要です",
+    "ask_answered": "質問に回答しました",
     "issue_assigned": "割り当て済み",
     "issue_subscribed": "購読済み",
     "unassigned": "割り当て解除",

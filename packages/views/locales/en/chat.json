@@ -10,6 +10,10 @@
     "new_chat_in_project": "New chats stay in \"{{title}}\"",
     "new_chat_unbound": "New chats are not tied to a project"
   },
+  "goal_flow": {
+    "hint": "Clarify it before creating the issue.",
+    "action": "Align first"
+  },
   "project_bar": {
     "all": "All",
     "more": "⋯ More ({{count}})",
@@ -344,5 +348,6 @@
     "body": "You have {{count}} chats that project members can now see.",
     "make_private": "Make selected private",
     "dismiss": "Got it"
-  }
+  },
+  "title_locked": "Title locked — the agent will not rename it"
 }

@@ -229,6 +229,7 @@ func init() {
 	agentUpdateCmd.Flags().Int32("max-concurrent-tasks", 0, "New max concurrent runs (1-50)")
 	agentUpdateCmd.Flags().String("parent-agent-id", "", "Attach this existing agent to a base role, or pass an empty string to detach it. Detaching here does NOT keep the inherited prompt — use 'multica agent solidify <id>' for the non-lossy unbind. An agent that already has specialisations cannot be attached (two levels only).")
 	agentUpdateCmd.Flags().Bool("runtime-inherited", false, "Follow the base role's runtime configuration (true), or keep this agent's own (false). Copied immediately in both directions; opting out keeps the values the agent is running with now. Refused on a base role, and refused in the same call as a runtime flag (--runtime-id/--model/--thinking-level/--service-tier/--runtime-config) while following.")
+	agentUpdateCmd.Flags().Bool("work-enabled", true, "Open (true) or close (false) the seat for work, e.g. --work-enabled=false. A closed seat refuses new runs and stays out of dispatch. On a base role every specialisation follows. Turning a seat back on also requeues the todo / in_progress issues it still owns that have no run.")
 	agentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent archive
@@ -886,8 +887,15 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		body["runtime_inherited"] = v
 	}
 
+	// work_enabled (DENE-714) is the reversible seat gate; like
+	// runtime_inherited, `false` must reach the server, so key on Changed.
+	if cmd.Flags().Changed("work-enabled") {
+		v, _ := cmd.Flags().GetBool("work-enabled")
+		body["work_enabled"] = v
+	}
+
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --routing-usage, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, or --runtime-inherited (env vars now live behind `multica agent env set <id>`)")
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --routing-usage, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, --runtime-inherited, or --work-enabled (env vars now live behind `multica agent env set <id>`)")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())

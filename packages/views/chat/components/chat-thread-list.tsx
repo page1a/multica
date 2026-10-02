@@ -43,6 +43,7 @@ import { createLogger } from "@multica/core/logger";
 import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import { useLocale, useT } from "../../i18n";
 import { HighlightText } from "../../search/highlight-text";
+import { ProgressLine } from "../../common/progress-line";
 
 const apiLogger = createLogger("chat.api");
 
@@ -270,7 +271,7 @@ export function ChatThreadList({
       ? formatChatTime(last.created_at, locale)
       : formatChatTime(session.updated_at, locale);
 
-    // The second line: search snippet → typing/waiting → failed → preview.
+    // The second line: search snippet → live status → durable progress → last-message preview.
     const snippet = search?.snippets.get(session.id);
     let previewNode: React.ReactNode;
     if (search && snippet) {
@@ -280,23 +281,13 @@ export function ChatThreadList({
         </span>
       );
     } else if (isRunning && agentOffline) {
-      // Task is queued but the agent is offline — it will run once the agent
-      // is back. Show a static "waiting", not an animated "typing".
-      previewNode = (
-        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-          <Clock className="size-3 shrink-0" />
-          <span className="truncate">{t(($) => $.list.waiting)}</span>
-        </span>
-      );
+      previewNode = <span className="flex min-w-0 items-center gap-1.5 text-amber-500"><Clock className="size-3 shrink-0" /><span className="truncate">{t(($) => $.list.waiting)}</span></span>;
     } else if (isRunning) {
-      previewNode = (
-        <span className="flex min-w-0 items-center gap-1.5 text-emerald-500">
-          <Loader2 className="size-3 shrink-0 animate-spin" />
-          <span className="truncate">{t(($) => $.list.typing)}</span>
-        </span>
-      );
+      previewNode = <span className="flex min-w-0 items-center gap-1.5 text-blue-500"><Loader2 className="size-3 shrink-0 animate-spin" /><span className="truncate">{t(($) => $.list.typing)}</span></span>;
     } else if (last?.failure_reason) {
       previewNode = <span className="block truncate text-destructive">{t(($) => $.list.failed)}</span>;
+    } else if (session.progress) {
+      previewNode = <ProgressLine progress={session.progress} />;
     } else if (last?.message_kind === "no_response") {
       // A no_response turn stores a non-empty English fallback as its content,
       // so the preview is never blank even on older clients; new clients show a
@@ -460,7 +451,7 @@ export function ChatThreadList({
               />
             )}
             <span className={cn("min-w-0 flex-1 truncate text-body", unread > 0 ? "font-semibold text-foreground" : "font-medium")}>
-              {search ? <HighlightText text={titleText} query={search.query} /> : titleText}
+              {search ? <HighlightText text={titleText} query={search.query} /> : titleText}{session.title_locked && <span aria-label={t(($) => $.title_locked)} title={t(($) => $.title_locked)} className="ml-1 text-micro text-muted-foreground">🔒</span>}
             </span>
             {search && session.status === "archived" && (
               <span className="inline-flex shrink-0 items-center rounded-xs bg-muted px-1 text-micro font-medium text-muted-foreground">

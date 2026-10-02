@@ -190,6 +190,13 @@ var issueGetCmd = &cobra.Command{
 	RunE: runIssueGet,
 }
 
+var issueWaitCmd = &cobra.Command{
+	Use:   "wait <id|url>",
+	Short: "Show what a blocked issue is waiting on and its last probe",
+	Args:  exactArgs(1),
+	RunE:  runIssueWait,
+}
+
 var issuePullRequestsCmd = &cobra.Command{
 	Use:     "pull-requests <id>",
 	Aliases: []string{"prs"},
@@ -243,6 +250,26 @@ var issueCloseCmd = &cobra.Command{
 	Long:  issueCloseLong(),
 	Args:  exactArgs(1),
 	RunE:  runIssueClose,
+}
+
+var issueProgressCmd = &cobra.Command{
+	Use:   "progress <id> [text]",
+	Short: "Report or read the progress line under an issue's title",
+	Long: `Report where this issue stands — the second line under its title on the
+board, in the list and on the detail page. Report when the state changes,
+not on every step. A close summary also writes this line; between yours and
+a close, the latest wins. The stall patrol's summary only fills in while
+neither exists.
+
+  multica issue progress DENE-12 "API done, wiring the settings page"
+  multica issue progress DENE-12 "Waiting on the design review" --tone waiting
+  multica issue progress DENE-12 --history --output table
+
+--tone sets the dot colour: working (blue), waiting (yellow), stuck (red),
+done (green). Omitted, it follows the issue status. --history lists earlier
+lines with their author and source, newest first.`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runIssueProgress,
 }
 
 func issueCloseLong() string {
@@ -530,7 +557,7 @@ var validIssueFields = []string{
 	"creator_id", "parent_issue_id",
 	"project_id", "position", "stage", "start_date", "due_date", "created_at",
 	"updated_at", "revision", "last_activity_at", "metadata", "properties",
-	"labels",
+	"labels", "progress",
 }
 
 // directionalIssueSortColumns are the sort keys for which --direction is
@@ -587,6 +614,7 @@ func validateIssueEnum(field, value string, allowed []string) error {
 func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
+	issueCmd.AddCommand(issueWaitCmd)
 	issueCmd.AddCommand(issuePullRequestsCmd)
 	issueCmd.AddCommand(issueChildrenCmd)
 	issueCmd.AddCommand(issueCreateCmd)
@@ -594,6 +622,7 @@ func init() {
 	issueCmd.AddCommand(issueAssignCmd)
 	issueCmd.AddCommand(issueStatusCmd)
 	issueCmd.AddCommand(issueCloseCmd)
+	issueCmd.AddCommand(issueProgressCmd)
 	issueCmd.AddCommand(issueHandoffCmd)
 	issueCmd.AddCommand(issueReorderCmd)
 	issueCmd.AddCommand(issueCommentCmd)
@@ -620,6 +649,9 @@ func init() {
 
 	// issue list
 	issueListCmd.Flags().String("output", "table", "Output format: table or json")
+	issueProgressCmd.Flags().String("output", "json", "Output format: table or json")
+	issueProgressCmd.Flags().String("tone", "", "Dot colour: working, waiting, stuck, or done (default: follows the issue status)")
+	issueProgressCmd.Flags().Bool("history", false, "List earlier progress lines instead of reporting one")
 	issueListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 	issueListCmd.Flags().String("status", "", "Filter by status")
 	issueListCmd.Flags().String("priority", "", "Filter by priority")
@@ -638,6 +670,7 @@ func init() {
 	// issue get
 	issueGetCmd.Flags().String("output", "json", "Output format: table or json")
 	issueGetCmd.Flags().Bool("resolve-properties", false, resolvePropertiesHelp)
+	issueWaitCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue pull-requests
 	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
@@ -1212,6 +1245,44 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return cli.PrintJSON(os.Stdout, issue)
+}
+
+func runIssueWait(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+	var issue map[string]any
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID), &issue); err != nil {
+		return fmt.Errorf("get issue: %w", err)
+	}
+	meta, _ := issue["metadata"].(map[string]any)
+	result := map[string]any{
+		"issue_id":       issueRef.ID,
+		"identifier":     issueDisplayKey(issue),
+		"status":         strVal(issue, "status"),
+		"wait_condition": strVal(meta, blockwait.KeyWaitCondition),
+		"wait_probe":     strVal(meta, blockwait.KeyWaitProbe),
+		"wait_timeout":   strVal(meta, blockwait.KeyWaitTimeout),
+		"probe_status":   strVal(meta, blockwait.KeyProbeStatus),
+		"probe_at":       strVal(meta, blockwait.KeyProbeAt),
+		"probe_output":   strVal(meta, blockwait.KeyProbeOutput),
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	cli.PrintTable(os.Stdout, []string{"KEY", "STATUS", "WAITING FOR", "LAST PROBE", "CHECKED AT", "OUTPUT"}, [][]string{{
+		strVal(result, "identifier"), strVal(result, "status"), strVal(result, "wait_condition"),
+		strVal(result, "probe_status"), strVal(result, "probe_at"), strVal(result, "probe_output"),
+	}})
+	return nil
 }
 
 // childStage extracts the integer stage from a child issue response map.
@@ -2075,6 +2146,20 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return cli.PrintJSON(os.Stdout, result)
+}
+
+func runIssueProgress(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	ref, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+	return reportOrListProgress(ctx, cmd, client, "/api/issues/"+url.PathEscape(ref.ID)+"/progress", args[1:], "issue")
 }
 
 // knowledgeAuditFromFlags builds the close body's knowledge_audit. The

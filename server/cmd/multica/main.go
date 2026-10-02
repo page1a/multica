@@ -60,6 +60,7 @@ func init() {
 	inboxCmd.GroupID = groupCore
 	transferCmd.GroupID = groupAdditional
 	logsCmd.GroupID = groupCore
+	askCmd.GroupID = groupCore
 
 	// Runtime commands
 	daemonCmd.GroupID = groupRuntime

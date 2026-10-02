@@ -45,6 +45,7 @@ import { AppLink, useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { useAuthStore } from "@multica/core/auth";
 import { conversationToMarkdown } from "../lib/copy-text";
+import { ProgressLine } from "../../common/progress-line";
 
 /**
  * Per-session header for the conversation pane: agent avatar + chat title +
@@ -253,7 +254,7 @@ export function ChatSessionHeader({
             className="w-full rounded-sm bg-background px-1 py-0.5 text-body font-semibold outline-none ring-1 ring-border focus-visible:ring-brand"
           />
         ) : (
-          <div className="truncate text-body font-semibold text-foreground">{title}</div>
+          <div className="min-w-0"><div className="flex items-center gap-1 truncate text-body font-semibold text-foreground">{title}{session.title_locked && <span aria-label={t(($) => $.title_locked)} title={t(($) => $.title_locked)} className="text-micro text-muted-foreground">🔒</span>}</div><ProgressLine progress={session.progress} /></div>
         )}
         {(agent || session.agent_name) && (
           <div className="truncate text-caption text-muted-foreground">

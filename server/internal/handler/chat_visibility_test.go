@@ -154,6 +154,48 @@ func TestChatProjectSharing(t *testing.T) {
 		t.Fatalf("task originator = %s, want creator %s", originator, testUserID)
 	}
 
+	// The directory uses the same visibility matrix as the session list while
+	// remaining read-only: browsing it must not create or advance B's read
+	// cursor.
+	var cursorsBefore int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM chat_session_read WHERE chat_session_id = $1 AND user_id = $2
+	`, sessionID, bID).Scan(&cursorsBefore); err != nil {
+		t.Fatalf("count B read cursor before directory: %v", err)
+	}
+	directoryReq := chatAs(t, bID, newRequest("GET", "/api/chat/directory?project="+projectID, nil))
+	directoryW := httptest.NewRecorder()
+	testHandler.ListChatDirectory(directoryW, directoryReq)
+	if directoryW.Code != http.StatusOK {
+		t.Fatalf("list chat directory: %d %s", directoryW.Code, directoryW.Body.String())
+	}
+	var directory []ChatDirectoryItem
+	if err := json.Unmarshal(directoryW.Body.Bytes(), &directory); err != nil {
+		t.Fatalf("decode chat directory: %v", err)
+	}
+	var listed *ChatDirectoryItem
+	for i := range directory {
+		if directory[i].ID == sessionID {
+			listed = &directory[i]
+			break
+		}
+	}
+	if listed == nil || listed.ProjectID != projectID || listed.OriginatorID != testUserID {
+		t.Fatalf("directory entry = %+v, want project chat created by A", listed)
+	}
+	if listed.MessageCount != 1 || listed.Summary != "from B" {
+		t.Fatalf("directory summary = count %d summary %q, want one message from B", listed.MessageCount, listed.Summary)
+	}
+	var cursorsAfter int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM chat_session_read WHERE chat_session_id = $1 AND user_id = $2
+	`, sessionID, bID).Scan(&cursorsAfter); err != nil {
+		t.Fatalf("count B read cursor after directory: %v", err)
+	}
+	if cursorsAfter != cursorsBefore {
+		t.Fatalf("directory changed B read cursor count from %d to %d", cursorsBefore, cursorsAfter)
+	}
+
 	// Both people have a cursor. A new reply after that is unread only for
 	// whoever has not marked it read.
 	_ = listChatsAs(t, testUserID)

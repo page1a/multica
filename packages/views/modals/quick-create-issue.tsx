@@ -85,6 +85,7 @@ import { useT } from "../i18n";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
+import { GoalFlowSteps } from "../issues/draft/goal-flow-steps";
 
 type ActorSelection =
   | { type: "agent"; id: string }
@@ -655,6 +656,8 @@ export function AgentCreatePanel({
             </button>
           </div>
         </div>
+
+        <GoalFlowSteps active="issue" className="px-5 pb-1" />
 
         {/* Actor picker — agents and squads in one searchable list. Squads
             route to their leader agent on the backend; the leader runs the

@@ -10,6 +10,10 @@
     "new_chat_in_project": "Les nouvelles discussions restent dans « {{title}} »",
     "new_chat_unbound": "Les nouvelles discussions ne sont liées à aucun projet"
   },
+  "goal_flow": {
+    "hint": "Clarifiez-la avant de créer la tâche.",
+    "action": "Aligner d'abord"
+  },
   "project_bar": {
     "all": "Tout",
     "more": "⋯ Plus ({{count}})",
@@ -344,5 +348,6 @@
     "body": "Vous avez {{count}} discussions que les membres du projet peuvent maintenant voir.",
     "make_private": "Rendre la sélection privée",
     "dismiss": "Compris"
-  }
+  },
+  "title_locked": "Titre verrouillé — l’agent ne le renommera pas"
 }

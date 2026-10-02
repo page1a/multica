@@ -85,6 +85,12 @@ func (h *Handler) recentCommentBodies(ctx context.Context, issue db.Issue) []str
 }
 
 func (h *Handler) persistBlockRecord(ctx context.Context, issue db.Issue, rec blockwait.Record) {
+	// A new wait record starts a fresh probe lifecycle on every block path
+	// (close, status, batch, accept): a result from the previous wait must
+	// not suppress this one's wakeup.
+	for _, key := range []string{blockwait.KeyProbeStatus, blockwait.KeyProbeAt, blockwait.KeyProbeOutput, blockwait.KeyProbeNotified} {
+		h.deleteIssueMeta(ctx, issue, key)
+	}
 	for key, value := range rec.Pairs() {
 		h.setIssueMetaString(ctx, issue, key, value)
 	}

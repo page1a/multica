@@ -1164,6 +1164,7 @@ type claimProject struct {
 	Resources   []ProjectResourceData
 	Repos       []RepoData
 	MemoryLine  string
+	ChatCount   int
 }
 
 // applyTo copies the resolved context onto a claim response. Callers assign the
@@ -1183,6 +1184,7 @@ func (c claimProjectContext) applyTo(resp *AgentTaskResponse) {
 				Description: p.Description,
 				Resources:   p.Resources,
 				MemoryLine:  p.MemoryLine,
+				ChatCount:   p.ChatCount,
 			})
 		}
 		primary := c.Projects[0]
@@ -1469,4 +1471,41 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 		}
 	}
 	return resources, repos
+}
+
+// applyClaimChatCounts fills the one-line chat directory hint of a claim. The
+// count uses the directory's own rules — the task originator is the viewer and
+// the task's own chat is excluded — so `multica chat list` returns exactly
+// what the brief announced. A task without an originator sees no chats, and a
+// failed count only drops the optional hint; it never blocks the claim.
+func (h *Handler) applyClaimChatCounts(ctx context.Context, out *claimProjectContext, task *db.AgentTaskQueue, workspaceID pgtype.UUID) {
+	if len(out.Projects) == 0 || !task.OriginatorUserID.Valid {
+		return
+	}
+	viewerID := uuidToString(task.OriginatorUserID)
+	viewerProjects, err := h.chatProjectIDs(ctx, uuidToString(workspaceID), viewerID)
+	if err != nil {
+		slog.Warn("claim chat count: resolve project access failed", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
+	for i := range out.Projects {
+		rows, err := h.Queries.ListChatDirectory(ctx, db.ListChatDirectoryParams{
+			WorkspaceID: workspaceID,
+			ViewerID:    task.OriginatorUserID,
+			ProjectIds:  viewerProjects,
+			ProjectID:   parseUUID(out.Projects[i].ID),
+		})
+		if err != nil {
+			slog.Warn("claim chat count: list directory failed", "task_id", uuidToString(task.ID), "error", err)
+			return
+		}
+		n := 0
+		for _, row := range rows {
+			if task.ChatSessionID.Valid && row.ID == task.ChatSessionID {
+				continue
+			}
+			n++
+		}
+		out.Projects[i].ChatCount = n
+	}
 }

@@ -704,6 +704,45 @@ func (c *Client) ReportDaemonPullRequests(ctx context.Context, workspaceID strin
 	return c.postJSON(ctx, "/api/daemon/pull-requests/report", map[string]any{"workspace_id": workspaceID, "pull_requests": prs}, nil)
 }
 
+type BlockWaitProbe struct {
+	ID            string `json:"id"`
+	Identifier    string `json:"identifier"`
+	WaitCondition string `json:"wait_condition,omitempty"`
+	WaitProbe     string `json:"wait_probe"`
+	WaitTimeout   string `json:"wait_timeout,omitempty"`
+	WorkDir       string `json:"work_dir,omitempty"`
+	ProbeStatus   string `json:"probe_status,omitempty"`
+	ProbeAt       string `json:"probe_at,omitempty"`
+	ProbeOutput   string `json:"probe_output,omitempty"`
+}
+
+func (c *Client) ListBlockWaitProbes(ctx context.Context, workspaceID, runtimeID string) ([]BlockWaitProbe, error) {
+	var resp struct {
+		Waits []BlockWaitProbe `json:"waits"`
+	}
+	path := fmt.Sprintf("/api/daemon/workspaces/%s/block-waits", url.PathEscape(workspaceID))
+	if runtimeID != "" {
+		path += "?runtime_id=" + url.QueryEscape(runtimeID)
+	}
+	if err := c.getJSON(ctx, path, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Waits, nil
+}
+
+func (c *Client) ReportBlockWaitProbe(ctx context.Context, issueID string, exitCode int, output string) (bool, error) {
+	var resp struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/issues/%s/wait-probe", url.PathEscape(issueID)), map[string]any{
+		"exit_code": exitCode,
+		"output":    output,
+	}, &resp); err != nil {
+		return false, err
+	}
+	return resp.Accepted, nil
+}
+
 // ReportAgentCLIStatus stores the current/latest/error snapshot for one
 // agent CLI on the runtime row the page reads.
 func (c *Client) ReportAgentCLIStatus(ctx context.Context, runtimeID string, body map[string]any) error {

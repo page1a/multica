@@ -28,6 +28,23 @@ func TestRecordRequiresOneKind(t *testing.T) {
 	}
 }
 
+func TestProbeStatusForExitCode(t *testing.T) {
+	for _, test := range []struct {
+		code int
+		want ProbeStatus
+	}{
+		{ProbeReadyExitCode, ProbeReady},
+		{ProbePendingExitCode, ProbePending},
+		{ProbePendingGitHubExitCode, ProbePending},
+		{1, ProbeFailed},
+		{124, ProbeFailed},
+	} {
+		if got := ProbeStatusForExitCode(test.code); got != test.want {
+			t.Fatalf("exit code %d: got %q, want %q", test.code, got, test.want)
+		}
+	}
+}
+
 func TestSuggestFromWaitingComment(t *testing.T) {
 	got := SuggestFromComments([]string{"买入这步卡住，等 DENE-806 修好再继续。"})
 	if len(got.BlockedBy) != 1 || got.BlockedBy[0] != "DENE-806" {

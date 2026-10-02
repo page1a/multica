@@ -138,6 +138,160 @@ func (q *Queries) GetChatShareAccess(ctx context.Context, arg GetChatShareAccess
 	return access, err
 }
 
+const listChatDirectory = `-- name: ListChatDirectory :many
+SELECT cs.id,
+       cs.workspace_id,
+       cs.agent_id,
+       cs.creator_id,
+       cs.title,
+       cs.status,
+       cs.visibility,
+       cs.project_id,
+       COALESCE(p.title, '') AS project_title,
+       COALESCE(ag.name, '') AS agent_name,
+       COALESCE(u.name, '') AS creator_name,
+       COALESCE(lm.created_at, cs.updated_at) AS last_active_at,
+       (SELECT count(*) FROM chat_message m
+          WHERE m.chat_session_id = cs.id
+            AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff'))::int AS message_count,
+       COALESCE(lm.content, '') AS summary
+FROM chat_session cs
+LEFT JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
+LEFT JOIN agent ag ON ag.id = cs.agent_id
+LEFT JOIN "user" u ON u.id = cs.creator_id
+LEFT JOIN LATERAL (
+  SELECT content, created_at
+    FROM chat_message m
+   WHERE m.chat_session_id = cs.id
+     AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+   ORDER BY m.created_at DESC, m.id DESC
+   LIMIT 1
+) lm ON true
+WHERE cs.workspace_id = $1
+  AND (
+    cs.creator_id = $2
+    OR (
+      cs.visibility = 'workspace'
+      AND EXISTS (
+        SELECT 1 FROM member m
+         WHERE m.workspace_id = cs.workspace_id
+           AND m.user_id = $2
+           AND m.role <> 'guest'
+      )
+    )
+    OR (
+      cs.visibility = 'project'
+      AND (
+        EXISTS (
+          SELECT 1 FROM chat_session_project csp
+           WHERE csp.chat_session_id = cs.id
+             AND csp.project_id = ANY($3::uuid[])
+        )
+        OR (cs.project_id IS NOT NULL AND cs.project_id = ANY($3::uuid[]))
+        OR EXISTS (
+          SELECT 1 FROM resource_share rs
+           WHERE rs.workspace_id = cs.workspace_id
+             AND rs.resource_type = 'chat_session'
+             AND rs.resource_id = cs.id::text
+             AND rs.member_id = $2
+        )
+      )
+    )
+  )
+  AND ($4::bool OR ($5::uuid IS NOT NULL AND (
+    cs.project_id = $5::uuid
+    OR EXISTS (
+      SELECT 1 FROM chat_session_project csp
+       WHERE csp.chat_session_id = cs.id
+         AND csp.project_id = $5::uuid
+    )
+  )))
+  AND ($6::timestamptz IS NULL OR COALESCE(lm.created_at, cs.updated_at) >= $6::timestamptz)
+  AND ($7::text IS NULL OR cs.title ILIKE '%' || $7::text || '%'
+       OR EXISTS (
+         SELECT 1 FROM chat_message sm
+          WHERE sm.chat_session_id = cs.id
+            AND sm.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+            AND sm.content ILIKE '%' || $7::text || '%'
+       ))
+  AND (cs.explicitly_created_at IS NOT NULL OR lm.created_at IS NOT NULL)
+ORDER BY COALESCE(lm.created_at, cs.updated_at) DESC, cs.id DESC
+`
+
+type ListChatDirectoryParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ViewerID    pgtype.UUID        `json:"viewer_id"`
+	ProjectIds  []pgtype.UUID      `json:"project_ids"`
+	AllProjects bool               `json:"all_projects"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Keyword     pgtype.Text        `json:"keyword"`
+}
+
+type ListChatDirectoryRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	CreatorID    pgtype.UUID        `json:"creator_id"`
+	Title        string             `json:"title"`
+	Status       string             `json:"status"`
+	Visibility   string             `json:"visibility"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ProjectTitle string             `json:"project_title"`
+	AgentName    string             `json:"agent_name"`
+	CreatorName  string             `json:"creator_name"`
+	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
+	MessageCount int32              `json:"message_count"`
+	Summary      string             `json:"summary"`
+}
+
+// Read-only directory projection for agents. Visibility is evaluated against
+// the task's human originator (viewer_id), never the runtime owner. This query
+// deliberately does not touch chat_session_read, so browsing a directory or
+// reading its summaries cannot clear a person's unread state.
+func (q *Queries) ListChatDirectory(ctx context.Context, arg ListChatDirectoryParams) ([]ListChatDirectoryRow, error) {
+	rows, err := q.db.Query(ctx, listChatDirectory,
+		arg.WorkspaceID,
+		arg.ViewerID,
+		arg.ProjectIds,
+		arg.AllProjects,
+		arg.ProjectID,
+		arg.Since,
+		arg.Keyword,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListChatDirectoryRow{}
+	for rows.Next() {
+		var i ListChatDirectoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.CreatorID,
+			&i.Title,
+			&i.Status,
+			&i.Visibility,
+			&i.ProjectID,
+			&i.ProjectTitle,
+			&i.AgentName,
+			&i.CreatorName,
+			&i.LastActiveAt,
+			&i.MessageCount,
+			&i.Summary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatShareMemberAccess = `-- name: ListChatShareMemberAccess :many
 SELECT member_id, access FROM resource_share
 WHERE workspace_id = $1
@@ -290,7 +444,7 @@ const setChatSessionVisibility = `-- name: SetChatSessionVisibility :one
 UPDATE chat_session
 SET visibility = $1, updated_at = now()
 WHERE id = $2
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at, project_nudge_dismissed_at, visibility
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at, project_nudge_dismissed_at, visibility, title_locked, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type SetChatSessionVisibilityParams struct {
@@ -324,6 +478,13 @@ func (q *Queries) SetChatSessionVisibility(ctx context.Context, arg SetChatSessi
 		&i.ExplicitlyCreatedAt,
 		&i.ProjectNudgeDismissedAt,
 		&i.Visibility,
+		&i.TitleLocked,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }

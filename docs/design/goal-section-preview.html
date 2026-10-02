@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>目标块预览 · DENE-1051</title>
+<style>
+  :root { color-scheme: dark; font: 15px/1.45 system-ui, -apple-system, sans-serif; background: #111318; color: #eceef2; }
+  body { margin: 0; padding: 48px; }
+  main { max-width: 720px; margin: auto; }
+  .description { color: #a9afba; padding: 24px 0 4px; border-bottom: 1px solid #2a2f39; }
+  .goal { margin-top: 32px; border: 1px solid #343b49; border-radius: 14px; background: #171a21; padding: 20px; }
+  header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+  h1 { font-size: 18px; margin: 0; } h2 { font-size: 13px; color: #a9afba; font-weight: 500; margin: 4px 0 0; }
+  .status { border: 1px solid #5365cf; color: #aeb8ff; border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 18px 0; }
+  .stat { background: #20242d; border-radius: 9px; padding: 9px 11px; } .label { color: #8f97a5; font-size: 11px; } .value { margin-top: 2px; font-variant-numeric: tabular-nums; }
+  ul { list-style: none; padding: 10px 0 0; margin: 0; border-top: 1px solid #303641; } li { padding: 11px 0; border-bottom: 1px solid #2a2f39; display: flex; gap: 10px; align-items: flex-start; } li:last-child { border: 0; }
+  .check { width: 15px; height: 15px; border: 1px solid #707a8a; border-radius: 50%; margin-top: 3px; } .done .check { background: #58c18c; border-color: #58c18c; } .done .check::after { content: '✓'; display: block; color: #101814; font-size: 11px; text-align: center; line-height: 15px; } .method { margin-left: auto; color: #8f97a5; background: #242934; padding: 2px 7px; border-radius: 5px; font-size: 11px; }
+</style>
+<main>
+  <div class="description">在任务描述下方显示完成线、轮次和累计预算；普通任务没有这一块。</div>
+  <section class="goal" aria-label="目标">
+    <header><div><h1>目标</h1><h2>1 / 2 条达标</h2></div><span class="status">推进中</span></header>
+    <div class="stats"><div class="stat"><div class="label">轮次</div><div class="value">3</div></div><div class="stat"><div class="label">Token</div><div class="value">32,400 / 50,000</div></div><div class="stat"><div class="label">运行次数</div><div class="value">2 / 6</div></div><div class="stat"><div class="label">时长</div><div class="value">18m / 1h</div></div></div>
+    <ul><li class="done"><span class="check"></span><span>服务端接口与权限校验通过</span><span class="method">test</span></li><li><span class="check"></span><span>任务详情能看到证据链接</span><span class="method">截图</span></li></ul>
+  </section>
+</main>

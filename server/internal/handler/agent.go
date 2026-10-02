@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // Mirrors AGENT_DESCRIPTION_MAX_LENGTH in packages/core/agents/constants.ts
@@ -724,6 +725,7 @@ type TaskProjectContextData struct {
 	// missing checklist. Empty on a server that has not observed the project.
 	// File bodies stay out of this payload. Mirror field: daemon ProjectContextData.
 	MemoryLine string `json:"memory_line,omitempty"`
+	ChatCount  int    `json:"chat_count,omitempty"`
 }
 
 // ConnectedAppData keeps the daemon-claim wire field local to handler types
@@ -1008,6 +1010,10 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+
+	// CapacityRetry is set on a deferred in-place retry waiting out a full
+	// model (DENE-1093): which retry this is and when it fires.
+	CapacityRetry *CapacityRetryResponse `json:"capacity_retry,omitempty"`
 }
 
 // TaskAttribution is the wire shape of a run's accountable-human provenance
@@ -1317,6 +1323,53 @@ func visibleTaskHistory(tasks []db.AgentTaskQueue) []db.AgentTaskQueue {
 			!task.StartedAt.Valid &&
 			(task.Status == "deferred" || task.Status == "cancelled")
 	})
+}
+
+// CapacityRetryResponse is the "model full, retry N, next at HH:MM" line
+// (DENE-1093). Retry counts retries, not runs: the first retry after the
+// original run is 1. The same object rides on the task row and on issue
+// detail so the UI and `multica issue get/runs --output json` read one shape.
+type CapacityRetryResponse struct {
+	TaskID string `json:"task_id"`
+	Retry  int32  `json:"retry"`
+	NextAt string `json:"next_at"`
+}
+
+func capacityRetryResponse(taskID pgtype.UUID, attempt int32, fireAt pgtype.Timestamptz) *CapacityRetryResponse {
+	if !fireAt.Valid {
+		return nil
+	}
+	return &CapacityRetryResponse{
+		TaskID: uuidToString(taskID),
+		Retry:  max(attempt-1, 1),
+		NextAt: timestampToString(fireAt),
+	}
+}
+
+// attachCapacityRetries marks every deferred row whose parent run failed on
+// a full model. tasks must still include the parents, so pass the list before
+// any display filtering.
+func attachCapacityRetries(tasks []db.AgentTaskQueue, resp []AgentTaskResponse) {
+	capacityParents := make(map[string]bool)
+	for _, t := range tasks {
+		if t.FailureReason.Valid && t.FailureReason.String == string(taskfailure.ReasonAgentProviderCapacityOrRateLimit) {
+			capacityParents[uuidToString(t.ID)] = true
+		}
+	}
+	if len(capacityParents) == 0 {
+		return
+	}
+	byID := make(map[string]db.AgentTaskQueue, len(tasks))
+	for _, t := range tasks {
+		byID[uuidToString(t.ID)] = t
+	}
+	for i := range resp {
+		if resp[i].Status != "deferred" || resp[i].ParentTaskID == nil || !capacityParents[*resp[i].ParentTaskID] {
+			continue
+		}
+		t := byID[resp[i].ID]
+		resp[i].CapacityRetry = capacityRetryResponse(t.ID, t.Attempt, t.FireAt)
+	}
 }
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
@@ -3218,10 +3271,12 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if err := h.TaskService.ReclaimDesignatedReviews(r.Context(), updated.ID); err != nil {
 			slog.Warn("reclaim designated reviewer failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		}
+		h.TaskService.RequeueStrandedIssues(r.Context(), updated.ID)
 		for _, spec := range toggledSpecialisations {
 			if err := h.TaskService.ReclaimDesignatedReviews(r.Context(), spec.ID); err != nil {
 				slog.Warn("reclaim designated reviewer failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(spec.ID))...)
 			}
+			h.TaskService.RequeueStrandedIssues(r.Context(), spec.ID)
 		}
 	}
 	if routingTx == nil {

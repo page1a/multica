@@ -281,6 +281,8 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("- `multica issue summon <id> --to <member> --reason \"...\"` — call a person onto the issue in one step: the server writes their inbox row (needs you), subscribes them, leaves a visible @, and dedupes a second call before they reply; their reply wakes the executor (DENE-880). Use it instead of a hand-written @mention of a person. A close or status with `--needs-human` already calls that person — do not summon them again.\n")
 	b.WriteString("- `multica issue children <id> [--output json]` — list a parent's sub-issues grouped by stage.\n")
 	b.WriteString("- `multica issue comment add <issue-id> [--content \"...\" | --content-file <path> | --content-stdin] [--parent <comment-id>] [--attachment <path>]` — post a comment. Agent-authored bodies MUST use `--content-file`; see `## Comment Formatting` for why. `multica issue comment add --help` for full flags.\n")
+	b.WriteString("- `multica chat list [--project <id>] [--all-projects] [--since <RFC3339>] [--output json|table]` — list visible chats without changing unread state. Task-scoped calls default to the current project; visibility follows the task initiator.\n")
+	b.WriteString("- `multica chat search <词> [--project <id>] [--all-projects] [--since <RFC3339>] [--output json|table]` — search visible chat titles and messages. Use `multica chat history --session <id>` for a bounded transcript.\n")
 	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>] [--fresh]` — repository checkout on a dedicated branch. Re-running it keeps an existing checkout that has uncommitted or unpushed work, or is already on this task's branch, and only fetches. `--fresh` discards uncommitted and untracked files and starts a new branch; commits stay on the old branch, but push any you still need first.\n\n")
 	b.WriteString("Git commits use the user's configured identity. Preserve it unless the user requests another identity. In a managed checkout, use `git config --worktree user.name` / `user.email` for an intentional task-local override; plain `git config` or `--local` can write into a shared cache and affect other tasks. Never change global Git identity for a task.\n\n")
 	// Squad maintenance is squad-leader surface: an agent that leads no squad
@@ -591,6 +593,7 @@ func writeProjectContext(b *strings.Builder, ctx TaskContextForEnv) {
 			b.WriteString(desc)
 			b.WriteString("\n\n")
 		}
+		writeProjectChatDirectoryHint(b, project)
 		writeProjectMemoryLine(b, project.MemoryLine)
 		writeProjectResourceList(b, ctx, project.Resources)
 		return
@@ -607,10 +610,18 @@ func writeProjectContext(b *strings.Builder, ctx TaskContextForEnv) {
 			b.WriteString(desc)
 			b.WriteString("\n\n")
 		}
+		writeProjectChatDirectoryHint(b, project)
 		writeProjectMemoryLine(b, project.MemoryLine)
 		writeProjectResourceList(b, ctx, project.Resources)
 	}
 	b.WriteString("When a deliverable must be attributed to one project — creating an issue, for example — infer the target from the request and the project descriptions above. If it is still ambiguous, ask the user which project to use instead of guessing.\n\n")
+}
+
+func writeProjectChatDirectoryHint(b *strings.Builder, project ProjectContextForEnv) {
+	if project.ChatCount <= 0 || strings.TrimSpace(project.ID) == "" {
+		return
+	}
+	fmt.Fprintf(b, "This project has %d chat(s) visible to you. Use `multica chat list --project %s` to browse them.\n\n", project.ChatCount, project.ID)
 }
 
 // writeProjectMemoryLine emits the one project-memory sentence. A blank line

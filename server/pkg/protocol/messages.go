@@ -414,8 +414,10 @@ type ChatSessionDeletedPayload struct {
 // patch the session row in their cached list so the dropdown stays in sync
 // without a full refetch.
 type ChatSessionUpdatedPayload struct {
-	ChatSessionID string `json:"chat_session_id"`
-	Title         string `json:"title"`
+	ChatSessionID string           `json:"chat_session_id"`
+	Title         string           `json:"title"`
+	TitleLocked   *bool            `json:"title_locked,omitempty"`
+	Progress      *ProgressPayload `json:"progress,omitempty"`
 	// ProjectID is set only by the project-context update path. The double
 	// pointer distinguishes an omitted field from an explicit JSON null.
 	ProjectID **string `json:"project_id,omitempty"`
@@ -436,6 +438,16 @@ type ChatSessionUpdatedPayload struct {
 	// the existing flag untouched.
 	ProjectNudgeDismissed *bool  `json:"project_nudge_dismissed,omitempty"`
 	UpdatedAt             string `json:"updated_at"`
+}
+
+// ProgressPayload mirrors handler.ProgressResponse on the wire (DENE-1037).
+type ProgressPayload struct {
+	Text       string `json:"text"`
+	Source     string `json:"source"`
+	Tone       string `json:"tone"`
+	AuthorType string `json:"author_type"`
+	AuthorID   string `json:"author_id,omitempty"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 // DaemonHeartbeatRequestPayload is sent from daemon to server over WebSocket

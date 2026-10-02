@@ -91,6 +91,11 @@ vi.mock("../../squads/components/squad-profile-card", () => ({
   SquadProfileCard: () => null,
 }));
 
+vi.mock("./issue-progress-line", () => ({
+  IssueProgressLine: () => null,
+  useIssueHasProgressLine: () => false,
+}));
+
 vi.mock("./issue-agent-activity-indicator", () => ({
   IssueAgentActivityIndicator: () => null,
 }));

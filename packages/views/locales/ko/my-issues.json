@@ -6,6 +6,7 @@
     "empty_description": "내가 만들었거나 담당자로 지정된 태스크가 여기에 표시됩니다."
   },
   "header": {
+    "set_as_goal": "목표로 설정",
     "scope": {
       "all_label": "전체",
       "all_description": "내게 할당됐거나, 내가 만들었거나, 내 에이전트와 스쿼드가 참여한 태스크",

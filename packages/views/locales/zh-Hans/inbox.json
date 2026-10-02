@@ -73,6 +73,8 @@
     "access_status_expired": "已过期：没人及时处理"
   },
   "types": {
+    "needs_you": "需要你处理",
+    "ask_answered": "提问已回答",
     "issue_assigned": "已分配",
     "issue_subscribed": "已订阅",
     "unassigned": "已取消分配",

@@ -6,10 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/parking"
+	"github.com/multica-ai/multica/server/internal/progress"
 	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type parkingRow struct {
@@ -98,7 +101,13 @@ func TestParkingDoneButNotClosed(t *testing.T) {
 // was refused. The agent's only words are the error, so the model phrases it.
 func TestParkingDeliveryStuck(t *testing.T) {
 	ctx := context.Background()
-	fx, svc, _, agentID, runtimeID := newCompletionStallFixture(t)
+	fx, svc, bus, agentID, runtimeID := newCompletionStallFixture(t)
+	var progressEvents int
+	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
+		if p, ok := e.Payload.(map[string]any); ok && p["progress_changed"] == true {
+			progressEvents++
+		}
+	})
 	issueID := fx.Issue(t, "Delivery stuck", testutil.Cols{
 		"status": "todo", "assignee_type": "agent", "assignee_id": agentID,
 	})
@@ -135,6 +144,23 @@ func TestParkingDeliveryStuck(t *testing.T) {
 	}
 	if len(kinds) != 3 || kinds[0] != "run_started" || kinds[2] != "rejected" {
 		t.Errorf("timeline = %v", kinds)
+	}
+
+	// DENE-1037: the summary fills the progress line, red, and is pushed live.
+	var text, source, tone string
+	fx.QueryRow(t, `SELECT progress_text, progress_source, progress_tone FROM issue WHERE id = $1`, issueID).Scan(&text, &source, &tone)
+	if text != r.summary || source != parkingProgressSource || tone != progress.ToneStuck {
+		t.Errorf("progress = %q/%s/%s, want the parking summary in red", text, source, tone)
+	}
+	if progressEvents != 1 {
+		t.Errorf("progress broadcasts = %d, want 1", progressEvents)
+	}
+	// An agent's own line is never replaced by a later parking summary.
+	fx.Exec(t, `UPDATE issue SET progress_text = 'agent says', progress_source = 'agent' WHERE id = $1`, issueID)
+	svc.RecordParking(ctx, task.IssueID, task)
+	fx.QueryRow(t, `SELECT progress_text FROM issue WHERE id = $1`, issueID).Scan(&text)
+	if text != "agent says" {
+		t.Errorf("parking replaced the agent line: %q", text)
 	}
 }
 

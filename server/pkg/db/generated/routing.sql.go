@@ -51,7 +51,7 @@ SET assignee_type = $1::text,
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND assignee_id IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type AssignIssueIfUnassignedParams struct {
@@ -116,6 +116,12 @@ func (q *Queries) AssignIssueIfUnassigned(ctx context.Context, arg AssignIssueIf
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }
@@ -157,7 +163,7 @@ SET status = 'done',
 WHERE id = $1::uuid
   AND workspace_id = $2::uuid
   AND status = ANY($3::text[])
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type CompleteIssueFromReviewParams struct {
@@ -209,6 +215,12 @@ func (q *Queries) CompleteIssueFromReview(ctx context.Context, arg CompleteIssue
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }
@@ -394,7 +406,7 @@ func (q *Queries) LastEnteredReviewAt(ctx context.Context, arg LastEnteredReview
 }
 
 const listIssuesRelayedFromReviewer = `-- name: ListIssuesRelayedFromReviewer :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at FROM issue
 WHERE workspace_id = $1
   AND status = 'in_review'
   AND metadata @> jsonb_build_object(
@@ -456,6 +468,12 @@ func (q *Queries) ListIssuesRelayedFromReviewer(ctx context.Context, arg ListIss
 			&i.AssigneeSource,
 			&i.AssigneeSourceUserID,
 			&i.AssigneeQuote,
+			&i.ProgressText,
+			&i.ProgressSource,
+			&i.ProgressTone,
+			&i.ProgressAuthorType,
+			&i.ProgressAuthorID,
+			&i.ProgressUpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -707,7 +725,7 @@ SET assignee_type = $1::text,
     updated_at = now()
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type ReassignIssueParams struct {
@@ -769,6 +787,12 @@ func (q *Queries) ReassignIssue(ctx context.Context, arg ReassignIssueParams) (I
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }
@@ -784,7 +808,7 @@ WHERE id = $2::uuid
   AND workspace_id = $3::uuid
   AND reviewer_type = 'agent'
   AND reviewer_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type ReplaceIssueReviewerIfCurrentParams struct {
@@ -841,6 +865,12 @@ func (q *Queries) ReplaceIssueReviewerIfCurrent(ctx context.Context, arg Replace
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }
@@ -852,7 +882,7 @@ SET assignee_source = $1::text,
     assignee_quote = $3::text
 WHERE id = $4::uuid
   AND workspace_id = $5::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type SetIssueAssigneeSourceParams struct {
@@ -911,6 +941,12 @@ func (q *Queries) SetIssueAssigneeSource(ctx context.Context, arg SetIssueAssign
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }
@@ -924,7 +960,7 @@ SET properties = jsonb_set(properties, ARRAY[$1::text], $2::jsonb, true),
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND NOT (properties ? $1::text)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type SetIssuePropertyValueIfUnsetParams struct {
@@ -981,6 +1017,12 @@ func (q *Queries) SetIssuePropertyValueIfUnset(ctx context.Context, arg SetIssue
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }
@@ -995,7 +1037,7 @@ SET reviewer_type = $1::text,
 WHERE id = $3::uuid
   AND workspace_id = $4::uuid
   AND reviewer_type IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
 `
 
 type SetIssueReviewerIfUnsetParams struct {
@@ -1053,6 +1095,12 @@ func (q *Queries) SetIssueReviewerIfUnset(ctx context.Context, arg SetIssueRevie
 		&i.AssigneeSource,
 		&i.AssigneeSourceUserID,
 		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
 	)
 	return i, err
 }

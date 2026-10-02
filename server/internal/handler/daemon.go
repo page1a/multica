@@ -3331,6 +3331,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				message: "failed to load project context",
 			}
 		}
+		h.applyClaimChatCounts(r.Context(), &projectCtx, task, issue.WorkspaceID)
 		projectCtx.applyTo(&resp)
 
 		// Load every planned input as one chronological, de-duplicated set.
@@ -3713,6 +3714,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				message: "failed to load project context",
 			}
 		}
+		h.applyClaimChatCounts(r.Context(), &projectCtx, task, cs.WorkspaceID)
 		projectCtx.applyTo(&resp)
 		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid {
 			// Resume chat sessions only when the stored pointer was produced
@@ -3965,6 +3967,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				message: "failed to load project context",
 			}
 		}
+		h.applyClaimChatCounts(r.Context(), &projectCtx, task, ap.WorkspaceID)
 		projectCtx.applyTo(&resp)
 	}
 
@@ -4037,6 +4040,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					message: "failed to load project context",
 				}
 			}
+			h.applyClaimChatCounts(r.Context(), &projectCtx, task, parseUUID(qc.WorkspaceID))
 			projectCtx.applyTo(&resp)
 
 			// Parent-issue resolution for quick-create tasks opened from
@@ -4873,6 +4877,10 @@ type TaskCompleteRequest struct {
 	// session because the prior one could not be resumed. Older daemons
 	// omit it.
 	SessionRestartReason string `json:"session_restart_reason,omitempty"`
+	// GoalChecks lets newer daemons report which locked completion-line checks
+	// they verified during this run. Older daemons omit it; the server keeps the
+	// existing check state and still owns continuation decisions.
+	GoalChecks []map[string]any `json:"goal_checks,omitempty"`
 }
 
 // sanitizeTaskCompleteRequest / sanitizeTaskFailRequest scrub every
@@ -6352,11 +6360,13 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	allTasks := slices.Clone(tasks)
 	tasks = visibleTaskHistory(tasks)
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
+	attachCapacityRetries(allTasks, resp)
 	// Execution-log rows render the "on behalf of <member>" badge, so this
 	// issue-facing surface must resolve initiator/originator names (departed-safe,
 	// one batch) — otherwise the badge falls back to "someone" on issue detail.

@@ -38,13 +38,14 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Number      int32   `json:"number"`
-	Identifier  string  `json:"identifier"`
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	Status      string  `json:"status"`
+	ID          string            `json:"id"`
+	WorkspaceID string            `json:"workspace_id"`
+	Number      int32             `json:"number"`
+	Identifier  string            `json:"identifier"`
+	Title       string            `json:"title"`
+	Progress    *ProgressResponse `json:"progress"`
+	Description *string           `json:"description"`
+	Status      string            `json:"status"`
 	// StatusCategory encodes lifecycle using the legacy seven-value wire enum. It is
 	// omitted when an endpoint cannot resolve a custom status, so consumers must
 	// fall back to their catalog rather than treat a blank as "no category".
@@ -137,6 +138,9 @@ type IssueResponse struct {
 	// SourceContext is detail-only. List, board, search, and children responses
 	// deliberately omit the potentially large immutable snapshot.
 	SourceContext *sourceContextDetailResponse `json:"source_context,omitempty"`
+	// CapacityRetry is detail-only: the waiting in-place retry after a full
+	// model (DENE-1093), absent when nothing is waiting.
+	CapacityRetry *CapacityRetryResponse `json:"capacity_retry,omitempty"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -383,6 +387,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		Number:         i.Number,
 		Identifier:     identifier,
 		Title:          i.Title,
+		Progress:       progressResponse(i.ProgressText, i.ProgressSource, i.ProgressTone, i.ProgressAuthorType, i.ProgressAuthorID, i.ProgressUpdatedAt),
 		Description:    textToPtr(i.Description),
 		Status:         i.Status,
 		StatusCategory: statusCategory,
@@ -429,6 +434,7 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		Number:         i.Number,
 		Identifier:     identifier,
 		Title:          i.Title,
+		Progress:       progressResponse(i.ProgressText, i.ProgressSource, i.ProgressTone, i.ProgressAuthorType, i.ProgressAuthorID, i.ProgressUpdatedAt),
 		Description:    textToPtr(i.Description),
 		Status:         i.Status,
 		StatusCategory: statusCategory,
@@ -501,6 +507,7 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 		Number:         i.Number,
 		Identifier:     identifier,
 		Title:          i.Title,
+		Progress:       progressResponse(i.ProgressText, i.ProgressSource, i.ProgressTone, i.ProgressAuthorType, i.ProgressAuthorID, i.ProgressUpdatedAt),
 		Description:    textToPtr(i.Description),
 		Status:         i.Status,
 		StatusCategory: statusCategory,
@@ -2475,6 +2482,12 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 		// would let agents run with silently incomplete instructions.
 		writeError(w, http.StatusInternalServerError, "failed to load issue source context")
 		return
+	}
+
+	// Display metadata: a failed read leaves the line off rather than failing
+	// the detail response.
+	if row, err := h.Queries.GetIssueCapacityRetry(r.Context(), issue.ID); err == nil {
+		resp.CapacityRetry = capacityRetryResponse(row.ID, row.Attempt, row.FireAt)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

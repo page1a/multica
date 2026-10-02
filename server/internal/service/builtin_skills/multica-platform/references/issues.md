@@ -13,6 +13,14 @@ Product contracts the runtime brief does not fully encode.
 
 Closing is its own contract; read `references/close-protocol.md` for its `close.*` keys, decision tables, and dispatcher promotion rules.
 
+`multica issue wait <id> --output json` is the read-only status view for a
+blocked issue's wait. It reports the wait condition, optional `wait_probe`,
+deadline, last probe status (`ready`, `pending`, or `failed`), check timestamp,
+and bounded output. A probe uses exit code `0` for ready, `10` (or GitHub CLI's
+`gh pr checks` code `8`) for pending, and
+any other code for failed. Do not add a follow-up stage-advance command after a
+close; the server advances stages as part of its close protocol.
+
 ## Sub-issues: todo starts work now, backlog parks it
 
 The steps are in `references/sub-issues.md`. `--status backlog` parks a child instead of starting it. `` `--stage <N>` `` groups children into a stage, and the parent is woken when a whole stage finishes. Promote one parked child with `multica issue status <child-id> todo`.
@@ -450,3 +458,13 @@ MUL-123: fix login redirect        # correct — links the PR
 
 Sub-issues, stages and their incorrect-to-correct examples live in
 `sub-issues.md`.
+When blocking on a one-line external check, pass it as `--wait-probe` together
+with `--wait-timeout`. Exit code `0` means ready, `10` means pending, and
+`gh pr checks` exit code `8` is also pending; any other exit code is failed.
+For GitLab, `glab ci status` can be used directly when it returns non-zero while
+the pipeline is pending, or wrap its pending code as `10`.
+
+
+### Report progress
+
+`multica issue progress <issue-id> "<progress>" [--tone working|waiting|stuck|done] --output json` sets the line under the issue's title; `--history` reads earlier lines. Who wins between your line, a close summary and the stall patrol: `references/progress.md`.

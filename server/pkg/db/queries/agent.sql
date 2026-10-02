@@ -3202,3 +3202,37 @@ SET plan_limits = @plan_limits
 WHERE id = @id
   AND workspace_id = @workspace_id
   AND plan_limits IS DISTINCT FROM @plan_limits;
+
+-- name: GetIssueCapacityRetry :one
+-- The waiting in-place retry after a model-at-capacity failure (DENE-1093):
+-- a deferred child whose parent failed with provider_capacity_or_rate_limit.
+-- Issue detail shows it as "model full, retry N, next at HH:MM"; the newest
+-- one wins when a stale row survived.
+SELECT c.id, c.attempt, c.fire_at
+FROM agent_task_queue c
+JOIN agent_task_queue p ON p.id = c.parent_task_id
+WHERE c.issue_id = $1
+  AND c.status = 'deferred'
+  AND c.fire_at IS NOT NULL
+  AND p.failure_reason = 'agent_error.provider_capacity_or_rate_limit'
+ORDER BY c.created_at DESC
+LIMIT 1;
+
+-- name: ListStrandedAgentIssues :many
+-- Issues a seat still owns but nothing is running for (DENE-1093, the
+-- DENE-1066 gap): todo / in_progress, assigned to this agent, and no run of
+-- any seat queued, dispatched, running, waiting, or deferred. A seat that was
+-- switched off left these behind; turning it back on requeues them. Halted
+-- issues stay halted.
+SELECT i.* FROM issue i
+WHERE i.assignee_type = 'agent'
+  AND i.assignee_id = $1
+  AND i.status IN ('todo', 'in_progress')
+  AND COALESCE(i.metadata -> 'agent_halted', 'false'::jsonb) <> 'true'::jsonb
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = i.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  )
+ORDER BY i.updated_at
+LIMIT 200;

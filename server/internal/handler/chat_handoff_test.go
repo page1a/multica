@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -122,9 +123,15 @@ func TestGetChatSessionHandoff_TaskTokenOfOwnerCanRead(t *testing.T) {
 	sessionID := createHandlerTestChatSession(t, agentID)
 	insertChatMessageRole(t, sessionID, "user", "continue the migration", "message", false, time.Date(2026, 9, 24, 3, 0, 0, 0, time.UTC))
 
+	// A task token always carries its task; the read is checked as the person
+	// who started that task (DENE-1088), here the session's creator.
+	taskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": handlerTestRuntimeID(t), "status": "running", "originator_user_id": testUserID, "accountable_user_id": testUserID, "originator_source": "direct_human",
+	})
 	req := handoffReq(t, sessionID, "", testUserID)
 	req.Header.Set("X-Actor-Source", "task_token")
 	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
 	w := httptest.NewRecorder()
 	testHandler.GetChatSessionHandoff(w, req)
 	if w.Code != http.StatusOK {

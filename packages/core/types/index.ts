@@ -1,4 +1,7 @@
 export type { Issue, IssueStatus, BuiltInIssueStatus, IssuePriority, IssueAssigneeType, IssueAssigneeSource, IssueReviewerType, IssueMetadata, IssueMetadataValue, IssueAgentGuardResponse, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext } from "./issue";
+export type { Progress, ProgressTone } from "./progress";
+export type { IssueGoal, IssueGoalStatus, IssueGoalCheck, IssueGoalBudget, IssueGoalEvidence, CreateIssueGoalInput, IssueGoalCheckInput } from "./goal";
+export { IssueGoalSchema } from "./goal";
 export type { IssueDraft, IssueDraftStatus, IssueDraftPayload, IssueDraftChild, IssueDraftProjectProposal, IssueDraftProjectChoice, IssueDraftCreatedIssue, IssueDraftAssignmentWarning, IssueDraftPolicy, IssueDraftCapabilities, IssueDraftSession, IssueDraftSummary, IssueDraftFinalizeResult, IssueDraftRuntimeSwitch } from "./issue-draft";
 export type { CloseIssueRequest, CloseIssueResponse, CloseOutcome, KnowledgeAudit, KnowledgeAuditChange } from "./close";
 export type {
@@ -56,6 +59,7 @@ export type {
   UpdateAgentEnvRequest,
   Skill,
   SkillSummary,
+  CapacityRetry,
   AgentSkillSummary,
   DisabledRuntimeSkill,
   SetAgentRuntimeSkillEnabledRequest,
@@ -193,6 +197,7 @@ export {
 } from "./attachment-url";
 export type {
   ChatSession,
+  ChatDirectoryItem,
   ChatLastMessage,
   ChatShareGrant,
   ChatAccessSettings,
@@ -420,3 +425,4 @@ export type {
 } from "./billing";
 
 export type { WorkThreadSnapshot, WorkThreadTurn, WorkThreadInput } from "./work_thread";
+export type { Ask, AskOption, AskQuestion, CreateAskRequest, AnswerAskRequest } from "./ask";

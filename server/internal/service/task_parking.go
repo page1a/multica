@@ -10,12 +10,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/parking"
+	"github.com/multica-ai/multica/server/internal/progress"
 	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ParkingSummarizer phrases the one-sentence summary of a parking record when
@@ -79,6 +82,10 @@ func (s *TaskService) RecordParking(ctx context.Context, issueID pgtype.UUID, ta
 		slog.Warn("parking: write record failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
 		return rec, false
 	}
+	// The parking summary is the last fallback for the issue's progress line
+	// (DENE-1037): it fills in only while no agent report or close summary
+	// stands — the SQL guard decides, so a report racing this write wins.
+	s.recordParkingProgress(ctx, issue, rec, summary, task)
 
 	if rec.Unexplained && !(hadPrev && prev.Unexplained && prev.Category == rec.Category) {
 		s.notifyParkingUnexplained(ctx, issue, rec, summary, task)
@@ -271,3 +278,51 @@ func (s *TaskService) parkingRecipient(ctx context.Context, issue db.Issue) (pgt
 	}
 	return pgtype.UUID{}, false
 }
+
+// recordParkingProgress copies the parking summary onto the issue's progress
+// line and pushes issue:updated so boards refresh without a reload. Zero rows
+// from the guarded update means an explicit line already stands.
+func (s *TaskService) recordParkingProgress(ctx context.Context, issue db.Issue, rec parking.Record, summary string, task db.AgentTaskQueue) {
+	text := progress.Clip(summary)
+	if text == "" {
+		return
+	}
+	tone := progress.ForParking(rec.Category)
+	updated, err := s.Queries.UpdateIssueProgress(ctx, db.UpdateIssueProgressParams{
+		ID: issue.ID, WorkspaceID: issue.WorkspaceID, Text: text, Source: parkingProgressSource, Tone: tone,
+		AuthorType: "system", AuthorID: task.AgentID, FallbackOnly: true,
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("parking: write progress failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+		}
+		return
+	}
+	if issue.ProgressSource == parkingProgressSource && issue.ProgressText == text && issue.ProgressTone == tone {
+		// Same line as before: no history row, no broadcast.
+		return
+	}
+	if err := s.Queries.CreateIssueProgress(ctx, db.CreateIssueProgressParams{
+		WorkspaceID: issue.WorkspaceID, IssueID: issue.ID, Text: text, Source: parkingProgressSource, Tone: tone,
+		AuthorType: "system", AuthorID: task.AgentID,
+	}); err != nil {
+		slog.Warn("parking: write progress history failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+	}
+	if s.Bus != nil {
+		s.Bus.Publish(events.Event{
+			Type:        protocol.EventIssueUpdated,
+			WorkspaceID: util.UUIDToString(updated.WorkspaceID),
+			ActorType:   "system",
+			Payload: map[string]any{
+				"issue":            IssueToMapResolved(ctx, s.Queries, updated, s.getIssuePrefix(updated.WorkspaceID)),
+				"status_changed":   false,
+				"prev_status":      updated.Status,
+				"progress_changed": true,
+			},
+		})
+	}
+}
+
+// parkingProgressSource tags progress copied from the parking summary. The
+// summary's own source (model / fixed wording) stays on the parking record.
+const parkingProgressSource = "parking"

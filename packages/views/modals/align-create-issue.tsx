@@ -28,6 +28,7 @@ import { contentReferencesAttachment, type IssueDraftSummary } from "@multica/co
 import { projectListOptions } from "@multica/core/projects/queries";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { DialogTitle } from "@multica/ui/components/ui/dialog";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { cn } from "@multica/ui/lib/utils";
@@ -40,6 +41,7 @@ import {
 } from "../editor";
 import { useT } from "../i18n";
 import { UnfinishedIssueDraftsBanner } from "../issues/draft/unfinished-issue-drafts";
+import { GoalFlowSteps } from "../issues/draft/goal-flow-steps";
 import { AlignmentConfigPicker } from "../issues/draft/alignment-config-picker";
 import { ClearablePillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
@@ -72,6 +74,7 @@ export function AlignCreatePanel({
   onClose,
   onSwitchMode,
   parentIssueId,
+  data,
 }: {
   onClose: () => void;
   /** Called with the carry payload for the panel this face switches back to. */
@@ -88,6 +91,7 @@ export function AlignCreatePanel({
    * the confirm files the whole group beneath that issue.
    */
   parentIssueId?: string;
+  data?: Record<string, unknown> | null;
 }) {
   const { t } = useT("issues");
   const { t: tModals } = useT("modals");
@@ -114,6 +118,7 @@ export function AlignCreatePanel({
   // rides the carry channel — that is left to the parent-issue context, which
   // is not persisted at all.
   const initialRequest = draft.align.request;
+  const [goalMode, setGoalMode] = useState(data?.goal_mode === true);
 
   const editorRef = useRef<ContentEditorRef>(null);
   const [hasContent, setHasContent] = useState(initialRequest.trim().length > 0);
@@ -296,6 +301,7 @@ export function AlignCreatePanel({
         // emptied picker sends `[]` ("none of them") rather than omitting the
         // field, which the server reads as "use the built-in default".
         capabilities: encodeIssueDraftCapabilities(capabilities),
+        goalMode,
         // Stored on the draft at creation, so the whole group the conversation
         // settles on is filed under it — a project chosen here is not a display
         // preference the page reads back later.
@@ -331,6 +337,8 @@ export function AlignCreatePanel({
   return (
     <>
       <DialogTitle className="sr-only">{t(($) => $.alignment.entry_title)}</DialogTitle>
+
+      <GoalFlowSteps active="align" className="px-6 pt-3" />
 
       {/* `min-h-[140px] flex-1 overflow-y-auto` is the agent panel's proven
           shape (MUL-6236): the region absorbs the delta against the card's
@@ -475,6 +483,10 @@ export function AlignCreatePanel({
           <ArrowLeftRight className="size-3.5" />
           {tModals(($) => $.create_issue.switch_from_align)}
         </button>
+        <label className="mr-auto flex items-center gap-2 text-caption text-muted-foreground">
+          <Switch checked={goalMode} onCheckedChange={setGoalMode} disabled={start.isPending} />
+          <span>{t(($) => $.alignment.goal_toggle)}</span>
+        </label>
         <Button variant="ghost" size="sm" onClick={onClose} disabled={start.isPending}>
           {t(($) => $.alignment.entry_cancel)}
         </Button>
@@ -493,7 +505,9 @@ export function AlignCreatePanel({
             ) : null}
             {start.isPending
               ? t(($) => $.alignment.entry_submitting)
-              : t(($) => $.alignment.entry_submit)}
+              : goalMode
+                ? t(($) => $.alignment.entry_create_start)
+                : t(($) => $.alignment.entry_submit)}
           </Button>
         )}
       </div>

@@ -473,6 +473,32 @@
     "prop_created": "作成日",
     "prop_updated": "更新日",
     "activity_section": "アクティビティ",
+    "goal": {
+      "title": "目標",
+      "completion_title": "完了ラインを設定",
+      "completion_hint": "このタスクを完了とするために通過すべきチェック項目を選びます。",
+      "question_label": "完了チェック",
+      "question_tabs": "完了チェックの質問",
+      "question_number": "質問 {{n}}",
+      "question_prompt": "何ができたら完了ですか？",
+      "other_option": "その他 — 自分でチェック項目を説明",
+      "add_question": "チェック項目を追加",
+      "lock_hint": "確認後、完了ラインはロックされます。変更するには Kun に相談してください。",
+      "confirm": "確認して開始",
+      "confirming": "ロックして開始中…",
+      "set_as_goal": "目標に設定",
+      "set_as_goal_hint": "完了済みの作業を引き継ぎ、これから何を完了とするかを決めます。",
+      "progress": "{{completed}} / {{total}} 件のチェックが完了",
+      "round": "ラウンド",
+      "tokens": "トークン",
+      "runs": "実行回数",
+      "duration": "時間",
+      "budget_warning": "この目標は予算の 80% 以上を使用しています。上限に達すると一時停止し、次の対応を確認します。",
+      "stopped_hint": "この目標は一時停止中です。受信トレイの選択式質問に回答して、予算の追加、達成ラインの変更、終了を選択してください。",
+      "evidence_item": "証拠",
+      "open_evidence": "証拠を開く",
+      "status": { "draft": "確認待ち", "locked": "進行中", "active": "進行中", "stopped": "停止", "achieved": "達成" }
+    },
     "subscribe": "購読",
     "unsubscribe": "購読解除",
     "delegated_subscription_badge": "エージェント経由で購読中",
@@ -729,6 +755,7 @@
     },
     "usage_total_tooltip": "このタスクのトークン使用量 — クリックで実行ごとの内訳",
     "status_deferred": "再試行中",
+    "status_capacity_retry": "モデル混雑中・{{retry}} 回目の再試行、次回 {{time}}",
     "usage_label": "トークン費用"
   },
   "usage_detail": {
@@ -1027,6 +1054,12 @@
   },
   "alignment": {
     "title": "新しいタスクをすり合わせ",
+    "goal_flow_aria": "目標フロー",
+    "goal_flow_chat": "チャット",
+    "goal_flow_align": "すり合わせ",
+    "goal_flow_issue": "タスク",
+    "entry_create_start": "作成して開始",
+    "goal_toggle": "完了ラインを満たすまで続ける",
     "subtitle": "確認するまで何も作成されません。",
     "back": "タスク一覧に戻る",
     "stage_aligning": "すり合わせ中",
@@ -1206,5 +1239,20 @@
   },
   "row": {
     "pinned_label": "ピン留め済み"
+  },
+  "progress_line": {
+    "label": "進捗",
+    "live_running": "エージェントが作業中",
+    "live_queued": "エージェント待ち",
+    "live_failed": "前回の実行が失敗",
+    "history_show": "履歴",
+    "history_hide": "履歴を閉じる",
+    "history_empty": "以前の更新はありません",
+    "history_loading": "読み込み中…",
+    "source_agent": "報告",
+    "source_close": "クローズ要約",
+    "source_parking": "巡回要約",
+    "source_model": "要約",
+    "source_reply": "返信から"
   }
 }

@@ -9,7 +9,8 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id,
        i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision, i.visibility
+       i.revision, i.visibility,
+       i.progress_text, i.progress_source, i.progress_tone, i.progress_author_type, i.progress_author_id, i.progress_updated_at
 FROM issue i
 WHERE i.workspace_id = $1
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
@@ -178,6 +179,22 @@ ORDER BY
   END,
   COALESCE(last_activity_at, updated_at)
 LIMIT sqlc.arg('row_limit')::int;
+
+-- name: ListDaemonBlockWaits :many
+-- A daemon only needs blocked issues carrying an executable probe. Do not
+-- return a ticket while another task is active: the probe would race the
+-- executor and could wake a second run.
+SELECT * FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')::uuid
+  AND status = 'blocked'
+  AND NULLIF(trim(COALESCE(metadata->>'block.wait_probe', '')), '') IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = issue.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY COALESCE(last_activity_at, updated_at), id
+LIMIT 100;
 
 -- name: LockIssueForChannelMediaBind :one
 -- Channel media resolves after /issue creation. Hold a key-share lock while
@@ -523,7 +540,8 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.reviewer_type, i.reviewer_id,
        i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision, i.visibility
+       i.revision, i.visibility,
+       i.progress_text, i.progress_source, i.progress_tone, i.progress_author_type, i.progress_author_id, i.progress_updated_at
 FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains visible.

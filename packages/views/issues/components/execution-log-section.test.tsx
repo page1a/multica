@@ -90,6 +90,42 @@ describe("ActiveTaskRow", () => {
     expect(screen.getByText("View transcript")).toBeInTheDocument();
     expect(mockState.taskMessagesOptions).not.toHaveBeenCalled();
   });
+
+  // DENE-1093: a run waiting out a full model says which retry it is and
+  // when it fires, instead of the generic "Retrying".
+  it("names the retry and its time on a capacity wait", () => {
+    const nextAt = "2026-06-08T08:10:00Z";
+    const time = new Date(nextAt).toLocaleTimeString("en", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    renderWithI18n(
+      <ActiveTaskRow
+        task={makeTask({
+          status: "deferred",
+          started_at: null,
+          capacity_retry: { task_id: "task-1", retry: 4, next_at: nextAt },
+        })}
+        issueId="issue-1"
+      />,
+    );
+
+    expect(
+      screen.getByText(`Model at capacity · retry 4, next at ${time}`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Retrying")).not.toBeInTheDocument();
+  });
+
+  it("keeps the plain retrying label on other deferred waits", () => {
+    renderWithI18n(
+      <ActiveTaskRow
+        task={makeTask({ status: "deferred", started_at: null })}
+        issueId="issue-1"
+      />,
+    );
+
+    expect(screen.getByText("Retrying")).toBeInTheDocument();
+  });
 });
 
 describe("TaskCommentCoverage", () => {

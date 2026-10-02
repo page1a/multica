@@ -350,11 +350,12 @@ func TestFailTaskProviderNetworkBudget(t *testing.T) {
 	}
 }
 
-// TestFailTaskProviderCapacityBudget is the end-to-end guard for DENE-210:
-// FailTask must (1) grant capacity failures the raised budget, (2) persist a
-// deferred child whose fire_at carries the 30s backoff, and (3) still honour
-// max_attempts=1 as "auto-retry disabled". Unlike provider_network, the first
-// retry is also deferred — a capacity miss does not clear immediately.
+// TestFailTaskProviderCapacityBudget is the end-to-end guard for DENE-1093:
+// a capacity failure on an issue its agent still owns is retried in place
+// with no ceiling, on the 30s → 1m → 2m → 5m → 5m… schedule, resuming the
+// same session. The seat stays open and no breaker row is written. The
+// chain stops when the issue is closed, and falls back to the old
+// three-attempt ceiling once the agent is no longer the assignee.
 func TestFailTaskProviderCapacityBudget(t *testing.T) {
 	pool := newResolveOriginatorPool(t)
 	ctx := context.Background()
@@ -371,16 +372,32 @@ func TestFailTaskProviderCapacityBudget(t *testing.T) {
 		name        string
 		attempt     int32
 		maxAttempts int32
+		issueSQL    string
 		wantChild   bool
-		wantAttempt int32
 		wantMax     int32
+		wantDelay   time.Duration
 	}{
-		{"first retry is deferred with raised budget", 1, 2, true, 2, 3},
-		{"second retry is still deferred", 2, 2, true, 3, 3},
-		{"disabled budget is never revived", 1, 1, false, 0, 0},
+		{"first retry waits 30s", 1, 2, "", true, 3, 30 * time.Second},
+		{"second retry waits 1m", 2, 3, "", true, 3, time.Minute},
+		{"third retry waits 2m past the old ceiling", 3, 3, "", true, 4, 2 * time.Minute},
+		{"fourth retry waits 5m", 4, 4, "", true, 5, 5 * time.Minute},
+		{"every later retry waits 5m", 9, 9, "", true, 10, 5 * time.Minute},
+		{"disabled budget is never revived", 1, 1, "", false, 0, 0},
+		{"closed issue stops the chain", 2, 3, `UPDATE issue SET status = 'done' WHERE id = $1`, false, 0, 0},
+		{"halted issue stops the chain", 2, 3, `UPDATE issue SET metadata = jsonb_build_object('agent_halted', true) WHERE id = $1`, false, 0, 0},
+		{"reassigned issue falls back to the bounded ceiling", 3, 3, `UPDATE issue SET assignee_type = NULL, assignee_id = NULL WHERE id = $1`, false, 0, 0},
+		{"reassigned issue still gets its bounded retry", 1, 2, `UPDATE issue SET assignee_type = NULL, assignee_id = NULL WHERE id = $1`, true, 3, 30 * time.Second},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.issueSQL != "" {
+				if _, err := pool.Exec(ctx, tc.issueSQL, issueID); err != nil {
+					t.Fatalf("prepare issue: %v", err)
+				}
+				t.Cleanup(func() {
+					pool.Exec(context.Background(), `UPDATE issue SET status = 'todo', metadata = '{}'::jsonb, assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, issueID, agentID)
+				})
+			}
 			var parentID pgtype.UUID
 			if err := pool.QueryRow(ctx, `
 				INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, attempt, max_attempts, session_id, work_dir)
@@ -395,8 +412,7 @@ func TestFailTaskProviderCapacityBudget(t *testing.T) {
 
 			before := time.Now()
 			// Empty reason: FailTask must Classify the GPT capacity wording
-			// itself, then retry. Passing the bucket pre-labelled would skip
-			// the bug this ticket exists to fix.
+			// itself, then retry.
 			if _, err := svc.FailTask(ctx, parentID, "Selected model is at capacity. Please try a different model.", "src-session", "/tmp/src-workdir", "", "", false, "", ""); err != nil {
 				t.Fatalf("FailTask: %v", err)
 			}
@@ -406,6 +422,7 @@ func TestFailTaskProviderCapacityBudget(t *testing.T) {
 				childAttempt int32
 				childMax     int32
 				childStatus  string
+				childSession string
 				fireAt       pgtype.Timestamptz
 			)
 			row := pool.QueryRow(ctx, `
@@ -413,12 +430,23 @@ func TestFailTaskProviderCapacityBudget(t *testing.T) {
 					coalesce(max(attempt),0),
 					coalesce(max(max_attempts),0),
 					coalesce(max(status),''),
+					coalesce(max(session_id),''),
 					max(fire_at)
 				FROM agent_task_queue WHERE parent_task_id = $1
 			`, parentID)
-			if err := row.Scan(&n, &childAttempt, &childMax, &childStatus, &fireAt); err != nil {
+			if err := row.Scan(&n, &childAttempt, &childMax, &childStatus, &childSession, &fireAt); err != nil {
 				t.Fatalf("read child: %v", err)
 			}
+
+			var enabled bool
+			var breakers int
+			if err := pool.QueryRow(ctx, `SELECT work_enabled, (SELECT count(*) FROM agent_quota_breaker WHERE agent_id = $1) FROM agent WHERE id = $1`, agentID).Scan(&enabled, &breakers); err != nil {
+				t.Fatalf("read seat: %v", err)
+			}
+			if !enabled || breakers != 0 {
+				t.Fatalf("work_enabled=%v breakers=%d, capacity must leave the seat open and write no breaker", enabled, breakers)
+			}
+
 			if !tc.wantChild {
 				if n != 0 {
 					t.Fatalf("expected no retry child, got %d", n)
@@ -428,8 +456,8 @@ func TestFailTaskProviderCapacityBudget(t *testing.T) {
 			if n != 1 {
 				t.Fatalf("expected exactly one retry child, got %d", n)
 			}
-			if childAttempt != tc.wantAttempt {
-				t.Errorf("child attempt = %d, want %d", childAttempt, tc.wantAttempt)
+			if childAttempt != tc.attempt+1 {
+				t.Errorf("child attempt = %d, want %d", childAttempt, tc.attempt+1)
 			}
 			if childMax != tc.wantMax {
 				t.Errorf("child max_attempts = %d, want %d (self-consistent budget)", childMax, tc.wantMax)
@@ -437,12 +465,15 @@ func TestFailTaskProviderCapacityBudget(t *testing.T) {
 			if childStatus != "deferred" {
 				t.Errorf("child status = %q, want deferred", childStatus)
 			}
+			if childSession != "src-session" {
+				t.Errorf("child session = %q, want the parent's session resumed", childSession)
+			}
 			if !fireAt.Valid {
 				t.Fatal("fire_at must be set: capacity retries are deferred, not immediate")
 			}
 			gotDelay := fireAt.Time.Sub(before)
-			if gotDelay < providerCapacityRetryWait-time.Second || gotDelay > providerCapacityRetryWait+2*time.Second {
-				t.Errorf("fire_at delay = %s, want ~%s", gotDelay, providerCapacityRetryWait)
+			if gotDelay < tc.wantDelay-time.Second || gotDelay > tc.wantDelay+2*time.Second {
+				t.Errorf("fire_at delay = %s, want ~%s", gotDelay, tc.wantDelay)
 			}
 		})
 	}

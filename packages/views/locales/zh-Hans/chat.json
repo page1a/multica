@@ -10,6 +10,10 @@
     "new_chat_in_project": "新对话会留在「{{title}}」",
     "new_chat_unbound": "新对话不绑定项目"
   },
+  "goal_flow": {
+    "hint": "先聊清楚，再创建任务。",
+    "action": "先对齐需求"
+  },
   "project_bar": {
     "all": "全部",
     "more": "⋯ 更多 ({{count}})",
@@ -339,5 +343,6 @@
     "body": "你有 {{count}} 个聊天现在项目成员能看到。",
     "make_private": "把勾选的设为私密",
     "dismiss": "知道了"
-  }
+  },
+  "title_locked": "标题已锁定，智能体不会再改名"
 }

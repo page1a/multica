@@ -75,6 +75,7 @@ vi.mock("@multica/core/auth", () => ({
 }));
 
 vi.mock("@multica/core/chat", () => ({
+  chatDirectoryOptions: () => ({ queryKey: ["chat-directory"] }),
   useRecentContextStore: (
     selector: (state: { recordVisit: typeof mocks.recordVisit }) => unknown,
   ) => selector({ recordVisit: mocks.recordVisit }),

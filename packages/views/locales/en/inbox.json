@@ -76,6 +76,8 @@
     "access_status_expired": "Expired — nobody answered in time"
   },
   "types": {
+    "needs_you": "Needs your attention",
+    "ask_answered": "Question answered",
     "issue_assigned": "Assigned",
     "issue_subscribed": "Subscribed",
     "unassigned": "Unassigned",

@@ -2,7 +2,9 @@ import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import type { InboxBoardResponse, ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
 import type { WorkThreadSnapshot } from "../types/work_thread";
+import type { Ask, CreateAskRequest, AnswerAskRequest } from "../types/ask";
 import { configStore } from "../config";
+import { IssueGoalSchema, type CreateIssueGoalInput } from "../types";
 import type {
   Issue,
   IssuePriority,
@@ -80,6 +82,7 @@ import type {
   CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
+  IssueGoal,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
@@ -99,10 +102,12 @@ import type {
   CreateRuntimeLocalSkillImportRequest,
   RuntimeLocalSkillImportRequest,
   TimelineEntry,
+  Progress,
   AssigneeFrequencyEntry,
   TaskMessagePayload,
   Attachment,
   ChatSession,
+  ChatDirectoryItem,
   ChatPinnedAgent,
   ChatMessage,
   ChatMessagesPage,
@@ -323,6 +328,8 @@ import {
   ChatMessagesPageSchema,
   ChatPendingTaskSchema,
   ChatSessionListSchema,
+  ChatDirectoryListSchema,
+  EMPTY_CHAT_DIRECTORY,
   ChatMessageSearchHitListSchema,
   EMPTY_CHAT_MESSAGE_SEARCH_HITS,
   type ChatMessageSearchHit,
@@ -434,6 +441,7 @@ import {
   SubscribersListSchema,
   TaskMessageListSchema,
   TimelineEntriesSchema,
+  ProgressHistorySchema,
   UserSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
@@ -1741,6 +1749,16 @@ export class ApiClient {
     return parseWithFallback(raw, IssueTriggerPreviewSchema, { triggers: [], total_count: 0 }, {
       endpoint: "POST /api/issues/preview-trigger",
     });
+  }
+
+  /** Progress line history, newest first (DENE-1037). */
+  async listIssueProgress(issueId: string): Promise<Progress[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/progress`,
+    );
+    return parseWithFallback(raw, ProgressHistorySchema, { progress: [] }, {
+      endpoint: "GET /api/issues/:id/progress",
+    }).progress as Progress[];
   }
 
   async listTimeline(issueId: string): Promise<TimelineEntry[]> {
@@ -3286,6 +3304,46 @@ export class ApiClient {
     }, { endpoint: "GET /api/issues/:id/usage" });
   }
 
+  async getIssueGoal(issueId: string): Promise<IssueGoal | null> {
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/goal`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+    if (raw == null) return null;
+    return parseWithFallback<IssueGoal | null>(raw, IssueGoalSchema.nullable(), null, {
+      endpoint: "GET /api/issues/:id/goal",
+    });
+  }
+
+  async createIssueGoal(issueId: string, data: CreateIssueGoalInput): Promise<IssueGoal> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/goal`, {
+      method: "POST",
+      body: JSON.stringify({
+        checks: data.checks,
+        budget: {
+          token_limit: data.budget?.token_limit ?? 0,
+          run_limit: data.budget?.run_limit ?? 0,
+          duration_seconds: data.budget?.duration_seconds ?? 0,
+        },
+      }),
+    });
+    return parseWithFallback(raw, IssueGoalSchema, null, {
+      endpoint: "POST /api/issues/:id/goal",
+    }) as unknown as IssueGoal;
+  }
+
+  async confirmIssueGoal(issueId: string): Promise<IssueGoal> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/goal/confirm`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, IssueGoalSchema, null, {
+      endpoint: "POST /api/issues/:id/goal/confirm",
+    }) as unknown as IssueGoal;
+  }
+
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -4579,6 +4637,24 @@ export class ApiClient {
     );
     return parseWithFallback(raw, ChatMessageSearchHitListSchema, EMPTY_CHAT_MESSAGE_SEARCH_HITS, {
       endpoint: "GET /api/chat/sessions/search",
+    });
+  }
+
+  async listChatDirectory(params?: {
+    project?: string;
+    allProjects?: boolean;
+    since?: string;
+    query?: string;
+  }, signal?: AbortSignal): Promise<ChatDirectoryItem[]> {
+    const query = new URLSearchParams();
+    if (params?.project) query.set("project", params.project);
+    if (params?.allProjects) query.set("all_projects", "true");
+    if (params?.since) query.set("since", params.since);
+    if (params?.query) query.set("q", params.query);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const raw: unknown = await this.fetch(`/api/chat/directory${suffix}`, signal ? { signal } : undefined);
+    return parseWithFallback(raw, ChatDirectoryListSchema, EMPTY_CHAT_DIRECTORY, {
+      endpoint: "GET /api/chat/directory",
     });
   }
 
@@ -6400,4 +6476,28 @@ export class ApiClient {
       { endpoint: "POST /api/telegram/binding/redeem" },
     );
   }
+
+  async createAsk(body: CreateAskRequest): Promise<Ask> {
+    return this.fetch<Ask>("/api/asks", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async listAsks(status = "open", issueId?: string): Promise<{ asks: Ask[] }> {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (issueId) params.set("issue_id", issueId);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.fetch<{ asks: Ask[] }>(`/api/asks${query}`);
+  }
+
+  async getAsk(id: string): Promise<Ask> {
+    return this.fetch<Ask>(`/api/asks/${encodeURIComponent(id)}`);
+  }
+
+  async answerAsk(id: string, body: AnswerAskRequest): Promise<Pick<Ask, "id" | "status" | "answers">> {
+    return this.fetch<Pick<Ask, "id" | "status" | "answers">>(`/api/asks/${encodeURIComponent(id)}/answer`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
 }
