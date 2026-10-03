@@ -122,6 +122,10 @@ export interface IssueUpdatedPayload {
   project_changed?: boolean;
   /** The progress line changed (DENE-1037): refresh its history. */
   progress_changed?: boolean;
+  // Both ends of a duplicate-mark change (MUL-7349). The mark is not on Issue,
+  // so these tell the realtime layer whose duplicate relations to refresh.
+  duplicate_of_issue_id?: string | null;
+  prev_duplicate_of_issue_id?: string | null;
 }
 
 export interface IssueDeletedPayload {

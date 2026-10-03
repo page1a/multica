@@ -98,6 +98,21 @@ func TestIgnoredAgentPickIsSaidOnceWithoutNamingWhoWasPicked(t *testing.T) {
 	}
 }
 
+func TestRejectedQuoteStaysUnassignedWithoutRerouting(t *testing.T) {
+	store := newFakeStore()
+	store.issue.AssigneeSource = SourceQuoteRejected
+	store.issue.Reviewer = ReviewerRef{Kind: ReviewerNoReview}
+	judge := &fakeJudge{verdict: confidentVerdict()}
+
+	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionNoop || len(store.assigns) != 0 || judge.callCount() != 0 {
+		t.Fatalf("rejected quote was rerouted: outcome=%+v assigns=%v judge_calls=%d", out, store.assigns, judge.callCount())
+	}
+}
+
 func TestQuotedExecutorIsKeptAndCreditedToTheSpeaker(t *testing.T) {
 	store := newFakeStore()
 	store.issue.AssigneeType = "agent"

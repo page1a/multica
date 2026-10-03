@@ -73,7 +73,11 @@
     "access_request_expires": "Expires {{until}}",
     "access_status_approved": "Approved",
     "access_status_declined": "Declined",
-    "access_status_expired": "Expired — nobody answered in time"
+    "access_status_expired": "Expired — nobody answered in time",
+    "stall_review_title": "This ticket is under a 24-hour stall review",
+    "stall_processed_title": "This ticket was handled automatically",
+    "stall_keep": "Keep ticket",
+    "stall_undo": "Undo handling"
   },
   "types": {
     "needs_you": "Needs your attention",
@@ -98,11 +102,13 @@
     "quick_create_failed": "Create with agent failed",
     "quick_create_unconfirmed": "Create with agent unconfirmed",
     "autopilot_paused": "Autopilot paused",
+    "children_done": "Sub-issues finished",
     "autopilot_quota_exceeded": "Autopilot run limit reached",
     "agent_access_request": "Agent access request",
     "agent_access_approved": "Agent access approved",
     "agent_access_declined": "Agent access declined",
-    "parking_unexplained": "Stopped without explanation"
+    "parking_unexplained": "Stopped without explanation",
+    "issue_stall_action": "Stall action"
   },
   "labels": {
     "set_status_to": "Set status to",
@@ -117,6 +123,7 @@
     "created_with_agent": "Created with agent: {{identifier}}",
     "failed_with_detail": "Failed: {{detail}}",
     "autopilot_quota_blocked": "Run blocked because the limit was reached",
+    "children_done_stage": "Stage {{stage}}'s sub-issues finished",
     "access_requested_by": "{{requester}} asked to use {{agent}}",
     "access_approved_for": "Your request to use {{agent}} was approved",
     "access_declined_for": "Your request to use {{agent}} was declined"
@@ -266,6 +273,26 @@
       "todo": "To do",
       "fresh": "New",
       "done": "Done"
+    },
+    "actions": {
+      "backlog": "Do later",
+      "done": "Complete",
+      "cancelled": "Not doing this",
+      "return_to_do": "Return to to-do",
+      "return_to_agent": "Return to to-do (wake {{name}})",
+      "more": "More actions",
+      "select": "Select {{title}}",
+      "selected": "{{count}} selected",
+      "clear_selection": "Clear selection",
+      "undo": "Undo"
+    },
+    "toasts": {
+      "status_changed": "Status updated",
+      "cancelled": "Marked as not doing this — running work will continue"
+    },
+    "errors": {
+      "status_failed": "Could not update status",
+      "undo_failed": "Could not undo the status change"
     }
   }
 }

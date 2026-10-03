@@ -1,14 +1,17 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FolderKanban, History, Sparkles } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import { ChevronDown, ChevronRight, Check, FolderKanban, History, MoreHorizontal, RotateCcw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { useCreateComment } from "@multica/core/issues/mutations";
+import { useBatchUpdateIssues, useCreateComment, useUpdateIssue } from "@multica/core/issues/mutations";
+import { useQueryClient } from "@tanstack/react-query";
+import type { UpdateIssueRequest } from "@multica/core/types";
 import {
   BOARD_LANES,
+  homeKeys,
   splitSeenDone,
   useBoardProject,
   useDoneSeenStore,
@@ -21,6 +24,13 @@ import {
 import type { ParkingEvent } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, resolveClickIntent, useNavigation } from "../../navigation";
@@ -113,6 +123,20 @@ export interface BoardLinking {
 
 const BoardLinkingContext = createContext<BoardLinking | null>(null);
 
+type BoardStatus = NonNullable<UpdateIssueRequest["status"]>;
+
+interface WaitingActions {
+  selected: ReadonlySet<string>;
+  toggleSelected: (issueId: string) => void;
+  applyStatus: (issueIds: string[], status: BoardStatus) => void;
+}
+
+const WaitingActionsContext = createContext<WaitingActions | null>(null);
+
+function useWaitingActions() {
+  return useContext(WaitingActionsContext);
+}
+
 function formatClock(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -186,6 +210,57 @@ function ReplyBox({ row, copy }: { row: BoardRow; copy: BoardCopy }) {
   );
 }
 
+function WaitingRowControls({ row, copy }: { row: BoardRow; copy: BoardCopy }) {
+  const actions = useWaitingActions();
+  if (!actions) return null;
+  const selected = actions.selected.has(row.issueId);
+  const ownerName = row.nextName || row.next?.id || "";
+  const returnLabel = ownerName && row.next?.type === "agent"
+    ? copy.t(($) => $.board.actions.return_to_agent, { name: ownerName })
+    : copy.t(($) => $.board.actions.return_to_do);
+  const stop = (event: SyntheticEvent) => event.stopPropagation();
+  const setStatus = (status: BoardStatus) => {
+    actions.applyStatus([row.issueId], status);
+  };
+  return (
+    <div className="flex items-center gap-1" onClick={stop} onKeyDown={stop}>
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={() => actions.toggleSelected(row.issueId)}
+        aria-label={copy.t(($) => $.board.actions.select, { title: row.title })}
+        data-testid="waiting-row-checkbox"
+        className="size-4 rounded-sm border-muted-foreground/50 accent-primary"
+      />
+      <div className="hidden items-center gap-0.5 [@media(hover:hover)]:group-hover:flex [@media(hover:hover)]:group-focus-within:flex">
+        <button type="button" title={copy.t(($) => $.board.actions.backlog)} aria-label={copy.t(($) => $.board.actions.backlog)} onClick={() => setStatus("backlog")} className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
+          <RotateCcw className="size-3.5" />
+        </button>
+        <button type="button" title={copy.t(($) => $.board.actions.done)} aria-label={copy.t(($) => $.board.actions.done)} onClick={() => setStatus("done")} className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
+          <Check className="size-3.5" />
+        </button>
+        <button type="button" title={copy.t(($) => $.board.actions.cancelled)} aria-label={copy.t(($) => $.board.actions.cancelled)} onClick={() => setStatus("cancelled")} className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-destructive">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<button type="button" aria-label={copy.t(($) => $.board.actions.more)} className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground" />}
+        >
+          <MoreHorizontal className="size-3.5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-auto">
+          <DropdownMenuItem onClick={() => setStatus("backlog")}><RotateCcw className="size-4" />{copy.t(($) => $.board.actions.backlog)}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setStatus("done")}><Check className="size-4" />{copy.t(($) => $.board.actions.done)}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setStatus("cancelled")}><X className="size-4" />{copy.t(($) => $.board.actions.cancelled)}</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setStatus("todo")}><RotateCcw className="size-4" />{returnLabel}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 function BoardRowView({
   row,
   copy,
@@ -231,11 +306,13 @@ function BoardRowView({
           if (e.key === "Enter") activate();
         }}
         className={cn(
-          "grid cursor-pointer grid-cols-[6.5rem_1fr_auto] gap-3 px-4 py-3 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40",
+          "group grid cursor-pointer gap-3 px-4 py-3 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40",
+          row.lane === "waiting" && !nested ? "grid-cols-[auto_6.5rem_1fr_auto]" : "grid-cols-[6.5rem_1fr_auto]",
           nested && "py-2 pl-8",
           highlighted && "bg-accent/60 shadow-[inset_3px_0_0_var(--color-primary)]",
         )}
       >
+        {row.lane === "waiting" && !nested && <span aria-hidden />}
         <span
           className={cn(
             "h-fit w-fit rounded-sm px-1.5 py-0.5 text-caption font-medium",
@@ -307,7 +384,10 @@ function BoardRowView({
         </div>
         <div className="flex flex-col items-end gap-0.5 text-right text-caption text-muted-foreground">
           {meta && <span className="text-foreground">{meta}</span>}
-          <span>{time}</span>
+          <div className="flex items-center gap-2">
+            <span>{time}</span>
+            {row.lane === "waiting" && !nested && <WaitingRowControls row={row} copy={copy} />}
+          </div>
         </div>
       </div>
       {open && (
@@ -381,6 +461,24 @@ function LaneSection({
   );
 }
 
+function WaitingSelectionToolbar({ copy }: { copy: BoardCopy }) {
+  const actions = useWaitingActions();
+  if (!actions || actions.selected.size === 0) return null;
+  const ids = [...actions.selected];
+  return (
+    <div className="mb-2 flex items-center gap-2 rounded-md border bg-card px-3 py-2" data-testid="waiting-selection-toolbar">
+      <span className="text-caption font-medium">{copy.t(($) => $.board.actions.selected, { count: ids.length })}</span>
+      <div className="ml-auto flex items-center gap-1">
+        <Button size="sm" variant="ghost" onClick={() => actions.applyStatus(ids, "backlog")}>{copy.t(($) => $.board.actions.backlog)}</Button>
+        <Button size="sm" variant="ghost" onClick={() => actions.applyStatus(ids, "done")}>{copy.t(($) => $.board.actions.done)}</Button>
+        <Button size="sm" variant="ghost" onClick={() => actions.applyStatus(ids, "cancelled")}>{copy.t(($) => $.board.actions.cancelled)}</Button>
+        <Button size="sm" variant="ghost" onClick={() => actions.applyStatus(ids, "todo")}>{copy.t(($) => $.board.actions.return_to_do)}</Button>
+        <Button size="sm" variant="ghost" onClick={() => ids.forEach((id) => actions.toggleSelected(id))}>{copy.t(($) => $.board.actions.clear_selection)}</Button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The board's lanes (DENE-882): one row per issue. Rows that were unread on
  * arrival keep a marker for this visit (DENE-901). Shared by the stand-alone
@@ -398,7 +496,131 @@ export function InboxBoardLanes({
   linking?: BoardLinking;
 }) {
   const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  const updateIssue = useUpdateIssue();
+  const batchUpdate = useBatchUpdateIssues();
   const copy = useBoardCopy();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+  const selected = useMemo(() => selectedIds, [selectedIds]);
+
+  const toggleSelected = (issueId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(issueId)) next.delete(issueId);
+      else next.add(issueId);
+      return next;
+    });
+  };
+
+  const rowsById = useMemo(() => {
+    const map = new Map<string, BoardRow>();
+    const visit = (rows: BoardRow[]) => rows.forEach((row) => {
+      map.set(row.issueId, row);
+      visit(row.children);
+    });
+    visit(board.waiting);
+    return map;
+  }, [board.waiting]);
+
+  const applyStatus = (issueIds: string[], status: BoardStatus) => {
+    const ids = [...new Set(issueIds)].filter((id) => rowsById.has(id));
+    if (ids.length === 0) return;
+    const previous = ids.map((id) => ({ id, status: rowsById.get(id)?.status }));
+    setHiddenIds((current) => new Set([...current, ...ids]));
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    const isBatch = ids.length > 1;
+    const write = !isBatch
+      ? updateIssue.mutateAsync({ id: ids[0]!, status })
+      : batchUpdate.mutateAsync({ ids, updates: { status } });
+    void write.then((result) => {
+      void queryClient.invalidateQueries({ queryKey: homeKeys.all(wsId) });
+
+      const rejected = isBatch && "rejected" in result ? result.rejected : [];
+      const rejectedIds = new Set(rejected.map(({ issue_id }) => issue_id));
+      const successfulIds = ids.filter((id) => !rejectedIds.has(id));
+      if (rejected.length > 0) {
+        setHiddenIds((current) => {
+          const next = new Set(current);
+          rejectedIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        const reason = rejected[0]?.reason;
+        toast.error(reason || copy.t(($) => $.board.errors.status_failed));
+      }
+      if (successfulIds.length === 0) return;
+
+      const successfulPrevious = previous.filter(({ id }) => successfulIds.includes(id));
+      toast.success(
+        status === "cancelled"
+          ? copy.t(($) => $.board.toasts.cancelled)
+          : copy.t(($) => $.board.toasts.status_changed),
+        {
+          action: {
+            label: copy.t(($) => $.board.actions.undo),
+            onClick: () => {
+              const restore = successfulPrevious.map(({ id, status: oldStatus }) =>
+                oldStatus ? updateIssue.mutateAsync({ id, status: oldStatus }) : Promise.resolve(),
+              );
+              setHiddenIds((current) => {
+                const next = new Set(current);
+                successfulIds.forEach((id) => next.delete(id));
+                return next;
+              });
+              void Promise.all(restore).then(
+                () => void queryClient.invalidateQueries({ queryKey: homeKeys.all(wsId) }),
+                () => toast.error(copy.t(($) => $.board.errors.undo_failed)),
+              );
+            },
+          },
+        },
+      );
+    }).catch((error: unknown) => {
+      setHiddenIds((current) => {
+        const next = new Set(current);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      toast.error(error instanceof Error && error.message ? error.message : copy.t(($) => $.board.errors.status_failed));
+    });
+  };
+
+  const filteredRows = useMemo(() => {
+    const filter = (rows: BoardRow[], hideWaiting = false): BoardRow[] => rows
+      .filter((row) => !hideWaiting || !hiddenIds.has(row.issueId))
+      .map((row) => ({ ...row, children: filter(row.children, hideWaiting) }));
+    return {
+      waiting: filter(board.waiting, true),
+      stalled: filter(board.stalled),
+      running: filter(board.running),
+      todo: filter(board.todo),
+      fresh: filter(board.fresh),
+      done: filter(board.done),
+    };
+  }, [board, hiddenIds]);
+
+  // Once the board refetch shows a changed issue in another lane, release its
+  // local optimistic hiding so an undo can still restore it from the toast.
+  useEffect(() => {
+    const waitingIds = new Set<string>();
+    const visit = (rows: BoardRow[]) => rows.forEach((row) => {
+      waitingIds.add(row.issueId);
+      visit(row.children);
+    });
+    visit(board.waiting);
+    setHiddenIds((current) => {
+      const next = new Set([...current].filter((id) => waitingIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => waitingIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [board.waiting]);
 
   // "Done today" shows once. Read the mark left by the previous visit, then
   // move it to now — on arrival and again on leaving, so rows that finish
@@ -409,7 +631,7 @@ export function InboxBoardLanes({
     markSeen(wsId, new Date().toISOString());
     return () => markSeen(wsId, new Date().toISOString());
   }, [markSeen, wsId]);
-  const done = useMemo(() => splitSeenDone(board.done, seenBefore), [board.done, seenBefore]);
+  const done = useMemo(() => splitSeenDone(filteredRows.done, seenBefore), [filteredRows.done, seenBefore]);
   const [showSeen, setShowSeen] = useState(false);
   // The issue being pointed at may sit among the folded rows.
   const highlightSeen = !!linking?.highlightIssueId && done.seen.some((r) => r.issueId === linking.highlightIssueId);
@@ -433,12 +655,13 @@ export function InboxBoardLanes({
 
   return (
     <BoardLinkingContext.Provider value={linking ?? null}>
+      <WaitingActionsContext.Provider value={{ selected, toggleSelected, applyStatus }}>
       <div className="space-y-3">
         <div className="flex flex-wrap gap-2">
           {BOARD_LANES.map((lane) => {
             const pill = (
               <>
-                <b className="mr-1 font-semibold tabular-nums">{board[lane].length}</b>
+                <b className="mr-1 font-semibold tabular-nums">{filteredRows[lane].length}</b>
                 {copy.t(($) => $.board.lanes[lane].title)}
               </>
             );
@@ -469,14 +692,16 @@ export function InboxBoardLanes({
         </div>
       ) : (
         <>
-          <LaneSection lane="waiting" rows={board.waiting} copy={copy} />
-          <LaneSection lane="stalled" rows={board.stalled} copy={copy} />
-          <LaneSection lane="running" rows={board.running} copy={copy} />
-          <LaneSection lane="todo" rows={board.todo} copy={copy} />
-          {board.fresh.length > 0 && <LaneSection lane="fresh" rows={board.fresh} copy={copy} />}
+          <WaitingSelectionToolbar copy={copy} />
+          <LaneSection lane="waiting" rows={filteredRows.waiting} copy={copy} />
+          <LaneSection lane="stalled" rows={filteredRows.stalled} copy={copy} />
+          <LaneSection lane="running" rows={filteredRows.running} copy={copy} />
+          <LaneSection lane="todo" rows={filteredRows.todo} copy={copy} />
+          {filteredRows.fresh.length > 0 && <LaneSection lane="fresh" rows={filteredRows.fresh} copy={copy} />}
           <LaneSection lane="done" rows={done.fresh} copy={copy} footer={seenFooter} />
         </>
       )}
+      </WaitingActionsContext.Provider>
     </BoardLinkingContext.Provider>
   );
 }
@@ -578,13 +803,14 @@ export function BoardProjectControls({ project }: { project: BoardProject }) {
       <BoardAskAiButton
         prompt={prompt}
         label={current ? t(($) => $.board.ask_ai_project) : t(($) => $.board.ask_ai)}
+        projectIds={current ? [current.id] : []}
       />
     </>
   );
 }
 
 /** DENE-975: the chat agent reads this same board (`multica inbox board`) and tells it back. */
-export function BoardAskAiButton({ prompt, label }: { prompt: string; label: string }) {
+export function BoardAskAiButton({ prompt, label, projectIds = [] }: { prompt: string; label: string; projectIds?: readonly string[] }) {
   const wsPaths = useWorkspacePaths();
   return (
     <Button
@@ -592,7 +818,7 @@ export function BoardAskAiButton({ prompt, label }: { prompt: string; label: str
       size="sm"
       className="text-muted-foreground"
       nativeButton={false}
-      render={<AppLink href={wsPaths.chatWithPrompt(prompt)} data-testid="board-ask-ai" />}
+      render={<AppLink href={wsPaths.chatWithPrompt(prompt, ...projectIds)} data-testid="board-ask-ai" />}
     >
       <Sparkles className="size-4" />
       {label}

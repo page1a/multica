@@ -37,7 +37,7 @@ func (c *webhookStatusCatalog) GetIssueStatusEntryByKey(ctx context.Context, arg
 	return c.Querier.GetIssueStatusEntryByKey(ctx, arg)
 }
 
-// Exercise both real mirror paths, including their persisted PR close gate.
+// Exercise both real mirror paths, including the PR auto-complete gate.
 // Signature parsing is covered by the existing provider webhook suites.
 //
 // Catalog READS are asserted by TestWebhookStatusResolverCatalogReads, not
@@ -94,7 +94,7 @@ func TestWebhookStatusResolver(t *testing.T) {
 						fixture.Cleanup(t, "DELETE FROM github_pull_request WHERE workspace_id = $1", ws)
 						fixture.Cleanup(t, "DELETE FROM vcs_pull_request WHERE workspace_id = $1", ws)
 						mirror := mirrorFixturePullRequest(ctx, t, &h, provider, fixture, ws, wsID, workspace, strings.Join(closing, "\n"))
-						mirror()
+						mirror(1)
 						for i, id := range ids {
 							want := tc.want[i]
 							if workspace == 1 && tc.statuses[i] == "approved" {
@@ -106,11 +106,11 @@ func TestWebhookStatusResolver(t *testing.T) {
 								t.Errorf("workspace %d issue %d status = %q, want %q", workspace, i, status, want)
 							}
 						}
-						// A fresh delivery must not reuse even a successful prior
-						// resolver. Reset one row onto a custom terminal key and replay.
+						// A redelivery of the same merge is not a new PR event, so it
+						// decides nothing and reads nothing.
 						if tc.name == "custom" {
 							fixture.Exec(t, "UPDATE issue SET status = 'dropped' WHERE id = $1", ids[0])
-							mirror()
+							mirror(1)
 							var status string
 							fixture.QueryRow(t, "SELECT status FROM issue WHERE id = $1", ids[0]).Scan(&status)
 							if status != "dropped" {
@@ -127,11 +127,11 @@ func TestWebhookStatusResolver(t *testing.T) {
 	}
 }
 
-// mirrorFixturePullRequest returns a delivery of one closed PR whose body
+// mirrorFixturePullRequest returns a delivery of one merged PR whose body
 // closes every issue the fixture just created, driven through the provider's
-// real mirror path. workspace is the loop index; the two providers are
-// otherwise identical, which is what lets the read-count test below exercise
-// both without restating the payload.
+// real mirror path. Each PR number is a separate delivery. workspace is the
+// loop index; the two providers are otherwise identical, which is what lets
+// the read-count test below exercise both without restating the payload.
 func mirrorFixturePullRequest(
 	ctx context.Context,
 	t *testing.T,
@@ -142,26 +142,28 @@ func mirrorFixturePullRequest(
 	wsID pgtype.UUID,
 	workspace int,
 	body string,
-) func() {
+) func(number int32) {
 	t.Helper()
 	const timestamp = "2026-09-08T00:00:00Z"
 	if provider == "github" {
-		p := &ghPullRequestPayload{}
-		p.Action = "closed"
-		p.Repository.Owner.Login, p.Repository.Name = "fixture", "resolver"
-		p.PullRequest.Number, p.PullRequest.Title = 1, "Resolve linked issues"
-		p.PullRequest.Body = body
-		p.PullRequest.State, p.PullRequest.Merged = "closed", true
-		p.PullRequest.HTMLURL = "https://github.test/fixture/resolver/pull/1"
-		p.PullRequest.CreatedAt, p.PullRequest.UpdatedAt = timestamp, timestamp
-		return func() {
-			h.mirrorPullRequestForWorkspace(ctx, wsID, int64(91000+workspace), p, closeIntentPolicy{unrestricted: true})
+		return func(number int32) {
+			p := &ghPullRequestPayload{}
+			p.Action = "closed"
+			p.Repository.Owner.Login, p.Repository.Name = "fixture", "resolver"
+			p.PullRequest.Number, p.PullRequest.Title = number, "Resolve linked issues"
+			p.PullRequest.Body = body
+			p.PullRequest.State, p.PullRequest.Merged = "closed", true
+			p.PullRequest.HTMLURL = fmt.Sprintf("https://github.test/fixture/resolver/pull/%d", number)
+			p.PullRequest.CreatedAt, p.PullRequest.UpdatedAt = timestamp, timestamp
+			h.mirrorPullRequestForWorkspace(ctx, wsID, int64(91000+workspace), p, prLinkPolicy{unrestricted: true})
 		}
 	}
 	connID := fixture.Insert(t, "vcs_connection", testutil.Cols{"workspace_id": ws, "provider": provider, "instance_url": "https://forgejo.test", "account_login": "fixture", "access_token_encrypted": "unused", "webhook_secret_encrypted": "unused"})
 	conn := db.VcsConnection{ID: parseUUID(connID), WorkspaceID: wsID, Provider: provider}
-	ev := vcs.PullRequestEvent{Action: "closed", State: "merged", RepoOwner: "fixture", RepoName: "resolver", Number: 1, Title: "Resolve linked issues", Body: body, HTMLURL: "https://forgejo.test/fixture/resolver/pulls/1", CreatedAt: timestamp, UpdatedAt: timestamp}
-	return func() { h.mirrorVCSPullRequest(ctx, conn, ev) }
+	return func(number int32) {
+		ev := vcs.PullRequestEvent{Action: "closed", State: "merged", RepoOwner: "fixture", RepoName: "resolver", Number: number, Title: "Resolve linked issues", Body: body, HTMLURL: fmt.Sprintf("https://forgejo.test/fixture/resolver/pulls/%d", number), CreatedAt: timestamp, UpdatedAt: timestamp}
+		h.mirrorVCSPullRequest(ctx, conn, ev)
+	}
 }
 
 // The close check resolves the workspace's status catalog at most ONCE per
@@ -216,15 +218,21 @@ func TestWebhookStatusResolverCatalogReads(t *testing.T) {
 					fixture.Cleanup(t, "DELETE FROM vcs_pull_request WHERE workspace_id = $1", ws)
 
 					mirror := mirrorFixturePullRequest(ctx, t, &h, provider, fixture, ws, wsID, 0, strings.Join(closing, "\n"))
-					mirror()
+					mirror(1)
 					if got := catalog.reads[wsID]; got != tc.wantReads {
 						t.Errorf("catalog reads for %d linked issues = %d, want %d", linked, got, tc.wantReads)
 					}
-					// A second delivery re-resolves from scratch: the resolver is
+					// A redelivery of the same merge is not a new PR event, so it
+					// decides nothing and reads nothing.
+					mirror(1)
+					if got := catalog.reads[wsID]; got != tc.wantReads {
+						t.Errorf("catalog reads after redelivery = %d, want %d", got, tc.wantReads)
+					}
+					// A second merged PR re-resolves from scratch: the resolver is
 					// scoped to one mirror pass, not cached across webhooks.
-					mirror()
+					mirror(2)
 					if got := catalog.reads[wsID]; got != tc.wantReads*2 {
-						t.Errorf("catalog reads after replay = %d, want %d", got, tc.wantReads*2)
+						t.Errorf("catalog reads after a second delivery = %d, want %d", got, tc.wantReads*2)
 					}
 					// And not through the per-key path, which would cost one read
 					// per issue and is what this optimization replaced.

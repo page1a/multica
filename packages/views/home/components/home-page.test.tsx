@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { BoardRow, InboxBoard } from "@multica/core/home";
 import { renderWithI18n } from "../../test/i18n";
 
@@ -16,6 +16,9 @@ const PROJECTS = [
 ] as unknown as import("@multica/core/types").Project[];
 let boardProjectId: string | null = null;
 const setBoardProject = vi.fn();
+const invalidateQueries = vi.fn();
+const updateIssue = vi.fn(() => Promise.resolve({}));
+const batchUpdateIssues = vi.fn(() => Promise.resolve({ updated: 1 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/auth", () => ({
@@ -33,6 +36,12 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 vi.mock("@multica/core/issues/mutations", () => ({
   useCreateComment: () => ({ mutate, isPending: false }),
+  useUpdateIssue: () => ({ mutateAsync: updateIssue, isPending: false }),
+  useBatchUpdateIssues: () => ({ mutateAsync: batchUpdateIssues, isPending: false }),
+}));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQueryClient: () => ({ invalidateQueries }),
 }));
 vi.mock("@multica/core/home", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/home")>();
@@ -170,6 +179,53 @@ describe("HomePage project filter (DENE-1019)", () => {
 });
 
 describe("HomePage", () => {
+  it("offers waiting-row quick status actions and removes the row immediately", async () => {
+    board.waiting[0] = {
+      ...board.waiting[0]!,
+      status: "in_review",
+    };
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    expect(updateIssue).toHaveBeenCalledWith({ id: "822", status: "done" });
+    await waitFor(() => expect(within(screen.getByTestId("board-lane-waiting")).getByText("Nothing is waiting on you")).toBeInTheDocument());
+  });
+
+  it("batch-updates selected waiting rows", async () => {
+    board.waiting = [
+      ...board.waiting,
+      row({ issueId: "823", lane: "waiting", kind: "needs_human", status: "in_review" }),
+    ];
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} />);
+    fireEvent.click(screen.getAllByTestId("waiting-row-checkbox")[0]!);
+    fireEvent.click(screen.getAllByTestId("waiting-row-checkbox")[1]!);
+    fireEvent.click(within(screen.getByTestId("waiting-selection-toolbar")).getByRole("button", { name: "Complete" }));
+    expect(batchUpdateIssues).toHaveBeenCalledWith({ ids: ["822", "823"], updates: { status: "done" } });
+    await waitFor(() => expect(screen.queryByTestId("waiting-selection-toolbar")).toBeNull());
+  });
+
+  it("returns selected waiting rows to to-do", () => {
+    board.waiting = [
+      ...board.waiting,
+      row({ issueId: "823", lane: "waiting", kind: "needs_human" }),
+    ];
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} />);
+    fireEvent.click(screen.getAllByTestId("waiting-row-checkbox")[0]!);
+    fireEvent.click(screen.getAllByTestId("waiting-row-checkbox")[1]!);
+    fireEvent.click(within(screen.getByTestId("waiting-selection-toolbar")).getByRole("button", { name: "Return to to-do" }));
+    expect(batchUpdateIssues).toHaveBeenCalledWith({ ids: ["822", "823"], updates: { status: "todo" } });
+  });
+
+  it("names the agent that will be woken when returning work to to-do", () => {
+    board.waiting[0] = {
+      ...board.waiting[0]!,
+      next: { type: "agent", id: "agent-1" },
+      nextName: "Trunks",
+    };
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getByText("Return to to-do (wake Trunks)")).toBeInTheDocument();
+  });
+
   it("shows one row per issue in the five lanes", () => {
     renderWithI18n(<HomePage />);
     for (const lane of ["waiting", "stalled", "running", "todo", "done"]) {

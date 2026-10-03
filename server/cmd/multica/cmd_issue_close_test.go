@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/ghpr"
 	"github.com/multica-ai/multica/server/internal/projectmemory"
@@ -54,51 +55,128 @@ func TestIssueCloseCommandRegistration(t *testing.T) {
 	}
 	// DENE-1002: the help must list all seven outcomes, and each requirement
 	// must be discoverable without reading the server.
-	for _, outcome := range validCloseOutcomes {
+	for _, outcome := range closeprotocol.OutcomeNames() {
 		if !strings.Contains(cmd.Long, "--outcome "+outcome) {
 			t.Errorf("long help does not document --outcome %s", outcome)
 		}
 	}
 	outcomeUsage := cmd.Flags().Lookup("outcome").Usage
-	for _, outcome := range validCloseOutcomes {
+	for _, outcome := range closeprotocol.OutcomeNames() {
 		if !strings.Contains(outcomeUsage, outcome) {
 			t.Errorf("--outcome usage does not list %s: %q", outcome, outcomeUsage)
 		}
 	}
 }
 
-func TestRunIssueCloseRejectsBadFlagsBeforeAnyRequest(t *testing.T) {
+// DENE-1183: the outcome table lives only on the server. The CLI forwards a
+// close it would once have refused locally and relays the server's reason.
+func TestRunIssueCloseRelaysServerRefusal(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const issueID = "33333333-3333-4333-8333-333333333333"
+	refusal := closeprotocol.OutcomeRejection("finished")
+	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": refusal})
 	}))
 	defer srv.Close()
 	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
 
-	cases := []struct {
-		name string
-		set  map[string]string
-		want string
-	}{
-		{"missing outcome", map[string]string{"evidence": "PR #1"}, "--outcome is required"},
-		{"unknown outcome", map[string]string{"outcome": "finished", "evidence": "PR #1"}, "not a close outcome"},
-		{"missing evidence", map[string]string{"outcome": "done"}, "--evidence"},
-		{"verdict hold", map[string]string{"outcome": "done", "evidence": "PR #1", "verdict": "hold"}, "--verdict only accepts pass"},
-		{"in_progress without a continuation", map[string]string{"outcome": "in_progress", "evidence": "先停一下"}, "must say who continues"},
-		{"in_progress with only a wait condition", map[string]string{"outcome": "in_progress", "evidence": "先停一下", "wait-condition": "等窗口"}, "must say who continues"},
-		{"missing audit", map[string]string{"outcome": "done", "evidence": "PR #1"}, closeprotocol.KnowledgeAuditRequiredMsg},
-		{"unknown location", map[string]string{"outcome": "done", "evidence": "PR #1", "knowledge": "DESIGN.md=nope"}, "不在项目记忆清单里"},
+	cmd := newIssueCloseTestCmd()
+	_ = cmd.Flags().Set("outcome", "finished")
+	_ = cmd.Flags().Set("evidence", "PR #1")
+	_ = cmd.Flags().Set("knowledge-none", "true")
+	err := runIssueClose(cmd, []string{issueID})
+	if err == nil {
+		t.Fatal("a server refusal must fail the command")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := newIssueCloseTestCmd()
-			for k, v := range tc.set {
-				_ = cmd.Flags().Set(k, v)
-			}
-			err := runIssueClose(cmd, []string{"33333333-3333-4333-8333-333333333333"})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v, want containing %q", err, tc.want)
-			}
-		})
+	if got := cli.FormatError(err, false); !strings.Contains(got, refusal) {
+		t.Fatalf("relayed error = %q, want the server's reason %q", got, refusal)
+	}
+	if len(paths) != 1 || paths[0] != "/api/issues/"+issueID+"/close" {
+		t.Fatalf("paths = %v, want the close request only", paths)
+	}
+}
+
+// A close that may merge locally asks the server's shape gate first, so a
+// refused close (here: no knowledge audit) never reaches the merge.
+func TestRunIssueCloseChecksShapeBeforeLocalMerge(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const issueID = "33333333-3333-4333-8333-333333333334"
+	origList, origMerge := ghListPRs, ghMergePR
+	t.Cleanup(func() { ghListPRs, ghMergePR = origList, origMerge })
+	ghListPRs = func(context.Context, string, ...string) ([]ghpr.PR, error) {
+		t.Fatal("a refused close must not look up or merge PRs")
+		return nil, nil
+	}
+	ghMergePR = func(context.Context, string, string) error { t.Fatal("must not merge"); return nil }
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{"identifier": "DENE-3"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": closeprotocol.KnowledgeAuditRequiredMsg})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueCloseTestCmd()
+	_ = cmd.Flags().Set("outcome", "done")
+	_ = cmd.Flags().Set("evidence", "PR #1")
+	err := runIssueClose(cmd, []string{issueID})
+	if err == nil || !strings.Contains(cli.FormatError(err, false), closeprotocol.KnowledgeAuditRequiredMsg) {
+		t.Fatalf("err = %v, want the server's audit refusal", err)
+	}
+	last := paths[len(paths)-1]
+	if last != "POST /api/issues/"+issueID+"/close/check" {
+		t.Fatalf("requests = %v, want to stop at the shape check", paths)
+	}
+}
+
+// A server that predates /close/check answers 404; the close still runs and
+// the server's full gate still applies.
+func TestRunIssueCloseSkipsMissingPreflight(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const issueID = "33333333-3333-4333-8333-333333333335"
+	origList := ghListPRs
+	t.Cleanup(func() { ghListPRs = origList })
+	ghListPRs = func(context.Context, string, ...string) ([]ghpr.PR, error) { return nil, nil }
+	closed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"identifier": "DENE-3"})
+		case strings.HasSuffix(r.URL.Path, "/close/check"):
+			http.NotFound(w, r)
+		default:
+			closed = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "in_review"})
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueCloseTestCmd()
+	_ = cmd.Flags().Set("outcome", "in_review")
+	_ = cmd.Flags().Set("evidence", "PR #1")
+	_ = cmd.Flags().Set("knowledge-none", "true")
+	_ = cmd.Flags().Set("output", "table")
+	stderr := captureStderr(t)
+	defer stderr.restore()
+	if err := runIssueClose(cmd, []string{issueID}); err != nil {
+		t.Fatalf("runIssueClose: %v", err)
+	}
+	if !closed {
+		t.Fatal("the close must still be sent when the preflight is missing")
 	}
 }
 
@@ -190,6 +268,10 @@ func TestRunIssueCloseVerdictPassReportsMerge(t *testing.T) {
 		// A UUID reference first resolves its issue key for the gh lookup.
 		if r.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(map[string]any{"identifier": "DENE-5"})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/close/check") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

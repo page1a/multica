@@ -46,8 +46,12 @@ func (h *Handler) chatAccessFor(ctx context.Context, session db.ChatSession, use
 	}
 	if session.Visibility == "workspace" {
 		member, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: parseUUID(userID), WorkspaceID: session.WorkspaceID})
-		if err != nil { return chatAccess{}, err }
-		if member.Role != "guest" { return chatAccess{see: true, speak: true, level: "speak"}, nil }
+		if err != nil {
+			return chatAccess{}, err
+		}
+		if member.Role != "guest" {
+			return chatAccess{see: true, speak: true, level: "speak"}, nil
+		}
 		return chatAccess{}, nil
 	}
 	if session.Visibility != "project" {
@@ -154,7 +158,9 @@ type chatAccessResponse struct {
 }
 
 func chatAccessMode(visibility string, shareCount int) string {
-	if visibility == "workspace" { return "workspace" }
+	if visibility == "workspace" {
+		return "workspace"
+	}
 	if visibility != "project" {
 		return "private"
 	}

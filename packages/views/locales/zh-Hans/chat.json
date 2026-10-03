@@ -18,12 +18,11 @@
     "all": "全部",
     "more": "⋯ 更多 ({{count}})",
     "menu_title": "项目栏",
-    "collapsed": "收起的项目",
     "done": "完成",
     "search": "搜项目…",
     "pinned": "置顶（拖动调整顺序）",
     "pinned_empty": "还没有置顶",
-    "other": "其他项目（按最近聊天自动排）",
+    "other": "未置顶（按最近聊天自动排）",
     "none": "无项目",
     "chat_count_other": "{{count}} 个聊天",
     "pin": "置顶",
@@ -33,7 +32,18 @@
     "unread": "有未读",
     "switch": "切换项目",
     "switch_search": "搜项目…",
-    "switch_empty": "没有匹配的项目"
+    "switch_empty": "没有匹配的项目",
+    "filter_label": "显示",
+    "filter_all": "全部",
+    "filter_pinned": "已置顶",
+    "filter_unpinned": "未置顶",
+    "filter_unread": "有未读",
+    "group_label": "分组",
+    "group_pin": "按置顶",
+    "group_status": "按状态",
+    "group_none": "不分组",
+    "collapsed_badge": "在更多里",
+    "menu_empty": "没有匹配的项目"
   },
   "list_resize": {
     "label": "调整聊天列表宽度",
@@ -79,7 +89,8 @@
     "remove_all_project_context": "移除全部项目上下文",
     "no_projects": "还没有项目",
     "switch_project": "切换到其他项目…",
-    "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级"
+    "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级",
+    "to_goal": "转成目标任务"
   },
   "queue": {
     "title_other": "{{count}} 条排队消息",
@@ -220,6 +231,11 @@
       "label": "帮我过一遍收件箱",
       "prompt": "帮我过一遍收件箱",
       "prompt_project": "帮我过一遍收件箱，只讲「{{name}}」这个项目。用 `multica inbox board --project {{id}}` 读看板，只讲这个项目的票。"
+    },
+    "project_board": {
+      "prompt": "帮我看一遍工作区所有未关闭的任务。先用 `multica project board --output json` 读全貌，再按「卡住了 / 可以往前推 / 可以清掉」三组汇报；要改状态或关票先问我确认。",
+      "prompt_project": "帮我看一遍「{{name}}」项目所有未关闭的任务。先用 `multica project board {{id}} --output json` 读全貌，再按「卡住了 / 可以往前推 / 可以清掉」三组汇报；要改状态或关票先问我确认。",
+      "prompt_projects": "帮我看一遍这些项目的所有未关闭任务：{{names}}。先用 `multica project board {{ids}} --output json` 读全貌，再按「卡住了 / 可以往前推 / 可以清掉」三组汇报；要改状态或关票先问我确认。"
     }
   },
   "onboarding_cards": {

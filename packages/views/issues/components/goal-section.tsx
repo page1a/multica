@@ -7,23 +7,56 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
 type GoalSectionProps = { wsId: string; issueId: string };
-type GoalTranslator = (key: string, options?: Record<string, unknown>) => string;
+type GoalLabelKey =
+  | "title"
+  | "progress"
+  | "round"
+  | "tokens"
+  | "runs"
+  | "duration"
+  | "budget_warning"
+  | "stopped_hint"
+  | "evidence_item"
+  | "open_evidence"
+  | "status.draft"
+  | "status.locked"
+  | "status.stopped"
+  | "status.achieved";
 
-function goalLabel(t: ReturnType<typeof useT<"issues">>["t"], key: string, options?: Record<string, unknown>): string {
-  return (t as unknown as GoalTranslator)(key, options);
+function goalLabel(
+  t: ReturnType<typeof useT<"issues">>["t"],
+  key: GoalLabelKey,
+  options?: { completed?: number; total?: number },
+): string {
+  switch (key) {
+    case "title": return t(($) => $.detail.goal.title);
+    case "progress": return t(($) => $.detail.goal.progress, options);
+    case "round": return t(($) => $.detail.goal.round);
+    case "tokens": return t(($) => $.detail.goal.tokens);
+    case "runs": return t(($) => $.detail.goal.runs);
+    case "duration": return t(($) => $.detail.goal.duration);
+    case "budget_warning": return t(($) => $.detail.goal.budget_warning);
+    case "stopped_hint": return t(($) => $.detail.goal.stopped_hint);
+    case "evidence_item": return t(($) => $.detail.goal.evidence_item);
+    case "open_evidence": return t(($) => $.detail.goal.open_evidence);
+    case "status.draft": return t(($) => $.detail.goal.status.draft);
+    case "status.locked": return t(($) => $.detail.goal.status.locked);
+    case "status.stopped": return t(($) => $.detail.goal.status.stopped);
+    case "status.achieved": return t(($) => $.detail.goal.status.achieved);
+  }
 }
 
 function statusText(status: IssueGoal["status"], t: ReturnType<typeof useT<"issues">>["t"]): string {
   switch (status) {
     case "draft":
-      return goalLabel(t, "goal.status.draft");
+      return goalLabel(t, "status.draft");
     case "locked":
     case "active":
-      return goalLabel(t, "goal.status.locked");
+      return goalLabel(t, "status.locked");
     case "stopped":
-      return goalLabel(t, "goal.status.stopped");
+      return goalLabel(t, "status.stopped");
     case "achieved":
-      return goalLabel(t, "goal.status.achieved");
+      return goalLabel(t, "status.achieved");
     default:
       return status;
   }
@@ -69,10 +102,10 @@ function EvidenceList({ evidence, t }: { evidence: IssueGoalEvidence[]; t: Retur
         <div key={item.id ?? `${item.kind ?? "evidence"}-${index}`} className="flex items-start gap-2 text-caption text-muted-foreground">
           <span className="mt-1 size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
           <div className="min-w-0 flex-1">
-            <span>{item.label ?? item.detail ?? item.kind ?? goalLabel(t, "goal.evidence_item")}</span>
+            <span>{item.label ?? item.detail ?? item.kind ?? goalLabel(t, "evidence_item")}</span>
             {item.url && (
               <a href={item.url} target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-1 text-primary hover:underline">
-                {goalLabel(t, "goal.open_evidence")}
+                {goalLabel(t, "open_evidence")}
                 <ExternalLink className="size-3" />
               </a>
             )}
@@ -134,8 +167,8 @@ export function GoalSection({ wsId, issueId }: GoalSectionProps) {
         <div className="flex min-w-0 items-start gap-2.5">
           <Target className="mt-0.5 size-5 shrink-0 text-primary" />
           <div className="min-w-0">
-            <h2 id={`goal-heading-${issueId}`} className="text-title-sm font-semibold">{goalLabel(t, "goal.title")}</h2>
-            <p className="mt-0.5 text-caption text-muted-foreground">{goalLabel(t, "goal.progress", { completed, total: checks.length })}</p>
+            <h2 id={`goal-heading-${issueId}`} className="text-title-sm font-semibold">{goalLabel(t, "title")}</h2>
+            <p className="mt-0.5 text-caption text-muted-foreground">{goalLabel(t, "progress", { completed, total: checks.length })}</p>
           </div>
         </div>
         <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-caption font-medium", statusClass(goal.status))}>
@@ -145,20 +178,20 @@ export function GoalSection({ wsId, issueId }: GoalSectionProps) {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "goal.round")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{goal.round ?? 0}</div></div>
-        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "goal.tokens")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{formatCount(tokenUsage)}{tokenBudget != null ? ` / ${formatCount(tokenBudget)}` : ""}</div></div>
-        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "goal.runs")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{formatCount(runUsage)}{runBudget != null ? ` / ${formatCount(runBudget)}` : ""}</div></div>
-        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "goal.duration")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{formatDuration(durationUsage)}{durationBudget != null ? ` / ${formatDuration(durationBudget)}` : ""}</div></div>
+        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "round")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{goal.round ?? 0}</div></div>
+        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "tokens")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{formatCount(tokenUsage)}{tokenBudget != null ? ` / ${formatCount(tokenBudget)}` : ""}</div></div>
+        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "runs")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{formatCount(runUsage)}{runBudget != null ? ` / ${formatCount(runBudget)}` : ""}</div></div>
+        <div className="rounded-lg bg-muted/50 px-3 py-2"><div className="text-micro text-muted-foreground">{goalLabel(t, "duration")}</div><div className="mt-0.5 text-body font-medium tabular-nums">{formatDuration(durationUsage)}{durationBudget != null ? ` / ${formatDuration(durationBudget)}` : ""}</div></div>
       </div>
 
       {Boolean(goal.budget_warning_at) && (
         <div role="status" className="mt-3 rounded-lg border border-amber-300/60 bg-amber-50/70 px-3 py-2 text-caption text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
-          {goalLabel(t, "goal.budget_warning")}
+          {goalLabel(t, "budget_warning")}
         </div>
       )}
       {goal.status === "stopped" && (
         <div role="status" className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-caption text-muted-foreground">
-          {goalLabel(t, "goal.stopped_hint")}
+          {goalLabel(t, "stopped_hint")}
         </div>
       )}
 

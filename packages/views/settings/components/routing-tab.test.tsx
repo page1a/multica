@@ -118,6 +118,15 @@ beforeEach(() => {
 
 // Exact names: each role card has its own model, URL and key fields, and a
 // loose pattern would match the analysis card's too.
+// Settings sections are landmarks labelled by their heading, so a section
+// titled like a field ("Judge model") also matches a plain label query. Pick
+// the control, not the region.
+function fieldByLabel(label: RegExp): HTMLElement {
+  const matches = screen.getAllByLabelText(label).filter((el) => el.tagName !== "SECTION");
+  if (matches.length !== 1) throw new Error(`expected one field labelled ${label}, got ${matches.length}`);
+  return matches[0]!;
+}
+
 const JUDGE_MODEL = /^(judge model|判断模型)$/i;
 const ANALYSIS_MODEL = /^(analysis model|分析模型)$/i;
 const JUDGE_KEY = /^api key$/i;
@@ -183,7 +192,7 @@ describe("RoutingTab", () => {
     render();
 
     await waitFor(() =>
-      expect(screen.getByLabelText(JUDGE_MODEL)).toHaveValue(
+      expect(fieldByLabel(JUDGE_MODEL)).toHaveValue(
         "gateway-model",
       ),
     );
@@ -242,7 +251,7 @@ describe("RoutingTab", () => {
     render();
 
     // A never-configured workspace starts on the analysis model alone.
-    const model = screen.getByLabelText(ANALYSIS_MODEL);
+    const model = fieldByLabel(ANALYSIS_MODEL);
     await userEvent.type(model, "gpt-5.6-luna");
 
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
@@ -276,11 +285,11 @@ describe("RoutingTab", () => {
   it("switches each model role on and off on its own", async () => {
     render();
     // The judge model box is greyed out until its role is on.
-    expect(screen.getByLabelText(JUDGE_MODEL)).toBeDisabled();
+    expect(fieldByLabel(JUDGE_MODEL)).toBeDisabled();
     await userEvent.click(
       screen.getByRole("switch", { name: /use the judge model|启用判断模型/i }),
     );
-    expect(screen.getByLabelText(JUDGE_MODEL)).not.toBeDisabled();
+    expect(fieldByLabel(JUDGE_MODEL)).not.toBeDisabled();
     await userEvent.click(
       screen.getByRole("switch", { name: /use the analysis model|启用分析模型/i }),
     );
@@ -297,7 +306,7 @@ describe("RoutingTab", () => {
 
   it("saves the analysis key into the analysis block only", async () => {
     render();
-    await userEvent.type(screen.getByLabelText(/^analysis api key$/i), "sk-analysis");
+    await userEvent.type(fieldByLabel(/^analysis api key$/i), "sk-analysis");
     const saves = screen.getAllByRole("button", { name: /save key|保存 key/i });
     await userEvent.click(saves[0]!);
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
@@ -329,7 +338,7 @@ describe("RoutingTab", () => {
     getRoutingHealth.mockResolvedValue({ ...HEALTHY, gateway_key_set: true });
     const { qc } = render();
     await healthSettled(qc);
-    const key = screen.getByLabelText(JUDGE_KEY) as HTMLInputElement;
+    const key = fieldByLabel(JUDGE_KEY) as HTMLInputElement;
     expect(key.value).toBe("");
     expect(key.type).toBe("password");
     // Not even a mask. The placeholder says a key exists; it does not stand
@@ -339,7 +348,7 @@ describe("RoutingTab", () => {
 
   it("sends the typed key only when the save button is pressed", async () => {
     render();
-    const key = screen.getByLabelText(JUDGE_KEY);
+    const key = fieldByLabel(JUDGE_KEY);
     await userEvent.type(key, "sk-live-abc");
     // Typing alone must not write: auto-save would store half-typed keys.
     expect(updateWorkspace).not.toHaveBeenCalled();
@@ -359,7 +368,7 @@ describe("RoutingTab", () => {
   it("saves the endpoint url with the ordinary fields", async () => {
     render();
     await userEvent.type(
-      screen.getByLabelText(/^(endpoint url|端点 url)$/i),
+      fieldByLabel(/^(endpoint url|端点 url)$/i),
       "https://gw.example/v1",
     );
     await waitFor(() => expect(updateWorkspace).toHaveBeenCalled());
@@ -379,7 +388,7 @@ describe("RoutingTab", () => {
     const { qc } = render();
     await healthSettled(qc);
     await waitFor(() =>
-      expect(screen.getByLabelText(JUDGE_KEY)).toBeDisabled(),
+      expect(fieldByLabel(JUDGE_KEY)).toBeDisabled(),
     );
   });
 
@@ -390,7 +399,7 @@ describe("RoutingTab", () => {
     // than the native attribute, so assert the behaviour too: a member who
     // clicks it must not produce a write.
     expect(masterSwitch()).toHaveAttribute("data-disabled");
-    expect(screen.getByLabelText(JUDGE_MODEL)).toBeDisabled();
+    expect(fieldByLabel(JUDGE_MODEL)).toBeDisabled();
 
     await userEvent.click(masterSwitch());
     await new Promise((resolve) => setTimeout(resolve, 800));
@@ -399,7 +408,7 @@ describe("RoutingTab", () => {
 
   it("greys out the threshold while routing is off so it cannot look active", () => {
     render();
-    expect(screen.getByLabelText(/confidence threshold|置信度阈值/i)).toBeDisabled();
+    expect(fieldByLabel(/confidence threshold|置信度阈值/i)).toBeDisabled();
   });
 
   // The regression the fourth state exists for: a configured workspace whose
@@ -510,7 +519,7 @@ describe("RoutingTab", () => {
 
     await userEvent.click(masterSwitch());
     await userEvent.type(
-      screen.getByLabelText(ANALYSIS_MODEL),
+      fieldByLabel(ANALYSIS_MODEL),
       "gpt-5.6-luna",
     );
 
@@ -570,7 +579,7 @@ describe("RoutingTab", () => {
   it("shows the default routing prompt, saves an edit, restores the default, and keeps the draft when save fails", async () => {
     const user = userEvent.setup();
     render();
-    const box = screen.getByLabelText(/routing prompt/i);
+    const box = fieldByLabel(/routing prompt/i);
     expect(box).toHaveValue(DEFAULT_ROUTING_POLICY_PROMPT);
 
     fireEvent.change(box, { target: { value: "Use the weak tier for copy edits." } });

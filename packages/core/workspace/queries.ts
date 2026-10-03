@@ -29,12 +29,21 @@ export const workspaceKeys = {
   mcpServers: (wsId: string) => ["workspaces", wsId, "mcp-servers"] as const,
   routingHealth: (wsId: string) => ["workspaces", wsId, "routing-health"] as const,
   modules: (wsId: string) => ["workspaces", wsId, "modules"] as const,
+  naming: (wsId: string) => ["workspaces", wsId, "naming"] as const,
 };
 
 export function workspaceListOptions() {
   return queryOptions({
     queryKey: workspaceKeys.list(),
     queryFn: () => api.listWorkspaces(),
+  });
+}
+
+export function workspaceNamingOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.naming(wsId),
+    queryFn: () => api.getWorkspaceNaming(wsId),
+    enabled: !!wsId,
   });
 }
 

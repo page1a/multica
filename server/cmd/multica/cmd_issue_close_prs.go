@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/delivery"
 	"github.com/multica-ai/multica/server/internal/ghpr"
 	"github.com/multica-ai/multica/server/internal/glabmr"
 )
@@ -19,6 +20,7 @@ var (
 	ghListPRs   = ghpr.List
 	ghMergePR   = ghpr.Merge
 	glabListMRs = glabmr.List
+	glabViewMR  = glabmr.View
 )
 
 var closeIdentRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-\d+$`)
@@ -32,6 +34,10 @@ var closeIdentRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-\d+$`)
 // daemon-sourced — the gate cannot merge those itself (DENE-906). Failures
 // only warn: the server gate stays fail-closed and blocks the close with a reason.
 func refreshIssuePullRequests(ctx context.Context, client *cli.APIClient, issueID, ident string, merge, mergeReady bool) {
+	refreshIssuePullRequestsWithURL(ctx, client, issueID, ident, "", merge, mergeReady)
+}
+
+func refreshIssuePullRequestsWithURL(ctx context.Context, client *cli.APIClient, issueID, ident, declaredURL string, merge, mergeReady bool) {
 	ident, ok := resolvePRIdentifier(ctx, client, issueID, ident)
 	if !ok {
 		return
@@ -52,9 +58,29 @@ func refreshIssuePullRequests(ctx context.Context, client *cli.APIClient, issueI
 		}
 		return namingIssue(prs, ident), nil
 	}
+	// Start with the normal GitHub lookup. Only when it cannot find a
+	// delivery do we ask the server for an exact linked GitLab URL; this keeps
+	// the refresh cheap for the common GitHub path.
 	prs, err := list()
 	if err != nil || len(prs) == 0 {
-		if mrs, gerr := glabListMRs(ctx, dir); gerr == nil {
+		linked := linkedPullURLs(ctx, client, issueID)
+		if strings.TrimSpace(declaredURL) != "" {
+			linked = append(linked, declaredURL)
+		}
+		seenURLs := map[string]bool{}
+		for _, rawURL := range linked {
+			rawURL = strings.TrimSpace(rawURL)
+			if rawURL == "" || seenURLs[rawURL] || !isGitLabMRURL(rawURL) {
+				continue
+			}
+			seenURLs[rawURL] = true
+			if mr, viewErr := glabViewMR(ctx, dir, rawURL); viewErr == nil {
+				prs = append(prs, mr)
+			}
+		}
+		if len(prs) > 0 {
+			err = nil
+		} else if mrs, gerr := glabListMRs(ctx, dir); gerr == nil {
 			if named := namingIssue(mrs, ident); len(named) > 0 {
 				prs = named
 				err = nil
@@ -122,6 +148,44 @@ func resolvePRIdentifier(ctx context.Context, client *cli.APIClient, issueID, id
 		return "", false
 	}
 	return key, true
+}
+
+var pullURLToken = regexp.MustCompile(`https?://[^\s<>"']+`)
+
+func pullURLFromText(text string) string {
+	for _, raw := range pullURLToken.FindAllString(text, -1) {
+		raw = strings.TrimRight(raw, ".,;:!?，。；：！？)]}>")
+		if _, err := delivery.ParsePullURL(raw); err == nil {
+			return raw
+		}
+	}
+	return ""
+}
+
+func isGitLabMRURL(raw string) bool {
+	ref, err := delivery.ParsePullURL(raw)
+	return err == nil && ref.Provider == "gitlab"
+}
+
+type linkedPullURLResponse struct {
+	PullRequests []struct {
+		URL      string `json:"html_url"`
+		Provider string `json:"provider"`
+	} `json:"pull_requests"`
+}
+
+func linkedPullURLs(ctx context.Context, client *cli.APIClient, issueID string) []string {
+	var body linkedPullURLResponse
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueID)+"/pull-requests", &body); err != nil {
+		return nil
+	}
+	urls := make([]string, 0, len(body.PullRequests))
+	for _, pr := range body.PullRequests {
+		if isGitLabMRURL(pr.URL) || strings.EqualFold(pr.Provider, "gitlab") {
+			urls = append(urls, pr.URL)
+		}
+	}
+	return urls
 }
 
 // namingIssue keeps PRs whose title or branch carries the identifier and

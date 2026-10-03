@@ -124,6 +124,42 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 	}
 }
 
+func TestBatchUpdateReportsStatusGuardRejection(t *testing.T) {
+	issueID := createTestIssue(t, "BU-guarded status", "in_progress", "low")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+	agentID := handlerTestAgentID(t)
+	setIssueAssigneeDirect(t, issueID, "agent", agentID)
+	taskID := insertIssueTaskWithStatus(t, agentID, issueID, "running")
+
+	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+		"issue_ids": []string{issueID},
+		"updates":   map[string]any{"status": "blocked"},
+	})
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	w := httptest.NewRecorder()
+	testHandler.BatchUpdateIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with per-issue rejection, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Updated  int                         `json:"updated"`
+		Rejected []BatchUpdateIssueRejection `json:"rejected"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Updated != 0 || len(resp.Rejected) != 1 {
+		t.Fatalf("response = %+v, want one rejected issue and no updates", resp)
+	}
+	if resp.Rejected[0].IssueID != issueID || !strings.Contains(resp.Rejected[0].Reason, "--blocked-by") {
+		t.Fatalf("rejection = %+v, want issue id and blocked guidance", resp.Rejected[0])
+	}
+	if got := issueStatusDirect(t, issueID); got != "in_progress" {
+		t.Fatalf("status changed despite guard rejection: %s", got)
+	}
+}
+
 // TestBatchUpdateStageOnly — regression for the stage barrier feature: a
 // batch update whose only field is `stage` must count as a mutation (hasMutation
 // includes "stage") and actually persist, not silently return {"updated": 0}.
@@ -406,5 +442,69 @@ func TestBatchChildDoneClosesLowerStageOnly(t *testing.T) {
 	}
 	if !strings.Contains(content, "Stage 2 is next") {
 		t.Errorf("expected the advance-to-next-stage instruction, got: %s", content)
+	}
+}
+
+// TestBatchChildDoneCrossStage_OneWakeRule is the MUL-4155 core. A single batch
+// that finishes children across two stages must wake the parent once, from
+// the final state: every sub-issue closed, never a stale "Stage 2 is next",
+// regardless of id order.
+func TestBatchChildDoneCrossStage_OneWakeRule(t *testing.T) {
+	enableChildDoneRule(t)
+	assertFinal := func(t *testing.T, parentID, agentID string) {
+		t.Helper()
+		entries := childDoneEntries(t, parentID)
+		if len(entries) != 1 || entries[0].Stage != nil || entries[0].Total != 4 || entries[0].Outcome != "woke" {
+			t.Fatalf("entries = %+v, want one wrap-up wake", entries)
+		}
+		runs := childDoneRuns(t, parentID)
+		if len(runs) != 1 || runs[0].ID != entries[0].TaskID || strings.Contains(runs[0].Note, "next_stage") || !strings.Contains(runs[0].Note, `"all":true`) {
+			t.Fatalf("runs = %+v, want one run for the final state", runs)
+		}
+		if got := countPendingTasksForAgent(t, parentID, agentID); got != 1 {
+			t.Fatalf("expected exactly 1 pending parent task, got %d", got)
+		}
+	}
+
+	t.Run("forward order [stage1, stage2]", func(t *testing.T) {
+		fx := newStagedBatchFixture(t)
+		batchSetStatus(t, []string{fx.stage1[0].ID, fx.stage1[1].ID, fx.stage2[0].ID, fx.stage2[1].ID}, "done")
+		assertFinal(t, fx.parent.ID, fx.agentID)
+	})
+
+	t.Run("reverse order [stage2, stage1]", func(t *testing.T) {
+		fx := newStagedBatchFixture(t)
+		batchSetStatus(t, []string{fx.stage2[0].ID, fx.stage2[1].ID, fx.stage1[0].ID, fx.stage1[1].ID}, "done")
+		assertFinal(t, fx.parent.ID, fx.agentID)
+	})
+}
+
+// TestBatchChildDoneCrossStage_CancelledRule — cancelling every stage in one batch
+// closes them too; the facts count the cancellations apart from finished work.
+func TestBatchChildDoneCrossStage_CancelledRule(t *testing.T) {
+	enableChildDoneRule(t)
+	fx := newStagedBatchFixture(t)
+	batchSetStatus(t, []string{fx.stage1[0].ID, fx.stage1[1].ID, fx.stage2[0].ID, fx.stage2[1].ID}, "cancelled")
+
+	runs := childDoneRuns(t, fx.parent.ID)
+	if len(runs) != 1 || !strings.Contains(runs[0].Note, `"cancelled":4`) || strings.Contains(runs[0].Note, "next_stage") {
+		t.Fatalf("runs = %+v, want one wake counting 4 cancellations", runs)
+	}
+}
+
+// TestBatchChildDoneClosesLowerStageOnlyRule — when a batch finishes only the lower
+// stage, the parent is told Stage 1 closed and pointed at Stage 2.
+func TestBatchChildDoneClosesLowerStageOnlyRule(t *testing.T) {
+	enableChildDoneRule(t)
+	fx := newStagedBatchFixture(t)
+	batchSetStatus(t, []string{fx.stage1[0].ID, fx.stage1[1].ID}, "done")
+
+	entries := childDoneEntries(t, fx.parent.ID)
+	if len(entries) != 1 || entries[0].Stage == nil || *entries[0].Stage != 1 || entries[0].Total != 2 {
+		t.Fatalf("entries = %+v, want stage 1", entries)
+	}
+	runs := childDoneRuns(t, fx.parent.ID)
+	if len(runs) != 1 || !strings.Contains(runs[0].Note, `"next_stage":2`) {
+		t.Fatalf("runs = %+v, want the next stage named", runs)
 	}
 }

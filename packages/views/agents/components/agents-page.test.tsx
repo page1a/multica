@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import type { AgentActivity } from "@multica/core/agents";
+import type { SupportedLocale } from "@multica/core/i18n";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { AgentsPage } from "./agents-page";
@@ -299,11 +300,12 @@ function makeAdapter(
   };
 }
 
-function renderPage() {
+function renderPage(locale?: SupportedLocale) {
   renderWithI18n(
     <NavigationProvider value={makeAdapter()}>
       <AgentsPage />
     </NavigationProvider>,
+    { locale },
   );
 }
 
@@ -775,5 +777,15 @@ describe("AgentsPage runtime inheritance tag", () => {
     expect(screen.getByTestId("agents-runtime-inheritance")).toHaveTextContent(
       "Inherited",
     );
+  });
+});
+
+describe("AgentsPage docs link", () => {
+  it("points Learn more at the viewer's docs locale", () => {
+    renderPage("fr");
+
+    expect(
+      screen.getByRole("link", { name: "En savoir plus →" }),
+    ).toHaveAttribute("href", "https://multica.ai/docs/fr/agents");
   });
 });

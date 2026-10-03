@@ -2,7 +2,7 @@
 
 import { issueStatusCategory } from "@multica/core/issues";
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLink, resolveClickIntent, useNavigation } from "../navigation";
 import { UnfinishedIssueDraftsBanner } from "../issues/draft/unfinished-issue-drafts";
 import { GoalFlowSteps } from "../issues/draft/goal-flow-steps";
@@ -84,10 +84,7 @@ import {
   useUpdateIssue,
 } from "@multica/core/issues/mutations";
 import { useAttachLabelToIssue } from "@multica/core/labels";
-import {
-  propertyListOptions,
-  useSetIssueProperty,
-} from "@multica/core/properties";
+import { propertyListOptions } from "@multica/core/properties";
 import {
   ApiError,
   DuplicateIssueErrorBodySchema,
@@ -95,6 +92,7 @@ import {
   parseWithFallback,
 } from "@multica/core/api";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
+import { BorderBeam } from "@multica/ui/components/common/border-beam";
 import { ClearablePillButton, PillButton } from "../common/pill-button";
 import { ActorAvatar } from "../common/actor-avatar";
 import { PropertyIcon } from "../common/property-icon";
@@ -107,6 +105,7 @@ import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
 import { openGoalCompletion } from "@multica/core/modals";
+import { GoalToggle } from "./goal-toggle";
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -263,7 +262,8 @@ export function ManualCreatePanel({
 
   const sendShortcut = useShortcut("send");
   const [title, setTitle] = useState(draft.manual.title);
-  const [goalMode, setGoalMode] = useState(data?.goal_mode === true);
+  const goalMode = draft.shared.goalMode || data?.goal_mode === true;
+  const setGoalMode = (value: boolean) => setShared({ goalMode: value });
   const createdGoalIssueRef = useRef<Issue | null>(null);
   const [formResetKey, setFormResetKey] = useState(0);
   const titleEditorRef = useRef<TitleEditorRef>(null);
@@ -296,6 +296,8 @@ export function ManualCreatePanel({
   const [customPropertyPickerId, setCustomPropertyPickerId] = useState<string | null>(null);
   const projectSeeded = Boolean(data && "project_id" in data);
   const [projectTouched, setProjectTouched] = useState(false);
+  const [propertyErrorId, setPropertyErrorId] = useState<string | null>(null);
+  const [unavailablePropertyRemoved, setUnavailablePropertyRemoved] = useState(false);
   const [projectId, setProjectId] = useState<string | undefined>(() => {
     if (data && "project_id" in data) {
       return (data.project_id as string | null) ?? undefined;
@@ -339,6 +341,7 @@ export function ManualCreatePanel({
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
   const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const { categoryOf: draftStatusCategory, colorOf, iconOf } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   // An alignment left half-finished is reachable from BOTH faces of this
@@ -431,6 +434,7 @@ export function ManualCreatePanel({
     else next[propertyId] = value;
     setPropertyValues(next);
     setManual({ propertyValues: next });
+    if (propertyErrorId === propertyId) setPropertyErrorId(null);
   };
 
   // Inline pill reveal per toolbar field: kept by Settings → Preferences → Issue creation, holding a
@@ -451,7 +455,6 @@ export function ManualCreatePanel({
   const createCommentSubIssueMutation = useCreateCommentSubIssue();
   const updateIssueMutation = useUpdateIssue();
   const attachLabelMutation = useAttachLabelToIssue();
-  const setIssuePropertyMutation = useSetIssueProperty();
   const resetForNextIssue = () => {
     setTitle("");
     setStatus("todo");
@@ -461,6 +464,8 @@ export function ManualCreatePanel({
     setLabelIds([]);
     setPropertyValues({});
     setCustomPropertyPickerId(null);
+    setPropertyErrorId(null);
+    setUnavailablePropertyRemoved(false);
     setProjectId(undefined);
     setParentIssueId(undefined);
     setStage(null);
@@ -511,6 +516,7 @@ export function ManualCreatePanel({
     uploadGate: gate,
     normalize: () => title.trim(),
     onSubmit: async (): Promise<boolean> => {
+      setUnavailablePropertyRemoved(false);
       // Flush the description editor's pending debounce into the store BEFORE
       // snapshotting, so a late flush of pre-submit typing cannot masquerade
       // as an edit made during the request.
@@ -530,7 +536,8 @@ export function ManualCreatePanel({
             mode: "manual",
             capture_token: sourcePreview.capture_token,
             issue: {
-              title: title.trim(),
+            title: title.trim(),
+              ...(goalMode ? { goal_mode: true } : {}),
               description,
               status,
               priority,
@@ -540,6 +547,7 @@ export function ManualCreatePanel({
               due_date: dueDate || undefined,
               attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
               label_ids: labelIds.length > 0 ? labelIds : undefined,
+              ...(Object.keys(propertyValues).length > 0 ? { properties: propertyValues } : {}),
               stage: parentIssueId && stage != null ? stage : undefined,
               project_id: submittedProjectId,
             },
@@ -548,6 +556,7 @@ export function ManualCreatePanel({
       } else {
         issue = await createIssueMutation.mutateAsync({
           title: title.trim(),
+          ...(goalMode ? { goal_mode: true } : {}),
           description,
           status,
           priority,
@@ -562,39 +571,12 @@ export function ManualCreatePanel({
           // backend that predates this ignores the field — handled by the
           // compatibility fallback below.
           label_ids: labelIds.length > 0 ? labelIds : undefined,
+          ...(Object.keys(propertyValues).length > 0 ? { properties: propertyValues } : {}),
           parent_issue_id: parentIssueId,
           // Stage is only meaningful for a sub-issue (relative to its siblings).
           stage: parentIssueId && stage != null ? stage : undefined,
           project_id: submittedProjectId,
         });
-      }
-
-      // Custom-property values can only be addressed once the issue has an
-      // id. Keep the modal in its submitting state until every value settles
-      // so closing or "Create another" cannot race the fan-out.
-      const propertyEntries = Object.entries(propertyValues);
-      if (propertyEntries.length > 0) {
-        const results = await Promise.allSettled(
-          propertyEntries.map(([propertyId, value]) =>
-            setIssuePropertyMutation.mutateAsync({
-              issueId: issue.id,
-              propertyId,
-              value,
-            }),
-          ),
-        );
-        let failed = 0;
-        for (const result of results) {
-          if (result.status === "rejected") {
-            failed += 1;
-            console.error("[create-issue] custom property set failed", result.reason);
-          }
-        }
-        if (failed > 0) {
-          toast.error(
-            t(($) => $.create_issue.toast_set_properties_failed, { count: failed }),
-          );
-        }
       }
 
       // Link queued children to the new parent. Deferred to after create
@@ -720,6 +702,47 @@ export function ManualCreatePanel({
       }
       if (sourceCode === "issue_limit_reached") {
         showIssueLimitUpgradePrompt();
+        return false;
+      }
+      if (sourceCode === "invalid_issue_property" && err instanceof ApiError) {
+        const propertyId =
+          err.body && typeof err.body === "object"
+            ? (err.body as { property_id?: unknown }).property_id
+            : undefined;
+        if (
+          mountedRef.current &&
+          typeof propertyId === "string" &&
+          Object.prototype.hasOwnProperty.call(propertyValues, propertyId)
+        ) {
+          // Read the current catalog, not the submit-time snapshot. An
+          // unloaded catalog is not evidence that a property is unavailable.
+          const availableProperties = queryClient.getQueryData(
+            propertyListOptions(wsId).queryKey,
+          )?.properties;
+          if (availableProperties?.some((property) => property.id === propertyId)) {
+            setPropertyErrorId(propertyId);
+            setCustomPropertyPickerId(propertyId);
+          } else if (availableProperties) {
+            const currentValues = useIssueDraftStore.getState().draft.manual.propertyValues ?? {};
+            if (Object.prototype.hasOwnProperty.call(currentValues, propertyId)) {
+              // Preserve edits made while the request was pending in both the
+              // local selection and the workspace-persisted draft.
+              setPropertyValues((current) => {
+                const next = { ...current };
+                delete next[propertyId];
+                return next;
+              });
+              const next = { ...currentValues };
+              delete next[propertyId];
+              setManual({ propertyValues: next });
+              setPropertyErrorId(null);
+              setCustomPropertyPickerId(null);
+              setUnavailablePropertyRemoved(true);
+              return false;
+            }
+          }
+        }
+        toast.error(err.message || t(($) => $.create_issue.toast_failed));
         return false;
       }
       // Duplicate-issue is the only structured 409 the create endpoint
@@ -1192,28 +1215,36 @@ export function ManualCreatePanel({
                 .map((property) => {
                   const value = propertyValues[property.id];
                   return (
-                    <CustomPropertyValueInput
+                    <div
                       key={property.id}
-                      property={property}
-                      value={value}
-                      onChange={(next) => updatePropertyValue(property.id, next)}
-                      open={customPropertyPickerId === property.id}
-                      onOpenChange={(open) =>
-                        setCustomPropertyPickerId(open ? property.id : null)
-                      }
-                      triggerRender={<PillButton />}
-                      trigger={
-                        <>
-                          <PropertyIcon property={property} className="size-3.5 text-caption" />
-                          <span className="max-w-32 truncate">{property.name}</span>
-                          {value !== undefined && (
-                            <span className="max-w-40 truncate text-muted-foreground">
-                              <CustomPropertyValueDisplay property={property} value={value} />
-                            </span>
-                          )}
-                        </>
-                      }
-                    />
+                      data-property-error={propertyErrorId === property.id || undefined}
+                      className={cn(
+                        propertyErrorId === property.id &&
+                          "rounded-full ring-2 ring-destructive",
+                      )}
+                    >
+                      <CustomPropertyValueInput
+                        property={property}
+                        value={value}
+                        onChange={(next) => updatePropertyValue(property.id, next)}
+                        open={customPropertyPickerId === property.id}
+                        onOpenChange={(open) =>
+                          setCustomPropertyPickerId(open ? property.id : null)
+                        }
+                        triggerRender={<PillButton />}
+                        trigger={
+                          <>
+                            <PropertyIcon property={property} className="size-3.5 text-caption" />
+                            <span className="max-w-32 truncate">{property.name}</span>
+                            {value !== undefined && (
+                              <span className="max-w-40 truncate text-muted-foreground">
+                                <CustomPropertyValueDisplay property={property} value={value} />
+                              </span>
+                            )}
+                          </>
+                        }
+                      />
+                    </div>
                   );
                 })}
 
@@ -1420,6 +1451,12 @@ export function ManualCreatePanel({
               </DropdownMenu>
             </div>
 
+            {unavailablePropertyRemoved && (
+              <p role="alert" className="px-5 pb-3 text-caption text-destructive">
+                {t(($) => $.create_issue.unavailable_property_removed)}
+              </p>
+            )}
+
             {/* Parent / child pickers — rendered inline so they stack over this
                 modal instead of replacing it via useModalStore. */}
             <IssuePickerModal
@@ -1471,10 +1508,11 @@ export function ManualCreatePanel({
                 aria-disabled={gate.uploading || undefined}
                 aria-busy={gate.uploading || undefined}
                 title={t(($) => $.create_issue.switch_to_agent_tooltip)}
-                className="border-beam group flex shrink-0 items-center gap-1.5 justify-self-end text-caption px-2 py-1 rounded-sm text-muted-foreground bg-brand/5 hover:bg-brand/10 hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                className="relative group flex shrink-0 items-center gap-1.5 justify-self-end text-caption px-2 py-1 rounded-sm text-muted-foreground bg-brand/5 hover:bg-brand/10 hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <ArrowLeftRight className="size-3.5 text-brand transition-transform duration-300 group-hover:rotate-180" />
                 {t(($) => $.create_issue.switch_to_agent)}
+                <BorderBeam />
               </button>
               {/* Aligning is the third face of this same dialog (DENE-370).
                   Absent without a wired callback and while a source context is
@@ -1496,10 +1534,7 @@ export function ManualCreatePanel({
                   {t(($) => $.create_issue.switch_to_align)}
                 </button>
               )}
-              <label className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground cursor-pointer select-none">
-                <Switch size="sm" checked={goalMode} onCheckedChange={setGoalMode} />
-                {tIssues(($) => $.detail.goal.set_as_goal)}
-              </label>
+              <GoalToggle checked={goalMode} onCheckedChange={setGoalMode} disabled={composer.submitting} />
               <label className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground cursor-pointer select-none">
                 <Switch
                   size="sm"

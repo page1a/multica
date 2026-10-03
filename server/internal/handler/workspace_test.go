@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -1389,6 +1390,23 @@ func TestNormalizeIssuePrefix(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("normalizeIssuePrefix(%q) = %q, want %q", tc.raw, got, tc.want)
 		}
+	}
+}
+
+func TestUpdateWorkspaceNamingRejectsUnavailableServerModel(t *testing.T) {
+	requireDB(t)
+	previous := testHandler.LLM
+	testHandler.LLM = nil
+	t.Cleanup(func() { testHandler.LLM = previous })
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPut, "/api/workspaces/"+testWorkspaceID+"/naming", map[string]any{"source": "server_llm"})
+	req = withURLParam(req, "id", testWorkspaceID)
+	testHandler.UpdateWorkspaceNaming(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected unavailable server model to be rejected with 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "MULTICA_LLM_") {
+		t.Fatalf("error should explain missing model key: %s", w.Body.String())
 	}
 }
 

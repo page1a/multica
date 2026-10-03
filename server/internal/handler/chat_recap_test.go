@@ -123,6 +123,31 @@ func TestChatRecap_FirstReplyNamesChat(t *testing.T) {
 	}
 }
 
+// A runtime title is authoritative for the opening turn. Recap's lexical
+// fallback must observe the successful report and leave it untouched.
+func TestChatRecap_PreservesRuntimeReportedTitle(t *testing.T) {
+	requireDB(t)
+	session := newChatTitleTestSession(t, "um so the invoices")
+	addChatTurns(t, session.ID, "um so the invoices, please", "I will handle the invoices.")
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO chat_naming_event (workspace_id, chat_session_id, source, status)
+		VALUES ($1, $2, 'runtime', 'success')
+	`, uuidToString(session.WorkspaceID), uuidToString(session.ID)); err != nil {
+		t.Fatalf("record runtime title: %v", err)
+	}
+	if _, err := testHandler.Queries.UpdateChatSessionTitle(context.Background(), db.UpdateChatSessionTitleParams{
+		ID: session.ID, Title: "Multica · invoice retry",
+	}); err != nil {
+		t.Fatalf("write runtime title: %v", err)
+	}
+	if _, err := testHandler.recapChatSession(context.Background(), testWorkspaceID, session.ID); err != nil {
+		t.Fatalf("recap: %v", err)
+	}
+	if got := loadRecapSession(t, session.ID).Title; got != "Multica · invoice retry" {
+		t.Fatalf("runtime title overwritten: %q", got)
+	}
+}
+
 // A title the user renamed is locked; the recap must never overwrite it.
 func TestChatRecap_LockedTitleIsNotRenamed(t *testing.T) {
 	requireDB(t)
@@ -238,5 +263,39 @@ func TestReplyProgressLine(t *testing.T) {
 		if got := replyProgressLine(in); got != want {
 			t.Errorf("replyProgressLine(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRuleCleanChatTitleRespectsWordBoundaries(t *testing.T) {
+	tests := map[string]string{
+		"something broke":         "something broke",
+		"umbrella planning":       "umbrella planning",
+		"So, fix the login flow":  "fix the login flow",
+		"um please review the PR": "review the PR",
+		"嗯 请整理部署日志":               "整理部署日志",
+	}
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			if got := ruleCleanChatTitle(input); got != want {
+				t.Fatalf("ruleCleanChatTitle(%q) = %q, want %q", input, got, want)
+			}
+		})
+	}
+}
+
+// DENE-1120 follow-up: the first send stores chattitle.Derive(opening), so the
+// rules fallback must recognise that placeholder or it never runs.
+func TestOpeningStillTitlesMatchesDerivedPlaceholder(t *testing.T) {
+	opening := "![image.png](https://x/a.png)\n\n这个聊天起名选不了啊，我哪怕选择 runtime 还起不了啊？"
+	for _, title := range []string{"", opening, "image.png"} {
+		if !openingStillTitles(title, opening) {
+			t.Errorf("openingStillTitles(%q) = false, want true", title)
+		}
+	}
+	if openingStillTitles("Multica · 聊天起名", opening) {
+		t.Error("a real title must not count as the placeholder")
+	}
+	if got, want := ruleCleanChatTitle(opening), "这个聊天起名选不了啊，我哪怕选择 runtime 还起不了啊"; got != want {
+		t.Errorf("ruleCleanChatTitle(screenshot opening) = %q, want %q", got, want)
 	}
 }

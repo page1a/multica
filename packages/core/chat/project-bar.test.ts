@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  chatProjectMenuGroups,
   narrowestWidthFittingAll,
   rankChatProjects,
   sessionMatchesChatProjectFilter,
@@ -167,5 +168,40 @@ describe("narrowestWidthFittingAll", () => {
   it("waits for every chip to be measured", () => {
     expect(narrowestWidthFittingAll([100, 0], gap, 2)).toBeNull();
     expect(narrowestWidthFittingAll([], gap, 2, 40)).toBe(40);
+  });
+});
+
+describe("chatProjectMenuGroups", () => {
+  const row = (id: string, hasUnread = false) => ({ id, chatCount: 1, hasUnread, recentAt: 0 });
+  const pinned = [row("a"), row("b", true)];
+  const rest = [row("c", true), row("d")];
+  const statusById = new Map([
+    ["a", "completed"],
+    ["b", "in_progress"],
+    ["c", "in_progress"],
+    ["d", "planned"],
+  ]);
+  const ids = (groups: ReturnType<typeof chatProjectMenuGroups>) =>
+    groups.map((group) => [group.key, group.rows.map((r) => r.id).join(",")]);
+
+  it("splits pins from the rest and only lets pins reorder", () => {
+    const groups = chatProjectMenuGroups({ pinned, rest, statusById, filter: "all", grouping: "pin" });
+    expect(ids(groups)).toEqual([["pinned", "a,b"], ["unpinned", "c,d"]]);
+    expect(groups.map((group) => group.reorderable)).toEqual([true, false]);
+  });
+
+  it("groups by status in status order, pins first inside a group", () => {
+    const groups = chatProjectMenuGroups({ pinned, rest, statusById, filter: "all", grouping: "status" });
+    expect(ids(groups)).toEqual([["in_progress", "b,c"], ["planned", "d"], ["completed", "a"]]);
+  });
+
+  it("filters before grouping and drops empty groups", () => {
+    expect(ids(chatProjectMenuGroups({ pinned, rest, statusById, filter: "unread", grouping: "pin" })))
+      .toEqual([["pinned", "b"], ["unpinned", "c"]]);
+    expect(ids(chatProjectMenuGroups({ pinned, rest, statusById, filter: "pinned", grouping: "none" })))
+      .toEqual([["all", "a,b"]]);
+    expect(ids(chatProjectMenuGroups({
+      pinned, rest, statusById, filter: "unpinned", grouping: "pin", matches: (id) => id === "d",
+    }))).toEqual([["unpinned", "d"]]);
   });
 });

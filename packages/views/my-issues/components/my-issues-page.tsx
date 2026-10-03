@@ -18,6 +18,8 @@ export function MyIssuesPage() {
   const user = useAuthStore((s) => s.user);
   const scope = useStore(myIssuesViewStore, (s) => s.scope);
   const setScope = useStore(myIssuesViewStore, (s) => s.setScope);
+  const goalOnly = useStore(myIssuesViewStore, (s) => s.goalOnly);
+  const setGoalOnly = useStore(myIssuesViewStore, (s) => s.setGoalOnly);
 
   const renderTitle = (refreshing = false) => (
     <PageHeader>
@@ -36,6 +38,7 @@ export function MyIssuesPage() {
             type: "my",
             userId: user.id,
             relation: myIssuesRelationFromScope(scope),
+            goalOnly,
           }}
           modes={["board", "list", "table", "swimlane"]}
           batchToolbar="list"
@@ -47,6 +50,8 @@ export function MyIssuesPage() {
                 workingAgents={controller.workingAgents}
                 scope={scope}
                 onScopeChange={setScope}
+                goalOnly={goalOnly}
+                onGoalOnlyChange={setGoalOnly}
                 facetCountsExact={controller.facetCountsExact}
                 tableFacetCounts={controller.tableFacetCounts}
                 onTableFacetChange={controller.setActiveTableFacet}

@@ -122,6 +122,7 @@ CLI（DENE-859 起）：一条命令做完整个收口。
 multica issue close <id> --outcome done      --evidence-file ./close.md --knowledge-none   # 交付：子票、或没有验收门的顶层票；关联 PR 还开着就先合并，合不进去落成 blocked 并在回复里说明。没有够格的项目记忆就加 --knowledge-none
 multica issue close <id> --outcome in_review --evidence-file ./close.md                     # 顶层票交付，等验收；要有关联 PR（纯文档票用 --no-code <原因>）；验收席为空则同一次调用补异族席位，再由路由交棒
 multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # 或 --wake-at / --wait-condition + --wait-timeout / --needs-human
+multica issue close <id> --outcome cancelled --evidence-file ./close.md                     # 有意取消：证据里写清为什么
 multica issue close <id> --outcome backlog   --evidence-file ./close.md                     # 有意放回待规划（DENE-1002）：写清原因，不要 PR，不叫醒任何人
 multica issue close <id> --outcome todo      --evidence-file ./close.md                     # 有意放回待办，形状同 backlog
 multica issue close <id> --outcome in_progress --evidence-file ./close.md --wake-at 2026-10-01T09:00:00Z   # 停在本轮、留着继续：必须写明「接下来谁继续」
@@ -129,6 +130,8 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
 ```
 
 服务端（`POST /api/issues/{id}/close`）在**一个事务**里做三件事：建证据评论、改 `issue.status`、写全部 `close.*` 键（含这次的知识审计）；落库前先过 `closeprotocol.Validate`，不合规就整体拒绝，并在错误里点名缺的那一项（缺证据、缺等待、缺知识审计、子票不进 `in_review`、`awaiting_human` 缺责任人……）。事务外只剩叫醒（父票屏障、`waiting_on` 等待方、路由）——这些照原有路径跑，失败不回滚已落库的收口。
+
+结论表和所有拒绝理由只住在服务端（`closeprotocol.Outcomes`，DENE-1183）。CLI 不再自己预检 `--outcome` 和必填项，原样转述服务端的拒绝原因；可能在本机合并 PR 的收口（`done` / `in_review`）会先问只读的 `POST /api/issues/{id}/close/check`，被拒就什么都不合。本文、`multica-platform` skill 和运行时简报里写的结论列表由 `closeprotocol` 的对照测试钉住，改结论表时三处要一起改。
 
 - `--evidence`（或 `--evidence-file` / `--evidence-stdin`）必填，`--summary` 放在证据上方。本回合有 triggering comment 时带同一 `--parent`；评论触发的 run 在同一张票上默认回那条线程。
 - `--outcome blocked` 必须带 DENE-850 的等待字段之一：`--blocked-by`、`--wake-at`、`--wait-condition` + `--wait-timeout`、`--needs-human`。不带即拒绝。

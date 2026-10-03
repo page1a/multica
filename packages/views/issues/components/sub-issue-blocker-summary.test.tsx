@@ -165,7 +165,7 @@ describe("SubIssueBlockerSummary", () => {
 
     renderWithProviders(<BlockerSummary issue={parent} subIssues={[child]} />);
 
-    await waitFor(() => expect(getIssue).toHaveBeenCalledWith("DENE-410", expect.anything()));
+    await waitFor(() => expect(getIssue).toHaveBeenCalledWith("DENE-410"));
     expect(await screen.findByRole("link", { name: "DENE-410 · Other family root" })).toHaveAttribute("href", "/issues/other-410");
   });
 
@@ -183,7 +183,7 @@ describe("SubIssueBlockerSummary", () => {
 
     renderWithProviders(<BlockerSummary issue={parent} subIssues={[child]} />);
 
-    await waitFor(() => expect(getIssue).toHaveBeenCalledWith("DENE-410", expect.anything()));
+    await waitFor(() => expect(getIssue).toHaveBeenCalledWith("DENE-410"));
     expect(await screen.findByRole("link", { name: "DENE-410" })).toHaveAttribute("href", "/issues/DENE-410");
   });
 

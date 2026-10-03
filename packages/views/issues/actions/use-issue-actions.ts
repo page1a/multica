@@ -29,10 +29,12 @@ export interface UseIssueActionsResult {
   openInNewTab: () => void;
   togglePin: () => void;
   copyLink: () => Promise<void>;
+  copyCommentLink: (commentId: string) => Promise<void>;
   openCreateSubIssue: () => void;
   openSetParent: () => void;
   removeParent: () => void;
   openAddChild: () => void;
+  openMarkDuplicate: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
   openClose: () => void;
 }
@@ -179,6 +181,26 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     }
   }, [paths, issueId, issueIdentifier, navigation, t]);
 
+  // Built during render so `copyCommentLink` depends on this string alone:
+  // `paths` is rebuilt on every render, and the handler is passed to every
+  // memoized comment card, so depending on it would re-render all of them on
+  // any unrelated page update. Identifier form for the same reason as `copyLink`.
+  const issueShareUrl = issueId
+    ? navigation.getShareableUrl(paths.issueDetail(issueIdentifier || issueId))
+    : null;
+  const copyCommentLink = useCallback(async (commentId: string) => {
+    if (!issueShareUrl) return;
+    // The `#comment-…` fragment is the deep-link anchor `IssueDetailRoute`
+    // resolves via `parseCommentHighlightHash`; dropping it would downgrade the
+    // link to the whole issue.
+    const url = `${issueShareUrl}#comment-${commentId}`;
+    if (await copyText(url)) {
+      toast.success(t(($) => $.comment.link_copied));
+    } else {
+      toast.error(t(($) => $.comment.link_copy_failed));
+    }
+  }, [issueShareUrl, t]);
+
   const openCreateSubIssue = useCallback(() => {
     if (!issueId) return;
     if (isGuest) return;
@@ -212,6 +234,11 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     if (isGuest) return;
     openModal("issue-set-parent", { issueId });
   }, [openModal, issueId, isGuest]);
+
+  const openMarkDuplicate = useCallback(() => {
+    if (!issueId) return;
+    openModal("issue-mark-duplicate", { issueId });
+  }, [openModal, issueId]);
 
   // Detach from the parent and promote to a standalone issue. Reversible
   // (Set parent re-links it), non-destructive, and mirrors the clear-date
@@ -289,10 +316,12 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     openInNewTab,
     togglePin,
     copyLink,
+    copyCommentLink,
     openCreateSubIssue,
     openSetParent,
     removeParent,
     openAddChild,
+    openMarkDuplicate,
     openDeleteConfirm,
     openClose,
   };

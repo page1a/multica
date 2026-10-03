@@ -124,13 +124,16 @@ type IssueStatusData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
-	ID              string `json:"id"`
-	AgentID         string `json:"agent_id"`
-	RuntimeID       string `json:"runtime_id"`
-	IssueID         string `json:"issue_id"`
-	WorkspaceID     string `json:"workspace_id"`
-	WorkspaceSlug   string `json:"workspace_slug,omitempty"`
-	IssueIdentifier string `json:"issue_identifier,omitempty"`
+	// StartClaimSupported gates retries when talking to older servers.
+	StartClaimSupported bool   `json:"start_claim_supported,omitempty"`
+	DispatchedAt        string `json:"dispatched_at,omitempty"`
+	ID                  string `json:"id"`
+	AgentID             string `json:"agent_id"`
+	RuntimeID           string `json:"runtime_id"`
+	IssueID             string `json:"issue_id"`
+	WorkspaceID         string `json:"workspace_id"`
+	WorkspaceSlug       string `json:"workspace_slug,omitempty"`
+	IssueIdentifier     string `json:"issue_identifier,omitempty"`
 	// CanonicalBranch is the issue's canonical delivery branch (DENE-820);
 	// empty until the issue's first run delivered one. Worktree mode
 	// continues it ahead of the seat's own conversation branch.
@@ -224,6 +227,7 @@ type Task struct {
 	ChatChannelDeliversFiles  bool                  `json:"chat_channel_delivers_files,omitempty"`  // server capability: this deployment carries a file the agent produces the last hop into this conversation. Absent on a server predating it, which reads as false — the run is told to describe its file in words, and the worst case is a delivery that could have happened did not. Must never be re-derived from chat_channel_type: whether the hop exists depends on the SERVER's storage and adapter wiring, which no daemon can see (MUL-4899)
 	ChatType                  string                `json:"chat_type,omitempty"`                    // "group" when the channel conversation is a shared room, "p2p" for a 1:1 with the bot. Empty for a web chat or an old server; the per-turn prompt then reports unknown rather than guessing 1:1
 	ChatInThread              bool                  `json:"chat_in_thread,omitempty"`               // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
+	ChatTitleRequested        bool                  `json:"chat_title_requested,omitempty"`         // server asks this run to name the chat with `multica chat title` (workspace naming source is runtime and no runtime title landed yet)
 	ChatMessage               string                `json:"chat_message,omitempty"`                 // user message content for chat tasks
 	ChatMessageAttachments    []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"`     // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
 	ChatIntro                 bool                  `json:"chat_intro,omitempty"`                   // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
@@ -237,9 +241,13 @@ type Task struct {
 	QuickCreatePrompt         string                `json:"quick_create_prompt,omitempty"`          // user's natural-language input for quick-create tasks
 	QuickCreatePriority       string                `json:"quick_create_priority,omitempty"`        // explicit priority selected in quick-create
 	QuickCreateDueDate        string                `json:"quick_create_due_date,omitempty"`        // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs  []string              `json:"quick_create_attachment_ids,omitempty"`  // attachments uploaded in the quick-create prompt and bound by issue create
-	QuickCreateSourceContext  json.RawMessage       `json:"quick_create_source_context,omitempty"`  // immutable historical context, separate from the new instruction
-	HandoffNote               string                `json:"handoff_note,omitempty"`                 // legacy assignment handoff instruction; rendered only in the per-turn prompt
+	QuickCreateGoalMode       bool                  `json:"quick_create_goal_mode,omitempty"`
+	QuickCreateAttachmentIDs  []string              `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
+	QuickCreateSourceContext  json.RawMessage       `json:"quick_create_source_context,omitempty"` // immutable historical context, separate from the new instruction
+	WakeupID                  string                `json:"wakeup_id,omitempty"`
+	WakeupSystemRule          string                `json:"wakeup_system_rule,omitempty"` // a platform rule (e.g. child_done) started the run
+	WakeupJoined              string                `json:"wakeup_joined,omitempty"`      // wakeups that joined this run instead of queuing their own
+	HandoffNote               string                `json:"handoff_note,omitempty"`       // legacy assignment handoff instruction; rendered only in the per-turn prompt
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text
@@ -254,17 +262,11 @@ type Task struct {
 	// when description is empty so the agent doesn't see a useless heading.
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	// Initiator* identify the actor who triggered THIS task (the real
-	// requester behind the current comment/mention or chat message) as
-	// distinct from the runtime owner whose credentials the agent runs with.
-	// Comment-triggered tasks resolve to the triggering comment's author;
-	// chat tasks resolve to the chat session creator. Empty for task kinds
-	// with no attributable human initiator (on-assign, autopilot,
-	// quick-create). InitiatorEmail is set only for member initiators. The
-	// daemon emits these into the brief under `## Task Initiator` so a
-	// workspace-visible agent can attribute the request per person. The
-	// agent's effective credentials stay owner-scoped — this is an attested
-	// identity, not a credential. See MUL-2645.
+	// Initiator* are the existing claim fields for the human whose authority
+	// this run uses (originator_user_id). The direct comment trigger author is
+	// carried separately in trigger_author_*. Empty when no originator exists.
+	// The daemon renders ## On Behalf Of per turn; its effective credentials
+	// remain scoped to the runtime owner. See MUL-2645, GH-8674.
 	InitiatorType  string `json:"initiator_type,omitempty"`
 	InitiatorID    string `json:"initiator_id,omitempty"`
 	InitiatorName  string `json:"initiator_name,omitempty"`

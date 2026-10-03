@@ -126,6 +126,7 @@
     "scripts/desktop-release-assets.mjs",
     "scripts/desktop-release-assets.test.mjs",
     ".github/workflows/desktop-release.yml",
+    "server/cmd/server/router.go",
     ".github/workflows/ci.yml",
     ".github/ci-paths.json",
     "scripts/ci-scope.mjs",

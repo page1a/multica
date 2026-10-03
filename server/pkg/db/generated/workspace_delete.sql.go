@@ -25,6 +25,12 @@ deleted_task_messages AS (
 deleted_task_tokens AS (
     DELETE FROM task_token WHERE task_id IN (SELECT id FROM batch)
 ),
+deleted_task_supplements AS (
+    DELETE FROM task_supplement WHERE task_id IN (SELECT id FROM batch)
+),
+deleted_task_supplement_capabilities AS (
+    DELETE FROM task_supplement_capability WHERE task_id IN (SELECT id FROM batch)
+),
 deleted_channel_outbound_cards AS (
     DELETE FROM channel_outbound_card_message WHERE task_id IN (SELECT id FROM batch)
 ),
@@ -237,7 +243,14 @@ func (q *Queries) DeleteWorkspaceConnections(ctx context.Context, workspaceID pg
 }
 
 const deleteWorkspaceIssueRoots = `-- name: DeleteWorkspaceIssueRoots :exec
-WITH
+WITH deleted_wakeup_receipts AS (
+ DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE workspace_id=$1)
+), deleted_wakeups AS (
+ DELETE FROM issue_wakeup WHERE workspace_id=$1
+),
+deleted_child_events AS (
+ DELETE FROM issue_child_event WHERE workspace_id=$1
+),
 deleted_issues AS (
     DELETE FROM issue WHERE issue.workspace_id = $1
 ),
@@ -304,6 +317,12 @@ deleted_task_tokens AS (
     DELETE FROM task_token
     WHERE workspace_id = $1
 ),
+deleted_orphan_task_supplements AS (
+    DELETE FROM task_supplement WHERE workspace_id = $1
+),
+deleted_orphan_task_supplement_capabilities AS (
+    DELETE FROM task_supplement_capability WHERE workspace_id = $1
+),
 deleted_hourly_dirty AS (
     DELETE FROM task_usage_hourly_dirty WHERE workspace_id = $1
 ),
@@ -324,6 +343,9 @@ deleted_chat_session_link_read_audits AS (
 ),
 deleted_chat_session_progress AS (
     DELETE FROM chat_session_progress WHERE workspace_id = $1
+),
+deleted_chat_naming_events AS (
+    DELETE FROM chat_naming_event WHERE workspace_id = $1
 ),
 deleted_issue_progress AS (
     DELETE FROM issue_progress WHERE workspace_id = $1
@@ -425,6 +447,12 @@ deleted_issue_delivery_branches AS (
     WHERE workspace_id = $1
        OR issue_id IN (SELECT id FROM ws_issues)
 ),
+deleted_issue_pr_automation AS (
+    DELETE FROM issue_pr_automation WHERE workspace_id = $1
+),
+deleted_issue_pr_exclusions AS (
+    DELETE FROM issue_pull_request_exclusion WHERE workspace_id = $1
+),
 deleted_agent_invocation_targets AS (
     DELETE FROM agent_invocation_target
     WHERE agent_id IN (SELECT id FROM ws_agents)
@@ -477,6 +505,10 @@ deleted_channel_task_deliveries AS (
 ),
 deleted_channel_outbound_messages AS (
     DELETE FROM channel_outbound_message
+    WHERE installation_id IN (SELECT id FROM ws_channel_installations)
+),
+deleted_channel_reply_deliveries AS (
+    DELETE FROM channel_reply_delivery
     WHERE installation_id IN (SELECT id FROM ws_channel_installations)
 ),
 deleted_channel_chat_contexts AS (
@@ -558,6 +590,9 @@ WHERE channel_media_pending_object.workspace_id = $1
 // Cross-workspace chat link reads are workspace-owned audit rows. Delete them
 // explicitly so teardown does not depend on the workspace FK cascade.
 // Progress history (DENE-1037) is workspace-keyed with no foreign key.
+// Naming audit rows are workspace-keyed and intentionally independent of the
+// chat-session cascade so the settings statistics remain queryable while a
+// session is alive. Teardown must remove them with the workspace.
 // Module-level sharing (DENE-699) is workspace-keyed with no foreign key.
 // Quota breakers and the one relay per failed task (DENE-771) are
 // workspace-keyed and have no foreign key, so they outlive the seat

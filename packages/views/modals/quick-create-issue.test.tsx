@@ -1257,7 +1257,12 @@ describe("AgentCreatePanel", () => {
     it("keeps every footer control a direct child of the grid container", () => {
       const switchToManual = screen.getByRole("button", { name: /Switch to Manual/i });
       const create = screen.getByRole("button", { name: /^Create$/i });
-      const keepOpen = screen.getByRole("checkbox");
+      // Goal mode now shares the panel with the footer's keep-open switch.
+      // The test mock renders both as native checkboxes, so select the
+      // footer control explicitly rather than relying on a unique role.
+      const checkboxes = screen.getAllByRole("checkbox");
+      expect(checkboxes).toHaveLength(2);
+      const keepOpen = checkboxes[1]!;
       const attach = screen.getByRole("button", { name: "Upload file" });
 
       const footer = switchToManual.parentElement;

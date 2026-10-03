@@ -59,10 +59,15 @@ func devecoTerminateGrace() time.Duration {
 // overridden by user-configured custom_args. DevEco's `run` subcommand exposes
 // the same daemon-managed flags as OpenCode's.
 var devecoBlockedArgs = map[string]blockedArgMode{
-	"--format":                       blockedWithValue,  // json output format for daemon communication
-	"--dir":                          blockedWithValue,  // task workdir anchor for skill / AGENTS.md discovery
-	"--variant":                      blockedWithValue,  // owned by agent.thinking_level
-	"--dangerously-skip-permissions": blockedStandalone, // daemon manages non-interactive permission prompts
+	"--format":                       blockedWithValue,     // json output format for daemon communication
+	"--session":                      blockedWithValue,     // managed via ExecOptions.ResumeSessionID
+	"-c":                             blockedOptionalValue, // --continue; also eats a stray Codex -c key=value
+	"--continue":                     blockedStandalone,    // resumes the cwd's latest session; daemon owns resume
+	"-s":                             blockedWithValue,     // short form of --session
+	"--fork":                         blockedStandalone,    // session fork is daemon-owned
+	"--dir":                          blockedWithValue,     // task workdir anchor for skill / AGENTS.md discovery
+	"--variant":                      blockedWithValue,     // owned by agent.thinking_level
+	"--dangerously-skip-permissions": blockedStandalone,    // daemon manages non-interactive permission prompts
 }
 
 // devecoBackend implements Backend by spawning `deveco run --format json` and

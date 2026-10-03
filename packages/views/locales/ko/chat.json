@@ -18,7 +18,6 @@
     "all": "전체",
     "more": "⋯ 더보기 ({{count}})",
     "menu_title": "프로젝트",
-    "collapsed": "접힌 프로젝트",
     "done": "완료",
     "search": "프로젝트 검색…",
     "pinned": "고정 (끌어 순서 변경)",
@@ -33,7 +32,18 @@
     "unread": "읽지 않음",
     "switch": "프로젝트 전환",
     "switch_search": "프로젝트 검색…",
-    "switch_empty": "일치하는 프로젝트가 없습니다"
+    "switch_empty": "일치하는 프로젝트가 없습니다",
+    "filter_label": "표시",
+    "filter_all": "전체",
+    "filter_pinned": "고정됨",
+    "filter_unpinned": "고정 안 됨",
+    "filter_unread": "읽지 않음",
+    "group_label": "그룹",
+    "group_pin": "고정별",
+    "group_status": "상태별",
+    "group_none": "없음",
+    "collapsed_badge": "더보기에 있음",
+    "menu_empty": "일치하는 프로젝트가 없습니다"
   },
   "list_resize": {
     "label": "채팅 목록 너비 조정",
@@ -79,7 +89,8 @@
     "remove_all_project_context": "모든 프로젝트 컨텍스트 제거",
     "no_projects": "아직 프로젝트가 없습니다",
     "switch_project": "다른 프로젝트로 전환…",
-    "project_context_unsupported": "프로젝트 설명이 적용되지 않습니다 — 이 에이전트의 데몬 업그레이드가 필요합니다"
+    "project_context_unsupported": "프로젝트 설명이 적용되지 않습니다 — 이 에이전트의 데몬 업그레이드가 필요합니다",
+    "to_goal": "转成目标任务"
   },
   "queue": {
     "title_other": "대기 중인 메시지 {{count}}개",
@@ -220,6 +231,11 @@
       "label": "받은편지함 훑어 주기",
       "prompt": "받은편지함을 훑어 줘",
       "prompt_project": "받은편지함을 훑어 줘. 단 \"{{name}}\" 프로젝트만. `multica inbox board --project {{id}}`로 보드를 읽고 그 프로젝트의 티켓만 알려 줘."
+    },
+    "project_board": {
+      "prompt": "`multica project board --output json`로 워크스페이스의 미종료 티켓 전체를 읽고 막힌 일, 진행할 일, 정리할 일로 나눠 알려 주세요. 변경 전에는 확인을 받아 주세요.",
+      "prompt_project": "`multica project board {{id}} --output json`로 \"{{name}}\" 프로젝트의 미종료 티켓 전체를 읽고 변경 전에는 확인을 받아 주세요.",
+      "prompt_projects": "다음 프로젝트의 미종료 티켓 전체를 읽어 주세요: {{names}}. `multica project board {{ids}} --output json`을 사용하고 변경 전에는 확인을 받아 주세요."
     }
   },
   "onboarding_cards": {

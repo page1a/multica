@@ -434,7 +434,7 @@ func readClaudeAccessToken(home, configDir string, lookupKeychain func(string) (
 			}
 		}
 	}
-	path := filepath.Join(claudeConfigDir(home, configDir), ".credentials.json")
+	path := filepath.Join(claudeCredentialsDir(home, configDir), ".credentials.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -500,13 +500,13 @@ func parseCodexCredentialsJSON(content string) (token, accountID string) {
 	return strings.TrimSpace(parsed.Tokens.AccessToken), strings.TrimSpace(parsed.Tokens.AccountID)
 }
 
-// claudeConfigDir resolves the directory Claude Code keeps this account's
+// claudeCredentialsDir resolves the directory Claude Code keeps this account's
 // credentials in. configDir is the account the caller knows the CLI will run
 // against — the value its task environment carries — and it wins over the
 // daemon process's own environment, which says nothing about which seat a
 // given agent was switched to (DENE-715). Both are empty for a machine with
 // no binding at all, where the CLI's own directory is the answer.
-func claudeConfigDir(home, configDir string) string {
+func claudeCredentialsDir(home, configDir string) string {
 	if dir := strings.TrimSpace(configDir); dir != "" {
 		return dir
 	}

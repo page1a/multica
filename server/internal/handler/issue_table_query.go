@@ -104,6 +104,7 @@ type issueTableFiltersRequest struct {
 	// parent that still has open children is deliberately kept — closing the
 	// parent is what would otherwise bury that work. (DENE-444)
 	HideCompletedParents bool `json:"hide_completed_parents,omitempty"`
+	GoalOnly             bool `json:"goal_only,omitempty"`
 }
 
 type issueTableSortRequest struct {
@@ -675,6 +676,9 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 			"EXISTS (SELECT 1 FROM project p WHERE p.id = i.project_id AND p.workspace_id = i.workspace_id AND p.status = ANY(%s::text[]))",
 			addArg(spec.Filters.ProjectStatuses),
 		))
+	}
+	if spec.Filters.GoalOnly {
+		where = append(where, "EXISTS (SELECT 1 FROM issue_goal g WHERE g.issue_id = i.id AND g.workspace_id = i.workspace_id)")
 	}
 
 	labelIDs, ok := parseIssueTableUUIDList(w, spec.Filters.LabelIDs, "filters.label_ids")

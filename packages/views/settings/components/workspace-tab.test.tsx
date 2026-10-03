@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
@@ -22,16 +22,32 @@ const workspaceRef = vi.hoisted(() => ({
   },
 }));
 const membersRef = vi.hoisted(() => ({
-  current: [{ user_id: "user-1", role: "owner" as "owner" | "admin" | "member" }],
+  current: [
+    { user_id: "user-1", role: "owner" as "owner" | "admin" | "member", name: "Ada" },
+  ] as { user_id: string; role: "owner" | "admin" | "member"; name?: string }[],
 }));
 const agentsRef = vi.hoisted(() => ({
   current: [] as Array<Record<string, unknown>>,
+}));
+const namingRef = vi.hoisted(() => ({
+  current: {
+    source: "runtime",
+    options: [
+      { id: "server_llm", label: "Server model", available: false, reason: "No model key configured" },
+      { id: "runtime", label: "Chat agent runtime", available: true, recommended: true },
+      { id: "rules", label: "Rules only", available: true },
+    ],
+    stats: { titled: 0, runtime: 0, rules: 0, failed: 0 },
+  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     if (options?.queryKey?.[0] === "agents") {
       return { data: agentsRef.current, isFetched: true };
+    }
+    if (options?.queryKey?.[2] === "naming") {
+      return { data: namingRef.current, isFetched: true };
     }
     return { data: membersRef.current, isFetched: true };
   },
@@ -55,8 +71,12 @@ vi.mock("@multica/core/platform", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
   agentListOptions: () => ({ queryKey: ["agents"], queryFn: vi.fn() }),
+  workspaceNamingOptions: () => ({ queryKey: ["workspaces", "workspace-1", "naming"], queryFn: vi.fn() }),
   workspaceListOptions: () => ({ queryKey: ["workspaces"], queryFn: vi.fn() }),
-  workspaceKeys: { list: () => ["workspaces"] },
+  workspaceKeys: {
+    list: () => ["workspaces"],
+    naming: () => ["workspaces", "workspace-1", "naming"],
+  },
 }));
 
 vi.mock("@multica/core/issues/queries", () => ({
@@ -71,6 +91,7 @@ vi.mock("@multica/core/workspace/mutations", () => ({
 vi.mock("@multica/core/api", () => ({
   api: {
     updateWorkspace: mockUpdateWorkspace,
+    updateWorkspaceNaming: vi.fn(async (_id: string, source: string) => ({ ...namingRef.current, source })),
     getBaseUrl: () => "http://127.0.0.1:8080",
   },
 }));
@@ -124,7 +145,7 @@ describe("WorkspaceTab — automatic updates", () => {
       repos: [],
       settings: {},
     };
-    membersRef.current = [{ user_id: "user-1", role: "owner" }];
+    membersRef.current = [{ user_id: "user-1", role: "owner", name: "Ada" }];
     mockUpdateWorkspace.mockImplementation(
       async (_id: string, payload: Record<string, unknown>) => ({
         ...workspaceRef.current,
@@ -143,33 +164,16 @@ describe("WorkspaceTab — automatic updates", () => {
     return userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   }
 
-  it("renders the current prefix in the shared input control", () => {
+  it("shows the prefix and slug as values, not editable fields", () => {
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
-    expect(input.value).toBe("TES");
+
+    expect(screen.getByText("TES")).toBeInTheDocument();
+    expect(screen.getByText("test-workspace")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Slug" })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Save$/ })).toBeNull();
   });
 
-  it("renders the workspace slug in the shared read-only input control", () => {
-    render(<WorkspaceTab />, { wrapper: I18nWrapper });
-
-    const input = screen.getByRole("textbox", { name: "Slug" }) as HTMLInputElement;
-    expect(input.value).toBe("test-workspace");
-    expect(input.readOnly).toBe(true);
-  });
-
-  it("uppercases and strips non-alphanumeric prefix input", async () => {
-    const user = setupUser();
-    render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
-
-    await user.clear(input);
-    await user.type(input, "ab-12!cd");
-
-    expect(input.value).toBe("AB12CD");
-  });
-
-  it("auto-saves ordinary workspace fields without invalidating issue caches", async () => {
+  it("auto-saves ordinary workspace fields silently, without invalidating issue caches", async () => {
     const user = setupUser();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
     const nameInput = screen.getByDisplayValue("Test Workspace");
@@ -184,77 +188,79 @@ describe("WorkspaceTab — automatic updates", () => {
         description: "",
         context: "",
       });
-      expect(mockToastSuccess).toHaveBeenCalledWith(
-        "Workspace settings saved",
-        { id: "settings-auto-save" },
-      );
     });
+    // The inline save state reports success; a toast would repeat it.
+    expect(mockToastSuccess).not.toHaveBeenCalled();
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
-  it("asks for confirmation on prefix blur and persists only after confirmation", async () => {
+  it("changes the prefix only from its own dialog, after previewing the result", async () => {
     const user = setupUser();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+
+    await user.click(screen.getByRole("button", { name: "Change prefix..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Change issue prefix" });
+    const input = within(dialog).getByRole("textbox", { name: "New prefix" });
 
     await user.clear(input);
-    await user.type(input, "NEW");
-    await user.tab();
-
+    await user.type(input, "ab-12!cd");
+    expect(input).toHaveValue("AB12CD");
+    expect(within(dialog).getByText("TES-123")).toBeInTheDocument();
+    expect(within(dialog).getByText("AB12CD-123")).toBeInTheDocument();
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
-    await screen.findByText(/Change issue prefix/i);
-    expect(screen.getByText(/TES-N/)).toBeTruthy();
-    expect(screen.getByText(/NEW-N/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await user.click(within(dialog).getByRole("button", { name: "Change to AB12CD" }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        issue_prefix: "NEW",
+        issue_prefix: "AB12CD",
       });
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["issues", "workspace-1"],
     });
-    expect(mockToastSuccess).toHaveBeenCalledWith(
-      "Workspace settings saved",
-      { id: "settings-auto-save" },
-    );
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Change issue prefix" })).toBeNull();
+    });
   });
 
-  it("does not persist a prefix when the confirmation is cancelled", async () => {
+  it("does not persist a prefix when the dialog is cancelled", async () => {
     const user = setupUser();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
 
-    await user.clear(input);
-    await user.type(input, "NEW");
-    await user.tab();
-    await screen.findByText(/Change issue prefix/i);
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Change prefix..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Change issue prefix" });
+    await user.type(within(dialog).getByRole("textbox", { name: "New prefix" }), "X");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
-    expect(input.value).toBe("NEW");
   });
 
-  it("marks an empty prefix invalid and does not persist it", async () => {
+  it("cannot confirm an empty or unchanged prefix", async () => {
     const user = setupUser();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+
+    await user.click(screen.getByRole("button", { name: "Change prefix..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Change issue prefix" });
+    const input = within(dialog).getByRole("textbox", { name: "New prefix" });
+    expect(within(dialog).getByRole("button", { name: "Change to TES" })).toBeDisabled();
 
     await user.clear(input);
-    await user.tab();
-
     expect(input).toHaveAttribute("aria-invalid", "true");
-    expect(mockUpdateWorkspace).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: /^Change to/ })).toBeDisabled();
   });
 
-  it("disables editable workspace controls for regular members", () => {
-    membersRef.current = [{ user_id: "user-1", role: "member" }];
+  it("shows regular members the values read-only, with who to ask", () => {
+    membersRef.current = [
+      { user_id: "user-1", role: "member" },
+      { user_id: "user-2", role: "owner", name: "Grace Hopper" },
+    ];
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
-    expect(screen.getByPlaceholderText("TES")).toBeDisabled();
-    expect(screen.getByDisplayValue("Test Workspace")).toBeDisabled();
+    expect(screen.getByRole("note")).toHaveTextContent("Ask Grace Hopper");
+    expect(screen.queryByDisplayValue("Test Workspace")).toBeNull();
+    expect(screen.getByText("Test Workspace")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change prefix..." })).toBeNull();
   });
 
   it("renders the sediment agent selector with default unconfigured state", () => {
@@ -294,5 +300,22 @@ describe("WorkspaceTab — automatic updates", () => {
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
     expect(screen.getByText(/Agent is currently offline/i)).toBeTruthy();
+  });
+
+  it("shows the naming source card and explains an unavailable server key", () => {
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Chat naming")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Naming source" })).toBeEnabled();
+    expect(screen.getByText("No model key configured")).toBeTruthy();
+    expect(screen.getByText(/Last 24 hours: 0 titled/)).toBeTruthy();
+  });
+
+  it("keeps naming source read-only for regular members with an explanation", () => {
+    membersRef.current = [{ user_id: "user-1", role: "member" }];
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByRole("combobox", { name: "Naming source" })).toBeDisabled();
+    expect(screen.getByText("Only workspace owners and admins can change this.")).toBeTruthy();
   });
 });

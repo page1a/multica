@@ -228,6 +228,18 @@ func (q *Queries) CreateIssueGoalCheck(ctx context.Context, arg CreateIssueGoalC
 	return i, err
 }
 
+const deleteDraftIssueGoalChecks = `-- name: DeleteDraftIssueGoalChecks :exec
+DELETE FROM issue_goal_check c
+USING issue_goal g
+WHERE c.goal_id = g.id AND g.id = $1 AND g.status = 'draft'
+`
+
+// Only a draft line may be rewritten; once locked the checks are fixed.
+func (q *Queries) DeleteDraftIssueGoalChecks(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteDraftIssueGoalChecks, id)
+	return err
+}
+
 const finishIssueGoal = `-- name: FinishIssueGoal :one
 UPDATE issue_goal
 SET status = $3,
@@ -339,6 +351,48 @@ func (q *Queries) ListIssueGoalChecks(ctx context.Context, goalID pgtype.UUID) (
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueGoalProgress = `-- name: ListIssueGoalProgress :many
+SELECT g.issue_id,
+       COUNT(c.id)::bigint AS total,
+       COUNT(c.id) FILTER (WHERE c.status = 'passed')::bigint AS passed
+FROM issue_goal g
+LEFT JOIN issue_goal_check c ON c.goal_id = g.id
+WHERE g.workspace_id = $1
+  AND g.issue_id = ANY($2::uuid[])
+GROUP BY g.issue_id
+`
+
+type ListIssueGoalProgressParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	Column2     []pgtype.UUID `json:"column_2"`
+}
+
+type ListIssueGoalProgressRow struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	Total   int64       `json:"total"`
+	Passed  int64       `json:"passed"`
+}
+
+func (q *Queries) ListIssueGoalProgress(ctx context.Context, arg ListIssueGoalProgressParams) ([]ListIssueGoalProgressRow, error) {
+	rows, err := q.db.Query(ctx, listIssueGoalProgress, arg.WorkspaceID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueGoalProgressRow{}
+	for rows.Next() {
+		var i ListIssueGoalProgressRow
+		if err := rows.Scan(&i.IssueID, &i.Total, &i.Passed); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

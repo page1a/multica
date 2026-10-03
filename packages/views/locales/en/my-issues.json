@@ -38,7 +38,9 @@
     "view_board_short": "Board",
     "view_list_short": "List",
     "view_swimlane_short": "Swimlane",
-    "sort_manual": "Manual"
+    "sort_manual": "Manual",
+    "new_goal": "New goal",
+    "only_goals": "Only goals"
   },
   "errors": {
     "move_failed": "Failed to move issue"

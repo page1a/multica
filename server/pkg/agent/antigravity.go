@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,98 +50,121 @@ type antigravityStreamUsage struct {
 }
 
 type antigravityStreamStepUpdate struct {
-	ConversationID string                     `json:"conversation_id"`
-	StepIndex      int                        `json:"step_index"`
-	State          string                     `json:"state"`
-	StepType       string                     `json:"step_type"`
-	TextDelta      string                     `json:"text_delta"`
-	Usage          *antigravityStreamUsage    `json:"usage"`
-	ToolName       string                     `json:"tool_name"`
-	ToolInfo       *antigravityStreamToolInfo `json:"tool_info"`
+	ConversationID string                  `json:"conversation_id"`
+	StepIndex      *int                    `json:"step_index"`
+	State          string                  `json:"state"`
+	StepType       string                  `json:"step_type"`
+	TextDelta      string                  `json:"text_delta"`
+	Usage          *antigravityStreamUsage `json:"usage"`
+	ToolName       string                  `json:"tool_name"`
+	ToolInfo       *antigravityStreamTool  `json:"tool_info"`
 }
 
-type antigravityStreamToolInfo struct {
+type antigravityStreamTool struct {
 	Name       string          `json:"name"`
 	Parameters map[string]any  `json:"parameters"`
 	Output     json.RawMessage `json:"output"`
-	Error      json.RawMessage `json:"error"`
+	Error      *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 type antigravityToolState struct {
-	name     string
-	finished bool
+	name string
+	done bool
 }
 
-// toolMessages translates snapshots, not deltas: each call starts and ends once.
-// Terminal-only snapshots still emit a matching start for the daemon's in-flight
-// counter. Conversation identity keeps equal step indexes from colliding.
-func (step *antigravityStreamStepUpdate) toolMessages(sessionID string, calls map[string]antigravityToolState) []Message {
-	if step.StepType != "tool" {
-		return nil
-	}
-	state := strings.ToUpper(step.State)
-	terminal := false
-	switch state {
-	case "ACTIVE":
-	case "DONE", "ERROR", "FAILED", "CANCELLED", "CANCELED", "ABORTED":
-		terminal = true
-	default:
-		return nil
-	}
-	callID := fmt.Sprintf("agy:%s:%d", sessionID, step.StepIndex)
-	call, started := calls[callID]
-	if call.finished {
-		return nil
-	}
-	var input map[string]any
-	if !started {
-		call.name = step.ToolName
-		if step.ToolInfo != nil {
-			if call.name == "" {
-				call.name = step.ToolInfo.Name
-			}
-			input = step.ToolInfo.Parameters
+// Normalize the shared transcript input without duplicating commands or file
+// bodies. Preserve collisions and unknown fields, and do not mutate the snapshot.
+func antigravityToolInput(parameters map[string]any) map[string]any {
+	input := maps.Clone(parameters)
+	for _, alias := range []struct {
+		from, to   string
+		allowEmpty bool
+	}{
+		{"CommandLine", "command", false},
+		{"AbsolutePath", "file_path", false},
+		{"TargetFile", "file_path", false},
+		{"CodeContent", "content", true},
+		{"TargetContent", "old_string", true},
+		{"ReplacementContent", "new_string", true},
+	} {
+		if _, exists := input[alias.to]; exists {
+			continue
 		}
-		// Incomplete snapshots carry no actionable tool identity yet.
-		if call.name == "" {
-			return nil
+		if value, ok := parameters[alias.from].(string); ok && (value != "" || alias.allowEmpty) {
+			input[alias.to] = value
+			delete(input, alias.from)
 		}
 	}
+	return input
+}
+
+// Each step has one tool lifecycle, even when agy repeats state snapshots or
+// only emits DONE. The existing daemon uploader handles these normal messages;
+// tool output must never be appended to the assistant's final answer.
+func antigravityToolMessages(step *antigravityStreamStepUpdate, states map[int]antigravityToolState) []Message {
+	if step.StepType != "tool" || step.StepIndex == nil || *step.StepIndex < 0 {
+		return nil
+	}
+	active := strings.EqualFold(step.State, "active")
+	done := strings.EqualFold(step.State, "done")
+	if !active && !done {
+		return nil
+	}
+	index := *step.StepIndex
+	state := states[index]
+	if state.done {
+		return nil
+	}
+	callID := fmt.Sprintf("agy-step-%d", index)
 	var messages []Message
-	if !started {
-		messages = append(messages, Message{Type: MessageToolUse, Tool: call.name, CallID: callID, Input: input})
-	}
-	if terminal {
-		var output, toolError string
+	if state.name == "" {
+		name := step.ToolName
+		var input map[string]any
 		if step.ToolInfo != nil {
-			output = antigravityToolText(step.ToolInfo.Output)
-			toolError = antigravityToolText(step.ToolInfo.Error)
-		}
-		if state != "DONE" || toolError != "" {
-			if toolError == "" {
-				toolError = state
+			if name == "" {
+				name = step.ToolInfo.Name
 			}
-			if output != "" {
-				output += "\n"
-			}
-			output += "Tool error: " + toolError
+			input = antigravityToolInput(step.ToolInfo.Parameters)
 		}
-		messages = append(messages, Message{Type: MessageToolResult, Tool: call.name, CallID: callID, Output: output})
-		call.finished = true
+		if name == "" {
+			return nil // A later snapshot may provide the missing metadata.
+		}
+		state.name = name
+		messages = append(messages, Message{Type: MessageToolUse, Tool: name, CallID: callID, Input: input})
 	}
-	calls[callID] = call
+	if done {
+		var output string
+		if info := step.ToolInfo; info != nil {
+			if len(info.Output) > 0 && string(info.Output) != "null" {
+				if err := json.Unmarshal(info.Output, &output); err != nil {
+					output = string(info.Output)
+				}
+			}
+			if info.Error != nil {
+				detail := info.Error.Message
+				if info.Error.Type != "" {
+					if detail != "" {
+						detail = info.Error.Type + ": " + detail
+					} else {
+						detail = info.Error.Type
+					}
+				}
+				// The daemon uploads a bounded prefix of tool output. Put the
+				// error first so verbose stdout cannot hide the failure detail.
+				if output != "" {
+					output = "\n" + output
+				}
+				output = "Tool error: " + detail + output
+			}
+		}
+		messages = append(messages, Message{Type: MessageToolResult, Tool: state.name, CallID: callID, Output: output})
+		state.done = true
+	}
+	states[index] = state
 	return messages
-}
-
-func antigravityToolText(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return text
-	}
-	return string(raw)
 }
 
 type antigravityStreamResult struct {
@@ -323,7 +347,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		var streamResponse string
 		var streamResultUsage *antigravityStreamUsage
 		streamStepUsage := make(map[int]TokenUsage)
-		streamTools := make(map[string]antigravityToolState)
+		streamTools := make(map[int]antigravityToolState)
 		streamLatestAgentResponseStep := -1
 		streamLatestAgentResponseDone := false
 		finalStatus := "completed"
@@ -333,6 +357,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 
 		trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 
+	streamLoop:
 		for scanner.Scan() {
 			line := scanner.Text()
 			var event antigravityStreamEvent
@@ -348,25 +373,32 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 					if event.StepUpdate.ConversationID != "" {
 						streamSessionID = event.StepUpdate.ConversationID
 					}
-					for _, msg := range event.StepUpdate.toolMessages(streamSessionID, streamTools) {
-						trySend(msgCh, msg)
+					for _, message := range antigravityToolMessages(event.StepUpdate, streamTools) {
+						// Tool lifecycle events also drive the daemon's in-flight
+						// counter. Unlike best-effort text, neither half may be
+						// dropped when a transcript consumer temporarily falls behind.
+						select {
+						case msgCh <- message:
+						case <-runCtx.Done():
+							break streamLoop
+						}
 					}
-					if event.StepUpdate.StepType == "agent_response" && event.StepUpdate.StepIndex >= streamLatestAgentResponseStep {
+					if event.StepUpdate.StepType == "agent_response" && event.StepUpdate.StepIndex != nil && *event.StepUpdate.StepIndex >= streamLatestAgentResponseStep {
 						// Only the latest response step determines whether the answer
 						// completed. A prior DONE response may be followed by a newer
 						// ACTIVE response that is cut off by the network error.
-						streamLatestAgentResponseStep = event.StepUpdate.StepIndex
+						streamLatestAgentResponseStep = *event.StepUpdate.StepIndex
 						streamLatestAgentResponseDone = strings.EqualFold(event.StepUpdate.State, "done")
 					}
 					if event.StepUpdate.StepType == "agent_response" && event.StepUpdate.TextDelta != "" {
 						output.WriteString(event.StepUpdate.TextDelta)
 						trySend(msgCh, Message{Type: MessageText, Content: event.StepUpdate.TextDelta})
 					}
-					if strings.EqualFold(event.StepUpdate.State, "done") && event.StepUpdate.Usage != nil && event.StepUpdate.Usage.hasTokens() {
+					if strings.EqualFold(event.StepUpdate.State, "done") && event.StepUpdate.StepIndex != nil && event.StepUpdate.Usage != nil && event.StepUpdate.Usage.hasTokens() {
 						// A step may be re-emitted as its state changes. Keying by
 						// index makes the final DONE snapshot replace, not duplicate,
 						// an earlier copy of the same step.
-						streamStepUsage[event.StepUpdate.StepIndex] = event.StepUpdate.Usage.tokenUsage()
+						streamStepUsage[*event.StepUpdate.StepIndex] = event.StepUpdate.Usage.tokenUsage()
 					}
 				case "result":
 					if event.Result == nil {
@@ -714,8 +746,12 @@ var antigravityBlockedArgs = map[string]blockedArgMode{
 	"--prompt":                       blockedWithValue,
 	"-i":                             blockedStandalone, // interactive mode requires a TTY and cannot run under the daemon
 	"--prompt-interactive":           blockedStandalone,
-	"-c":                             blockedStandalone, // resume via --conversation, not --continue
+	"-c":                             blockedOptionalValue, // resume via --conversation, not --continue
 	"--continue":                     blockedStandalone,
+	"-r":                             blockedWithValue,
+	"--resume":                       blockedWithValue,
+	"--session-id":                   blockedWithValue,
+	"--fork-session":                 blockedStandalone,
 	"--conversation":                 blockedWithValue, // managed via ExecOptions.ResumeSessionID
 	"--model":                        blockedWithValue, // managed via ExecOptions.Model / agent.model
 	"--output-format":                blockedWithValue, // stream-json is required for token accounting

@@ -196,7 +196,7 @@ func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.checkSignupAllowed(email, true); err != nil {
+	if err := h.checkSignupAllowed(r.Context(), email, true); err != nil {
 		var signupErr SignupError
 		if errors.As(err, &signupErr) {
 			writeError(w, http.StatusForbidden, signupErr.Error())

@@ -27,6 +27,10 @@ const (
 	SourceQuote = "quote"
 	// SourceAgent — an agent chose it on its own. Routing does not use it.
 	SourceAgent = "agent"
+	// SourceQuoteRejected — an agent supplied a quote that the server could
+	// not verify. The slot stays empty and routing must not replace the
+	// rejected choice with a different seat.
+	SourceQuoteRejected = "quote_rejected"
 	// SourceRouter — the routing module filled the slot.
 	SourceRouter = "router"
 )
@@ -78,4 +82,12 @@ func (i Issue) HumanLabels() []string {
 // dropped the name: source "agent" with nobody in the slot.
 func (i Issue) IgnoredAgentPick() bool {
 	return i.AssigneeSource == SourceAgent && i.AssigneeType == ""
+}
+
+// RejectedQuote reports that an agent tried to carry a person's words but the
+// server could not verify them. This is deliberately distinct from an agent's
+// unquoted guess: a failed proof must wait for the agent to ask the person,
+// rather than silently assigning somebody else.
+func (i Issue) RejectedQuote() bool {
+	return i.AssigneeSource == SourceQuoteRejected && i.AssigneeType == ""
 }

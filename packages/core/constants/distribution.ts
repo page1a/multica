@@ -15,3 +15,8 @@ export const CLI_INSTALL_SCRIPT_URL = `https://raw.githubusercontent.com/${CLI_R
 
 /** The copy-and-paste one-liner shown wherever we ask someone to install the CLI. */
 export const CLI_INSTALL_COMMAND = `curl -fsSL ${CLI_INSTALL_SCRIPT_URL} | bash`;
+
+export const CLI_INSTALL_SCRIPT_PS1_URL = `https://raw.githubusercontent.com/${CLI_REPO_SLUG}/${CLI_REPO_BRANCH}/scripts/install.ps1`;
+
+/** The Windows PowerShell counterpart of {@link CLI_INSTALL_COMMAND}. */
+export const CLI_INSTALL_COMMAND_WINDOWS = `irm ${CLI_INSTALL_SCRIPT_PS1_URL} | iex`;

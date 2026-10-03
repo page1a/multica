@@ -10,6 +10,7 @@ header). Report the progress line when the state changes, not on every step:
 | `multica issue progress <issue> --history --output json` | Earlier lines, newest first, with author, source and tone |
 | `multica chat progress "<line>" [--session <id>] [--tone T] --output json` | Report the current chat's progress line (`--session` defaults to `MULTICA_CHAT_SESSION_ID`) |
 | `multica chat progress --history --output json` | The chat's earlier lines |
+| `multica chat title "Project · topic" [--session <id>] --output json` | Report a validated title from the chat agent runtime; manual member renames are protected |
 
 `--tone` sets the dot colour: `working` (blue), `waiting` (yellow), `stuck`
 (red), `done` (green). Omitted, an issue line follows the issue status and a

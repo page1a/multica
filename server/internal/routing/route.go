@@ -260,6 +260,9 @@ const (
 
 // routeTodo is the only row that fills slots.
 func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Settings, issue Issue, mode fillMode) (Outcome, error) {
+	if issue.RejectedQuote() {
+		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "assignee quote could not be verified; waiting for the agent to ask the person"}, nil
+	}
 	// Declined until a write proves otherwise: the action is derived from what
 	// was written, at the bottom of this function.
 	out := Outcome{State: StateEnabled, Action: ActionDeclined}

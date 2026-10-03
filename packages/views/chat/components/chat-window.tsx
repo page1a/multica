@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Archive, Pencil, Loader2, Square, LockKeyhole } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Archive, Pencil, Loader2, Square, LockKeyhole, Target } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -103,6 +103,7 @@ import {
 import { createLogger } from "@multica/core/logger";
 import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useLocale, useT } from "../../i18n";
+import { openGoalCompletion } from "@multica/core/modals";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
@@ -203,11 +204,13 @@ export function ChatWindow() {
   } = useChatTaskActions(activeSessionId, enqueueLocalRestore);
   // Nonce handed to ChatInput to pull focus into the compose box: when a new
   // chat starts (⊕ or switching agent), and whenever the window itself opens.
-  const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen);
+  const windowRef = useRef<HTMLDivElement>(null);
+  const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen, windowRef);
   const [conversationStarterRequest, setConversationStarterRequest] = useState<{
     id: number;
     content: string;
   } | null>(null);
+  const [convertedGoal, setConvertedGoal] = useState<{ issueId: string; title: string } | null>(null);
   const nextConversationStarterRequestIdRef = useRef(0);
   const prefillConversationStarter = useCallback(
     (prompt: string) => {
@@ -818,7 +821,6 @@ export function ChatWindow() {
 
   const isExpanded = useChatStore((s) => s.isExpanded);
 
-  const windowRef = useRef<HTMLDivElement>(null);
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
 
   // Show the list (vs empty state) as soon as there's anything to display —
@@ -898,6 +900,8 @@ export function ChatWindow() {
   return (
     <motion.div
       ref={windowRef}
+      inert={!isOpen}
+      aria-hidden={!isOpen}
       className={containerClass}
       style={containerStyle}
       initial={{ opacity: 0, scale: 0.95, ...motionSize }}
@@ -940,6 +944,11 @@ export function ChatWindow() {
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
+          {convertedGoal && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-micro font-medium text-brand" title={convertedGoal.title}>
+              <Target className="size-3" aria-hidden="true" /> 0/3
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           {!isMobile && (
@@ -1083,6 +1092,14 @@ export function ChatWindow() {
         onRestoreDraftApplied={handleRestoreDraftApplied}
         uploadEnabled={(!!activeAgent || sharedSpeaker) && !isAgentAccessRevoked && !isChatViewOnly}
         onStop={handleStop}
+        onConvertToGoal={activeSessionId ? async () => {
+          const result = await api.convertChatSessionToGoal(activeSessionId);
+          // The server appends a link message to this chat; refetch to show it.
+          void qc.invalidateQueries({ queryKey: chatKeys.messages(activeSessionId) });
+          void qc.invalidateQueries({ queryKey: chatKeys.messagesPage(activeSessionId) });
+          setConvertedGoal({ issueId: result.issue.id, title: result.issue.title });
+          openGoalCompletion({ issueId: result.issue.id, title: result.issue.title });
+        } : undefined}
         isRunning={!!pendingTaskId}
         allowSubmitWhileRunning={pendingTask?.supports_queue === true}
         disabled={

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -245,5 +246,53 @@ func TestOutcomeDoneMergesCleanDaemonSnapshot(t *testing.T) {
 				t.Fatalf("wait condition = %q, want the check name", decision.Record.WaitCondition)
 			}
 		})
+	}
+}
+
+// A local GitLab connection must refresh the exact linked MR, even when the
+// caller's checkout is another repository and the MR is already merged (so the
+// default glab list would otherwise omit it).
+func TestRefreshIssuePullRequestsUsesLinkedMergedGitLabMR(t *testing.T) {
+	const issueID = "55555555-5555-4555-8555-555555555555"
+	const mrURL = "http://gitlab.example/acme/game/-/merge_requests/490"
+	mergedAt := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	origGH, origList, origView := ghListPRs, glabListMRs, glabViewMR
+	t.Cleanup(func() { ghListPRs, glabListMRs, glabViewMR = origGH, origList, origView })
+	ghListPRs = func(context.Context, string, ...string) ([]ghpr.PR, error) {
+		return nil, fmt.Errorf("gh unavailable")
+	}
+	glabListMRs = func(context.Context, string) ([]ghpr.PR, error) {
+		t.Fatal("must query the linked MR directly before listing the checkout")
+		return nil, nil
+	}
+	glabViewMR = func(_ context.Context, _ string, rawURL string) (ghpr.PR, error) {
+		if rawURL != mrURL {
+			t.Fatalf("view URL = %q, want %q", rawURL, mrURL)
+		}
+		return ghpr.PR{Provider: "gitlab", Owner: "acme", Repo: "game", Number: 490,
+			Title: "Fix production issue", State: "merged", URL: mrURL, SHA: "27b88db00", MergedAt: &mergedAt}, nil
+	}
+	var reported []ghpr.PR
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/" + issueID + "/pull-requests":
+			_ = json.NewEncoder(w).Encode(map[string]any{"pull_requests": []map[string]any{{"provider": "gitlab", "html_url": mrURL, "state": "open"}}})
+		case "/api/issues/" + issueID + "/pull-requests/report":
+			var body struct {
+				PullRequests []ghpr.PR `json:"pull_requests"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			reported = body.PullRequests
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := cli.NewAPIClient(srv.URL, "", "mat_test")
+
+	refreshIssuePullRequests(context.Background(), client, issueID, "DENE-1156", false, false)
+	if len(reported) != 1 || reported[0].Provider != "gitlab" || reported[0].State != "merged" || reported[0].MergedAt == nil {
+		t.Fatalf("reported = %+v, want merged GitLab MR", reported)
 	}
 }

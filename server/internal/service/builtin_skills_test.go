@@ -354,6 +354,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 	triggerWords := map[string]string{
 		"references/issues.md":          "issue",
 		"references/sub-issues.md":      "sub-issue",
+		"references/wakeups.md":         "wakeup",
 		"references/github-app.md":      "github app",
 		"references/routing.md":         "routing",
 		"references/close-protocol.md":  "close protocol",
@@ -367,9 +368,11 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 		"references/skill-import.md":    "skill import",
 		"references/transfer.md":        "transfer",
 		"references/inbox.md":           "inbox",
+		"references/project-board.md":   "project board",
 		"references/asks.md":            "ask",
 		"references/goals.md":           "goal",
 		"references/progress.md":        "progress",
+		"references/stall-actions.md":   "stall",
 	}
 
 	skill, ok := findSkill(t, PlatformSkillName)
@@ -448,7 +451,6 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				// home, so losing one here loses it everywhere.
 				"A name is not an id",
 				"`--output json` writes to stdout",
-				"`--no-start` when you are only recording",
 				"categories describe lifecycle only",
 				"Custom statuses do not inherit built-in automation behavior",
 				"Comment reads stay bounded",
@@ -460,6 +462,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"that read is the bounded scan",
 			},
 			notWant: []string{
+				"--no-start",
 				// The singular forms this replaced.
 				"open the ONE reference",
 				"there is never a reason to read all eight",
@@ -478,11 +481,10 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				// both halves of it are pinned: a syntax problem is repairable
 				// by editing the PR, and an integration problem is not — an
 				// agent that keeps editing burns deliveries on a no-op.
-				"editing the title or adding a closing keyword re-runs the scan",
+				"editing the title re-runs the scan",
 				"stop editing the PR blind",
 				"whether the installation is bound to this workspace",
 				"redelivered once the receiving side is fixed",
-				"unless the issue should auto-advance",
 				"include the PR URL when a PR exists",
 				"Closes MUL-123",
 				"--status backlog",
@@ -698,14 +700,16 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"multica squad member set-role",
 				"mention://squad/<squad-id>",
 				"recording squad activity",
-				"four ordered blocks",
-				"Leader Identity Reminder, always last",
 				// The debugging entry point must stay a bounded two-step read
 				// (MUL-5442): a roots-only scan alone never returns reply
 				// bodies, where mention triggers and failure reasons live.
 				"--roots-only --summary",
 				"--thread <thread-id> --tail 30",
 				"scan the roots first, then open the threads",
+				// MUL-5850: the reads carry --compact, matching the brief and
+				// the router's bounded-reads rule.
+				"--roots-only --summary --compact --output json",
+				"--thread <thread-id> --tail 30 --compact --output json",
 			},
 			notWant: []string{
 				// MUL-5696: no unbounded comment pull. Both shapes contradict

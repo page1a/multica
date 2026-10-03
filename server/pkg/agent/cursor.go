@@ -1007,9 +1007,11 @@ func cursorErrorText(evt *cursorStreamEvent) string {
 // overridden by user-configured custom_args. Overriding these would break
 // the daemon↔cursor-agent communication protocol.
 var cursorBlockedArgs = map[string]blockedArgMode{
-	"-p":              blockedStandalone, // non-interactive print mode
-	"--output-format": blockedWithValue,  // stream-json protocol
-	"--yolo":          blockedStandalone, // auto-approval for autonomous operation
+	"-p":              blockedStandalone,    // non-interactive print mode
+	"--output-format": blockedWithValue,     // stream-json protocol
+	"--yolo":          blockedStandalone,    // auto-approval for autonomous operation
+	"--resume":        blockedOptionalValue, // managed via ExecOptions.ResumeSessionID; chatId is optional
+	"--continue":      blockedStandalone,    // resumes the latest chat; daemon owns resume
 }
 
 // buildCursorArgs assembles the argv for a one-shot cursor-agent invocation.

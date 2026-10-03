@@ -356,6 +356,7 @@ export function encodeIssueDraftInput(
         description: draft.description,
         status: draft.status,
         priority: draft.priority,
+        ...(draft.goal_mode ? { goal_mode: true } : {}),
         ...(children.length > 0 ? { children } : {}),
         // The proposal travels as `project`, the same key the carrier writes
         // back. The id the person picked does not: the carrier must not see

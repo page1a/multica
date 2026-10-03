@@ -43,6 +43,20 @@ export interface Workspace {
   updated_at: string;
 }
 
+export interface WorkspaceNamingOption {
+  id: "server_llm" | "runtime" | "rules";
+  label: string;
+  available: boolean;
+  recommended?: boolean;
+  reason?: string;
+}
+
+export interface WorkspaceNaming {
+  source: "server_llm" | "runtime" | "rules";
+  options: WorkspaceNamingOption[];
+  stats: { titled: number; runtime: number; rules: number; failed: number };
+}
+
 /**
  * One MCP server in the workspace's library.
  *
@@ -60,6 +74,11 @@ export interface WorkspaceMcpServer {
   name: string;
   transport: string;
   enabled?: boolean;
+  /**
+   * Live agents the entry is assigned to. Only the workspace library listing
+   * carries it, and servers older than this field omit it.
+   */
+  agent_count?: number;
   created_at: string;
   updated_at: string;
 }

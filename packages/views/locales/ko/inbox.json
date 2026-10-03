@@ -70,7 +70,11 @@
     "access_request_expires": "{{until}}에 만료",
     "access_status_approved": "승인됨",
     "access_status_declined": "거절됨",
-    "access_status_expired": "만료됨: 제때 처리되지 않았습니다"
+    "access_status_expired": "만료됨: 제때 처리되지 않았습니다",
+    "stall_review_title": "이 티켓은 24시간 정체 검토 중입니다",
+    "stall_processed_title": "이 티켓은 시스템에서 자동 처리되었습니다",
+    "stall_keep": "유지",
+    "stall_undo": "처리 취소"
   },
   "types": {
     "needs_you": "확인이 필요합니다",
@@ -95,11 +99,13 @@
     "quick_create_failed": "에이전트 생성 실패",
     "quick_create_unconfirmed": "에이전트 생성 결과 미확인",
     "autopilot_paused": "자동화 일시 중지됨",
+    "children_done": "하위 태스크가 모두 끝났습니다",
     "autopilot_quota_exceeded": "자동화 실행 한도 도달",
     "agent_access_request": "에이전트 사용 요청",
     "agent_access_approved": "에이전트 사용 승인됨",
     "agent_access_declined": "에이전트 사용 거절됨",
-    "parking_unexplained": "설명 없이 멈춤"
+    "parking_unexplained": "설명 없이 멈춤",
+    "issue_stall_action": "정체 처리"
   },
   "labels": {
     "set_status_to": "상태 변경:",
@@ -114,6 +120,7 @@
     "created_with_agent": "에이전트가 생성: {{identifier}}",
     "failed_with_detail": "실패: {{detail}}",
     "autopilot_quota_blocked": "한도에 도달하여 실행이 차단됨",
+    "children_done_stage": "{{stage}}단계 하위 태스크가 모두 끝났습니다",
     "access_requested_by": "{{requester}}님이 {{agent}} 사용을 요청했습니다",
     "access_approved_for": "{{agent}} 사용 요청이 승인되었습니다",
     "access_declined_for": "{{agent}} 사용 요청이 거절되었습니다"
@@ -260,6 +267,26 @@
       "todo": "할 일",
       "fresh": "새 소식",
       "done": "완료"
+    },
+    "actions": {
+      "backlog": "나중에 하기",
+      "done": "완료",
+      "cancelled": "하지 않기",
+      "return_to_do": "할 일로 돌려보내기",
+      "return_to_agent": "할 일로 돌려보내기 ({{name}} 깨우기)",
+      "more": "추가 작업",
+      "select": "{{title}} 선택",
+      "selected": "{{count}}개 선택됨",
+      "clear_selection": "선택 해제",
+      "undo": "실행 취소"
+    },
+    "toasts": {
+      "status_changed": "상태가 업데이트되었습니다",
+      "cancelled": "하지 않기로 표시했습니다. 실행 중인 작업은 계속됩니다"
+    },
+    "errors": {
+      "status_failed": "상태를 업데이트하지 못했습니다",
+      "undo_failed": "상태 변경을 되돌리지 못했습니다"
     }
   }
 }

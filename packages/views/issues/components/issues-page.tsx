@@ -14,8 +14,10 @@ import { RefreshablePageIcon } from "../../layout/refreshable-page-icon";
 import { useT } from "../../i18n";
 import { IssueSurface } from "../surface/issue-surface";
 import { IssuesHeader } from "./issues-header";
+import type { IssueSurfaceController } from "../surface/use-issue-surface-controller";
 
 function IssuesSurfaceHeader({
+  controller,
   issues,
   workingAgents,
   isRefreshing,
@@ -23,6 +25,7 @@ function IssuesSurfaceHeader({
   tableFacetCounts,
   onTableFacetChange,
 }: {
+  controller: IssueSurfaceController;
   issues: Issue[];
   workingAgents: WorkingAgentSummary[] | undefined;
   isRefreshing: boolean;
@@ -42,15 +45,16 @@ function IssuesSurfaceHeader({
         </RefreshablePageIcon>
         <h1 className="text-body font-medium">{t(($) => $.page.breadcrumb_title)}</h1>
       </PageHeader>
-      <IssuesHeader
+          <IssuesHeader
         scopedIssues={issues}
         workingAgents={workingAgents}
         dateFilter={dateFilter}
         onDateFilterChange={setDateFilter}
         facetCountsExact={facetCountsExact}
         tableFacetCounts={tableFacetCounts}
-        onTableFacetChange={onTableFacetChange}
-      />
+            onTableFacetChange={onTableFacetChange}
+            onNewGoal={() => controller.openCreateIssue({ goal_mode: true })}
+          />
     </>
   );
 }
@@ -67,6 +71,7 @@ export function IssuesPage() {
         batchToolbar="list"
         renderHeader={({ controller }) => (
           <IssuesSurfaceHeader
+            controller={controller}
             issues={controller.surfaceIssues}
             workingAgents={controller.workingAgents}
             isRefreshing={controller.isRefreshing}

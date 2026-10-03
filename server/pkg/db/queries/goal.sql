@@ -1,6 +1,16 @@
 -- name: GetIssueGoal :one
 SELECT * FROM issue_goal WHERE issue_id = $1 AND workspace_id = $2;
 
+-- name: ListIssueGoalProgress :many
+SELECT g.issue_id,
+       COUNT(c.id)::bigint AS total,
+       COUNT(c.id) FILTER (WHERE c.status = 'passed')::bigint AS passed
+FROM issue_goal g
+LEFT JOIN issue_goal_check c ON c.goal_id = g.id
+WHERE g.workspace_id = $1
+  AND g.issue_id = ANY($2::uuid[])
+GROUP BY g.issue_id;
+
 -- name: CreateIssueGoal :one
 INSERT INTO issue_goal (issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, created_by_type, created_by_id)
 VALUES ($1, $2, 'draft', 0, $3, $4, $5, $6, $7)
@@ -13,6 +23,12 @@ SELECT * FROM issue_goal_check WHERE goal_id = $1 ORDER BY position ASC;
 INSERT INTO issue_goal_check (goal_id, position, description, method)
 VALUES ($1, $2, $3, $4)
 RETURNING *;
+
+-- name: DeleteDraftIssueGoalChecks :exec
+-- Only a draft line may be rewritten; once locked the checks are fixed.
+DELETE FROM issue_goal_check c
+USING issue_goal g
+WHERE c.goal_id = g.id AND g.id = $1 AND g.status = 'draft';
 
 -- name: ConfirmIssueGoal :one
 UPDATE issue_goal

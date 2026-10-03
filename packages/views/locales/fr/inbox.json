@@ -73,7 +73,11 @@
     "access_request_expires": "Expire {{until}}",
     "access_status_approved": "Approuvée",
     "access_status_declined": "Refusée",
-    "access_status_expired": "Expirée : personne n'a répondu à temps"
+    "access_status_expired": "Expirée : personne n'a répondu à temps",
+    "stall_review_title": "Ce ticket est en revue de stagnation pendant 24 heures",
+    "stall_processed_title": "Ce ticket a été traité automatiquement",
+    "stall_keep": "Conserver",
+    "stall_undo": "Annuler le traitement"
   },
   "types": {
     "needs_you": "Nécessite votre attention",
@@ -98,11 +102,13 @@
     "quick_create_failed": "Échec de la création avec un agent",
     "quick_create_unconfirmed": "Création avec un agent non confirmée",
     "autopilot_paused": "Automatisation en pause",
+    "children_done": "Sous-tâches terminées",
     "autopilot_quota_exceeded": "Limite d'exécutions d'automatisation atteinte",
     "agent_access_request": "Demande d'accès à un agent",
     "agent_access_approved": "Accès à l'agent approuvé",
     "agent_access_declined": "Accès à l'agent refusé",
-    "parking_unexplained": "Arrêt sans explication"
+    "parking_unexplained": "Arrêt sans explication",
+    "issue_stall_action": "Action de stagnation"
   },
   "labels": {
     "set_status_to": "Statut défini sur",
@@ -117,6 +123,7 @@
     "created_with_agent": "Créé avec un agent : {{identifier}}",
     "failed_with_detail": "Échec : {{detail}}",
     "autopilot_quota_blocked": "Exécution bloquée car la limite a été atteinte",
+    "children_done_stage": "Sous-tâches de l’étape {{stage}} terminées",
     "access_requested_by": "{{requester}} demande à utiliser {{agent}}",
     "access_approved_for": "Votre demande d'utiliser {{agent}} a été approuvée",
     "access_declined_for": "Votre demande d'utiliser {{agent}} a été refusée"
@@ -266,6 +273,26 @@
       "todo": "À faire",
       "fresh": "Nouveau",
       "done": "Terminé"
+    },
+    "actions": {
+      "backlog": "Faire plus tard",
+      "done": "Terminer",
+      "cancelled": "Ne pas le faire",
+      "return_to_do": "Remettre à faire",
+      "return_to_agent": "Remettre à faire (réveillera {{name}})",
+      "more": "Autres actions",
+      "select": "Sélectionner {{title}}",
+      "selected": "{{count}} sélectionnés",
+      "clear_selection": "Effacer la sélection",
+      "undo": "Annuler"
+    },
+    "toasts": {
+      "status_changed": "Statut mis à jour",
+      "cancelled": "Marqué comme à ne pas faire — les tâches en cours continuent"
+    },
+    "errors": {
+      "status_failed": "Impossible de mettre à jour le statut",
+      "undo_failed": "Impossible d’annuler le changement de statut"
     }
   }
 }

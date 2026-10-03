@@ -181,6 +181,13 @@ export interface IssueSourceContext {
  *  configured, a person's words an agent relayed, an agent's own idea, or
  *  routing. */
 export type IssueAssigneeSource = "human" | "automation" | "quote" | "agent" | "router";
+/** The original a duplicate points at: enough to link it and show its status. */
+export interface IssueDuplicateOf {
+  id: string;
+  identifier: string;
+  title: string;
+  status: IssueStatus;
+}
 
 export interface Issue {
   id: string;
@@ -189,6 +196,8 @@ export interface Issue {
   identifier: string;
   title: string;
   progress?: Progress | null;
+  /** List/board projection of the attached goal; avoids one request per row. */
+  goal_progress?: { done: number; total: number } | null;
   description: string | null;
   status: IssueStatus;
   /**
@@ -224,13 +233,19 @@ export interface Issue {
   creator_type: IssueAssigneeType;
   creator_id: string;
   parent_issue_id: string | null;
+  /**
+   * The original this issue duplicates (MUL-7349): present only while the
+   * issue is cancelled and the original still exists, resolved by the server.
+   * Absent when connected to an older backend.
+   */
+  duplicate_of?: IssueDuplicateOf | null;
   project_id: string | null;
   /** Resource sharing scope. Older servers omit this field. */
   visibility?: "private" | "project" | "workspace";
   position: number;
   // Ordered barrier group among sibling sub-issues (null = unstaged). The
-  // parent assignee is notified/woken only when every sub-issue in a stage
-  // finishes; see server/internal/handler/issue_child_done.go.
+  // parent assignee is woken when a stage closes while a later one waits;
+  // see server/internal/service/issue_wakeup_system.go.
   stage: number | null;
   // Calendar days as date-only "YYYY-MM-DD" (no time, no timezone). Use the
   // helpers in @multica/core/issues/date to format/compare — never `new Date()`

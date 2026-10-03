@@ -282,6 +282,48 @@ func TestEnqueueQuickCreateTaskWithSourceContextIsAtomic(t *testing.T) {
 	}
 }
 
+// A quick-create request carries every fork option as a field, so goal mode
+// and a source context land on one task together (DENE-1183).
+func TestEnqueueQuickCreateCarriesGoalModeWithSourceContext(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx := context.Background()
+	q := db.New(pool)
+	workspaceID, userID, agentID, sourceIssueID := seedAttributionFixture(t, pool)
+	var sourceCommentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content)
+		VALUES ($1, $2, 'member', $3, 'goal history') RETURNING id
+	`, sourceIssueID, workspaceID, userID).Scan(&sourceCommentID); err != nil {
+		t.Fatalf("insert source comment: %v", err)
+	}
+	build, err := BuildSourceContext(ctx, q, util.MustParseUUID(workspaceID), util.MustParseUUID(sourceCommentID))
+	if err != nil {
+		t.Fatalf("build source context: %v", err)
+	}
+	capture, err := PrepareSourceContextCapture(build, dbid.NewV7(), util.MustParseUUID(workspaceID), util.MustParseUUID(userID), time.Now().UTC(), nil)
+	if err != nil {
+		t.Fatalf("prepare source context: %v", err)
+	}
+
+	svc := &TaskService{Queries: q, TxStarter: pool, Bus: events.New()}
+	task, err := svc.EnqueueQuickCreate(ctx, QuickCreateRequest{
+		WorkspaceID: util.MustParseUUID(workspaceID), RequesterID: util.MustParseUUID(userID), AgentID: util.MustParseUUID(agentID),
+		Prompt: "goal from context", Priority: "medium",
+		ParentIssueID: util.MustParseUUID(sourceIssueID), ProjectExplicitNone: true,
+		GoalMode: true, SourceContext: &capture,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	var payload QuickCreateContext
+	if err := json.Unmarshal(task.Context, &payload); err != nil {
+		t.Fatalf("decode context: %v", err)
+	}
+	if !payload.GoalMode || payload.SourceContextID != util.UUIDToString(capture.ID) || !payload.ProjectExplicitNone || payload.ParentIssueID != sourceIssueID {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
 func TestSourceContextRetryTransfersSingleAttachAuthority(t *testing.T) {
 	pool := newResolveOriginatorPool(t)
 	ctx := context.Background()

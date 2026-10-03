@@ -24,6 +24,9 @@ describe("paths.workspace(slug)", () => {
     );
     expect(ws.chatSession("session one")).toBe("/acme/chat/session%20one");
     expect(ws.chatWithPrompt("帮我 过一遍")).toBe(`/acme/chat?prompt=${encodeURIComponent("帮我 过一遍")}`);
+    expect(ws.chatWithPrompt("读项目", "p-1", "p-2")).toBe(
+      `/acme/chat?prompt=${encodeURIComponent("读项目")}&project_ids=p-1%2Cp-2`,
+    );
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
     expect(ws.runtimeSettings("machine/runtime", "runtime one")).toBe(

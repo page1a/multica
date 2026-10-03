@@ -559,7 +559,7 @@
       "unsaved_changes": "Unsaved changes"
     },
     "instructions": {
-      "intro": "Set the system prompt used for every run. It guides behavior but does not enforce permissions or security boundaries. Markdown is supported.",
+      "intro": "Set the system prompt used for every run. Markdown is supported.",
       "system_prompt_label": "System prompt",
       "placeholder": "Define this agent's role, expertise, and working style.\n\n# Example\nYou are a frontend engineer specializing in React and TypeScript.\n\n## Working Style\n- Write small, focused PRs — one commit per logical change\n- Prefer composition over inheritance\n- Always add unit tests for new components\n\n## Constraints\n- Do not modify shared/ types without explicit approval\n- Follow the existing component patterns in features/",
       "system_layer_label": "Maintained by Multica",
@@ -567,7 +567,7 @@
       "system_layer_show": "Show",
       "system_layer_hide": "Hide",
       "workspace_notes_label": "Workspace notes",
-      "workspace_notes_intro": "Add your team's context and preferences below. They guide behavior on top of the instructions Multica maintains for this agent, but do not enforce permissions or security boundaries. Markdown is supported.",
+      "workspace_notes_intro": "Add your team's context and preferences below. They apply on top of the instructions Multica maintains for this agent. Markdown is supported.",
       "workspace_notes_placeholder": "Add context this agent should always have.\n\n# Example\nOur main repository is github.com/acme/platform.\nWrite issues in English even when we chat in Chinese.\nWe do not deploy on Fridays."
     },
     "accounts": {
@@ -1152,7 +1152,6 @@
     "copy_filtered": "Copy filtered",
     "copied": "Copied",
     "waiting_events": "Waiting for events...",
-    "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the run completes.",
     "no_data": "No execution data recorded.",
     "sort_chronological": "Oldest first",
     "sort_newest_first": "Newest first",
@@ -1169,6 +1168,7 @@
     "status_waiting": "Waiting",
     "status_deferred": "Retrying",
     "trigger_initial": "Initial run",
+    "trigger_text": "Trigger",
     "trigger_comment": "From a comment",
     "trigger_autopilot": "Autopilot",
     "trigger_retry": "Retry",
@@ -1230,6 +1230,7 @@
     "tool_kind_write": "Edits",
     "tool_kind_read": "Reads",
     "tool_kind_misc": "Other",
+    "trigger_wakeup": "Wakeup",
     "details_source": "Code source",
     "details_source_path": "Directory",
     "details_source_path_planned": "Will use",

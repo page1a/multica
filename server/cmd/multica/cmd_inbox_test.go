@@ -74,3 +74,35 @@ func TestInboxBoardProjectFlag(t *testing.T) {
 		t.Fatalf("an unresolved project must not read the board")
 	}
 }
+
+func TestInboxDismissPostsIssueAndReason(t *testing.T) {
+	const issueID = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	var gotReason string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/inbox/issues/"+issueID+"/dismiss" {
+			t.Fatalf("unexpected request %s", r.URL)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		gotReason = body["reason"]
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issue_id": issueID,
+			"reason":   gotReason,
+		})
+	}))
+	defer srv.Close()
+	setCopyTestEnv(t, srv.URL)
+
+	cmd := &cobra.Command{}
+	cmd.PersistentFlags().String("profile", "", "")
+	cmd.Flags().String("reason", "已在别处定案", "")
+	cmd.Flags().String("output", "json", "")
+	if err := runInboxDismiss(cmd, []string{issueID}); err != nil {
+		t.Fatalf("runInboxDismiss: %v", err)
+	}
+	if gotReason != "已在别处定案" {
+		t.Fatalf("reason = %q", gotReason)
+	}
+}

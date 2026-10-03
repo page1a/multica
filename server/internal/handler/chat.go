@@ -381,6 +381,78 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, responses[0])
 }
 
+// ConvertChatSessionToGoal turns the current conversation into an ordinary
+// issue owned by the same agent. The caller then uses the shared goal endpoint
+// to edit and lock its completion line, so chat does not grow a second goal
+// rule set.
+func (h *Handler) ConvertChatSessionToGoal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
+	if !ok {
+		return
+	}
+	messages, err := h.Queries.ListChatMessages(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read chat transcript")
+		return
+	}
+	var seed string
+	for _, message := range messages {
+		if message.Role == "user" && strings.TrimSpace(message.Content) != "" {
+			seed = strings.TrimSpace(message.Content)
+			break
+		}
+	}
+	title := strings.TrimSpace(session.Title)
+	if title == "" || title == "New chat" {
+		title = seed
+	}
+	if title == "" {
+		writeError(w, http.StatusBadRequest, "chat has no user message to turn into a goal")
+		return
+	}
+	if len([]rune(title)) > chatSessionTitleMaxLen {
+		title = string([]rune(title)[:chatSessionTitleMaxLen])
+	}
+	creatorID, err := util.ParseUUID(userID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
+		WorkspaceID: session.WorkspaceID,
+		Title:       title,
+		Description: pgtype.Text{String: seed, Valid: seed != ""},
+		Status:      "todo", Priority: "none",
+		AssigneeType: pgtype.Text{String: "agent", Valid: true}, AssigneeID: session.AgentID,
+		CreatorType: "member", CreatorID: creatorID,
+		ProjectID: session.ProjectID, ProjectPinned: session.ProjectID.Valid,
+		GoalMode: true,
+	}, service.IssueCreateOpts{ActorID: userID, AnalyticsAgentID: uuidToString(session.AgentID), Platform: "web"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create goal issue")
+		return
+	}
+	prefix := h.getIssuePrefix(r.Context(), session.WorkspaceID)
+	resp := issueToResponse(result.Issue, prefix)
+	// Leave a visible bridge in the conversation so the conversion is
+	// discoverable after the composer closes. The issue remains the source of
+	// truth; this message is only the chat-side link record.
+	if _, messageErr := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		ChatSessionID: session.ID,
+		Role:          "assistant",
+		Content:       fmt.Sprintf("已转成目标任务 [%s](mention://issue/%s)", resp.Identifier, resp.ID),
+		MessageKind:   pgtype.Text{String: "goal_link", Valid: true},
+	}); messageErr != nil {
+		slog.Warn("chat goal conversion link message failed", "session_id", uuidToString(session.ID), "issue_id", resp.ID, "error", messageErr)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"issue": resp, "chat_session_id": uuidToString(session.ID)})
+}
+
 type UpdateChatSessionRequest struct {
 	Title     *string         `json:"title"`
 	ProjectID json.RawMessage `json:"project_id"`
@@ -783,8 +855,8 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusInternalServerError, "failed to cancel queued tasks for the archived session")
 				return
 			}
-			if err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
+			if err = service.SettleTerminalTaskState(r.Context(), qtx, cancelled...); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to settle terminal task state")
 				return
 			}
 		case errors.Is(bindingErr, pgx.ErrNoRows):
@@ -904,8 +976,8 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to cancel chat session tasks")
 		return
 	}
-	if err := service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
+	if err := service.SettleTerminalTaskState(r.Context(), qtx, cancelled...); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to settle terminal task state")
 		return
 	}
 

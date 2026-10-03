@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DENE-1121 · 聊天项目栏与左边栏共用一份项目置顶</title>
+<style>
+  :root { --bg:#fafafa; --panel:#fff; --line:#e5e5e5; --muted:#737373; --fg:#171717; --accent:#2563eb; --pin:#f59e0b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:20px 28px 8px; }
+  header h1 { font-size:18px; margin:0 0 4px; }
+  header p { margin:0; color:var(--muted); }
+  .scenes { display:grid; gap:24px; padding:16px 28px 40px; }
+  .scene { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .scene > h2 { margin:0; padding:10px 16px; font-size:13px; border-bottom:1px solid var(--line); background:#f5f5f5; }
+  .app { display:grid; grid-template-columns:220px 1fr; min-height:220px; }
+  .sidebar { border-right:1px solid var(--line); padding:12px; }
+  .sidebar .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:4px 6px 6px; }
+  .sidebar .item { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; }
+  .sidebar .item.hl { background:#eff6ff; outline:1px dashed var(--accent); }
+  .dot { width:8px; height:8px; border-radius:2px; background:#a3a3a3; }
+  .main { padding:12px 16px; }
+  .bar { display:flex; gap:6px; flex-wrap:wrap; padding-bottom:10px; border-bottom:1px solid var(--line); }
+  .chip { padding:3px 10px; border:1px solid var(--line); border-radius:999px; font-size:12px; white-space:nowrap; }
+  .chip.active { background:var(--fg); color:#fff; border-color:var(--fg); }
+  .chip.pinned::before { content:"📌 "; font-size:10px; }
+  .chip.hl { outline:1px dashed var(--accent); outline-offset:1px; }
+  .chip.more { color:var(--muted); }
+  .threads { margin-top:10px; color:var(--muted); font-size:12px; }
+  .note { padding:10px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+  .note b { color:var(--fg); }
+  .store { font-family:ui-monospace,Menlo,monospace; font-size:12px; background:#f5f5f5; padding:2px 6px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>聊天项目栏与左边栏共用一份项目置顶（DENE-1121）</h1>
+  <p>📌 表示服务端置顶（/api/pins，按人保存）。两处显示同一份列表、同一个顺序。虚线框标出这一步变化的地方。</p>
+</header>
+<div class="scenes">
+
+  <section class="scene">
+    <h2>① 首次加载：本机旧置顶迁移到服务端</h2>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="label">置顶</div>
+        <div class="item"><span class="dot"></span>Multica 魔改</div>
+        <div class="item hl"><span class="dot"></span>Agent mono</div>
+        <div class="item hl"><span class="dot"></span>IPA-input</div>
+      </aside>
+      <div class="main">
+        <div class="bar">
+          <span class="chip active">全部</span>
+          <span class="chip pinned">Multica 魔改</span>
+          <span class="chip pinned hl">Agent mono</span>
+          <span class="chip pinned hl">IPA-input</span>
+          <span class="chip">online-tarot</span>
+          <span class="chip more">更多 ▾</span>
+        </div>
+        <div class="threads">聊天列表……</div>
+      </div>
+    </div>
+    <div class="note">迁移前：服务端只置顶了 <b>Multica 魔改</b>，本机项目栏还记着 <span class="store">[Agent mono, Multica 魔改, IPA-input]</span>。迁移会跳过服务端已有的项目，把缺的两个按本机顺序<b>追加到已有置顶之后</b>，全部写入成功后清掉本机这份。只迁移当前登录用户的数据，写入失败就保留本机数据，下次加载再补（重复执行不会重复置顶）。</div>
+  </section>
+
+  <section class="scene">
+    <h2>② 在左边栏拖动排序 → 聊天项目栏立刻同步</h2>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="label">置顶</div>
+        <div class="item hl"><span class="dot"></span>IPA-input</div>
+        <div class="item"><span class="dot"></span>Multica 魔改</div>
+        <div class="item"><span class="dot"></span>Agent mono</div>
+      </aside>
+      <div class="main">
+        <div class="bar">
+          <span class="chip active">全部</span>
+          <span class="chip pinned hl">IPA-input</span>
+          <span class="chip pinned">Multica 魔改</span>
+          <span class="chip pinned">Agent mono</span>
+          <span class="chip">online-tarot</span>
+          <span class="chip more">更多 ▾</span>
+        </div>
+        <div class="threads">聊天列表……</div>
+      </div>
+    </div>
+    <div class="note">两处读同一份置顶数据，左边栏一改，聊天项目栏马上跟着变；刷新页面或换浏览器后顺序也一样。</div>
+  </section>
+
+  <section class="scene">
+    <h2>③ 在聊天项目栏的「更多」里取消置顶 → 左边栏同步移除</h2>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="label">置顶</div>
+        <div class="item"><span class="dot"></span>IPA-input</div>
+        <div class="item"><span class="dot"></span>Agent mono</div>
+      </aside>
+      <div class="main">
+        <div class="bar">
+          <span class="chip active">全部</span>
+          <span class="chip pinned">IPA-input</span>
+          <span class="chip pinned">Agent mono</span>
+          <span class="chip hl">Multica 魔改</span>
+          <span class="chip">online-tarot</span>
+          <span class="chip more">更多 ▾</span>
+        </div>
+        <div class="threads">聊天列表……</div>
+      </div>
+    </div>
+    <div class="note"><b>Multica 魔改</b>取消置顶后退回普通位置（有聊天的项目按最近聊天排）；左边栏的置顶区同时少了这一项。在「更多」里置顶或拖动排序，写回的也是同一份服务端置顶。</div>
+  </section>
+
+</div>
+</body>
+</html>

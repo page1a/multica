@@ -68,3 +68,27 @@ SET answered_at = now()
 WHERE issue_id = $1 AND answered_at IS NULL
   AND (sqlc.narg('recipient_id')::uuid IS NULL OR recipient_id = sqlc.narg('recipient_id')::uuid)
 RETURNING *;
+
+-- name: DismissOpenIssueSummonForRecipient :one
+-- An agent may clear one stale "waiting on you" reminder only for the human
+-- behind its direct-human run. Close the summon and archive exactly the inbox
+-- row delivered for that summon; the handler writes the visible reason comment
+-- in the same transaction.
+WITH dismissed AS (
+    UPDATE issue_summon
+    SET answered_at = now()
+    WHERE issue_summon.issue_id = $1
+      AND issue_summon.recipient_id = $2
+      AND issue_summon.answered_at IS NULL
+    RETURNING *
+), archived AS (
+    UPDATE inbox_item i
+    SET archived = true
+    FROM dismissed d
+    WHERE i.id = d.inbox_item_id
+      AND i.workspace_id = d.workspace_id
+      AND i.recipient_type = 'member'
+      AND i.recipient_id = d.recipient_id
+      AND i.archived = false
+)
+SELECT dismissed.* FROM dismissed;

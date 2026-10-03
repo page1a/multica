@@ -24,13 +24,6 @@ func (h *Handler) deliveryClient() *http.Client {
 	return delivery.HTTP
 }
 
-// closeDeclare is a --pr link resolved before the close gate runs.
-type closeDeclare struct {
-	URL        string
-	Verified   bool
-	Unverified bool
-}
-
 // deliveryBag memoises one request's lookup and the --pr verdict. The close
 // handler puts it on the context; a status write that has none just looks up
 // once per call.
@@ -143,6 +136,16 @@ func (h *Handler) computeIssueDeliveries(ctx context.Context, issue db.Issue) (i
 		return issueDeliveries{Ident: ident}, err
 	}
 	if len(gh)+len(vcsRows) > 0 {
+		// Webhooks are the normal update path, but a self-hosted GitLab MR can
+		// be merged without the webhook reaching this server. Refresh linked VCS
+		// rows through the configured provider before the close gate decides.
+		if len(vcsRows) > 0 {
+			h.refreshLinkedVCSPulls(ctx, issue, vcsRows)
+			gh, vcsRows, err = h.loadDeliveryRows(ctx, issue.ID)
+			if err != nil {
+				return issueDeliveries{Ident: ident}, err
+			}
+		}
 		return finishDeliveries(ident, gh, vcsRows, false, true, false, ""), nil
 	}
 
@@ -232,7 +235,7 @@ func (h *Handler) computeIssueDeliveries(ctx context.Context, issue db.Issue) (i
 		h.recordLookup(ctx, *conn, true, "")
 		queried = true
 		for _, pull := range pulls {
-			if !namesIssue(pull, ident) {
+			if !pullNamesIssue(pull, ident) {
 				continue
 			}
 			if err := h.persistDeliveryPull(ctx, issue, conn, pull); err != nil {
@@ -258,6 +261,48 @@ func (h *Handler) computeIssueDeliveries(ctx context.Context, issue db.Issue) (i
 		view.Gap.NextCommand = gitconn.AddCommand(deniedHost) + " --yes"
 	}
 	return view, nil
+}
+
+// refreshLinkedVCSPulls asks each configured self-hosted provider for the
+// current state of an already-linked MR. This closes the stale-open window
+// where a GitLab MR was merged after its last webhook but before issue close.
+// A missing token or a failed read is deliberately best-effort: the stored
+// snapshot remains the conservative fallback.
+func (h *Handler) refreshLinkedVCSPulls(ctx context.Context, issue db.Issue, rows []db.ListVCSPullRequestsByIssueRow) {
+	if !h.isVCSAvailable() || !h.isVCSConfigured() {
+		return
+	}
+	conns, err := h.Queries.ListVCSConnectionsByWorkspace(ctx, issue.WorkspaceID)
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		ref, err := delivery.ParsePullURL(row.HtmlUrl)
+		if err != nil {
+			continue
+		}
+		conn := matchConnection(conns, ref.Key, ref.Host)
+		if conn == nil {
+			continue
+		}
+		token, err := h.openVCSSecret(conn.AccessTokenEncrypted)
+		if err != nil || token == "" || token == "local" {
+			continue
+		}
+		pull, err := delivery.Fetch(ctx, h.deliveryClient(), ref.Provider, delivery.APIBase(ref.Provider, conn.InstanceUrl, ""), token, ref)
+		if err != nil || pull.Number == 0 {
+			continue
+		}
+		if pull.URL == "" {
+			pull.URL = ref.URL
+		}
+		if pull.Provider == "" {
+			pull.Provider = ref.Provider
+		}
+		if err := h.persistDeliveryPull(ctx, issue, conn, pull); err != nil {
+			slog.Warn("delivery: refresh linked pull failed", "issue_id", uuidToString(issue.ID), "url", ref.URL, "error", err)
+		}
+	}
 }
 
 // deliveryRepos narrows a delivery lookup to the issue's project repositories
@@ -400,69 +445,6 @@ func (h *Handler) recordLookup(ctx context.Context, conn db.VcsConnection, ok bo
 	})
 }
 
-// resolveDeclaredPull checks a --pr link once. A link the provider confirms
-// is stored and linked even when the title omits the issue key. A link that
-// cannot be checked still returns, marked unverified, so the close proceeds.
-func (h *Handler) resolveDeclaredPull(ctx context.Context, issue db.Issue, raw string) (closeDeclare, error) {
-	ref, err := delivery.ParsePullURL(raw)
-	if err != nil {
-		return closeDeclare{}, err
-	}
-	d := closeDeclare{URL: ref.URL}
-	if h.urlAlreadyLinked(ctx, issue.ID, ref.URL) {
-		d.Verified = true
-		h.rememberDeclared(ctx, d)
-		return d, nil
-	}
-	if h.fetchAndLinkDeclared(ctx, issue, ref) {
-		invalidateDelivery(ctx)
-		d.Verified = true
-		h.rememberDeclared(ctx, d)
-		return d, nil
-	}
-	view, _ := h.ensureIssueDeliveries(ctx, issue)
-	if deliveriesContainURL(view, ref.URL) {
-		d.Verified = true
-	} else {
-		d.Unverified = true
-	}
-	h.rememberDeclared(ctx, d)
-	return d, nil
-}
-
-func (h *Handler) fetchAndLinkDeclared(ctx context.Context, issue db.Issue, ref delivery.Ref) bool {
-	if !h.isVCSAvailable() || !h.isVCSConfigured() {
-		return false
-	}
-	conns, err := h.Queries.ListVCSConnectionsByWorkspace(ctx, issue.WorkspaceID)
-	if err != nil {
-		return false
-	}
-	conn := matchConnection(conns, ref.Key, ref.Host)
-	if conn == nil {
-		return false
-	}
-	token, err := h.openVCSSecret(conn.AccessTokenEncrypted)
-	if err != nil || token == "" || token == "local" {
-		return false
-	}
-	pull, err := delivery.Fetch(ctx, h.deliveryClient(), ref.Provider, delivery.APIBase(ref.Provider, conn.InstanceUrl, ""), token, ref)
-	if err != nil || pull.Number == 0 {
-		return false
-	}
-	if pull.URL == "" {
-		pull.URL = ref.URL
-	}
-	if pull.Provider == "" {
-		pull.Provider = ref.Provider
-	}
-	if err := h.persistDeliveryPull(ctx, issue, conn, pull); err != nil {
-		slog.Warn("delivery: persist declared pull failed", "url", ref.URL, "error", err)
-		return false
-	}
-	return true
-}
-
 func (h *Handler) persistDeliveryPull(ctx context.Context, issue db.Issue, conn *db.VcsConnection, pull delivery.Pull) error {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	if pull.Provider == "github" || pull.Provider == "" {
@@ -531,23 +513,23 @@ func (h *Handler) persistDeliveryPull(ctx context.Context, issue db.Issue, conn 
 }
 
 func (h *Handler) linkGitHubDelivery(ctx context.Context, issue db.Issue, prID pgtype.UUID, title, branch string) {
-	_ = h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
-		IssueID: issue.ID, PullRequestID: prID, CloseIntent: true,
+	_, _ = h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+		IssueID: issue.ID, PullRequestID: prID,
 	})
 	h.linkNamedIssues(ctx, issue, title, branch, func(id pgtype.UUID) {
-		_ = h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
-			IssueID: id, PullRequestID: prID, CloseIntent: true,
+		_, _ = h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+			IssueID: id, PullRequestID: prID,
 		})
 	})
 }
 
 func (h *Handler) linkVCSDelivery(ctx context.Context, issue db.Issue, prID pgtype.UUID, title, branch string) {
-	_ = h.Queries.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
-		IssueID: issue.ID, PullRequestID: prID, CloseIntent: true,
+	_, _ = h.Queries.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
+		IssueID: issue.ID, PullRequestID: prID,
 	})
 	h.linkNamedIssues(ctx, issue, title, branch, func(id pgtype.UUID) {
-		_ = h.Queries.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
-			IssueID: id, PullRequestID: prID, CloseIntent: true,
+		_, _ = h.Queries.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
+			IssueID: id, PullRequestID: prID,
 		})
 	})
 }
@@ -569,28 +551,6 @@ func (h *Handler) linkNamedIssues(ctx context.Context, issue db.Issue, title, br
 		}
 		link(other.ID)
 	}
-}
-
-func (h *Handler) urlAlreadyLinked(ctx context.Context, issueID pgtype.UUID, raw string) bool {
-	gh, vcsRows, err := h.loadDeliveryRows(ctx, issueID)
-	if err != nil {
-		return false
-	}
-	return deliveriesContainURL(issueDeliveries{GitHub: gh, VCS: vcsRows}, raw)
-}
-
-func deliveriesContainURL(view issueDeliveries, raw string) bool {
-	for _, row := range view.GitHub {
-		if samePullURL(row.HtmlUrl, raw) {
-			return true
-		}
-	}
-	for _, row := range view.VCS {
-		if samePullURL(row.HtmlUrl, raw) {
-			return true
-		}
-	}
-	return false
 }
 
 func situationFromRows(ident string, gh []db.ListPullRequestsByIssueRow, vcsRows []db.ListVCSPullRequestsByIssueRow, queried, connected bool) delivery.Situation {
@@ -705,14 +665,6 @@ func splitRepoKey(key string) (host, owner, repo string, ok bool) {
 		return "", "", "", false
 	}
 	return host, owner, repo, true
-}
-
-func namesIssue(pull delivery.Pull, ident string) bool {
-	id := strings.ToLower(strings.TrimSpace(ident))
-	if id == "" {
-		return false
-	}
-	return strings.Contains(strings.ToLower(pull.Title), id) || strings.Contains(strings.ToLower(pull.Branch), id)
 }
 
 func samePullURL(a, b string) bool {

@@ -2,14 +2,114 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+// ChatTitleRequest is the small, server-validated contract behind
+// `multica chat title`. Runtime agents report a complete display title; the
+// server never lets that write turn into a manual lock.
+type ChatTitleRequest struct {
+	Title string `json:"title"`
+}
+
+func (h *Handler) recordChatNamingEvent(ctx context.Context, session db.ChatSession, source, status string) {
+	if h.DB == nil {
+		return
+	}
+	if _, err := h.DB.Exec(ctx, `INSERT INTO chat_naming_event (workspace_id, chat_session_id, source, status) VALUES ($1, $2, $3, $4)`, session.WorkspaceID, session.ID, source, status); err != nil {
+		slog.Warn("record chat naming event failed", "session_id", uuidToString(session.ID), "error", err)
+	}
+}
+
+// normalizeRuntimeChatTitle enforces the runtime title convention. The
+// separator makes the project/topic split visible in every client while the
+// existing model recap remains backwards compatible with older plain titles.
+func normalizeRuntimeChatTitle(raw string) (string, error) {
+	collapsed := strings.TrimSpace(strings.Join(strings.Fields(raw), " "))
+	if len([]rune(collapsed)) > chatSessionTitleMaxLen {
+		return "", errors.New("title is too long")
+	}
+	title := sanitizeChatTitle(raw)
+	if title == "" {
+		return "", errors.New("title is required")
+	}
+	parts := strings.SplitN(title, "·", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", errors.New("title must use the format Project · topic")
+	}
+	return strings.TrimSpace(parts[0]) + " · " + strings.TrimSpace(parts[1]), nil
+}
+
+// WriteChatTitle is POST /api/chat/sessions/{sessionId}/title. It is the
+// server-side command used by a chat agent at the beginning of a run.
+// Manual renames set title_locked and are reported as a conflict instead of
+// being silently overwritten.
+func (h *Handler) WriteChatTitle(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
+	if !ok {
+		return
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if actorType != "agent" {
+		writeError(w, http.StatusForbidden, "chat title may only be reported by the chat agent runtime")
+		return
+	}
+	var req ChatTitleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.recordChatNamingEvent(r.Context(), session, "runtime", "failure")
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	title, err := normalizeRuntimeChatTitle(req.Title)
+	if err != nil {
+		h.recordChatNamingEvent(r.Context(), session, "runtime", "failure")
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if session.TitleLocked {
+		h.recordChatNamingEvent(r.Context(), session, "runtime", "failure")
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "chat title is locked",
+			"reason": "a member manually renamed this chat; runtime titles cannot replace it",
+		})
+		return
+	}
+	updated, err := h.Queries.UpdateChatSessionTitleIfCurrent(r.Context(), db.UpdateChatSessionTitleIfCurrentParams{
+		ID: session.ID, ExpectedTitle: session.Title, NewTitle: title,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.recordChatNamingEvent(r.Context(), session, "runtime", "failure")
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "chat title changed",
+			"reason": "the title was changed by another writer or locked by a member",
+		})
+		return
+	}
+	if err != nil {
+		h.recordChatNamingEvent(r.Context(), session, "runtime", "failure")
+		writeError(w, http.StatusInternalServerError, "failed to update chat title")
+		return
+	}
+	h.publishChatSessionState(workspaceID, actorType, actorID, updated)
+	h.recordChatNamingEvent(r.Context(), updated, "runtime", "success")
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
+}
 
 // ChannelChatStarted publishes list invalidation metadata without changing any
 // client's current navigation. The explicit empty Chat is already committed.

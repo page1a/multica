@@ -91,6 +91,14 @@ var workspaceUpdateCmd = &cobra.Command{
 	RunE:  runWorkspaceUpdate,
 }
 
+var workspaceNamingCmd = &cobra.Command{
+	Use:   "naming [workspace-id|slug|prefix]",
+	Short: "Read or change the chat naming source",
+	Long:  "Reads the current chat naming source. Pass --source server_llm, runtime, or rules to change it (owner/admin only).",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runWorkspaceNaming,
+}
+
 var workspaceSwitchCmd = &cobra.Command{
 	Use:   "switch <workspace-id|slug|prefix>",
 	Short: "Set the default workspace for this profile",
@@ -172,6 +180,7 @@ func init() {
 	workspaceMemberCmd.AddCommand(workspaceMemberListCmd)
 	workspaceMemberCmd.AddCommand(workspaceMemberInviteCmd)
 	workspaceCmd.AddCommand(workspaceUpdateCmd)
+	workspaceCmd.AddCommand(workspaceNamingCmd)
 	workspaceCmd.AddCommand(workspaceSwitchCmd)
 	workspaceCmd.AddCommand(workspaceMcpCmd)
 	workspaceMcpCmd.AddCommand(workspaceMcpListCmd)
@@ -201,6 +210,8 @@ func init() {
 	workspaceUpdateCmd.Flags().Bool("context-stdin", false, "Read context from stdin (preserves multi-line content verbatim)")
 	workspaceUpdateCmd.Flags().String("issue-prefix", "", "New issue prefix (uppercased server-side)")
 	workspaceUpdateCmd.Flags().String("output", "json", "Output format: table or json")
+	workspaceNamingCmd.Flags().String("source", "", "Naming source: server_llm, runtime, or rules")
+	workspaceNamingCmd.Flags().String("output", "json", "Output format: table or json")
 
 	workspaceMcpListCmd.Flags().String("output", "json", "Output format: table or json")
 	// Same three mutually-exclusive secret-safe channels as `agent update`,
@@ -216,6 +227,44 @@ func init() {
 	workspaceMcpUpdateCmd.Flags().String("server-config-file", "", "Read the replacement server entry JSON from a file")
 	workspaceMcpUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 	workspaceMcpRemoveCmd.Flags().String("output", "json", "Output format: table or json")
+}
+
+func runWorkspaceNaming(cmd *cobra.Command, args []string) error {
+	wsID, err := resolveWorkspaceArg(cmd, args)
+	if err != nil {
+		return err
+	}
+	if wsID == "" {
+		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix or set MULTICA_WORKSPACE_ID")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	path := "/api/workspaces/" + url.PathEscape(wsID) + "/naming"
+	var out map[string]any
+	if source, _ := cmd.Flags().GetString("source"); strings.TrimSpace(source) != "" {
+		if err := client.PutJSON(ctx, path, map[string]any{"source": source}, &out); err != nil {
+			return fmt.Errorf("update workspace naming: %w", err)
+		}
+	} else if err := client.GetJSON(ctx, path, &out); err != nil {
+		return fmt.Errorf("get workspace naming: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		fmt.Printf("Source: %v\n", out["source"])
+		if options, ok := out["options"].([]any); ok {
+			for _, option := range options {
+				if item, ok := option.(map[string]any); ok {
+					fmt.Printf("%v\t%v\t%v\n", item["id"], item["label"], item["available"])
+				}
+			}
+		}
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, out)
 }
 
 // workspaceSummary is the subset of fields the CLI needs from /api/workspaces

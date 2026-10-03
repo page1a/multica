@@ -22,8 +22,8 @@ Inspect first:
 multica issue get <issue-id> --output json
 multica squad get <squad-id> --output json
 multica squad member list <squad-id> --output json
-multica issue comment list <issue-id> --roots-only --summary --output json
-multica issue comment list <issue-id> --thread <thread-id> --tail 30 --output json
+multica issue comment list <issue-id> --roots-only --summary --compact --output json
+multica issue comment list <issue-id> --thread <thread-id> --tail 30 --compact --output json
 ```
 
 The two comment reads are a sequence: scan the roots first, then open the
@@ -89,7 +89,7 @@ Issue/comment commands often needed with squads:
 ```bash
 multica issue get <issue-id> --output json
 multica issue update <issue-id> --help
-multica issue comment list <issue-id> --roots-only --summary --output json
+multica issue comment list <issue-id> --roots-only --summary --compact --output json
 multica issue comment add <issue-id> --help
 ```
 
@@ -140,16 +140,11 @@ the backend adds the new leader as a squad member with role `leader`.
 ## Leader briefing
 
 For squad leader tasks, Multica appends a squad leader briefing to the leader
-agent instructions. The briefing includes four ordered blocks (Squad
-Instructions is omitted when `instructions` is empty):
+agent instructions. The briefing includes:
 
 - Squad Operating Protocol;
 - Squad Roster;
-- Squad Instructions, only when `instructions` is non-empty;
-- Leader Identity Reminder, always last. It re-establishes that the running
-  agent is the squad leader after the roster and any squad instructions;
-  member roles and squad guidance remain coordination context and do not
-  replace the leader's own identity or instructions.
+- Squad Instructions, only when `instructions` is non-empty.
 
 Roster entries include member name, member type, mention markdown, and non-empty
 role. For agent members the roster also lists their assigned skills

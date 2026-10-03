@@ -636,6 +636,31 @@ func TestBuildClaudeArgsFiltersBlockedCustomArgs(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgsFiltersSessionContinuationCustomArgs(t *testing.T) {
+	t.Parallel()
+
+	args := buildClaudeArgs(ExecOptions{
+		CustomArgs: []string{
+			"-c", "model_reasoning_effort=high",
+			"--continue",
+			"-r", "old-session",
+			"--resume=another-session",
+			"--session-id", "session-id",
+			"--fork-session",
+			"--max-turns", "7",
+		},
+	}, slog.Default())
+
+	for _, blocked := range []string{"-c", "model_reasoning_effort=high", "--continue", "-r", "old-session", "--resume=another-session", "--session-id", "session-id", "--fork-session"} {
+		if slices.Contains(args, blocked) {
+			t.Fatalf("session continuation arg %q reached Claude: %v", blocked, args)
+		}
+	}
+	if !slices.Contains(args, "--max-turns") || !slices.Contains(args, "7") {
+		t.Fatalf("unrelated custom args were filtered: %v", args)
+	}
+}
+
 func TestBuildClaudeInputEncodesUserMessage(t *testing.T) {
 	t.Parallel()
 

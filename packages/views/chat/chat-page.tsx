@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useRequiredWorkspaceSlug, useWorkspacePaths } from "@multica/core/paths";
+import { getCurrentSlug } from "@multica/core/platform";
 import { useChatStore } from "@multica/core/chat";
 import { chatSessionProjectIds } from "@multica/core/chat/project-context";
 import {
@@ -34,6 +35,7 @@ import {
   useRegenerateChatQuickActions,
 } from "@multica/core/chat/mutations";
 import {
+  chatKeys,
   chatMessageSearchOptions,
   chatMessagesOptions,
   chatQuickActionsPendingOptions,
@@ -42,6 +44,8 @@ import { useQuickActionsPendingTimeout } from "@multica/core/chat/use-quick-acti
 import { useQuickActionsFailureToast } from "./components/use-quick-actions-failure-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatSessionIdFromLocation } from "@multica/core/paths";
+import { pinListOptions, useCreatePin, useDeletePin, useReorderPins } from "@multica/core/pins";
+import { useChatProjectBarStore, selectPinnedProjectIds } from "@multica/core/chat/project-bar-store";
 import type { Agent, ChatSession } from "@multica/core/types";
 import { PageHeader } from "../layout/page-header";
 import { useBackOrReplace, useNavigation } from "../navigation";
@@ -71,6 +75,8 @@ import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { useDebouncedValue } from "../common/use-debounced-value";
 import { useRestoredScrollRef } from "../platform";
 import { openAlignIssue } from "@multica/core/issues/stores/create-mode-store";
+import { api } from "@multica/core/api";
+import { openGoalCompletion } from "@multica/core/modals";
 
 /**
  * Title half of the chat page search: every word in the title, or the whole
@@ -129,10 +135,87 @@ export function ChatPage() {
   const { pathname, searchParams, replace, push, back } = useNavigation();
   const backOrReplace = useBackOrReplace();
   const queryClient = useQueryClient();
+  const workspaceSlug = useRequiredWorkspaceSlug();
   const wsPaths = useWorkspacePaths();
+  // App Router can retain this page after navigation. Once the URL belongs
+  // to another route, this instance must stop reconciling shared chat state.
+  // Also check the live workspace mirror in each effect: the incoming layout
+  // can rehydrate the store before this page observes the destination URL.
+  // This fork addresses a thread by path (`/chat/<id>`), so the chat route is
+  // the list path and everything under it.
+  const isCurrentChatRoute =
+    pathname === wsPaths.chat() || pathname.startsWith(`${wsPaths.chat()}/`);
   const isCompact = useIsCompact();
 
-  const c = useChatController({ isActive: true });
+  const c = useChatController({
+    isActive: isCurrentChatRoute && getCurrentSlug() === workspaceSlug,
+  });
+  const pinUserId = c.user?.id ?? "";
+  const localProjectPins = useChatProjectBarStore(selectPinnedProjectIds(pinUserId || null));
+  const removeLocalProjectPins = useChatProjectBarStore((s) => s.remove);
+  const projectPinQuery = useQuery({
+    ...pinListOptions(c.wsId, pinUserId),
+    enabled: !!c.wsId && !!pinUserId,
+  });
+  const pinnedItems = useMemo(() => projectPinQuery.data ?? [], [projectPinQuery.data]);
+  const createPin = useCreatePin();
+  const deletePin = useDeletePin();
+  const reorderPins = useReorderPins();
+  const migrationKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pinUserId || !c.wsId || !c.projectsLoaded || !projectPinQuery.isSuccess) return;
+    const key = `${c.wsId}:${pinUserId}`;
+    if (migrationKeyRef.current === key) return;
+    const workspaceProjectIds = new Set(c.projects.map((project) => project.id));
+    const candidates = localProjectPins.filter((id) => workspaceProjectIds.has(id));
+    if (candidates.length === 0) return;
+    migrationKeyRef.current = key;
+    const serverProjectIds = new Set(
+      pinnedItems.filter((pin) => pin.item_type === "project").map((pin) => pin.item_id),
+    );
+    void (async () => {
+      try {
+        for (const projectId of candidates) {
+          if (serverProjectIds.has(projectId)) continue;
+          await createPin.mutateAsync({ item_type: "project", item_id: projectId });
+        }
+        removeLocalProjectPins(pinUserId, candidates);
+      } catch {
+        migrationKeyRef.current = null;
+      }
+    })();
+  }, [
+    c.projects,
+    c.projectsLoaded,
+    c.wsId,
+    createPin,
+    localProjectPins,
+    pinnedItems,
+    pinUserId,
+    projectPinQuery.isSuccess,
+    removeLocalProjectPins,
+  ]);
+  const projectPinnedItems = useMemo(
+    () => pinnedItems.filter((pin) => pin.item_type === "project"),
+    [pinnedItems],
+  );
+  const toggleProjectPin = (projectId: string) => {
+    if (projectPinnedItems.some((pin) => pin.item_id === projectId)) {
+      deletePin.mutate({ itemType: "project", itemId: projectId });
+    } else {
+      createPin.mutate({ item_type: "project", item_id: projectId });
+    }
+  };
+  const moveProjectPin = (fromProjectId: string, toProjectId: string) => {
+    const from = pinnedItems.findIndex((pin) => pin.item_type === "project" && pin.item_id === fromProjectId);
+    const to = pinnedItems.findIndex((pin) => pin.item_type === "project" && pin.item_id === toProjectId);
+    if (from < 0 || to < 0 || from === to) return;
+    const reordered = pinnedItems.slice();
+    const [item] = reordered.splice(from, 1);
+    if (!item) return;
+    reordered.splice(to, 0, item);
+    reorderPins.mutate(reordered);
+  };
   const restoreListScroll = useRestoredScrollRef("chat-list");
   const { data: quickActionsPending = null } = useQuery(
     chatQuickActionsPendingOptions(c.activeSessionId ?? ""),
@@ -228,15 +311,17 @@ export function ChatPage() {
 
   // URL → store: deep link, refresh, notification click, back/forward.
   useEffect(() => {
+    if (!isCurrentChatRoute || getCurrentSlug() !== workspaceSlug) return;
     if (!urlSession && !composingNew) conversationEntry.current = null;
     if (urlSession !== useChatStore.getState().activeSessionId) {
       c.setActiveSession(urlSession);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to URL only
-  }, [urlSession]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reconcile URL/route changes, not store updates
+  }, [isCurrentChatRoute, workspaceSlug, urlSession]);
 
   // store → URL: thread selection, "new chat", and sessions created by sending.
   useEffect(() => {
+    if (!isCurrentChatRoute || getCurrentSlug() !== workspaceSlug) return;
     const live = useChatStore.getState().activeSessionId;
     const current = chatSessionIdFromLocation(pathname, searchParams);
     const pushSync = pushNextSessionSync.current;
@@ -253,8 +338,8 @@ export function ChatPage() {
       const canonical = wsPaths.chatSession(live);
       if (pathname !== canonical) replace(canonical);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to store only
-  }, [c.activeSessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reconcile store/route changes, not URL updates
+  }, [isCurrentChatRoute, workspaceSlug, c.activeSessionId]);
 
   // How wide the project bar needs to be for every chip to fit on its two
   // rows; the divider snaps to it and double-click expands to it.
@@ -325,12 +410,14 @@ export function ChatPage() {
     c.archiveSession(session.id);
   };
 
-  const startNewChat = (agent: Agent | null) => {
+  const startNewChat = (agent: Agent | null, projectIdsOverride?: readonly string[]) => {
     // A manual ⊕ pick outranks a pending deep link; when called FROM the
     // intent effect the ref is already set to this param, so this is a no-op.
     supersedeAgentIntent();
     if (isCompact) conversationEntry.current = "inplace";
-    const projectIds = draftProjectIdsForNewChat(projectFilter);
+    const projectIds = projectIdsOverride
+      ? [...projectIdsOverride]
+      : draftProjectIdsForNewChat(projectFilter);
     if (agent) c.handleStartNewChat(agent, projectIds);
     else c.handleNewChat(projectIds);
     setComposingNew(true);
@@ -426,6 +513,7 @@ export function ChatPage() {
   // that surfaces the agent cannot start a chat without a fresh click. While
   // the queries are still loading the intent simply stays pending.
   useEffect(() => {
+    if (!isCurrentChatRoute || getCurrentSlug() !== workspaceSlug) return;
     if (!urlAgent) {
       consumedAgentIntent.current = null;
       return;
@@ -444,7 +532,7 @@ export function ChatPage() {
       replace(wsPaths.chat());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- consume when the URL param or the resolving agent list changes
-  }, [urlAgent, c.availableAgents, c.agentsSettled]);
+  }, [isCurrentChatRoute, workspaceSlug, urlAgent, c.availableAgents, c.agentsSettled]);
 
   // URL → new chat that sends: `?prompt=<text>` (DENE-975, the inbox page's
   // "walk me through it") opens a fresh chat with the agent already in play
@@ -452,21 +540,26 @@ export function ChatPage() {
   // agent, no runtime, a refused send) the text is left in the composer
   // instead. The ref keeps StrictMode's double effect from sending twice.
   const urlPrompt = searchParams.get("prompt") || null;
+  const urlProjectIds = useMemo(
+    () => (searchParams.get("project_ids") ?? "").split(",").map((id) => id.trim()).filter(Boolean),
+    [searchParams],
+  );
   const consumedPrompt = useRef<string | null>(null);
   const [queuedPrompt, setQueuedPrompt] = useState<{ id: number; text: string } | null>(null);
   const sentPrompt = useRef<number | null>(null);
   useEffect(() => {
+    if (!isCurrentChatRoute || getCurrentSlug() !== workspaceSlug) return;
     if (!urlPrompt) {
       consumedPrompt.current = null;
       return;
     }
     if (consumedPrompt.current === urlPrompt) return;
     consumedPrompt.current = urlPrompt;
-    startNewChat(null);
+    startNewChat(null, urlProjectIds);
     setQueuedPrompt({ id: Date.now(), text: urlPrompt });
     replace(wsPaths.chat());
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react to the URL only
-  }, [urlPrompt]);
+  }, [isCurrentChatRoute, workspaceSlug, urlPrompt, urlProjectIds]);
   useEffect(() => {
     if (!queuedPrompt || sentPrompt.current === queuedPrompt.id || c.activeSessionId) return;
     if (!c.agentsSettled && !c.activeAgent) return;
@@ -561,7 +654,9 @@ export function ChatPage() {
     <ChatProjectBar
       projects={c.projects ?? []}
       sessions={c.sessions}
-      userId={c.user?.id ?? null}
+      pinnedIds={projectPinnedItems.map((pin) => pin.item_id)}
+      onTogglePin={toggleProjectPin}
+      onMovePin={moveProjectPin}
       filter={projectFilter}
       onFilterChange={changeProjectFilter}
       onOpenSwitcher={() => setSwitcherOpen(true)}
@@ -759,6 +854,13 @@ export function ChatPage() {
         onProjectsChange={changeProjectContext}
         isProjectUpdating={c.isProjectUpdating}
         focusRequest={c.focusInputRequest}
+        onConvertToGoal={c.activeSessionId ? async () => {
+          const result = await api.convertChatSessionToGoal(c.activeSessionId!);
+          // The server appends a link message to this chat; refetch to show it.
+          void queryClient.invalidateQueries({ queryKey: chatKeys.messages(c.activeSessionId!) });
+          void queryClient.invalidateQueries({ queryKey: chatKeys.messagesPage(c.activeSessionId!) });
+          openGoalCompletion({ issueId: result.issue.id, title: result.issue.title });
+        } : undefined}
       />
     </div>
   );

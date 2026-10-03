@@ -18,7 +18,6 @@
     "all": "Tout",
     "more": "⋯ Plus ({{count}})",
     "menu_title": "Projets",
-    "collapsed": "Projets masqués",
     "done": "Terminé",
     "search": "Rechercher un projet…",
     "pinned": "Épinglés — glisser pour réordonner",
@@ -34,7 +33,18 @@
     "unread": "Non lu",
     "switch": "Changer de projet",
     "switch_search": "Rechercher un projet…",
-    "switch_empty": "Aucun projet ne correspond"
+    "switch_empty": "Aucun projet ne correspond",
+    "filter_label": "Afficher",
+    "filter_all": "Tous",
+    "filter_pinned": "Épinglés",
+    "filter_unpinned": "Non épinglés",
+    "filter_unread": "Non lus",
+    "group_label": "Grouper",
+    "group_pin": "Par épingle",
+    "group_status": "Par statut",
+    "group_none": "Aucun",
+    "collapsed_badge": "Dans Plus",
+    "menu_empty": "Aucun projet correspondant"
   },
   "list_resize": {
     "label": "Redimensionner la liste des discussions",
@@ -81,7 +91,8 @@
     "no_projects": "Aucun projet pour l'instant",
     "project_context_unsupported": "La description du projet ne s'appliquera pas — le daemon de cet agent doit être mis à jour",
     "remove_all_project_context": "Retirer tout le contexte de projet",
-    "switch_project": "Passer à un autre projet…"
+    "switch_project": "Passer à un autre projet…",
+    "to_goal": "转成目标任务"
   },
   "queue": {
     "title_one": "{{count}} message en file d'attente",
@@ -225,6 +236,11 @@
       "label": "Résume ma boîte de réception",
       "prompt": "Résume-moi ma boîte de réception",
       "prompt_project": "Résume-moi ma boîte de réception, mais seulement le projet « {{name}} ». Lis le tableau avec `multica inbox board --project {{id}}` et ne parle que des tickets de ce projet."
+    },
+    "project_board": {
+      "prompt": "Dresse le panorama des tickets ouverts de l’espace de travail avec `multica project board --output json`, puis regroupe-les en bloqués, à faire avancer et à clôturer. Demande confirmation avant toute modification.",
+      "prompt_project": "Dresse le panorama des tickets ouverts du projet « {{name}} » avec `multica project board {{id}} --output json`, puis regroupe-les en bloqués, à faire avancer et à clôturer. Demande confirmation avant toute modification.",
+      "prompt_projects": "Dresse le panorama des tickets ouverts de ces projets : {{names}}. Utilise `multica project board {{ids}} --output json`, puis demande confirmation avant toute modification."
     }
   },
   "onboarding_cards": {

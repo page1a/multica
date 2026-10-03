@@ -5,12 +5,12 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ChatSession, Project } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import { useChatProjectBarStore } from "@multica/core/chat/project-bar-store";
 import enCommon from "../../locales/en/common.json";
 import enChat from "../../locales/en/chat.json";
+import enProjects from "../../locales/en/projects.json";
 import { ChatProjectBar } from "./chat-project-bar";
 
-const RESOURCES = { en: { common: enCommon, chat: enChat } };
+const RESOURCES = { en: { common: enCommon, chat: enChat, projects: enProjects } };
 
 function project(id: string, title: string): Project {
   return {
@@ -54,14 +54,10 @@ const projects = Array.from({ length: 20 }, (_, index) =>
 );
 
 describe("ChatProjectBar", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    useChatProjectBarStore.setState({ byUser: {} });
-  });
-
   it("more can search, pin, and reorder", async () => {
     const user = userEvent.setup();
     const onFilterChange = vi.fn();
+    const onTogglePin = vi.fn();
     render(
       <I18nProvider locale="en" resources={RESOURCES}>
         <ChatProjectBar
@@ -70,7 +66,9 @@ describe("ChatProjectBar", () => {
             session("s1", ["p3"], "2026-09-02T00:00:00Z"),
             session("s2", ["p1"], "2026-09-20T00:00:00Z"),
           ]}
-          userId="user-1"
+          pinnedIds={[]}
+          onTogglePin={onTogglePin}
+          onMovePin={vi.fn()}
           filter={{ type: "all" }}
           onFilterChange={onFilterChange}
         />
@@ -90,19 +88,7 @@ describe("ChatProjectBar", () => {
     expect(within(dialog).queryByText("Project 1")).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: "Pin" }));
-    expect(useChatProjectBarStore.getState().byUser["user-1"]).toEqual(["p17"]);
-
-    const saved = JSON.parse(localStorage.getItem("multica_chat_project_bar") ?? "{}") as {
-      state?: { byUser?: Record<string, string[]> };
-    };
-    expect(saved.state?.byUser?.["user-1"]).toEqual(["p17"]);
-
-    await user.clear(within(dialog).getByRole("textbox", { name: "Search projects…" }));
-    await user.click(within(dialog).getAllByRole("button", { name: "Pin" })[0]!);
-    useChatProjectBarStore.getState().move("user-1", "p17", useChatProjectBarStore.getState().byUser["user-1"]![0]!);
-    const order = useChatProjectBarStore.getState().byUser["user-1"]!;
-    expect(order[0]).toBe("p17");
-    expect(order).toHaveLength(2);
+    expect(onTogglePin).toHaveBeenCalledWith("p17");
 
     await user.click(within(dialog).getByRole("button", { name: /Project 17/ }));
     expect(onFilterChange).toHaveBeenCalledWith({ type: "project", id: "p17" });
@@ -155,7 +141,9 @@ describe("ChatProjectBar", () => {
           <ChatProjectBar
             projects={projects}
             sessions={sessions}
-            userId="user-1"
+            pinnedIds={props.pinnedIds ?? []}
+            onTogglePin={props.onTogglePin ?? vi.fn()}
+            onMovePin={props.onMovePin ?? vi.fn()}
             filter={{ type: "all" }}
             onFilterChange={onFilterChange}
             onFitWidthChange={onFitWidthChange}
@@ -188,8 +176,7 @@ describe("ChatProjectBar", () => {
 
     it("keeps pinned projects on the bar when space runs out", () => {
       areaWidth = 320;
-      useChatProjectBarStore.setState({ byUser: { "user-1": ["p8", "p20"] } });
-      const { chips } = renderBar();
+      const { chips } = renderBar({ pinnedIds: ["p8", "p20"] });
       expect(chips()).toEqual([
         "All",
         "Project 81",
@@ -200,29 +187,55 @@ describe("ChatProjectBar", () => {
       ]);
     });
 
-    it("lists the collapsed projects with their chat counts in More", async () => {
+    it("lists every project once in More and marks the ones behind it", async () => {
+      // Seven pins, five slots: p6 and p7 are pinned but behind More.
       areaWidth = 320;
       const user = userEvent.setup();
-      const { onFilterChange } = renderBar();
+      const onTogglePin = vi.fn();
+      const { onFilterChange } = renderBar({
+        pinnedIds: ["p1", "p2", "p3", "p4", "p5", "p6", "p7"],
+        onTogglePin,
+      });
+
+      await user.click(screen.getByRole("button", { name: /More \(15\)/ }));
+      const dialog = within(screen.getByRole("dialog"));
+      const pinned = within(dialog.getByRole("group", { name: "Pinned — drag to reorder" }));
+      expect(pinned.getAllByRole("button", { name: /, \d+ chats?$/ }).map((row) => row.getAttribute("aria-label")))
+        .toEqual([1, 2, 3, 4, 5, 6, 7].map((n) => `Project ${n}, 1 chat`));
+      expect(dialog.getAllByText("Project 7")).toHaveLength(1);
+      // Two collapsed pins plus p8, the one chatted project that did not fit.
+      expect(dialog.getAllByText("In More")).toHaveLength(3);
+
+      await user.click(pinned.getAllByRole("button", { name: "Unpin" })[5]!);
+      expect(onTogglePin).toHaveBeenCalledWith("p6");
+      await user.click(dialog.getByRole("button", { name: "Project 8, 1 chat" }));
+      expect(onFilterChange).toHaveBeenCalledWith({ type: "project", id: "p8" });
+    });
+
+    it("filters and groups the projects in More", async () => {
+      areaWidth = 320;
+      const user = userEvent.setup();
+      renderBar({ pinnedIds: ["p2"] });
 
       await user.click(screen.getByRole("button", { name: /More/ }));
-      const collapsed = within(screen.getByRole("group", { name: "Collapsed projects" }));
-      expect(
-        collapsed.getAllByRole("button", { name: /Project \d+, 1 chat/ }).map((row) =>
-          row.getAttribute("aria-label"),
-        ),
-      ).toEqual(["Project 6, 1 chat", "Project 7, 1 chat", "Project 8, 1 chat"]);
-      // Listed once: not repeated under "Other projects".
-      expect(within(screen.getByRole("dialog")).getAllByText("Project 7")).toHaveLength(1);
+      const dialog = within(screen.getByRole("dialog"));
+      await user.click(dialog.getByRole("radio", { name: "Pinned" }));
+      expect(dialog.getAllByRole("button", { name: /, \d+ chats?$/ })).toHaveLength(1);
+      expect(dialog.getByText("Project 2")).toBeInTheDocument();
 
-      await user.click(collapsed.getByRole("button", { name: "Project 7, 1 chat" }));
-      expect(onFilterChange).toHaveBeenCalledWith({ type: "project", id: "p7" });
+      await user.click(dialog.getByRole("radio", { name: "Not pinned" }));
+      expect(dialog.queryByText("Project 2")).not.toBeInTheDocument();
+      expect(dialog.getAllByRole("button", { name: /, \d+ chats?$/ })).toHaveLength(19);
+
+      await user.click(dialog.getByRole("radio", { name: "All" }));
+      await user.click(dialog.getByRole("radio", { name: "By status" }));
+      expect(dialog.getByRole("group", { name: "In Progress" })).toBeInTheDocument();
+      expect(dialog.queryByRole("group", { name: "Pinned — drag to reorder" })).not.toBeInTheDocument();
     });
 
     it("moves the project picked from More to a visible slot right after the pins", () => {
       areaWidth = 320;
-      useChatProjectBarStore.setState({ byUser: { "user-1": ["p8"] } });
-      const { chips } = renderBar({ filter: { type: "project", id: "p7" } });
+      const { chips } = renderBar({ pinnedIds: ["p8"], filter: { type: "project", id: "p7" } });
       expect(chips()).toEqual([
         "All",
         "Project 81",

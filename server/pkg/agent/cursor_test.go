@@ -34,6 +34,25 @@ func TestBuildCursorArgs(t *testing.T) {
 	}
 }
 
+func TestBuildCursorArgsFiltersManagedResumeFlag(t *testing.T) {
+	t.Parallel()
+
+	args := buildCursorArgs(ExecOptions{
+		ResumeSessionID: "sess-123",
+		CustomArgs:      []string{"--resume", "evil-session", "--keep", "value"},
+	}, slog.Default())
+
+	if !containsAdjacent(args, "--resume", "sess-123") {
+		t.Fatalf("daemon resume session missing: %v", args)
+	}
+	if containsAdjacent(args, "--resume", "evil-session") {
+		t.Fatalf("custom resume session was not filtered: %v", args)
+	}
+	if !containsAdjacent(args, "--keep", "value") {
+		t.Fatalf("unrelated custom args were filtered: %v", args)
+	}
+}
+
 func TestBuildCursorArgsWithResume(t *testing.T) {
 	t.Parallel()
 

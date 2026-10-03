@@ -36,12 +36,17 @@ func codeartsTerminateGrace() time.Duration {
 // codeartsBlockedArgs are flags hardcoded by the daemon that must not be
 // overridden by user-configured custom_args.
 var codeartsBlockedArgs = map[string]blockedArgMode{
-	"--format":                       blockedWithValue,  // JSON output format for daemon communication
-	"--auto":                         blockedStandalone, // daemon-owned non-interactive permission mode
-	"--sandbox":                      blockedStandalone, // daemon-owned sandbox policy
-	"--dir":                          blockedWithValue,  // unsupported; cmd.Dir owns the workdir
-	"--variant":                      blockedWithValue,  // unsupported by CodeArts
-	"--dangerously-skip-permissions": blockedStandalone, // OpenCode-only permission flag
+	"--format":                       blockedWithValue,     // JSON output format for daemon communication
+	"--session":                      blockedWithValue,     // managed via ExecOptions.ResumeSessionID
+	"-c":                             blockedOptionalValue, // --continue; also eats a stray Codex -c key=value
+	"--continue":                     blockedStandalone,    // resumes the cwd's latest session; daemon owns resume
+	"-s":                             blockedWithValue,     // short form of --session
+	"--fork":                         blockedStandalone,    // session fork is daemon-owned
+	"--auto":                         blockedStandalone,    // daemon-owned non-interactive permission mode
+	"--sandbox":                      blockedStandalone,    // daemon-owned sandbox policy
+	"--dir":                          blockedWithValue,     // unsupported; cmd.Dir owns the workdir
+	"--variant":                      blockedWithValue,     // unsupported by CodeArts
+	"--dangerously-skip-permissions": blockedStandalone,    // OpenCode-only permission flag
 }
 
 // codeartsBackend is an independent adapter for Huawei Cloud CodeArts CLI.

@@ -37,7 +37,9 @@
     "view_board_short": "看板",
     "view_list_short": "列表",
     "view_swimlane_short": "泳道",
-    "sort_manual": "手动"
+    "sort_manual": "手动",
+    "new_goal": "新建目标",
+    "only_goals": "只看目标"
   },
   "errors": {
     "move_failed": "移动任务失败"

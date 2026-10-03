@@ -2,15 +2,19 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/chattitle"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/progress"
 	"github.com/multica-ai/multica/server/internal/titling"
@@ -107,27 +111,52 @@ func (h *Handler) recapChatSession(ctx context.Context, workspaceID string, sess
 	}
 
 	changed := false
-	if !session.TitleLocked && h.LLM != nil && h.LLM.Enabled() {
+	namingSource := h.chatNamingSource(ctx, session)
+	if !session.TitleLocked {
 		replies, err := h.Queries.CountChatAssistantReplies(ctx, sessionID)
 		if err != nil {
 			return false, err
 		}
 		var title string
+		titleSource := ""
 		switch {
-		case replies == 1:
+		case replies == 1 && namingSource == "server_llm" && h.LLM != nil && h.LLM.Enabled():
+			titleSource = "server_llm"
 			title, err = h.recapFirstTitle(ctx, workspaceID, session, opening, lastReply)
-		case replies > 1 && replies%chatTopicCheckEvery == 0:
+		case replies > 1 && replies%chatTopicCheckEvery == 0 && namingSource == "server_llm" && h.LLM != nil && h.LLM.Enabled():
+			titleSource = "server_llm"
 			title, err = h.recapTopicTitle(ctx, session.Title, turns)
+		case replies == 1 && namingSource == "runtime" && h.runtimeChatTitleReported(ctx, session):
+			// The runtime has already supplied the authoritative title for this
+			// opening turn. The lexical fallback must never overwrite it.
+		case replies == 1 && openingStillTitles(session.Title, opening):
+			titleSource = "rules"
+			// Self-hosted instances without MULTICA_LLM_* still get a useful
+			// title. This is deliberately lexical cleanup, never another model
+			// call, and the CAS below keeps a concurrent manual rename winning.
+			title = ruleCleanChatTitle(opening)
 		}
 		if err != nil {
+			if titleSource != "" {
+				h.recordChatNamingEvent(ctx, session, titleSource, "failure")
+			}
 			slog.Warn("chat recap title failed; keeping title", "session_id", uuidToString(sessionID), "error", err)
 		} else if title != "" && title != session.Title {
 			updated, err := h.Queries.UpdateChatSessionTitleIfCurrent(ctx, db.UpdateChatSessionTitleIfCurrentParams{ID: sessionID, ExpectedTitle: session.Title, NewTitle: title})
 			if err == nil {
 				session, changed = updated, true
+				if titleSource != "" {
+					h.recordChatNamingEvent(ctx, session, titleSource, "success")
+				}
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return false, err
 			}
+		} else if titleSource != "" {
+			status := "success"
+			if title == "" {
+				status = "failure"
+			}
+			h.recordChatNamingEvent(ctx, session, titleSource, status)
 		}
 	}
 
@@ -147,6 +176,126 @@ func (h *Handler) recapChatSession(ctx context.Context, workspaceID string, sess
 		h.publishChatSessionState(workspaceID, "system", "", session)
 	}
 	return changed, nil
+}
+
+func (h *Handler) runtimeChatTitleReported(ctx context.Context, session db.ChatSession) bool {
+	if h.DB == nil {
+		return false
+	}
+	var reported bool
+	if err := h.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM chat_naming_event WHERE chat_session_id = $1 AND source = 'runtime' AND status = 'success')`, session.ID).Scan(&reported); err != nil {
+		slog.Warn("check runtime chat title failed", "session_id", uuidToString(session.ID), "error", err)
+		return false
+	}
+	return reported
+}
+
+func (h *Handler) chatNamingSource(ctx context.Context, session db.ChatSession) string {
+	source := "runtime"
+	if h.LLM != nil && h.LLM.Enabled() {
+		source = "server_llm"
+	}
+	workspace, err := h.Queries.GetWorkspace(ctx, session.WorkspaceID)
+	if err != nil {
+		return source
+	}
+	var settings map[string]any
+	if json.Unmarshal(workspace.Settings, &settings) == nil {
+		if naming, ok := settings["naming"].(map[string]any); ok {
+			if configured, ok := naming["source"].(string); ok && configured != "" {
+				return configured
+			}
+		}
+	}
+	return source
+}
+
+// openingStillTitles reports whether the chat still carries the placeholder
+// the first send wrote: empty, the raw opening, or chattitle.Derive of it
+// (what service.SendChatMessage actually stores — the raw-opening check alone
+// never matched a multi-line or long first message, so rules never ran).
+func openingStillTitles(title, opening string) bool {
+	title = strings.TrimSpace(title)
+	return title == "" || title == strings.TrimSpace(opening) || title == chattitle.Derive(opening)
+}
+
+// openingTitleSource drops lines that are only an image/file embed so a
+// screenshot pasted ahead of the question does not become the title.
+func openingTitleSource(opening string) string {
+	kept := make([]string, 0, strings.Count(opening, "\n")+1)
+	for _, line := range strings.Split(opening, "\n") {
+		if strings.TrimSpace(markdownEmbedOnly.ReplaceAllString(line, "")) == "" && strings.TrimSpace(line) != "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if text := strings.TrimSpace(strings.Join(kept, "\n")); text != "" {
+		return text
+	}
+	return opening
+}
+
+var markdownEmbedOnly = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+
+func ruleCleanChatTitle(opening string) string {
+	// Derive caps at 30 runes, so drop the trailing sentence punctuation of the
+	// line it will keep first; otherwise a question one "？" over the cap gets
+	// truncated with "…" instead of fitting.
+	source := openingTitleSource(opening)
+	for _, line := range strings.Split(source, "\n") {
+		if strings.TrimSpace(line) != "" {
+			source = strings.TrimRight(strings.TrimSpace(line), ".。!！?？,，;；:：、 ")
+			break
+		}
+	}
+	s := chattitle.Derive(source)
+	for {
+		before := s
+		for _, prefix := range []string{"嗯", "呃", "额", "请"} {
+			if strings.HasPrefix(s, prefix) {
+				s = strings.TrimSpace(s[len(prefix):])
+				break
+			}
+		}
+		s = stripEnglishChatLead(s)
+		if s == before {
+			break
+		}
+	}
+	if linkedIssueKey.MatchString(s) {
+		if match := linkedIssueKey.FindString(s); match != "" {
+			return sanitizeChatTitle(match + " · 任务讨论")
+		}
+	}
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return "链接 · 任务讨论"
+	}
+	return sanitizeChatTitle(s)
+}
+
+func stripEnglishChatLead(s string) string {
+	for _, prefix := range []string{"um", "uh", "so", "please"} {
+		if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
+			continue
+		}
+		rest := s[len(prefix):]
+		if rest == "" {
+			return ""
+		}
+		r, _ := utf8.DecodeRuneInString(rest)
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			continue
+		}
+		// Conversational leads are often followed by a comma ("So, fix …").
+		// Remove that separator as part of the lead, while keeping punctuation
+		// inside a real word (for example "so-called") intact.
+		trimmed := strings.TrimSpace(rest)
+		if trimmed != "" && strings.ContainsRune(",;:!?", []rune(trimmed)[0]) {
+			return strings.TrimSpace(trimmed[1:])
+		}
+		return trimmed
+	}
+	return s
 }
 
 func (h *Handler) recapFirstTitle(ctx context.Context, workspaceID string, session db.ChatSession, opening, reply string) (string, error) {

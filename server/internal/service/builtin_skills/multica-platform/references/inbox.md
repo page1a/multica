@@ -81,3 +81,20 @@ To answer or unblock a ticket from the chat, reply on that ticket:
 
 Do not change a ticket's status or assignment just because it appears on the
 board. Those changes follow the issue workflow, not the inbox.
+
+### Clearing an expired waiting reminder
+
+When a `waiting` row is obsolete because the decision has already been made
+elsewhere, an agent may clear only the reminder for the human who directly
+started its current run:
+
+    multica inbox dismiss <issue> --reason "五种语言已经定下并已合入代码" --output json
+
+The server derives the recipient from the run's `direct_human` originator. It
+rejects human requests, automation or delegated runs, finished runs, and any
+attempt to target another person's inbox. `--reason` is required and is saved
+as a visible issue comment authored by the clearing agent. The command closes
+that open summon and archives only its linked inbox row; it leaves issue status,
+assignee and other inbox rows alone, and does not wake anyone. If the person
+still needs to answer, use the ticket comment or the normal summon flow instead
+of dismissing the reminder.

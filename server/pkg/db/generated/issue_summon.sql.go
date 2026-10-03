@@ -198,6 +198,75 @@ func (q *Queries) CreateIssueSummon(ctx context.Context, arg CreateIssueSummonPa
 	return i, err
 }
 
+const dismissOpenIssueSummonForRecipient = `-- name: DismissOpenIssueSummonForRecipient :one
+WITH dismissed AS (
+    UPDATE issue_summon
+    SET answered_at = now()
+    WHERE issue_summon.issue_id = $1
+      AND issue_summon.recipient_id = $2
+      AND issue_summon.answered_at IS NULL
+    RETURNING id, workspace_id, issue_id, recipient_id, caller_type, caller_id, source, reason, comment_id, inbox_item_id, created_at, answered_at, answer_comment_id, reminded_at
+), archived AS (
+    UPDATE inbox_item i
+    SET archived = true
+    FROM dismissed d
+    WHERE i.id = d.inbox_item_id
+      AND i.workspace_id = d.workspace_id
+      AND i.recipient_type = 'member'
+      AND i.recipient_id = d.recipient_id
+      AND i.archived = false
+)
+SELECT dismissed.id, dismissed.workspace_id, dismissed.issue_id, dismissed.recipient_id, dismissed.caller_type, dismissed.caller_id, dismissed.source, dismissed.reason, dismissed.comment_id, dismissed.inbox_item_id, dismissed.created_at, dismissed.answered_at, dismissed.answer_comment_id, dismissed.reminded_at FROM dismissed
+`
+
+type DismissOpenIssueSummonForRecipientParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+}
+
+type DismissOpenIssueSummonForRecipientRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	RecipientID     pgtype.UUID        `json:"recipient_id"`
+	CallerType      string             `json:"caller_type"`
+	CallerID        pgtype.UUID        `json:"caller_id"`
+	Source          string             `json:"source"`
+	Reason          string             `json:"reason"`
+	CommentID       pgtype.UUID        `json:"comment_id"`
+	InboxItemID     pgtype.UUID        `json:"inbox_item_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	AnsweredAt      pgtype.Timestamptz `json:"answered_at"`
+	AnswerCommentID pgtype.UUID        `json:"answer_comment_id"`
+	RemindedAt      pgtype.Timestamptz `json:"reminded_at"`
+}
+
+// An agent may clear one stale "waiting on you" reminder only for the human
+// behind its direct-human run. Close the summon and archive exactly the inbox
+// row delivered for that summon; the handler writes the visible reason comment
+// in the same transaction.
+func (q *Queries) DismissOpenIssueSummonForRecipient(ctx context.Context, arg DismissOpenIssueSummonForRecipientParams) (DismissOpenIssueSummonForRecipientRow, error) {
+	row := q.db.QueryRow(ctx, dismissOpenIssueSummonForRecipient, arg.IssueID, arg.RecipientID)
+	var i DismissOpenIssueSummonForRecipientRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.RecipientID,
+		&i.CallerType,
+		&i.CallerID,
+		&i.Source,
+		&i.Reason,
+		&i.CommentID,
+		&i.InboxItemID,
+		&i.CreatedAt,
+		&i.AnsweredAt,
+		&i.AnswerCommentID,
+		&i.RemindedAt,
+	)
+	return i, err
+}
+
 const getOpenIssueSummon = `-- name: GetOpenIssueSummon :one
 SELECT id, workspace_id, issue_id, recipient_id, caller_type, caller_id, source, reason, comment_id, inbox_item_id, created_at, answered_at, answer_comment_id, reminded_at FROM issue_summon
 WHERE issue_id = $1 AND recipient_id = $2 AND answered_at IS NULL

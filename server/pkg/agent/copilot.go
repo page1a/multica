@@ -620,6 +620,7 @@ var copilotBlockedArgs = map[string]blockedArgMode{
 	"--yolo":            blockedStandalone,
 	"--no-ask-user":     blockedStandalone,
 	"--resume":          blockedWithValue,  // managed via ExecOptions.ResumeSessionID
+	"--continue":        blockedStandalone, // resumes the most recent session; daemon owns resume
 	"--acp":             blockedStandalone, // prevent switching to ACP mode
 }
 

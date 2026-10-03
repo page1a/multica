@@ -17,11 +17,11 @@ import (
 //
 // The rule, in one place: an executor picked by a person's own hand (web,
 // desktop, CLI as a member) stands. One picked by an agent stands only when the
-// person the run belongs to said it in the message that started the run, and
-// the server can find those words in that message. Anything else an agent
-// names is the agent's own idea, and on a ticket routing will judge it is
-// dropped — routing then decides from scratch, and says one sentence that a
-// pick was ignored.
+// person the run belongs to said it in an earlier message in the direct chat
+// or issue thread, and the server can find those words in that message.
+// Anything else an agent names is rejected; an unquoted guess may still be
+// dropped for routing, but a supplied quote that fails verification leaves the
+// ticket unassigned so the agent can ask the person.
 type assignmentRuling struct {
 	// Apply is false when the executor named must not be written.
 	Apply bool
@@ -30,6 +30,10 @@ type assignmentRuling struct {
 	Source     string
 	SourceUser pgtype.UUID
 	Quote      string
+	// Reason is returned to an agent when a requested pick is rejected. It is
+	// intentionally explicit so the agent can ask the person for a real quote
+	// instead of guessing again.
+	Reason string
 }
 
 // rulePick decides one request. actorType/actorID come from resolveActor (the
@@ -48,9 +52,18 @@ func (h *Handler) rulePick(
 		return ruling
 	}
 
-	if task, ok := h.liveTaskOf(r, actorID); ok && quote != "" {
-		if user, holds := h.quoteFromInitiator(r.Context(), task, assigneeType, assigneeID, quote); holds {
-			return assignmentRuling{Apply: true, Source: routing.SourceQuote, SourceUser: user, Quote: strings.TrimSpace(quote)}
+	if quote != "" {
+		if task, ok := h.liveTaskOf(r, actorID); ok {
+			if user, holds := h.quoteFromInitiator(r.Context(), task, assigneeType, assigneeID, quote); holds {
+				return assignmentRuling{Apply: true, Source: routing.SourceQuote, SourceUser: user, Quote: strings.TrimSpace(quote)}
+			}
+		}
+		if assigneeType.Valid && (assigneeType.String == "agent" || assigneeType.String == "squad") {
+			return assignmentRuling{
+				Apply:  false,
+				Source: routing.SourceQuoteRejected,
+				Reason: "assignee quote was not found in an earlier message by the person who started this run, or did not name the requested assignee",
+			}
 		}
 	}
 
@@ -82,10 +95,11 @@ func (h *Handler) liveTaskOf(r *http.Request, agentID string) (db.AgentTaskQueue
 	return task, true
 }
 
-// quoteFromInitiator is the whole quote check. The message that started the
-// run must have been written by the run's initiator (a member, never another
-// agent, never a third party), the quote must be a passage of it word for
-// word, and the passage must name the agent being assigned.
+// quoteFromInitiator is the whole quote check. The message must have been
+// written by the run's initiator (a member, never another agent, never a third
+// party), the quote must be a passage of it word for word, and the passage must
+// name the agent being assigned. Direct-chat history and the issue thread are
+// both valid evidence; the original trigger remains valid for compatibility.
 func (h *Handler) quoteFromInitiator(ctx context.Context, task db.AgentTaskQueue, assigneeType pgtype.Text, assigneeID pgtype.UUID, quote string) (pgtype.UUID, bool) {
 	initiator := task.OriginatorUserID
 	if !initiator.Valid {
@@ -95,11 +109,17 @@ func (h *Handler) quoteFromInitiator(ctx context.Context, task db.AgentTaskQueue
 	if name == "" {
 		return pgtype.UUID{}, false
 	}
+	directChat := false
+	if task.ChatSessionID.Valid {
+		if channelType, err := h.sessionChannelType(ctx, task.ChatSessionID); err == nil {
+			directChat = channelType == ""
+		}
+	}
 	for _, msg := range h.initiatorMessages(ctx, task) {
 		if msg.author != uuidToString(initiator) {
 			continue
 		}
-		if routing.QuoteHolds(msg.content, quote, name) {
+		if quoteNamesAssignee(msg.content, quote, name, directChat && uuidToString(task.AgentID) == uuidToString(assigneeID)) {
 			return initiator, true
 		}
 	}
@@ -111,10 +131,10 @@ type triggerMessage struct {
 	content string
 }
 
-// initiatorMessages lists the messages that started the run: the trigger
-// comment (and any comments folded into it) for a comment-started run, the
-// sealed input batch for a chat turn. Only member-authored rows carry an
-// author; an agent-authored or unattributed row never matches an initiator.
+// initiatorMessages lists the member-authored evidence available to this run:
+// the trigger comments, the full history of a direct chat before this run, and
+// comments in the issue thread. Only rows authored by the run initiator can
+// match, so widening the evidence window does not weaken the anti-forgery gate.
 func (h *Handler) initiatorMessages(ctx context.Context, task db.AgentTaskQueue) []triggerMessage {
 	var out []triggerMessage
 	ids := append([]pgtype.UUID{}, task.CoalescedCommentIds...)
@@ -146,7 +166,62 @@ func (h *Handler) initiatorMessages(ctx context.Context, task db.AgentTaskQueue)
 			}
 		}
 	}
+	if task.ChatSessionID.Valid {
+		if msgs, err := h.Queries.ListChatMessages(ctx, task.ChatSessionID); err == nil {
+			creator := ""
+			if sess, err := h.Queries.GetChatSession(ctx, task.ChatSessionID); err == nil {
+				creator = uuidToString(sess.CreatorID)
+			}
+			for _, m := range msgs {
+				if m.Role != "user" {
+					continue
+				}
+				author := uuidToString(m.SenderUserID)
+				if author == "" {
+					author = creator
+				}
+				out = append(out, triggerMessage{author: author, content: m.Content})
+			}
+		}
+	}
+	if task.IssueID.Valid {
+		if issue, err := h.Queries.GetIssue(ctx, task.IssueID); err == nil {
+			if comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+				IssueID: task.IssueID, WorkspaceID: issue.WorkspaceID, Limit: 1000,
+			}); err == nil {
+				for _, c := range comments {
+					if c.DeletedAt.Valid || c.AuthorType != "member" || !c.AuthorID.Valid {
+						continue
+					}
+					out = append(out, triggerMessage{author: uuidToString(c.AuthorID), content: c.Content})
+				}
+			}
+		}
+	}
 	return out
+}
+
+func quoteNamesAssignee(message, quote, name string, directSelf bool) bool {
+	if routing.QuoteHolds(message, quote, name) {
+		return true
+	}
+	if !directSelf {
+		return false
+	}
+	// A second-person quote identifies the current agent only in a direct
+	// chat, but it still has to be a passage of the user's message. Without
+	// this check an agent could invent "你来做" after any unrelated message
+	// and bypass the quote provenance check.
+	message = strings.Join(strings.Fields(message), " ")
+	q := strings.Join(strings.Fields(quote), " ")
+	if q == "" || !strings.Contains(strings.ToLower(message), strings.ToLower(q)) {
+		return false
+	}
+	return strings.Contains(q, "你来做") ||
+		strings.Contains(q, "你自己做") ||
+		strings.Contains(q, "指派给你") ||
+		strings.Contains(q, "让你做") ||
+		strings.Contains(q, "你来负责")
 }
 
 func (h *Handler) assigneeName(ctx context.Context, assigneeType pgtype.Text, assigneeID pgtype.UUID) string {

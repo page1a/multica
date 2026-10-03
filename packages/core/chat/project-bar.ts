@@ -4,8 +4,8 @@
  * The bar is: pinned projects in the person's own order, then every other
  * project that already has a chat, most recently chatted first. Projects
  * with no chats stay out of the bar (they still appear in "more"). Pin
- * order is a list of project ids supplied by the caller — that list is a
- * per-user preference, not a workspace setting.
+ * order is a list of project ids supplied by the caller from the server's
+ * per-user sidebar pin list.
  */
 
 export interface ChatProjectBarSession {
@@ -218,4 +218,75 @@ export function narrowestWidthFittingAll(
     else low = middle;
   }
   return high;
+}
+
+/** Which projects the More menu lists. */
+export type ChatProjectMenuFilter = "all" | "pinned" | "unpinned" | "unread";
+/** How the More menu groups what it lists. */
+export type ChatProjectMenuGrouping = "pin" | "status" | "none";
+
+/** Project statuses in the order the More menu shows their groups. */
+export const CHAT_PROJECT_MENU_STATUS_ORDER = [
+  "in_progress",
+  "planned",
+  "paused",
+  "completed",
+  "cancelled",
+] as const;
+
+export interface ChatProjectMenuGroup {
+  /** "pinned" / "unpinned" / a project status / "all". */
+  key: string;
+  rows: RankedChatProject[];
+  /** Rows in this group are pins and can be dragged to reorder. */
+  reorderable: boolean;
+}
+
+/**
+ * The More menu: every project exactly once, pins first in pin order, then
+ * the rest by most recent chat. `filter` and `matches` narrow the list,
+ * `grouping` splits it. Empty groups are dropped.
+ */
+export function chatProjectMenuGroups({
+  pinned,
+  rest,
+  statusById,
+  filter,
+  grouping,
+  matches = () => true,
+}: {
+  pinned: readonly RankedChatProject[];
+  rest: readonly RankedChatProject[];
+  statusById: ReadonlyMap<string, string>;
+  filter: ChatProjectMenuFilter;
+  grouping: ChatProjectMenuGrouping;
+  matches?: (id: string) => boolean;
+}): ChatProjectMenuGroup[] {
+  const keep = (row: RankedChatProject) =>
+    matches(row.id) && (filter !== "unread" || row.hasUnread);
+  const pinnedRows = filter === "unpinned" ? [] : pinned.filter(keep);
+  const restRows = filter === "pinned" ? [] : rest.filter(keep);
+
+  let groups: ChatProjectMenuGroup[];
+  if (grouping === "pin") {
+    groups = [
+      { key: "pinned", rows: pinnedRows, reorderable: true },
+      { key: "unpinned", rows: restRows, reorderable: false },
+    ];
+  } else if (grouping === "status") {
+    const all = [...pinnedRows, ...restRows];
+    const known: readonly string[] = CHAT_PROJECT_MENU_STATUS_ORDER;
+    const keys = [
+      ...known,
+      ...new Set(all.map((row) => statusById.get(row.id) ?? "").filter((s) => !known.includes(s))),
+    ];
+    groups = keys.map((key) => ({
+      key,
+      rows: all.filter((row) => (statusById.get(row.id) ?? "") === key),
+      reorderable: false,
+    }));
+  } else {
+    groups = [{ key: "all", rows: [...pinnedRows, ...restRows], reorderable: false }];
+  }
+  return groups.filter((group) => group.rows.length > 0);
 }

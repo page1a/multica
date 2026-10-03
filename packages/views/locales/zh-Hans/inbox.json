@@ -70,7 +70,11 @@
     "access_request_expires": "{{until}} 过期",
     "access_status_approved": "已批准",
     "access_status_declined": "已拒绝",
-    "access_status_expired": "已过期：没人及时处理"
+    "access_status_expired": "已过期：没人及时处理",
+    "stall_review_title": "这张票正在进行 24 小时停滞公示",
+    "stall_processed_title": "这张票由系统自动处理",
+    "stall_keep": "保留",
+    "stall_undo": "撤销处理"
   },
   "types": {
     "needs_you": "需要你处理",
@@ -95,11 +99,13 @@
     "quick_create_failed": "通过智能体创建失败",
     "quick_create_unconfirmed": "通过智能体创建结果未确认",
     "autopilot_paused": "自动化已暂停",
+    "children_done": "子任务已全部结束",
     "autopilot_quota_exceeded": "自动化执行次数已用完",
     "agent_access_request": "智能体借用申请",
     "agent_access_approved": "智能体借用已批准",
     "agent_access_declined": "智能体借用已拒绝",
-    "parking_unexplained": "停了没交代"
+    "parking_unexplained": "停了没交代",
+    "issue_stall_action": "停滞处理"
   },
   "labels": {
     "set_status_to": "状态设为",
@@ -114,6 +120,7 @@
     "created_with_agent": "通过智能体创建：{{identifier}}",
     "failed_with_detail": "失败：{{detail}}",
     "autopilot_quota_blocked": "执行已被阻止：额度已用完",
+    "children_done_stage": "第 {{stage}} 阶段的子任务已全部结束",
     "access_requested_by": "{{requester}} 申请使用 {{agent}}",
     "access_approved_for": "你使用 {{agent}} 的申请已批准",
     "access_declined_for": "你使用 {{agent}} 的申请已拒绝"
@@ -260,6 +267,26 @@
       "todo": "待做",
       "fresh": "新动态",
       "done": "做完"
+    },
+    "actions": {
+      "backlog": "以后做",
+      "done": "完成",
+      "cancelled": "不做了",
+      "return_to_do": "交回去做",
+      "return_to_agent": "交回去做（会叫醒 {{name}}）",
+      "more": "更多操作",
+      "select": "选择 {{title}}",
+      "selected": "已选 {{count}} 项",
+      "clear_selection": "清除选择",
+      "undo": "撤销"
+    },
+    "toasts": {
+      "status_changed": "状态已更新",
+      "cancelled": "已标记为不做了，在跑的不会停"
+    },
+    "errors": {
+      "status_failed": "状态更新失败",
+      "undo_failed": "撤销状态失败"
     }
   }
 }

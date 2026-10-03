@@ -82,3 +82,5 @@ perf-report/
 
 # pnpm content-addressable store, when a run puts it inside the checkout
 .pnpm-store/
+# The production example is a tracked template; `.env*` above would hide it.
+!apps/mobile/.env.production.example

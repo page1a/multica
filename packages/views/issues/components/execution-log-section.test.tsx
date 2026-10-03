@@ -29,11 +29,15 @@ vi.mock("./terminate-task-confirm-dialog", () => ({
   TerminateTaskConfirmDialog: () => null,
 }));
 
+vi.mock("@multica/core/workspace/hooks", () => ({
+  useActorName: () => ({ getActorName: () => "Lambda" }),
+}));
+
 import {
   ActiveTaskRow,
   ExecutionLogSection,
   TaskCommentCoverage,
-  IssueUsageTotal,
+  IssueRunsTotal,
 } from "./execution-log-section";
 import type { TaskUsage } from "@multica/core/types";
 import { act, within } from "@testing-library/react";
@@ -273,7 +277,7 @@ describe("execution log failure reasons", () => {
       { locale: "zh-Hans" },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "显示历史运行（1）" }));
+    // The latest past runs are listed without a toggle.
     expect(screen.getByText(/提供商配额已用尽/)).toBeInTheDocument();
     expect(
       screen.queryByText(/Provider quota exhausted/),
@@ -293,7 +297,6 @@ describe("execution log failure reasons", () => {
       { locale: "zh-Hans" },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "显示历史运行（1）" }));
     expect(screen.queryByTitle(/provider returned 402/)).not.toBeInTheDocument();
     expect(screen.getByTitle("提供商配额已用尽")).toBeInTheDocument();
   });
@@ -340,7 +343,7 @@ describe("per-run token usage", () => {
 // 260px minimum the row has 227px and the full header wants ~238px, and the
 // label was the only item that could give. It gave by breaking "Execution log"
 // across two lines (MUL-5804). These tests pin the contract that replaced that:
-// one line always, and a width tier that drops the token figure whole.
+// one line always, and a width tier that drops the run count whole.
 describe("execution log header geometry", () => {
   function renderSection(tasks: AgentTask[]) {
     // Seed the cache instead of mocking the API: the query is fresh for 30s,
@@ -375,8 +378,11 @@ describe("execution log header geometry", () => {
     ]);
     expect(screen.getByText("Retrying now")).toBeInTheDocument();
     expect(screen.getByText("Retrying")).toBeInTheDocument();
-    expect(screen.queryByText("Finished earlier")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Show past runs \(1\)/ })).toBeInTheDocument();
+    // The retry sits in the active rows, above the latest finished runs.
+    expect(
+      screen.getByText("Retrying now").compareDocumentPosition(screen.getByText("Finished earlier")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows the running task before pending tasks in queue order", () => {
@@ -419,15 +425,15 @@ describe("execution log header geometry", () => {
     }
   });
 
-  it("drops the token figure whole rather than clipping a number", () => {
+  it("drops the run count whole rather than clipping a number", () => {
     const { unmount } = renderSection([completed]);
     let header = within(headerOf());
 
-    // Below the tier the tokens and their separator leave together and the
-    // cost stays — never a clipped "$2.0…", which would read as a different
-    // figure than the issue actually spent.
+    // Below the tier the count and its separator leave together and the cost
+    // stays — never a clipped "$2.0…", which would read as a different figure
+    // than the issue actually spent.
     const cost = header.getByText("$2.00");
-    expect(header.getByText("892K").className).toContain(
+    expect(header.getByText("1 run").className).toContain(
       "@max-[14rem]/execution-log:hidden",
     );
     expect(header.getByText("·").className).toContain(
@@ -445,13 +451,97 @@ describe("execution log header geometry", () => {
     unmount();
     renderSection([completed, makeTask({ status: "running" })]);
     header = within(headerOf());
-    expect(header.getByText("892K").className).toContain(
+    expect(header.getByText("2 runs").className).toContain(
       "@max-[16rem]/execution-log:hidden",
     );
   });
+
+  it("keeps the run count when there is no cost to show instead", () => {
+    renderSection([makeTask({ status: "completed", completed_at: "2026-06-08T08:04:00Z" })]);
+    const count = within(headerOf()).getByText("1 run");
+    expect(count.className).not.toContain("hidden");
+    expect(within(headerOf()).queryByText("$0.00")).not.toBeInTheDocument();
+  });
 });
 
-describe("IssueUsageTotal pricing", () => {
+describe("execution log past runs", () => {
+  function renderSection(tasks: AgentTask[]) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(issueKeys.tasks("issue-1"), tasks);
+    return renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <ExecutionLogSection issueId="issue-1" identifier="MUL-1" issueTitle="Wakeups" />
+      </QueryClientProvider>,
+    );
+  }
+
+  const past = (i: number, overrides: Partial<AgentTask> = {}) =>
+    makeTask({
+      id: `past-${i}`,
+      status: "completed",
+      trigger_summary: `Past run ${i}`,
+      started_at: `2026-06-0${i}T08:00:00Z`,
+      completed_at: `2026-06-0${i}T08:10:00Z`,
+      usage: [usageSlice()],
+      ...overrides,
+    });
+
+  it("lists the latest three and hands the rest to the Runs dialog", () => {
+    renderSection([past(1), past(2), past(3), past(4), past(5)]);
+
+    expect(screen.getAllByText(/^Past run \d$/).map((el) => el.textContent)).toEqual([
+      "Past run 5",
+      "Past run 4",
+      "Past run 3",
+    ]);
+    expect(screen.getByText("2 more")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Open timeline/ }));
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeInTheDocument();
+    expect(screen.getByText("MUL-1 · Wakeups")).toBeInTheDocument();
+  });
+
+  it("shows each past run's cost, not its token count", () => {
+    renderSection([past(1)]);
+
+    const row = screen.getByText("Past run 1").closest("div")!;
+    expect(within(row).getByText("$2.00")).toBeInTheDocument();
+    expect(within(row).queryByText("892K")).not.toBeInTheDocument();
+  });
+
+  it("draws the spend sparkline over a track of every run and sums the agent time", () => {
+    renderSection([past(1), past(2), past(3, { status: "failed", usage: [] })]);
+
+    const chart = screen.getByRole("button", {
+      name: "Cumulative cost over time — open the run timeline",
+    });
+    expect(chart.querySelectorAll("[data-run]")).toHaveLength(3);
+    expect(screen.getByText(/30m agent time/)).toBeInTheDocument();
+
+    fireEvent.click(chart);
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeInTheDocument();
+  });
+
+  it("draws the sparkline from the first priced run", () => {
+    // Review repro (MUL-7780): the old bar strip waited for two runs and then
+    // drew them as two 12px bars in the corner of an empty strip.
+    renderSection([past(1)]);
+    expect(
+      screen.getByRole("button", { name: /Cumulative cost over time/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("skips the sparkline when no run recorded usage — there is no curve to draw", () => {
+    renderSection([past(1, { usage: [] }), past(2, { usage: [] })]);
+    expect(
+      screen.queryByRole("button", { name: /Cumulative cost over time/ }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("IssueRunsTotal pricing", () => {
   afterEach(() => {
     useCustomPricingStore.setState({ pricings: {} });
   });
@@ -472,7 +562,7 @@ describe("IssueUsageTotal pricing", () => {
     const task = makeTask({ status: "completed", usage: [unpriced] });
 
     renderWithI18n(
-      <IssueUsageTotal tasks={[task]} alone onOpen={() => {}} />,
+      <IssueRunsTotal tasks={[task]} alone onOpen={() => {}} />,
     );
 
     // No rate on file for this model yet.
@@ -492,7 +582,7 @@ describe("IssueUsageTotal pricing", () => {
   });
 });
 
-describe("IssueUsageTotal with nothing metered", () => {
+describe("IssueRunsTotal with nothing metered", () => {
   it("still offers the Token cost entry so the empty state is reachable", () => {
     // Regression for DENE-670: this used to render null when no run reported
     // usage, which removed the only door to the breakdown at exactly the
@@ -500,10 +590,12 @@ describe("IssueUsageTotal with nothing metered", () => {
     // or no run yet. The door stays; the numbers do not appear.
     const onOpen = vi.fn();
     renderWithI18n(
-      <IssueUsageTotal tasks={[makeTask({ status: "completed" })]} alone onOpen={onOpen} />,
+      <IssueRunsTotal tasks={[makeTask({ status: "completed" })]} alone onOpen={onOpen} />,
     );
 
-    const entry = screen.getByRole("button", { name: "Token cost" });
+    // Upstream's run-count total is the door now (it never hides on runs
+    // that reported no usage), labelled by the count instead of "Token cost".
+    const entry = screen.getByRole("button", { name: "1 run" });
     expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
 
     fireEvent.click(entry);
@@ -593,7 +685,7 @@ describe("Token cost deep link", () => {
     // instead of the figures — the same door DENE-670 kept open.
     renderSection("", [makeTask({ status: "completed" })]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Token cost" }));
+    fireEvent.click(screen.getByRole("button", { name: "1 run" }));
 
     expect(screen.getByText("Usage breakdown")).toBeInTheDocument();
     expect(replace).toHaveBeenCalledWith("/acme/issues/MUL-1?usage=1");
@@ -614,7 +706,7 @@ describe("Token cost deep link", () => {
   it("keeps the comment fragment when the dialog writes the param", () => {
     renderSection("", [makeTask({ status: "completed" })], "#comment-7");
 
-    fireEvent.click(screen.getByRole("button", { name: "Token cost" }));
+    fireEvent.click(screen.getByRole("button", { name: "1 run" }));
 
     expect(replace).toHaveBeenCalledWith("/acme/issues/MUL-1?usage=1#comment-7");
   });

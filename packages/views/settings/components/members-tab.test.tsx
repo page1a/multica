@@ -1,293 +1,260 @@
-// Wiring, accessibility and the named regressions for the members roster.
-// The tier ladder itself — which tiers are offered, which are blocked and
-// what each change costs or grants — is the canonical business of
-// packages/core/workspace/member-roles.test.ts and is NOT re-run here.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { configStore } from "@multica/core/config";
+import { BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG } from "@multica/core/feature-flags";
 import { renderWithI18n } from "../../test/i18n";
-import type { MemberWithUser } from "@multica/core/types";
 
-const updateMember = vi.hoisted(() => vi.fn());
-const listMembers = vi.hoisted(() => vi.fn());
-const listInvitations = vi.hoisted(() => vi.fn());
-const listShareLinks = vi.hoisted(() => vi.fn());
-const toastSuccess = vi.hoisted(() => vi.fn());
-/** Who is looking at the tab; the owner unless a test says otherwise. */
-const viewer = vi.hoisted(() => ({ id: "user-owner" }));
-
-vi.mock("@multica/core/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@multica/core/api")>();
+const mockCreateMember = vi.hoisted(() => vi.fn());
+// The URL the settings router holds; `setSearch` stands in for navigation.
+const url = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const state = { search: "" };
   return {
-    ...actual,
-    api: {
-      updateMember,
-      listMembers,
-      listInvitations,
-      listShareLinks,
-      // ActorAvatar resolves avatar URLs through the client's base url.
-      getBaseUrl: () => "https://api.example.test",
+    get: () => state.search,
+    set: (search: string) => {
+      state.search = search;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   };
 });
-
-vi.mock("@multica/core/paths", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@multica/core/paths")>();
-  return {
-    ...actual,
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
-    // ActorAvatar builds member links from this; without a route provider
-    // the real hook throws and takes the whole roster down with it.
-    useWorkspacePaths: () => actual.paths.workspace("acme"),
-  };
-});
-
-vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
-
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector: (s: { user: { id: string } }) => unknown) =>
-      selector({ user: { id: viewer.id } }),
-    { getState: () => ({ user: { id: viewer.id } }) },
-  ),
+const data = vi.hoisted(() => ({
+  members: [] as Array<Record<string, unknown>>,
+  invitations: [] as Array<Record<string, unknown>>,
+  shareLinks: [] as Array<Record<string, unknown>>,
+  summary: null as Record<string, unknown> | null,
 }));
 
-vi.mock("@multica/core/billing", () => ({
-  usePreviewWorkspaceSeatPurchase: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  usePurchaseWorkspaceSeats: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  workspaceSubscriptionSummaryOptions: () => ({
-    queryKey: ["billing", "summary"],
-    queryFn: async () => null,
+vi.mock("@tanstack/react-query", () => ({
+  queryOptions: <T,>(opts: T) => opts,
+  useQuery: (opts: { queryKey: unknown[] }) => {
+    const key = JSON.stringify(opts.queryKey);
+    if (key.includes("invitations")) return { data: data.invitations };
+    if (key.includes("share-links")) return { data: data.shareLinks };
+    if (key.includes("members")) return { data: data.members };
+    return { data: data.summary };
+  },
+  useQueryClient: () => ({
+    invalidateQueries: vi.fn(),
+    fetchQuery: vi.fn(),
   }),
 }));
-
-vi.mock("sonner", () => ({
-  toast: { success: toastSuccess, error: vi.fn() },
+vi.mock("@multica/core/billing", () => ({
+  usePreviewWorkspaceSeatPurchase: () => ({ mutateAsync: vi.fn() }),
+  usePurchaseWorkspaceSeats: () => ({ mutateAsync: vi.fn() }),
+  workspaceSubscriptionSummaryOptions: (wsId: string) => ({
+    queryKey: ["billing", wsId, "summary"],
+  }),
 }));
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/paths", () => ({
+  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
+}));
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/api")>()),
+  api: { createMember: mockCreateMember },
+}));
+vi.mock("@multica/core/auth", () => {
+  const state = { user: { id: "user-1" } };
+  const useAuthStore = Object.assign(
+    (selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state),
+    { getState: () => state },
+  );
+  return { useAuthStore };
+});
+vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => <span /> }));
+vi.mock("../../navigation", () => ({
+  AppLink: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+  useOptionalNavigation: () => {
+    const search = useSyncExternalStore(url.subscribe, url.get);
+    const go = (href: string) => url.set(href.split("?")[1] ?? "");
+    return {
+      pathname: "/acme/settings",
+      searchParams: new URLSearchParams(search),
+      push: go,
+      replace: go,
+    };
+  },
+}));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { MembersTab } from "./members-tab";
 
-/** Minimal adapter so the roster's avatars can render their profile links.
- *  Views tests never mock next/* or react-router-dom — the adapter IS the
- *  seam the platform layers plug into. */
-const TEST_NAVIGATION: NavigationAdapter = {
-  push: vi.fn(),
-  replace: vi.fn(),
-  back: vi.fn(),
-  pathname: "/acme/settings",
-  searchParams: new URLSearchParams(),
-  hash: "",
-  getShareableUrl: (path: string) => `https://app.example.test${path}`,
-};
-
-/** `role` widens to `string` so a test can stage a tier this build does not
- *  know — exactly what the lenient response schema lets through. */
-function member(
-  over: Partial<Omit<MemberWithUser, "role">> &
-    Pick<MemberWithUser, "id"> & { role?: string },
-): MemberWithUser {
-  return {
-    workspace_id: "ws-1",
-    user_id: `user-${over.id}`,
-    role: "member",
-    created_at: "2026-01-01T00:00:00Z",
-    name: "Nobody",
-    email: "nobody@example.test",
-    avatar_url: null,
-    ...over,
-  } as MemberWithUser;
-}
-
-const OWNER = member({
-  id: "m-owner",
-  user_id: "user-owner",
-  role: "owner",
-  name: "Ada Owner",
-  email: "ada@example.test",
+const member = (id: string, name: string, role: string) => ({
+  id: `m-${id}`,
+  user_id: id,
+  workspace_id: "ws-1",
+  role,
+  name,
+  email: `${name.toLowerCase().split(" ")[0]}@acme.dev`,
+  avatar_url: null,
+  created_at: "2025-01-08T00:00:00Z",
 });
-const TEAMMATE = member({
-  id: "m-teammate",
-  user_id: "user-teammate",
-  role: "member",
-  name: "Bo Member",
-  email: "bo@example.test",
-});
-
-/** Pass `null` to leave `listMembers` on whatever the test already staged —
- *  the loading case needs a request that never settles. */
-function renderTab(members: MemberWithUser[] | null = null) {
-  if (members) roster = members;
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // Nested inside the element, not passed as `wrapper`: renderWithI18n owns
-  // the wrapper slot, and a second one would blank every translated label.
-  const result = renderWithI18n(
-    <QueryClientProvider client={qc}>
-      <NavigationProvider value={TEST_NAVIGATION}>
-        <MembersTab />
-      </NavigationProvider>
-    </QueryClientProvider>,
-  );
-  return { ...result, qc };
-}
-
-/** The tier picker for one row, found by its per-member accessible name. */
-function tierPicker(name: string): HTMLElement {
-  return screen.getByRole("combobox", { name: new RegExp(`Tier for ${name}`) });
-}
-
-/** Roster the fake server owns, so a refetch after a write sees the write —
- *  a static mock would silently undo every optimistic patch and make the
- *  rollback assertions meaningless. */
-let roster: MemberWithUser[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  viewer.id = "user-owner";
-  roster = [OWNER, TEAMMATE];
-  listMembers.mockImplementation(async () => roster);
-  listInvitations.mockResolvedValue([]);
-  listShareLinks.mockResolvedValue([]);
-  updateMember.mockImplementation(async (_ws: string, id: string, data: { role: string }) => {
-    roster = roster.map((m) => (m.id === id ? member({ ...m, role: data.role }) : m));
-    return roster.find((m) => m.id === id)!;
-  });
+  url.set("tab=members");
+  data.members = [
+    member("user-1", "Ada Lovelace", "owner"),
+    member("user-2", "Grace Hopper", "admin"),
+    member("user-3", "Alan Turing", "member"),
+  ];
+  data.invitations = [
+    {
+      id: "inv-1",
+      workspace_id: "ws-1",
+      inviter_id: "user-1",
+      invitee_email: "linus@acme.dev",
+      invitee_user_id: null,
+      role: "member",
+      status: "pending",
+      created_at: "2025-03-01T00:00:00Z",
+      updated_at: "2025-03-01T00:00:00Z",
+      expires_at: "2025-03-08T00:00:00Z",
+    },
+  ];
+  data.shareLinks = [];
+  data.summary = null;
+  configStore.getState().setFeatureFlags({});
 });
 
-describe("MembersTab roster states", () => {
-  it("shows placeholder rows while the roster is still loading", async () => {
-    listMembers.mockReturnValue(new Promise(() => {}));
-    renderTab();
+describe("MembersTab", () => {
+  it("lists members with their role and marks the current user", () => {
+    renderWithI18n(<MembersTab />);
 
-    expect(screen.getByRole("status", { name: /Loading members/i })).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: /Tier for/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /Members\s*3/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+    expect(screen.getByText("You")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for Grace Hopper" })).toBeInTheDocument();
+    // Nobody manages their own membership from this list.
+    expect(screen.queryByRole("button", { name: "Actions for Ada Lovelace" })).toBeNull();
   });
 
-  it("offers the invite entry when nobody but you is on the roster", async () => {
-    renderTab([OWNER]);
+  it("filters members by name or email", () => {
+    renderWithI18n(<MembersTab />);
+    const search = screen.getByRole("searchbox", { name: "Search name or email" });
 
-    await screen.findByText("No members yet");
-    await userEvent.click(screen.getByRole("button", { name: /Invite a member/i }));
-    // The prompt's only job is to land the person in the invite field.
-    expect(screen.getByRole("textbox", { name: /user@company\.com/ })).toHaveFocus();
+    fireEvent.change(search, { target: { value: "grace@" } });
+    expect(screen.getByText("Grace Hopper")).toBeInTheDocument();
+    expect(screen.queryByText("Alan Turing")).toBeNull();
+
+    fireEvent.change(search, { target: { value: "nobody" } });
+    expect(screen.getByText("No members match this search.")).toBeInTheDocument();
   });
 
-  it("drops the prompt once someone else is on the roster", async () => {
-    renderTab();
+  it("shows when each pending invitation was sent and expires", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
 
-    await screen.findByText("Bo Member");
-    expect(screen.queryByText("No members yet")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: /Pending invitations\s*1/ }));
+    expect(screen.getByText("linus@acme.dev")).toBeInTheDocument();
+    expect(screen.getByText(/Sent .* · Expires /)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Revoke invitation for linus@acme.dev" }),
+    ).toBeInTheDocument();
   });
 
-  it("renders one tier picker per editable row and none for yourself", async () => {
-    renderTab();
+  it("keeps the open list in the URL and follows it while on the page", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
 
-    await screen.findByText("Bo Member");
-    expect(tierPicker("Bo Member")).toBeInTheDocument();
-    // An owner demoting themselves is the classic way to lock a workspace;
-    // the server refuses it, so the row never offers it.
-    expect(screen.queryByRole("combobox", { name: /Tier for Ada Owner/ })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: /Pending invitations\s*1/ }));
+    expect(url.get()).toBe("tab=members&section=invitations");
+
+    // A search result or back/forward changes the URL without remounting.
+    act(() => url.set("tab=members&section=links"));
+    expect(screen.getByRole("tab", { name: /Share links\s*0/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    act(() => url.set("tab=members"));
+    expect(screen.getByRole("tab", { name: /Members\s*3/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
-  it("shows a tier this build does not know without inventing one for it", async () => {
-    renderTab([OWNER, member({ id: "m-x", role: "superadmin", name: "Cy Future" })]);
-
-    await screen.findByText("Cy Future");
-    expect(screen.getByText("Unknown tier")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: /Tier for Cy Future/ })).toBeNull();
-  });
-});
-
-// DENE-1022: the page is the owner's. Everyone else is told why, and the
-// pending-invitation and invite-link requests (owner-only on the server) are
-// never sent.
-describe("MembersTab is owner-only", () => {
-  it.each([
-    ["admin", "user-admin"],
-    ["member", "user-teammate"],
-  ])("tells a %s the page is closed and shows no management data", async (role, userId) => {
-    viewer.id = userId;
-    const self = member({ id: `m-${role}`, user_id: userId, role, name: "Viewer" });
-    // What the server sends a non-owner: everyone else without role / email.
-    const redactedOwner = member({ ...OWNER, role: "", email: "", created_at: "" });
-    renderTab([redactedOwner, self]);
-
-    await screen.findByText("Only the workspace owner can manage members");
-    expect(screen.queryByText("ada@example.test")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Invite/i })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: /Tier for/ })).toBeNull();
-    expect(listShareLinks).not.toHaveBeenCalled();
+  it("opens the tab a deep link names", () => {
+    url.set("tab=members&section=links");
+    renderWithI18n(<MembersTab />);
+    expect(screen.getByRole("tab", { name: /Share links\s*0/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("No share links yet.")).toBeInTheDocument();
   });
 
-  it("shows the roster to the owner", async () => {
-    renderTab();
+  it("invites from a dialog and closes it once the invitation is sent", async () => {
+    mockCreateMember.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
 
-    await screen.findByText("Bo Member");
-    expect(screen.queryByText("Only the workspace owner can manage members")).toBeNull();
-    expect(screen.getByText("bo@example.test")).toBeInTheDocument();
-  });
-});
-
-describe("MembersTab tier changes", () => {
-  it("updates the row and names what the change affects", async () => {
-    // Hold the write open so the assertion below can only pass on the
-    // optimistic patch, not on a refetch that already landed.
-    let releaseWrite: () => void = () => {};
-    const written = new Promise<void>((resolve) => {
-      releaseWrite = resolve;
-    });
-    const serverWrite = updateMember.getMockImplementation()!;
-    updateMember.mockImplementation(async (...args: unknown[]) => {
-      await written;
-      return serverWrite(...args);
-    });
-
-    renderTab();
-    await screen.findByText("Bo Member");
-
-    await userEvent.click(tierPicker("Bo Member"));
-    await userEvent.click(await screen.findByRole("option", { name: /Admin/ }));
+    await user.click(screen.getByRole("button", { name: "Invite member" }));
+    const dialog = await screen.findByRole("dialog", { name: "Invite member" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Email" }), "new@acme.dev");
+    await user.click(within(dialog).getByRole("button", { name: "Invite" }));
 
     await waitFor(() =>
-      expect(updateMember).toHaveBeenCalledWith("ws-1", "m-teammate", { role: "admin" }),
+      expect(mockCreateMember).toHaveBeenCalledWith("ws-1", {
+        email: "new@acme.dev",
+        role: "member",
+      }),
     );
-    // Row shows the new tier while the write is still in flight.
-    await waitFor(() => expect(tierPicker("Bo Member")).toHaveTextContent("Admin"));
-    releaseWrite();
-    // And the person who made the change is told what it opened, which is
-    // the whole point of the confirmation.
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
-    const [title, opts] = toastSuccess.mock.calls.at(-1)!;
-    expect(title).toMatch(/Bo Member is now Admin/);
-    expect(opts.description).toMatch(/invite members and change tiers/);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("rolls the row back and explains the failure in place", async () => {
-    updateMember.mockRejectedValue(new Error("seat limit reached"));
-    renderTab();
-    await screen.findByText("Bo Member");
+  it("keeps the invite dialog open when sending fails", async () => {
+    mockCreateMember.mockRejectedValue(new Error("nope"));
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
 
-    await userEvent.click(tierPicker("Bo Member"));
-    await userEvent.click(await screen.findByRole("option", { name: /Admin/ }));
+    await user.click(screen.getByRole("button", { name: "Invite member" }));
+    const dialog = await screen.findByRole("dialog", { name: "Invite member" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Email" }), "new@acme.dev");
+    await user.click(within(dialog).getByRole("button", { name: "Invite" }));
 
-    await waitFor(() => expect(screen.getByText("seat limit reached")).toBeInTheDocument());
-    // The optimistic patch must not survive the rejection.
-    expect(tierPicker("Bo Member")).toHaveTextContent("Member");
-    expect(toastSuccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockCreateMember).toHaveBeenCalled());
+    expect(screen.getByRole("dialog", { name: "Invite member" })).toBeInTheDocument();
   });
 
-  it("lets a member be moved down to guest", async () => {
-    // Guest is released: the server rejects every guest write in one layer
-    // (DENE-697), so the picker no longer holds the tier back.
-    renderTab();
-    await screen.findByText("Bo Member");
+  it("links seat usage to billing when subscriptions are on", () => {
+    configStore
+      .getState()
+      .setFeatureFlags({ [BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG]: true });
+    data.summary = { seatCapacity: { used: 3, reserved: 1, purchased: 5 } };
+    renderWithI18n(<MembersTab />);
 
-    await userEvent.click(tierPicker("Bo Member"));
-    await userEvent.click(await screen.findByRole("option", { name: /Guest/ }));
-
-    await waitFor(() =>
-      expect(updateMember).toHaveBeenCalledWith("ws-1", "m-teammate", { role: "guest" }),
+    expect(screen.getByText(/4 of 5 seats used/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Manage seats" })).toHaveAttribute(
+      "href",
+      "/acme/settings?tab=billing",
     );
+  });
+
+  it("closes the page to non-owners (kun DENE-1022)", () => {
+    // kun: member management is owner-only, so admins and members see why the
+    // page is closed instead of upstream's read-only roster.
+    data.members = [
+      member("user-1", "Ada Lovelace", "admin"),
+      member("user-2", "Grace Hopper", "owner"),
+    ];
+    renderWithI18n(<MembersTab />);
+
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Invite member" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /Share links/ })).toBeNull();
+    expect(screen.queryByText("Grace Hopper")).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -117,6 +118,29 @@ func TestIssueMetadataValidation(t *testing.T) {
 				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestIssueMetadataTitleSuggestionRejectsAgentCreatedIssue(t *testing.T) {
+	requireDB(t)
+	issueID := createMetadataTestIssue(t, "Agent-created issue")
+	var agentID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`, testWorkspaceID,
+	).Scan(&agentID); err != nil {
+		t.Fatalf("load seeded agent: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE issue SET creator_type = 'agent', creator_id = $1 WHERE id = $2`, agentID, issueID,
+	); err != nil {
+		t.Fatalf("mark issue agent-created: %v", err)
+	}
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/title_suggestion", json.RawMessage(`{"value":"Agent suggestion"}`))
+	req = withURLParams(req, "id", issueID, "key", "title_suggestion")
+	testHandler.SetIssueMetadataKey(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected agent-created issue suggestion to be rejected with 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

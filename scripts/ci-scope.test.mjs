@@ -37,6 +37,7 @@ for (const [name, files, selected] of [
   ["migration allocation", ["scripts/migration-new.test.sh"], ["scripts"]],
   ["reserved slug source", ["server/internal/handler/reserved_slugs.json"], ["backend", "runtime", "scripts"]],
   ["reserved slug output", ["packages/core/paths/reserved-slugs.ts"], ["frontend", "quality", "scripts"]],
+  ["integration key gates", ["server/cmd/server/router.go"], ["backend", "runtime", "scripts"]],
   ["cross-module runtime contract", ["packages/core/runtimes/cli-version.ts"], ["frontend", "backend", "runtime", "quality"]],
   ["lockfile", ["pnpm-lock.yaml"], ["frontend", "quality"]],
   ["package patch", ["patches/example.patch"], ["frontend", "quality"]],

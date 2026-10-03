@@ -42,11 +42,26 @@ var inboxBoardCmd = &cobra.Command{
 	RunE: runInboxBoard,
 }
 
+var inboxDismissCmd = &cobra.Command{
+	Use:   "dismiss <issue>",
+	Short: "Clear your stale waiting reminder for an issue",
+	Long: "Clear the open \"waiting on you\" reminder for one issue. This command is only\n" +
+		"allowed from an agent run started directly by a person; the server targets that\n" +
+		"person's inbox and records the reason as a visible issue comment. It does not\n" +
+		"change the issue status or assignee, and it does not wake anyone.\n\n" +
+		"  --reason  why the reminder is stale (required)\n",
+	Args: exactArgs(1),
+	RunE: runInboxDismiss,
+}
+
 func init() {
 	inboxCmd.AddCommand(inboxBoardCmd)
+	inboxCmd.AddCommand(inboxDismissCmd)
 	inboxBoardCmd.Flags().String("tz", "", "IANA time zone \"done today\" is counted in (default: this machine's)")
 	inboxBoardCmd.Flags().String("project", "", "Only this project's tickets: project id, id prefix or exact name")
 	inboxBoardCmd.Flags().String("output", "table", "Output format: table or json")
+	inboxDismissCmd.Flags().String("reason", "", "why the waiting reminder is stale (required)")
+	inboxDismissCmd.Flags().String("output", "table", "Output format: table or json")
 }
 
 // localTZName is this machine's IANA zone name: $TZ, else the /etc/localtime
@@ -129,6 +144,33 @@ func runInboxBoard(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("inbox board: %w", err)
 	}
 	printInboxBoard(os.Stdout, board)
+	return nil
+}
+
+func runInboxDismiss(cmd *cobra.Command, args []string) error {
+	reason, _ := cmd.Flags().GetString("reason")
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("--reason is required: why the waiting reminder is stale")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	ref, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+	var out map[string]any
+	path := "/api/inbox/issues/" + url.PathEscape(ref.ID) + "/dismiss"
+	if err := client.PostJSON(ctx, path, map[string]any{"reason": reason}, &out); err != nil {
+		return fmt.Errorf("inbox dismiss: %w", err)
+	}
+	if format, _ := cmd.Flags().GetString("output"); format == "json" {
+		return cli.PrintJSON(os.Stdout, out)
+	}
+	fmt.Printf("Dismissed waiting reminder for %v\nReason: %v\n", ref.Display, out["reason"])
 	return nil
 }
 

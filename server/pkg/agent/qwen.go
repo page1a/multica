@@ -36,7 +36,7 @@ var qwenBlockedArgs = map[string]blockedArgMode{
 	"--model":              blockedWithValue,
 	"-r":                   blockedWithValue,
 	"--resume":             blockedWithValue,
-	"-c":                   blockedStandalone,
+	"-c":                   blockedOptionalValue,
 	"--continue":           blockedStandalone,
 	"--chat-recording":     blockedWithValue,
 	"--mcp-config":         blockedWithValue,

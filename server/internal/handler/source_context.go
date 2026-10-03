@@ -715,6 +715,10 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return errSourceContextResponseWritten
 	}
+	properties, ok := parseIssueCreateProperties(w, input.Properties)
+	if !ok {
+		return errSourceContextResponseWritten
+	}
 	var startDate, dueDate pgtype.Date
 	if input.StartDate != nil && *input.StartDate != "" {
 		parsed, err := util.ParseCalendarDate(*input.StartDate)
@@ -745,7 +749,7 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		WorkspaceID: workspaceID, Title: title, Description: ptrToText(input.Description), Status: status, Priority: priority,
 		AssigneeType: assigneeType, AssigneeID: assigneeID, CreatorType: "member", CreatorID: userID,
 		ParentIssueID: capture.SourceIssueID, ProjectID: projectID, ProjectPinned: projectPinned, StartDate: startDate, DueDate: dueDate,
-		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Stage: stage,
+		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Properties: properties, Stage: stage,
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
 		ActorID: util.UUIDToString(userID),
@@ -886,7 +890,12 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 			projectID = parent.ProjectID
 		}
 	}
-	task, err := h.TaskService.EnqueueQuickCreateTaskWithSourceContextChoosingProject(r.Context(), workspaceID, userID, prepared.agentID, prepared.squadID, prepared.prompt, prepared.priority, prepared.dueDate, projectID, capture.SourceIssueID, prepared.attachmentIDs, prepared.projectExplicitNone, capture)
+	task, err := h.TaskService.EnqueueQuickCreate(r.Context(), service.QuickCreateRequest{
+		WorkspaceID: workspaceID, RequesterID: userID, AgentID: prepared.agentID, SquadID: prepared.squadID,
+		Prompt: prepared.prompt, Priority: prepared.priority, DueDate: prepared.dueDate,
+		ProjectID: projectID, ParentIssueID: capture.SourceIssueID, AttachmentIDs: prepared.attachmentIDs,
+		ProjectExplicitNone: prepared.projectExplicitNone, SourceContext: &capture,
+	})
 	if err != nil {
 		return err
 	}
@@ -902,6 +911,7 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 	status := http.StatusInternalServerError
 	code := "source_context_capture_failed"
 	message := "failed to capture source context"
+	var propertyErr *service.IssuePropertyValidationError
 	switch {
 	case errors.Is(err, service.ErrSourceContextChanged):
 		status, code = http.StatusConflict, "source_context_changed"
@@ -927,6 +937,12 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrProjectNotFound):
 		status = http.StatusBadRequest
 		message = err.Error()
+	case errors.As(err, &propertyErr):
+		status, code = http.StatusBadRequest, "invalid_issue_property"
+		message = propertyErr.Message
+	case errors.Is(err, service.ErrIssuePropertiesTooLarge):
+		status, code = http.StatusBadRequest, "issue_properties_too_large"
+		message = err.Error()
 	case errors.Is(err, errSourceContextBadRequest):
 		status, code = http.StatusBadRequest, "invalid_request"
 		message = err.Error()
@@ -934,6 +950,9 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 		return
 	}
 	payload := map[string]any{"code": code, "error": message}
+	if propertyErr != nil {
+		payload["property_id"] = propertyErr.PropertyID
+	}
 	if errors.Is(err, service.ErrSourceContextTooLarge) {
 		payload["limits"] = limits
 	}

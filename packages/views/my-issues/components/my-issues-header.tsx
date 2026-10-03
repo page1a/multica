@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Target } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
@@ -26,6 +26,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { issueBehavesAs } from "@multica/core/issues";
 import { openGoalCompletion } from "@multica/core/modals";
+import { openCreateIssueWithPreference } from "@multica/core/issues/stores/create-mode-store";
 import { PAGE_GUTTER } from "../../layout/page-header";
 import { FilterChipsBar } from "../../issues/components/filter-chips-bar";
 import { toast } from "sonner";
@@ -49,6 +50,8 @@ export function MyIssuesHeader({
   workingAgents,
   scope,
   onScopeChange,
+  goalOnly,
+  onGoalOnlyChange,
   facetCountsExact = true,
   tableFacetCounts,
   onTableFacetChange,
@@ -60,6 +63,8 @@ export function MyIssuesHeader({
   workingAgents: WorkingAgentSummary[] | undefined;
   scope: MyIssuesScope;
   onScopeChange: (scope: MyIssuesScope) => void;
+  goalOnly: boolean;
+  onGoalOnlyChange: (goalOnly: boolean) => void;
   /** See IssueDisplayControls.facetCountsExact. */
   facetCountsExact?: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
@@ -159,6 +164,34 @@ export function MyIssuesHeader({
         </DropdownMenu>
 
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="default"
+            size="sm"
+            className="hidden gap-1 bg-brand text-brand-foreground hover:bg-brand/90 sm:inline-flex"
+            onClick={() => openCreateIssueWithPreference({ goal_mode: true })}
+          >
+            <Target className="size-3.5" aria-hidden="true" />
+            {t(($) => $.header.new_goal)}
+          </Button>
+          <Button
+            variant={goalOnly ? "default" : "outline"}
+            size="sm"
+            className={cn("hidden gap-1 md:inline-flex", goalOnly && "bg-brand text-brand-foreground hover:bg-brand/90")}
+            aria-pressed={goalOnly}
+            onClick={() => onGoalOnlyChange(!goalOnly)}
+          >
+            <Target className="size-3.5" aria-hidden="true" />
+            {t(($) => $.header.only_goals)}
+          </Button>
+          <Button
+            variant="default"
+            size="icon-sm"
+            className="bg-brand text-brand-foreground hover:bg-brand/90 sm:hidden"
+            aria-label={t(($) => $.header.new_goal)}
+            onClick={() => openCreateIssueWithPreference({ goal_mode: true })}
+          >
+            <Target className="size-3.5" aria-hidden="true" />
+          </Button>
           {agentRunningFilter && (
             <span className="mr-1 hidden text-caption text-muted-foreground md:inline">
               {tIssues(($) => $.agent_activity.filter_active_label)}

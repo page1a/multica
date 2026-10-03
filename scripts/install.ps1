@@ -1,4 +1,4 @@
-# Multica installer for Windows — one command to get started.
+# Multica installer for Windows - one command to get started.
 #
 # Install CLI (default): connects to multica.ai
 #   irm https://raw.githubusercontent.com/jeff-kunkun/multica/kun/scripts/install.ps1 | iex
@@ -294,10 +294,10 @@ function Install-CliBinary {
             }
             Write-Ok "Checksum verified"
         } else {
-            Write-Warn "Could not find checksum entry for $releaseAsset — skipping verification."
+            Write-Warn "Could not find checksum entry for $releaseAsset - skipping verification."
         }
     } catch {
-        Write-Warn "Could not download checksums.txt — skipping verification."
+        Write-Warn "Could not download checksums.txt - skipping verification."
     }
 
     Expand-Archive -Path (Join-Path $tmpDir "multica.zip") -DestinationPath $tmpDir -Force

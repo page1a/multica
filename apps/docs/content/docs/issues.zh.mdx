@@ -69,7 +69,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 两个变化由系统执行：
 
 - 执行失败，且该任务没有其他执行、也没有触发重试时，`in_progress` 回到 `todo`。
-- 关联的 GitHub PR 带关闭意图合并，且没有其他仍处于 open 或 draft 的关联 PR 时，任务变为 `done`。
+- 任务的所有关联 PR 都合并时，任务改为工作区选定的状态（默认 `done`），除非工作区设置为不改变，或该任务设置了合并后不改状态。详见 [GitHub 集成](/github-integration)。
 </Callout>
 
 ### 自定义状态

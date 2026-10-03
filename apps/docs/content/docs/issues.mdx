@@ -69,7 +69,7 @@ Agents write the status the issue is in as their work changes it: starting work 
 Two changes are made by the system:
 
 - When a run fails, the issue has no other runs, and no retry is triggered, `in_progress` rolls back to `todo`.
-- When a linked GitHub PR merges with close intent and no other linked PR is still open or draft, the issue becomes `done`.
+- When every PR linked to the issue is merged, the issue moves to the status the workspace chose (`done` by default) — unless the workspace leaves status alone or the issue is switched off. See [GitHub integration](/github-integration#when-merged-prs-move-an-issue).
 </Callout>
 
 ### Custom statuses

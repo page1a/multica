@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Multica platform actions: asks, goals, inbox, issues, sub-issues, routing, close protocol, mentions, agents, specialisations, squads, autopilots, projects, runtimes, progress, skill import, transfers, GitHub App. Not product code."
+description: "Use for Multica platform actions: asks, goals, inbox, project board, issues, sub-issues, wakeups, comment charts, routing, close protocol, stall actions, mentions, agents, specialisations, squads, autopilots, projects, runtimes, progress, skill import, transfers, GitHub App. Not product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -19,7 +19,9 @@ Read the invariants below, then open the reference(s) your task actually needs
 
 | Open | When the task is about |
 |---|---|
-| `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, who else is running |
+| `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, who else is running, charts vs attached files in a comment |
+| `references/wakeups.md` | Issue wakeups: events, conditions (`--until-*`), timers, check-ins, runaway protection |
+| `references/stall-actions.md` | Automatic stall actions: 24-hour keep announcements, parent auto-close, 7-day undo, and CLI/API commands |
 | `references/goals.md` | Task goals: draft a completion line, confirm the human lock, track budget, and finish a goal |
 | `references/sub-issues.md` | Sub-issues: todo vs backlog at create time, stages as barrier groups, promoting parked children |
 | `references/routing.md` | Automatic routing: which slots it fills at which status, the 验收席 field, who may pick an executor (`--per-quote`, `issue escalate`), what an `issue route` result means, why dispatch stopped |
@@ -33,6 +35,7 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode), and project memory (`check`, `status`, `seat`) |
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/inbox.md` | The user asks about their inbox or what is stuck: `multica inbox board` (optionally `--project`) and the fixed five-part answer |
+| `references/project-board.md` | The user asks for the full open-ticket panorama by project: `multica project board` (one or more projects, or the whole workspace) |
 | `references/transfer.md` | `multica transfer export` / `import` / `bind-runtimes`, and the kun `/transfer/*` endpoints |
 | `references/skill-import.md` | Importing a skill into this workspace from a URL or a local archive |
 | `references/github-app.md` | GitHub App identity for this deployment: status, and a setup link a person opens to create the App |
@@ -72,11 +75,6 @@ mentioning, triggering and status changes mutate durable workspace state or
 start agent runs that cost real budget. Never run one to see what happens. When
 the user has not asked for a specific mutation, propose it instead of making it.
 
-**`--no-start` when you are only recording.** Assignment and status writes
-normally enqueue a run. When the work is already underway and the write merely
-records ownership or progress, pass `--no-start` on EVERY command in that flow —
-suppressing the assignment alone does not suppress a later status update.
-
 **Status keys identify workflow states; categories describe lifecycle only.**
 Custom statuses do not inherit built-in automation behavior. For status side
 effects and API field meanings, read `references/issues.md`.
@@ -93,6 +91,12 @@ opt in to a workspace-wide directory. Visibility follows the person who
 started the task, so another member's private chats stay hidden. Listing and
 reading chats never changes unread state. Use `multica chat history` for a
 bounded transcript after choosing a session.
+
+To promote the current conversation into a goal task, use
+`multica chat to-goal --session <id-or-url>`. The server creates the issue with
+the chat's agent as executor; confirm the completion line through the shared
+`multica goal` commands. Add `--output json` when another tool needs the new
+issue id.
 
 **Comment reads stay bounded.** Scan the threads cheaply
 (`--roots-only --summary --compact`), then expand only what matters
@@ -117,4 +121,4 @@ moves the surprise to somebody else.
 
 ## Progress
 
-Use `multica issue progress` and `multica chat progress` to report a concise current update. See `references/progress.md`.
+Use `multica issue progress` and `multica chat progress` to report a concise current update. At the beginning of a chat run, report a title with `multica chat title "Project · topic"`; a manual member rename is locked and the command returns a reason. For a human-created issue, suggest a clearer first-pass title with `multica issue title <id> --suggest "<title>"`; it never applies the change. See `references/progress.md`.

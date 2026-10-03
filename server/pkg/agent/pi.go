@@ -916,11 +916,21 @@ func decodePiResult(raw json.RawMessage) string {
 // overridden by user-configured custom_args. Overriding these would
 // break the daemon↔Pi communication protocol.
 var piBlockedArgs = map[string]blockedArgMode{
-	"-p":         blockedStandalone, // non-interactive mode
-	"--print":    blockedStandalone, // alias for -p
-	"--mode":     blockedWithValue,  // "json" event stream protocol
-	"--session":  blockedWithValue,  // daemon manages the session path
-	"--thinking": blockedWithValue,  // owned by agent.thinking_level
+	"-p":        blockedStandalone, // non-interactive mode
+	"--print":   blockedStandalone, // alias for -p
+	"--mode":    blockedWithValue,  // "json" event stream protocol
+	"--session": blockedWithValue,  // daemon manages the session path
+	// Session selection is daemon-owned: any of these would point the run at
+	// a different session than the one the daemon recorded for this task.
+	"-c":            blockedOptionalValue, // --continue; also eats a stray Codex -c key=value
+	"--continue":    blockedStandalone,
+	"-r":            blockedStandalone,
+	"--resume":      blockedStandalone,
+	"--no-session":  blockedStandalone,
+	"--session-id":  blockedWithValue,
+	"--session-dir": blockedWithValue,
+	"--fork":        blockedWithValue,
+	"--thinking":    blockedWithValue, // owned by agent.thinking_level
 }
 
 // piCustomArgModes mirrors Pi 0.83's built-in parser closely enough to

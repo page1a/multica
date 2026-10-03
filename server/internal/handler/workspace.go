@@ -115,6 +115,100 @@ type WorkspaceResponse struct {
 	UpdatedAt    string  `json:"updated_at"`
 }
 
+type workspaceNamingResponse struct {
+	Source  string           `json:"source"`
+	Options []map[string]any `json:"options"`
+	Stats   map[string]int   `json:"stats"`
+}
+
+type updateWorkspaceNamingRequest struct {
+	Source string `json:"source"`
+}
+
+func (h *Handler) workspaceNamingOptions() []map[string]any {
+	serverReady := h.LLM != nil && h.LLM.Enabled()
+	return []map[string]any{
+		{"id": "server_llm", "label": "Server model key", "available": serverReady, "reason": func() string {
+			if serverReady {
+				return ""
+			}
+			return "this instance has no MULTICA_LLM_* key configured"
+		}()},
+		{"id": "runtime", "label": "Chat agent runtime", "available": true, "recommended": true},
+		{"id": "rules", "label": "Rules only", "available": true},
+	}
+}
+
+func (h *Handler) GetWorkspaceNaming(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUUIDOrBadRequest(w, workspaceIDFromURL(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	ws, err := h.Queries.GetWorkspace(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+	var settings map[string]any
+	_ = json.Unmarshal(ws.Settings, &settings)
+	source := "runtime"
+	if h.LLM != nil && h.LLM.Enabled() {
+		source = "server_llm"
+	}
+	if naming, ok := settings["naming"].(map[string]any); ok {
+		if value, ok := naming["source"].(string); ok && value != "" {
+			source = value
+		}
+	}
+	stats := map[string]int{"titled": 0, "runtime": 0, "rules": 0, "failed": 0}
+	if h.DB != nil {
+		var titled, runtime, rules, failed int
+		if err := h.DB.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE status = 'success'), count(*) FILTER (WHERE status = 'success' AND source = 'runtime'), count(*) FILTER (WHERE status = 'success' AND source = 'rules'), count(*) FILTER (WHERE status = 'failure') FROM chat_naming_event WHERE workspace_id = $1 AND created_at >= now() - interval '24 hours'`, id).Scan(&titled, &runtime, &rules, &failed); err == nil {
+			stats = map[string]int{"titled": titled, "runtime": runtime, "rules": rules, "failed": failed}
+		}
+	}
+	writeJSON(w, http.StatusOK, workspaceNamingResponse{Source: source, Options: h.workspaceNamingOptions(), Stats: stats})
+}
+
+func (h *Handler) UpdateWorkspaceNaming(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUUIDOrBadRequest(w, workspaceIDFromURL(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	var req updateWorkspaceNamingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Source != "server_llm" && req.Source != "runtime" && req.Source != "rules" {
+		writeError(w, http.StatusBadRequest, "source must be server_llm, runtime, or rules")
+		return
+	}
+	ws, err := h.Queries.GetWorkspace(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+	if req.Source == "server_llm" && (h.LLM == nil || !h.LLM.Enabled()) {
+		writeError(w, http.StatusBadRequest, "server model key is unavailable: this instance has no MULTICA_LLM_* key configured")
+		return
+	}
+	var settings map[string]any
+	_ = json.Unmarshal(ws.Settings, &settings)
+	if settings == nil {
+		settings = map[string]any{}
+	}
+	settings["naming"] = map[string]any{"source": req.Source}
+	raw, _ := json.Marshal(settings)
+	updated, err := h.Queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{ID: id, Settings: raw})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update naming source")
+		return
+	}
+	h.publish(protocol.EventWorkspaceUpdated, uuidToString(updated.ID), "member", requestUserID(r), map[string]any{"workspace": h.workspaceToResponse(updated)})
+	writeJSON(w, http.StatusOK, workspaceNamingResponse{Source: req.Source, Options: h.workspaceNamingOptions(), Stats: map[string]int{"titled": 0, "runtime": 0, "rules": 0, "failed": 0}})
+}
+
 func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	var settings any
 	if w.Settings != nil {
@@ -531,6 +625,15 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		var stored []byte
 		if existing, err := h.Queries.GetWorkspace(r.Context(), idUUID); err == nil {
 			stored = existing.Settings
+		}
+		if incoming, ok := req.Settings.(map[string]any); ok {
+			// Only an old client's flip of the retired PR switch needs the
+			// stored value; see reconcilePRMergeSettings.
+			var storedMap map[string]any
+			if _, sent := incoming[prAutoCompleteLegacyKey]; sent && len(stored) > 0 {
+				_ = json.Unmarshal(stored, &storedMap)
+			}
+			reconcilePRMergeSettings(storedMap, incoming)
 		}
 		merged, ok := h.applyRoutingSecret(req.Settings, stored)
 		if !ok {
@@ -1432,6 +1535,12 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		{
 			name: "delete comments",
 			run:  func() error { return qtx.DeleteWorkspaceComments(ctx, requester.WorkspaceID) },
+		},
+		{
+			// Teardown mode keeps the triggers from logging the deletes above
+			// and below; this clears what normal writes logged before.
+			name: "delete search index changes",
+			run:  func() error { return qtx.DeleteWorkspaceSearchIndexChanges(ctx, requester.WorkspaceID) },
 		},
 		// Keep source-context object intents after the workspace row is gone.
 		// They are the durable retry ledger for an upload that began before the

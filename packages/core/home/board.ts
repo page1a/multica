@@ -31,6 +31,7 @@ export interface BoardRow {
   issueId: string;
   identifier: string;
   title: string;
+  status?: string;
   parentIssueId: string | null;
   lane: BoardLane;
   /**
@@ -73,6 +74,7 @@ function row(r: InboxBoardRowPayload): BoardRow {
     issueId: r.issue_id,
     identifier: r.identifier,
     title: r.title,
+    status: r.status,
     parentIssueId: r.parent_issue_id,
     lane: r.lane,
     kind: r.kind,

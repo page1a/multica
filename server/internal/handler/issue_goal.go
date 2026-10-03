@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -225,7 +227,8 @@ func goalActorIsAgent(h *Handler, r *http.Request, issue db.Issue, userID string
 	return actorType == "agent"
 }
 
-// CreateIssueGoal attaches one draft completion line to an issue.
+// CreateIssueGoal attaches one draft completion line to an issue, or
+// rewrites the checks of a draft that has not been locked yet.
 func (h *Handler) CreateIssueGoal(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -265,15 +268,25 @@ func (h *Handler) CreateIssueGoal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, _, err := h.loadIssueGoal(r, issue); err == nil {
-		writeError(w, http.StatusConflict, "issue already has a goal")
-		return
+	isAgent := goalActorIsAgent(h, r, issue, userID)
+	// Entry points that create the issue (quick create, chat to goal) already
+	// leave a drafted line behind. A human submitting the shared completion
+	// panel rewrites that draft instead of colliding with it; a locked goal,
+	// or an agent, still gets the conflict.
+	existing, _, err := h.loadIssueGoal(r, issue)
+	redraft := false
+	if err == nil {
+		if existing.Status != "draft" || isAgent {
+			writeError(w, http.StatusConflict, "issue already has a goal")
+			return
+		}
+		redraft = true
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "failed to check existing goal")
 		return
 	}
 	actorType := "member"
-	if goalActorIsAgent(h, r, issue, userID) {
+	if isAgent {
 		actorType = "agent"
 	}
 	creatorID, _ := util.ParseUUID(userID)
@@ -284,10 +297,18 @@ func (h *Handler) CreateIssueGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := db.New(tx)
-	goal, err := qtx.CreateIssueGoal(r.Context(), db.CreateIssueGoalParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, TokenLimit: req.Budget.TokenLimit, RunLimit: req.Budget.RunLimit, DurationSeconds: req.Budget.DurationSeconds, CreatedByType: actorType, CreatedByID: creatorID})
-	if err != nil {
-		writeError(w, http.StatusConflict, "issue already has a goal")
-		return
+	goal := existing
+	if redraft {
+		if err := qtx.DeleteDraftIssueGoalChecks(r.Context(), existing.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to replace goal checks")
+			return
+		}
+	} else {
+		goal, err = qtx.CreateIssueGoal(r.Context(), db.CreateIssueGoalParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, TokenLimit: req.Budget.TokenLimit, RunLimit: req.Budget.RunLimit, DurationSeconds: req.Budget.DurationSeconds, CreatedByType: actorType, CreatedByID: creatorID})
+		if err != nil {
+			writeError(w, http.StatusConflict, "issue already has a goal")
+			return
+		}
 	}
 	checks := make([]db.IssueGoalCheck, 0, len(req.Checks))
 	for i, c := range req.Checks {
@@ -346,6 +367,25 @@ func (h *Handler) ConfirmIssueGoal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load goal checks")
 		return
+	}
+	// Goal confirmation is the single transition that releases the execution
+	// gate. Creation and assignment paths deliberately skip draft goals, so a
+	// pre-assigned agent gets its first run only after the human locks the line.
+	if h.TaskService != nil && issue.AssigneeType.Valid && issue.AssigneeID.Valid {
+		switch issue.AssigneeType.String {
+		case "agent":
+			if _, enqueueErr := h.TaskService.EnqueueTaskForIssue(r.Context(), issue); enqueueErr != nil && !errors.Is(enqueueErr, service.ErrDuplicatePendingTask) {
+				slog.Warn("confirmed goal could not enqueue assigned agent", "issue_id", uuidToString(issue.ID), "error", enqueueErr)
+			}
+		case "squad":
+			// Squad assignment resolves to its leader. Reuse the ordinary
+			// assignment path so the same access, readiness, and pending-task
+			// guards apply after the human locks the completion line.
+			userID, _ := requireUserID(w, r)
+			if !h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, "member", userID, "") {
+				slog.Warn("confirmed goal could not enqueue assigned squad leader", "issue_id", uuidToString(issue.ID), "squad_id", uuidToString(issue.AssigneeID))
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, makeGoalResponse(goal, checks))
 }

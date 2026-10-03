@@ -17,12 +17,14 @@ export interface ChatPinnedAgent {
  *   Mika but never rendered as a member message.
  * - "onboarding_opening" — Mika's reply to the kickoff; chat renders the
  *   onboarding starter cards under it instead of quick-action chips.
+ * - "goal_link" — a server-authored bridge from a chat to its goal issue.
  */
 export type ChatMessageKind =
   | "message"
   | "no_response"
   | "onboarding_kickoff"
-  | "onboarding_opening";
+  | "onboarding_opening"
+  | "goal_link";
 
 /**
  * A concise follow-up offered by an assistant reply. `label` is rendered in

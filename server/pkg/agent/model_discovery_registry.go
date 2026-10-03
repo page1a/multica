@@ -57,7 +57,7 @@ var modelDiscoveryMu sync.RWMutex
 var modelDiscoveryByProvider = map[string]modelDiscoveryDecl{
 	"claude":      {Kind: modelDiscoveryDedicated, Discover: catalogDiscoverer(discoverClaudeCatalog)},
 	"codebuddy":   {Kind: modelDiscoveryDedicated, Discover: discoverCodebuddyModels},
-	"codex":       {Kind: modelDiscoveryDedicated, Discover: modelValuesDiscoverer(discoverCodexModels)},
+	"codex":       {Kind: modelDiscoveryDedicated, Discover: catalogDiscoverer(discoverCodexCatalog)},
 	"copilot":     {Kind: modelDiscoveryDedicated, Discover: discoverCopilotModels},
 	"opencode":    {Kind: modelDiscoveryDedicated, Discover: modelsDiscoverer(discoverOpenCodeModels)},
 	"codearts":    {Kind: modelDiscoveryDedicated, Discover: modelsDiscoverer(discoverCodeArtsModels)},
@@ -100,12 +100,6 @@ func catalogDiscoverer(fn func(context.Context, Command) Catalog) modelDiscovere
 func modelsDiscoverer(fn func(context.Context, Command) ([]Model, error)) modelDiscoverer {
 	return func(ctx context.Context, cmd Command) (Catalog, error) {
 		return discovered(fn(ctx, cmd))
-	}
-}
-
-func modelValuesDiscoverer(fn func(context.Context, Command) []Model) modelDiscoverer {
-	return func(ctx context.Context, cmd Command) (Catalog, error) {
-		return Catalog{Models: fn(ctx, cmd)}, nil
 	}
 }
 

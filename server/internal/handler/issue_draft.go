@@ -103,6 +103,7 @@ func issueDraftToResponse(d db.IssueDraft) issueDraftResponse {
 // absent or empty `Children` is not a legacy shape to be tolerated: it is a
 // group with a single node, which is exactly what a lone issue always was.
 type issueDraftPayload struct {
+	GoalMode      bool              `json:"goal_mode"`
 	Title         string            `json:"title"`
 	Description   string            `json:"description"`
 	Status        string            `json:"status"`

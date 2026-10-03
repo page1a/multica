@@ -557,6 +557,14 @@ func (p ProviderJudge) Stale(ctx context.Context, t Target, st StaleState) (Stal
 	return j.Stale(ctx, t, st)
 }
 
+func (p ProviderJudge) Candidate(ctx context.Context, t Target, st StallCandidateState) (StallCandidateDecision, error) {
+	j := p.pick(t)
+	if candidate, ok := j.(StallCandidateJudge); ok {
+		return candidate.Candidate(ctx, t, st)
+	}
+	return StallCandidateDecision{}, ErrJudgeUnavailable
+}
+
 func (p ProviderJudge) Unblock(ctx context.Context, t Target, st JudgeState) (Advice, error) {
 	j := p.pick(t)
 	if j == nil {

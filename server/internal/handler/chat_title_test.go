@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -167,4 +168,85 @@ func TestSanitizeChatTitle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNormalizeRuntimeChatTitle(t *testing.T) {
+	long := strings.Repeat("a", chatSessionTitleMaxLen+1)
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "normalizes project separator", input: "  Billing   ·   retry invoices ", want: "Billing · retry invoices"},
+		{name: "rejects missing topic", input: "Billing", want: ""},
+		{name: "rejects missing project", input: " · retry invoices", want: ""},
+		{name: "rejects overlong title", input: "Billing · " + long, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeRuntimeChatTitle(tc.input)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("normalizeRuntimeChatTitle(%q) = %q, want an error", tc.input, got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("normalizeRuntimeChatTitle(%q) = %q, %v; want %q", tc.input, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// WriteChatTitle is the `multica chat title` endpoint: only the chat agent's
+// task token may write, the shape is validated, and a member rename locks it.
+func TestWriteChatTitle(t *testing.T) {
+	requireDB(t)
+	call := func(session db.ChatSession, title string, asAgent bool) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPut, "/api/chat/sessions/"+uuidToString(session.ID)+"/title", map[string]any{"title": title})
+		if asAgent {
+			req.Header.Set("X-Actor-Source", "task_token")
+			req.Header.Set("X-Agent-ID", uuidToString(session.AgentID))
+		}
+		req = withURLParam(req, "sessionId", uuidToString(session.ID))
+		testHandler.WriteChatTitle(w, req)
+		return w
+	}
+
+	t.Run("member is forbidden", func(t *testing.T) {
+		session := newChatTitleTestSession(t, "um so the invoices")
+		if w := call(session, "Multica · invoice retry", false); w.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+	t.Run("agent writes a valid title", func(t *testing.T) {
+		session := newChatTitleTestSession(t, "um so the invoices")
+		if w := call(session, "Multica · invoice retry", true); w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if got := loadRecapSession(t, session.ID).Title; got != "Multica · invoice retry" {
+			t.Fatalf("title = %q", got)
+		}
+	})
+	t.Run("malformed title is rejected", func(t *testing.T) {
+		session := newChatTitleTestSession(t, "um so the invoices")
+		if w := call(session, "invoice retry", true); w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+	t.Run("member-renamed title is locked", func(t *testing.T) {
+		session := newChatTitleTestSession(t, "um so the invoices")
+		if _, err := testPool.Exec(context.Background(),
+			`UPDATE chat_session SET title = 'My own name', title_locked = TRUE WHERE id = $1`, uuidToString(session.ID),
+		); err != nil {
+			t.Fatalf("lock title: %v", err)
+		}
+		w := call(session, "Multica · invoice retry", true)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "manually renamed") {
+			t.Fatalf("expected 409 with reason, got %d: %s", w.Code, w.Body.String())
+		}
+		if got := loadRecapSession(t, session.ID).Title; got != "My own name" {
+			t.Fatalf("locked title overwritten: %q", got)
+		}
+	})
 }

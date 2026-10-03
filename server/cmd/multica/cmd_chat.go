@@ -93,6 +93,25 @@ stuck (red), done (green). --history lists earlier lines, newest first.`,
 	RunE: runChatProgress,
 }
 
+var chatToGoalCmd = &cobra.Command{
+	Use:   "to-goal",
+	Short: "Turn the current chat into a goal task",
+	Args:  cobra.NoArgs,
+	RunE:  runChatToGoal,
+}
+
+var chatTitleCmd = &cobra.Command{
+	Use:   "title <Project · topic>",
+	Short: "Report the title for the current chat",
+	Long: `Report a chat title from the agent runtime. The server validates the
+Project · topic shape and refuses to overwrite a title a member has renamed.
+
+  multica chat title "Billing · retry invoices"
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: runChatTitle,
+}
+
 func init() {
 	for _, c := range []*cobra.Command{chatListCmd, chatSearchCmd} {
 		c.Flags().String("project", "", "Filter to a project id (defaults to the current project)")
@@ -111,10 +130,72 @@ func init() {
 	chatCmd.AddCommand(chatHistoryCmd)
 	chatCmd.AddCommand(chatThreadCmd)
 	chatCmd.AddCommand(chatProgressCmd)
+	chatCmd.AddCommand(chatToGoalCmd)
+	chatToGoalCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
+	chatToGoalCmd.Flags().String("output", "json", "Output format: table or json")
+	chatCmd.AddCommand(chatTitleCmd)
 	chatProgressCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
 	chatProgressCmd.Flags().String("output", "json", "Output format: table or json")
 	chatProgressCmd.Flags().String("tone", "", "Dot colour: working, waiting, stuck, or done (default working)")
 	chatProgressCmd.Flags().Bool("history", false, "List earlier progress lines instead of reporting one")
+	chatTitleCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
+	chatTitleCmd.Flags().String("output", "json", "Output format: table or json")
+}
+
+func runChatTitle(cmd *cobra.Command, args []string) error {
+	session, _ := cmd.Flags().GetString("session")
+	if strings.TrimSpace(session) == "" {
+		session = os.Getenv("MULTICA_CHAT_SESSION_ID")
+	}
+	ref, err := parseChatSessionLinkRef(session)
+	if err != nil {
+		return fmt.Errorf("chat title: --session is required (or set MULTICA_CHAT_SESSION_ID): %w", err)
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var out map[string]any
+	path := "/api/chat/sessions/" + url.PathEscape(ref.ID) + "/title"
+	if err := client.PostJSON(ctx, path, map[string]any{"title": args[0]}, &out); err != nil {
+		return fmt.Errorf("report chat title: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		fmt.Printf("Title: %v\n", out["title"])
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, out)
+}
+
+func runChatToGoal(cmd *cobra.Command, _ []string) error {
+	session := os.Getenv("MULTICA_CHAT_SESSION_ID")
+	if raw, _ := cmd.Flags().GetString("session"); strings.TrimSpace(raw) != "" {
+		session = raw
+	}
+	ref, err := parseChatSessionLinkRef(session)
+	if err != nil {
+		return fmt.Errorf("chat to-goal: session is required (or set MULTICA_CHAT_SESSION_ID): %w", err)
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var out map[string]any
+	if err := client.PostJSON(ctx, "/api/chat/sessions/"+url.PathEscape(ref.ID)+"/to-goal", nil, &out); err != nil {
+		return fmt.Errorf("convert chat to goal: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		issue, _ := out["issue"].(map[string]any)
+		fmt.Printf("Goal task: %v\n", issue["identifier"])
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, out)
 }
 
 func runChatProgress(cmd *cobra.Command, args []string) error {

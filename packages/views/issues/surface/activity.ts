@@ -18,6 +18,9 @@ export interface IssueSurfaceActivity {
   runningIssueIds: Set<string>;
 }
 
+// Every `deferred` task counts as queued — an auto-retry waiting out its
+// backoff (DENE-216) as much as a scheduled wakeup. Upstream narrows this to
+// wakeup-backed deferrals only, which would hide the fork's retries.
 function isQueuedTaskStatus(status: AgentTask["status"]) {
   return (
     status === "queued" ||

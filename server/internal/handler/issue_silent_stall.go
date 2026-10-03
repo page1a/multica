@@ -114,6 +114,15 @@ func (h *Handler) decideSilentStall(ctx context.Context, issue db.Issue, nextSta
 				tr.note = "执行人声明这张票没有代码交付：" + reason + "。"
 			}
 		}
+		// `none` is a routing verdict meaning that this ticket does not need
+		// acceptance. It is not a reviewer who can receive an in_review handoff.
+		// A close request must follow the done path instead of creating an
+		// unowned in_review ticket. Explicit reviewer fields remain supported for
+		// callers that deliberately override routing (DENE-1156).
+		if strings.EqualFold(strings.TrimSpace(reviewerType.String), "none") && !reviewerExplicit {
+			tr.refuse = "这张票的路由判定为不需要验收，不能进入 in_review；请改用 `multica issue close --outcome done`。如果确实需要验收，先指定 reviewer 再重试。"
+			return tr
+		}
 		if reviewerChosen(reviewerType, reviewerID, reviewerExplicit) {
 			return tr
 		}
@@ -188,9 +197,31 @@ func reviewerChosen(reviewerType pgtype.Text, reviewerID pgtype.UUID, explicit b
 func (h *Handler) fillAcceptanceSeat(ctx context.Context, issue db.Issue, assigneeID pgtype.UUID) statusTransition {
 	tr := h.pickAcceptanceSeat(ctx, issue, assigneeID)
 	if tr.refuse != "" {
-		h.postBlockComment(ctx, issue, tr.refuse+"。这张票保持原来的状态。")
+		// A close must never leave an in_review ticket with nobody to wake.
+		// Convert an unseatable review into a structured human decision block;
+		// the caller persists it together with the status write.
+		why := tr.refuse
+		tr.refuse = ""
+		tr.status = issuestatus.Blocked
+		tr.persistBlock = true
+		tr.block, tr.note = h.reviewSeatBlock(ctx, issue, why)
 	}
 	return tr
+}
+
+func (h *Handler) reviewSeatBlock(ctx context.Context, issue db.Issue, why string) (blockwait.Record, string) {
+	managers, err := h.Queries.ListWorkspaceManagerUserIDs(ctx, issue.WorkspaceID)
+	if err != nil {
+		slog.Warn("acceptance seat: list managers failed", "issue_id", uuidToString(issue.ID), "error", err)
+	}
+	rec := blockwait.Record{}
+	if len(managers) > 0 && managers[0].Valid {
+		rec.NeedsHuman = uuidToString(managers[0])
+	} else {
+		rec = blockwait.FailureWake(time.Now(), "验收席由人来定", 1)
+	}
+	reason := why + "。平台补不上验收席，这张票改成阻塞，等人指定验收席后再送审。"
+	return rec, reason
 }
 
 // pickAcceptanceSeat chooses a different-family acceptance seat for an agent
@@ -322,7 +353,7 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, act
 		tr.refuse = "交付查询没有返回 PR 或 MR。下一步：multica issue close " + view.Ident + " --no-code <原因>"
 		return tr
 	}
-	if actorType == "agent" && strings.TrimSpace(noCodeReason) != "" {
+	if actorType == "agent" && strings.TrimSpace(noCodeReason) != "" && hasOpenPull(prs) {
 		tr.refuse = "这张票已经关联了 PR，不能用 `--no-code` 跳过合入门禁。"
 		return tr
 	}

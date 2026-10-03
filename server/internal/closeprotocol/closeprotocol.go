@@ -13,6 +13,7 @@ package closeprotocol
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,13 +112,12 @@ func (e *Error) Error() string {
 // path read it so a deliberate stop is not reported as "stopped without
 // saying why" (DENE-1002).
 func ExplainedPause(conclusion string) bool {
-	switch conclusion {
-	case ConclusionDeferred, ConclusionContinuing:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(ExplainedPauseConclusions, conclusion)
 }
+
+// ExplainedPauseConclusions is the set ExplainedPause accepts. The stall
+// patrol's SQL is built from it, so the two cannot drift (DENE-1183).
+var ExplainedPauseConclusions = []string{ConclusionDeferred, ConclusionContinuing}
 
 // Complete reports whether all eight keys are present. A comment-only wrap-up
 // is not a close: the keys are missing, so this is false.

@@ -1,0 +1,321 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>目标模式入口提到明面上 · Multica</title><style>
+
+:root{
+  --app-shell:oklch(0.964435 0.001327 286.375);--canvas:oklch(0.988087 0 0);--surface:#fff;
+  --hover:oklch(0.967 0.001 286.375);--selected:oklch(0.95 0.002 286.375);--side-accent:oklch(0.935 0.003 286.375);
+  --fg:oklch(0.141 0.005 285.823);--muted:oklch(0.505 0.016 285.938);--faint:oklch(0.606 0.016 285.938);
+  --border:oklch(0.945 0.003 286.32);--input:oklch(0.92 0.004 286.32);--primary:oklch(0.21 0.006 285.885);
+  --brand:oklch(0.56079497 0.19449888 256.41258418);--success:oklch(0.55 0.16 145);--warning:oklch(0.75 0.16 85);--destructive:oklch(0.577 0.245 27.325);
+  --shadow:0 1px 2px rgb(15 23 42/.04),0 1px 1px rgb(15 23 42/.03);--float:0 16px 40px rgb(15 23 42/.14),0 3px 10px rgb(15 23 42/.08);
+  --new:oklch(0.56 0.19 256);
+  font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}body{margin:0;background:#e9e9ec;color:var(--fg);font-size:14px;line-height:20px;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+svg.s{width:14px;height:14px}svg.xs{width:12px;height:12px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* preview chrome (outside the app) */
+.chrome{max-width:1480px;margin:0 auto;padding:20px 24px 8px;display:flex;align-items:flex-end;gap:24px}
+.chrome h1{margin:0;font-size:16px;line-height:24px;font-weight:600}.chrome p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.tabs{margin-left:auto;display:flex;gap:2px;background:#dcdce0;border-radius:8px;padding:2px}
+.tabs button{padding:5px 10px;border-radius:6px;font-size:12px;color:var(--muted);white-space:nowrap}.tabs button.on{background:#fff;color:var(--fg);box-shadow:var(--shadow)}
+.note{max-width:1480px;margin:0 auto;padding:0 24px 24px;display:flex;gap:10px;flex-wrap:wrap}
+.note div{flex:1 1 280px;background:#fff;border-radius:8px;padding:10px 12px;font-size:12px;line-height:18px;color:var(--muted)}
+.note b{color:var(--fg);font-weight:600;margin-right:6px}
+.note .n{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--new);color:#fff;font-size:10px;font-weight:600;margin-right:6px;vertical-align:1px}
+
+/* app frame */
+.stage{max-width:1480px;margin:0 auto;padding:0 24px 12px}
+.app{height:860px;background:var(--app-shell);border-radius:12px;display:flex;overflow:hidden;box-shadow:0 1px 3px rgb(0 0 0/.08),0 12px 32px rgb(0 0 0/.06);position:relative}
+.side{width:248px;flex:none;padding:12px 8px;display:flex;flex-direction:column}
+.ws{display:flex;align-items:center;gap:8px;padding:6px 8px 10px;font-weight:600}
+.ws .av{width:20px;height:20px;border-radius:5px;background:#fff;border:1px solid var(--input);display:grid;place-items:center;font-size:11px;position:relative}
+.ws .av:after{content:"";position:absolute;top:-3px;right:-3px;width:7px;height:7px;border-radius:50%;background:var(--brand)}
+.nav{display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;border-radius:6px;color:oklch(0.3 0.006 285.885);font-size:14px}
+.nav:hover{background:var(--side-accent)}.nav.on{background:var(--side-accent);font-weight:500;color:var(--fg)}
+.nav .k,.nav .c{margin-left:auto;font-size:11px;color:var(--muted)}.nav .k{border:1px solid var(--input);border-radius:4px;padding:0 4px;line-height:16px}
+.grp{font-size:12px;color:var(--muted);padding:16px 8px 6px}
+.side .sp{flex:1}
+.main{flex:1;min-width:0;margin:8px 8px 8px 0;background:var(--canvas);border-radius:10px;border:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;position:relative}
+.bar{height:48px;flex:none;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--border)}
+.crumb{color:var(--muted);display:flex;align-items:center;gap:6px}.crumb b{color:var(--fg);font-weight:500}
+.iconbtn{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted)}.iconbtn:hover{background:var(--hover)}
+.btn{height:28px;padding:0 10px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;font-size:13px;border:1px solid var(--input);background:#fff;white-space:nowrap}
+.btn:hover{background:var(--hover)}.btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}.btn.primary:hover{opacity:.92}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.status{height:40px;flex:none;border-top:1px solid var(--border);display:flex;align-items:center;gap:28px;padding:0 16px;font-size:12px;color:var(--muted)}
+.status b{color:var(--fg);font-weight:500;margin-right:6px}
+.fab{position:absolute;right:16px;bottom:8px;width:40px;height:40px;border-radius:50%;border:1px solid var(--input);background:#fff;display:grid;place-items:center;color:var(--brand);box-shadow:var(--shadow)}
+.body{flex:1;min-height:0;display:flex}
+.scroll{overflow:auto;min-height:0}
+.view{display:none;flex:1;min-width:0;flex-direction:column}.view.on{display:flex}
+
+/* new-mark */
+.mk{position:relative;outline:1.5px dashed var(--new);outline-offset:3px;border-radius:6px}
+.mk>.tag{position:absolute;top:-11px;right:-6px;background:var(--new);color:#fff;font-size:10px;line-height:16px;font-weight:600;padding:0 5px;border-radius:8px;z-index:3;white-space:nowrap}
+.hide-marks .mk{outline:0}.hide-marks .mk>.tag{display:none}
+
+/* shared bits */
+.pill{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border:1px solid var(--input);border-radius:999px;font-size:12px;background:#fff;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border-radius:4px;background:var(--hover);font-size:11px;color:var(--muted)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--success);flex:none}
+.cap{font-size:12px;line-height:16px;color:var(--muted)}.micro{font-size:11px;line-height:15px;color:var(--muted)}
+.avatar{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:10px;font-weight:600;color:#fff}
+.a1{background:#d97706}.a2{background:#6d28d9}.a3{background:#0f766e}.a4{background:#334155}
+.track{height:4px;border-radius:2px;background:var(--selected);overflow:hidden}.track i{display:block;height:100%;background:var(--primary)}
+.track.warn i{background:var(--warning)}
+
+
+/* page */
+.wrap{max-width:1320px;margin:0 auto;padding:0 24px 24px}
+.app{height:640px}
+.view{display:none}.view.on{display:block}
+.ctrl{display:flex;gap:10px;align-items:center;padding:10px 0;flex-wrap:wrap}
+.seg{display:flex;gap:2px;background:#dcdce0;border-radius:8px;padding:2px}
+.seg button{padding:4px 10px;border-radius:6px;font-size:12px;color:var(--muted)}.seg button.on{background:#fff;color:var(--fg);box-shadow:var(--shadow)}
+.seg.now button.on{background:oklch(0.97 0.02 27);color:var(--destructive)}
+.explain{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.explain div{background:#fff;border-radius:8px;padding:10px 12px;font-size:12px;line-height:18px;color:var(--muted)}
+.explain b{display:block;color:var(--fg);margin-bottom:2px}
+.brand{color:var(--brand)}
+.gbtn{height:28px;padding:0 10px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;font-size:13px;border:1px solid oklch(0.85 0.07 256);background:oklch(0.97 0.02 256);color:var(--brand);font-weight:500;white-space:nowrap}
+.gbtn:hover{background:oklch(0.94 0.04 256)}
+.gchip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;background:oklch(0.95 0.035 256);color:var(--brand);font-size:12px;font-weight:500;white-space:nowrap}
+.sm{height:24px;font-size:12px;padding:0 8px}
+/* issue detail */
+.iss{flex:1;padding:28px 0;overflow:auto;display:flex;justify-content:center}
+.iss .col{width:620px}
+.iss h2{margin:0;font-size:22px;line-height:30px;font-weight:600}
+.acts{display:flex;gap:8px;margin:10px 0 14px;flex-wrap:wrap;align-items:center}
+.desc p{margin:0 0 8px}
+.oldbox{border:1px dashed var(--input);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px;margin:14px 0;background:#fff}
+.oldbox .cap{font-size:11px}
+.props{width:270px;flex:none;border-left:1px solid var(--border);padding:16px 18px;font-size:13px;overflow:auto}
+.props .h{font-weight:600;margin-bottom:10px}
+.prow{display:flex;align-items:center;min-height:32px;gap:8px}.prow>span:first-child{width:56px;color:var(--muted);font-size:12px;flex:none}
+.goal{border:1px solid oklch(0.88 0.05 256);background:oklch(0.985 0.008 256);border-radius:12px;padding:14px 16px;margin:4px 0 16px}
+.goal .ghd{display:flex;align-items:center;gap:8px}
+.goal .ghd b{font-size:14px}.goal .ghd .st{margin-left:auto}
+.ck{display:flex;gap:9px;align-items:flex-start;padding:6px 0;font-size:13px}
+.ck i{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--input);flex:none;margin-top:2px;display:grid;place-items:center;font-style:normal;font-size:10px;color:#fff}
+.ck.ok i{background:var(--success);border-color:var(--success)}.ck.ok span{color:var(--muted);text-decoration:line-through}
+.meters{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.meters div{background:var(--hover);border-radius:8px;padding:6px 10px;font-size:11px;color:var(--muted)}.meters b{display:block;color:var(--fg);font-size:13px}
+/* modal */
+.scrim{position:absolute;inset:0;background:rgb(15 23 42/.28);display:grid;place-items:center;z-index:10;border-radius:12px}
+.dlg{width:440px;background:#fff;border-radius:12px;box-shadow:var(--float);padding:20px}
+.dlg h3{margin:0;font-size:15px}.dlg .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.qbox{border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:14px}
+.qn{display:flex;gap:4px;margin-left:auto}.qn span{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;background:var(--hover);color:var(--muted)}.qn span.on{background:var(--primary);color:#fff}
+.inp{border:1px solid var(--input);border-radius:6px;padding:6px 9px;font-size:13px;margin-top:8px;background:#fff}
+.lock{background:var(--hover);border-radius:6px;padding:7px 10px;font-size:12px;color:var(--muted);margin-top:12px}
+.wide{width:100%;justify-content:center;height:34px;margin-top:12px}
+.fld{margin-top:12px}.fld .cap{margin-bottom:4px}
+/* create modal */
+.blur{position:absolute;inset:0;background:repeating-linear-gradient(90deg,#ececef 0 250px,#e4e4e8 250px 254px);filter:blur(1px)}
+.cm{width:580px;background:#fff;border-radius:12px;box-shadow:var(--float);position:relative;z-index:2}
+.cm .top{display:flex;align-items:center;gap:8px;padding:14px 18px 6px;font-size:13px;color:var(--muted)}
+.cm .top b{color:var(--fg);font-weight:500}
+.flow{display:flex;gap:6px;align-items:center;padding:0 18px;font-size:12px;color:var(--muted)}
+.flow span.on{background:var(--hover);color:var(--fg);padding:2px 8px;border-radius:6px;font-weight:500}
+.cm .who{padding:8px 18px;font-size:13px;color:var(--muted);display:flex;gap:8px;align-items:center}
+.cm textarea{border:0;resize:none;width:100%;padding:4px 18px;font:inherit;font-size:14px;height:92px;outline:0;color:var(--fg)}
+.cm .pills{display:flex;gap:8px;padding:6px 16px 12px;align-items:center;flex-wrap:wrap}
+.cm .foot{border-top:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:10px 16px;font-size:13px;color:var(--muted)}
+.sw{width:28px;height:16px;border-radius:8px;background:var(--input);position:relative;flex:none;transition:.15s}.sw:after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.15s}
+.sw.on{background:var(--brand)}.sw.on:after{left:14px}
+.gpill{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--input);border-radius:8px;font-size:12.5px;background:#fff;cursor:pointer}
+.gpill.on{border-color:oklch(0.8 0.09 256);background:oklch(0.97 0.02 256);color:var(--brand)}
+.hint{margin:0 18px 10px;font-size:12px;line-height:18px;color:var(--brand);background:oklch(0.975 0.015 256);border-radius:6px;padding:7px 10px}
+/* chat */
+.chatlist{width:280px;flex:none;border-right:1px solid var(--border);background:var(--canvas)}
+.chatlist .head{height:48px;display:flex;align-items:center;padding:0 16px;font-weight:500;border-bottom:1px solid var(--border)}
+.row{padding:10px 14px;border-bottom:1px solid var(--border)}.row.on{background:var(--selected)}
+.row .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}.row .s{font-size:12px;color:var(--muted)}
+.pane{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--canvas)}
+.ph{height:48px;padding:0 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.ph .t{font-weight:600}
+.msgs{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
+.m{max-width:74%;padding:9px 12px;border-radius:10px;font-size:13px;line-height:19px}
+.m.u{align-self:flex-end;background:var(--primary);color:#fff}.m.a{background:#fff;border:1px solid var(--border)}
+.sysline{align-self:center;font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;border:1px solid oklch(0.88 0.05 256);border-radius:999px;padding:3px 12px;background:oklch(0.985 0.008 256)}
+.composer{margin:0 16px 14px;border:1px solid var(--input);border-radius:10px;background:#fff}
+.composer .tb{display:flex;gap:8px;align-items:center;padding:8px 10px 0}
+.composer .tx{padding:8px 12px;color:var(--faint);font-size:13px;height:44px}
+.composer .bt{display:flex;align-items:center;gap:8px;padding:6px 10px;color:var(--muted)}
+.send{margin-left:auto;width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;font-size:13px}
+/* list */
+.lst{flex:1;overflow:auto}
+.li{display:flex;align-items:center;gap:10px;height:40px;padding:0 18px;border-bottom:1px solid var(--border);font-size:13px}
+.li .id{color:var(--muted);width:76px;font-size:12px}.li .tt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--warning);flex:none}.sc.p{border-color:var(--brand);background:conic-gradient(var(--brand) 50%,transparent 0)}.sc.d{background:var(--success);border-color:var(--success)}
+.filters{display:flex;gap:6px;padding:10px 18px;border-bottom:1px solid var(--border);align-items:center}
+.narrow{width:390px;flex:none;border-left:8px solid #e9e9ec}
+/* align */
+.al{flex:1;display:flex;flex-direction:column;align-items:center;padding:30px 0;overflow:auto}
+.al .card2{width:640px;background:#fff;border:1px solid var(--border);border-radius:12px}
+.al .hd{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:13px}
+.al .bd{padding:16px;font-size:13px;line-height:20px;min-height:180px}
+.al .ft{border-top:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+table.cmp{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;font-size:12.5px;margin-top:12px}
+table.cmp th,table.cmp td{padding:9px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;line-height:18px}
+table.cmp th{background:oklch(0.975 0.002 286);font-weight:600}
+.rec{background:oklch(0.975 0.03 145)}
+.bad{color:var(--destructive)}
+</style></head><body>
+<div class="chrome"><div><h1>目标模式：把入口提到明面上</h1>
+<p>代码已在 test.14，但每个入口都做成了最弱的形态。这页每个入口都能切「现在 / 改后」，改后可以按步骤点。蓝色虚线框 = 新增或挪动的东西。</p></div>
+<div class="tabs" id="tabs">
+<button data-v="detail" class="on">① 任务详情</button><button data-v="create">② 新建任务</button><button data-v="chat">③ 聊天</button><button data-v="list">④ 列表 / 我的任务</button><button data-v="align">⑤ 先对齐需求</button><button data-v="sum">总览 + 推荐</button></div></div>
+
+<div class="wrap">
+
+<!-- ① detail -->
+<section class="view on" id="v-detail">
+<div class="ctrl"><div class="seg" data-k="detail"><button data-s="now">现在</button><button data-s="0" class="on">改后 ① 标题下就看得到</button><button data-s="1">② 点「设为目标」</button><button data-s="2">③ 确认后</button></div></div>
+<div class="app"><div class="main" style="margin:8px"><div class="bar"><div class="crumb">Multica 魔改 › <b>DENE-1101 聊天列表偶发点击无响应</b></div><span style="flex:1"></span><span class="cap">线程 · 排队</span></div>
+<div class="body"><div class="iss"><div class="col" id="detail-col"></div></div><div class="props" id="detail-props"></div></div></div><div id="detail-modal"></div></div>
+<div class="explain">
+<div><b>挪到哪</b>「设为目标」从描述下面的灰色虚线框，挪到标题下，和「就这张任务发起对齐」并排，用品牌蓝，一眼能看到。</div>
+<div><b>属性栏也挂一行</b>右侧属性栏加「目标」一行：没设时写「未设 · 设为目标」，设了显示 0/2 达标。往下滚看不到标题时也知道它是不是目标。</div>
+<div><b>点了之后</b>弹的还是已有的「补全完成线」面板（同一个组件、同一个接口），不另做一套。确认后完成线卡片顶到描述上方。</div></div>
+</section>
+
+<!-- ② create -->
+<section class="view" id="v-create">
+<div class="ctrl"><div class="seg" data-k="create"><button data-s="now">现在</button><button data-s="0" class="on">改后 ① 默认页就有开关</button><button data-s="1">② 打开开关</button><button data-s="2">③ 创建后补完成线</button></div></div>
+<div class="app" style="display:grid;place-items:center"><div class="blur"></div><div id="create-box" style="position:relative;z-index:2"></div></div>
+<div class="explain">
+<div><b>问题</b>按 C 默认打开「通过智能体创建」，开关只在「切换到手动」那页。你平时根本走不到。</div>
+<div><b>改法</b>默认页的项目按钮旁边加「◎ 做到达标为止」开关；手动页保留原位。两页用同一个开关组件，状态互相带过去。</div>
+<div><b>打开后</b>智能体建好任务、起草 2–3 条完成线，自动弹出「补全完成线」让你改；你确认后才锁定开跑。</div></div>
+</section>
+
+<!-- ③ chat -->
+<section class="view" id="v-chat">
+<div class="ctrl"><div class="seg" data-k="chat"><button data-s="now">现在</button><button data-s="0" class="on">改后 ① 输入框上方常驻</button><button data-s="1">② 点「转成目标任务」</button><button data-s="2">③ 转好之后</button></div>
+<span class="cap">备选位置：</span><div class="seg" id="chat-pos"><button data-p="composer" class="on">A 输入框上方（推荐）</button><button data-p="header">B 顶栏右侧</button></div></div>
+<div class="app"><div class="chatlist"><div class="head">聊天</div>
+<div class="row on"><div class="t">Multica 魔改 · 聊天列表点了没反应</div><div class="s">孙悟空 · 定位到了，等你拍板</div></div>
+<div class="row"><div class="t">Multica 魔改 · 起名改用 runtime</div><div class="s">孙悟空 · 原型已出</div></div>
+<div class="row"><div class="t">tarot · 记忆沉淀</div><div class="s">特兰克斯 · 已完成</div></div></div>
+<div class="pane"><div class="ph" id="chat-ph"></div><div class="msgs" id="chat-msgs"></div><div id="chat-comp"></div></div><div id="chat-modal"></div></div>
+<div class="explain">
+<div><b>问题</b>现在只有「新开空聊天 + 选好智能体」才出一张小卡片，聊着聊着想转成目标就没入口了。</div>
+<div><b>改法</b>任何聊天的输入框上方都有「◎ 转成目标任务」。点了弹一个小框：标题和完成线由当前智能体按聊天内容起草，你改完点确认。</div>
+<div><b>转好之后</b>聊天里留一条记录链到新任务，顶栏挂「目标 0/3」小标签；执行人默认就是这个聊天的智能体，接着干。</div></div>
+</section>
+
+<!-- ④ list -->
+<section class="view" id="v-list">
+<div class="ctrl"><div class="seg" data-k="list"><button data-s="now">现在</button><button data-s="0" class="on">改后</button></div></div>
+<div class="app"><div class="side"><div class="ws"><span class="av">K</span>kunkunya</div><div class="nav">搜索…</div><div class="nav">新建任务<span class="k">C</span></div><div class="nav">先对齐需求</div><div class="grp"></div><div class="nav">收件箱<span class="c">47</span></div><div class="nav on">我的任务</div><div class="nav">聊天</div><div class="grp">工作</div><div class="nav">任务</div><div class="nav">项目</div></div>
+<div class="main"><div class="bar" id="list-bar"></div><div class="filters" id="list-filters"></div><div class="lst" id="list-rows"></div></div>
+<div class="narrow main" style="margin:8px 8px 8px 0" id="list-narrow"></div></div>
+<div class="explain">
+<div><b>问题</b>「设为目标」按钮只在你有进行中任务时出现，窄屏还藏起来；目标任务在列表和看板上也认不出来。</div>
+<div><b>改法</b>顶栏「◎ 新建目标」常驻，窄屏收成一个图标按钮。目标任务在标题前带「◎ 2/5」进度，悬停看完成线。</div>
+<div><b>筛选</b>筛选条加「只看目标」，看板卡片同样带进度标。右侧是窄屏的样子。</div></div>
+</section>
+
+<!-- ⑤ align -->
+<section class="view" id="v-align">
+<div class="ctrl"><div class="seg" data-k="align"><button data-s="now">现在</button><button data-s="0" class="on">改后 ① 第一步就能开</button><button data-s="1">② 最后一步带出完成线</button></div></div>
+<div class="app"><div class="main" style="margin:8px"><div class="bar"><div class="crumb">先对齐需求 › <b>聊天列表偶发点击无响应</b></div></div><div class="al" id="align-body"></div></div></div>
+<div class="explain">
+<div><b>问题</b>开关在对齐最后一步的左下角，走到最后才看得到。</div>
+<div><b>改法</b>顶部「聊天 — 对齐 — 任务」那条步骤条右边挂开关，第一步就能打开，一路带到最后。</div>
+<div><b>好处</b>开着时，对齐过程中智能体会多问一句「怎么算做完」，最后一步直接把对齐结论变成完成线，不用再补一次。</div></div>
+</section>
+
+<!-- sum -->
+<section class="view" id="v-sum">
+<table class="cmp"><tr><th style="width:120px">入口</th><th>现在</th><th>改后</th><th style="width:110px">改动大小</th></tr>
+<tr class="rec"><td><b>① 任务详情</b></td><td class="bad">描述下面的灰色虚线框，像提示</td><td>标题下和「发起对齐」并排的蓝色按钮 + 属性栏「目标」一行</td><td>小，纯界面</td></tr>
+<tr class="rec"><td><b>② 新建任务</b></td><td class="bad">默认页没有，要切到手动页</td><td>默认页加开关；创建后智能体起草完成线，弹面板确认</td><td>中，要让智能体建票时带上目标标记</td></tr>
+<tr class="rec"><td><b>③ 聊天</b></td><td class="bad">只有新开空聊天才有小卡片</td><td>任何聊天输入框上方「转成目标任务」，智能体按聊天起草标题和完成线</td><td>中，新加一个「聊天转目标任务」接口 + CLI</td></tr>
+<tr class="rec"><td><b>④ 列表 / 我的任务</b></td><td class="bad">按钮有条件才出现，窄屏隐藏；目标任务认不出</td><td>「新建目标」常驻；行和卡片带「◎ 2/5」；筛选「只看目标」</td><td>小到中</td></tr>
+<tr><td><b>⑤ 先对齐需求</b></td><td>最后一步左下角</td><td>步骤条上常驻，开着时最后一步自动带出完成线</td><td>小</td></tr></table>
+<div class="explain" style="grid-template-columns:1fr 1fr">
+<div><b>我的推荐：①②③④ 一起做，⑤ 顺手挪</b>四个都是你常走的路。①④ 纯界面，最快；②③ 要智能体参与起草完成线，所有入口最后都落到同一个「补全完成线」面板和同一个服务端接口，规则只写一份。</div>
+<div><b>三面齐</b>服务端：新增「聊天转目标任务」、建票带目标标记；界面：上面五处；CLI：<span class="mono">multica issue goal open</span> 已有，补 <span class="mono">multica chat to-goal</span> 和 <span class="mono">issue list --goal</span>，并写进 multica-platform skill。</div></div>
+</section>
+</div>
+
+<script>
+const G='<svg class="i s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>';
+const mk=(h,t)=>'<span class="mk" style="display:inline-flex">'+h+'<span class="tag">'+(t||'新')+'</span></span>';
+const alignBtn='<button class="btn sm">✦ 就这张任务发起对齐</button>';
+const desc='<div class="desc"><p>聊天列表点一下有时没反应，要点两下才进去。</p><p>Web 和桌面都有，手机没试。</p></div>';
+const checks=(n)=>['点一次就能进入聊天，连点 20 次不丢','Web 和桌面端都验过，附录屏','加回归测试，CI 绿'].map((c,i)=>'<div class="ck'+(i<n?' ok':'')+'"><i>'+(i<n?'✓':'')+'</i><span>'+c+'</span></div>').join('');
+const goalCard=(n)=>'<div class="goal">'+'<div class="ghd"><span class="brand">'+G+'</span><b>完成线</b><span class="cap">'+n+'/3 达标</span><span class="gchip st">已锁定 · 自动续跑中</span></div>'+checks(n)+'<div class="meters"><div>轮次<b>1</b></div><div>Tokens<b>12k / 400k</b></div><div>运行<b>1 / 8</b></div><div>时长<b>4m / 2h</b></div></div></div>';
+const props=(g)=>'<div class="h">属性</div><div class="prow"><span>状态</span>'+(g==2?'进行中':'待处理')+'</div><div class="prow"><span>负责人</span>孙悟空</div><div class="prow"><span>项目</span>Multica 魔改</div>'+
+ (g==null?'':'<div class="prow mk" style="padding:0 4px"><span>目标</span>'+(g==2?'<span class="gchip">'+G+'0/3 达标</span>':'<span class="cap" style="white-space:nowrap">未设 · <button class="brand" style="font-size:12px" onclick="go(\'detail\',1)">设为目标</button></span>')+'<span class="tag">新</span></div>')+'<div class="prow"><span>优先级</span>中</div>';
+const panel=(title,items,sub)=>'<div class="scrim"><div class="dlg"><div style="display:flex;gap:10px;align-items:flex-start"><span class="brand" style="background:oklch(0.95 0.035 256);border-radius:10px;width:36px;height:36px;display:grid;place-items:center">'+G+'</span><div><h3>补全完成线</h3><div class="sub">'+title+' · '+(sub||'做到这些都达标才停')+'</div></div></div>'+
+ '<div class="qbox"><div style="display:flex;align-items:center;font-size:12px;font-weight:500">怎么算做完？<div class="qn">'+items.map((_,i)=>'<span class="'+(i?'':'on')+'">'+(i+1)+'</span>').join('')+'</div></div><div class="inp">'+items[0]+'</div><div class="cap" style="margin-top:6px">'+items.slice(1).map((x,i)=>(i+2)+'. '+x).join('<br>')+'</div><div class="brand cap" style="margin-top:8px;color:var(--brand)">+ 再加一条</div></div>'+
+ '<div class="lock">✓ 确认后完成线会锁定；想改只能停下来问 Kun。</div><button class="btn primary wide">确认完成线，开始做</button></div></div>';
+const CK=['点一次就能进入聊天，连点 20 次不丢','Web 和桌面端都验过，附录屏','加回归测试，CI 绿'];
+const V={
+ detail:{
+  now:()=>({col:'<h2>聊天列表偶发点击无响应</h2><div class="acts">'+alignBtn+'</div>'+desc+'<div class="oldbox"><div style="flex:1"><div style="font-size:12px;font-weight:500">设为目标</div><div class="cap">保留已经做完的部分，只补齐接下来怎么算达标。</div></div><button class="btn sm">设为目标</button></div><div class="cap">+ 添加子任务</div>',props:props(null)}),
+  0:()=>({col:'<h2>聊天列表偶发点击无响应</h2><div class="acts">'+mk('<button class="gbtn" onclick="go(\'detail\',1)">'+G+'设为目标</button>','挪到这')+alignBtn+'</div>'+desc+'<div class="cap" style="margin-top:14px">+ 添加子任务</div>',props:props(0)}),
+  1:()=>({col:V.detail[0]().col,props:props(0),modal:panel('聊天列表偶发点击无响应',CK)}),
+  2:()=>({col:'<h2>聊天列表偶发点击无响应</h2><div class="acts"><span class="gchip">'+G+'目标 · 0/3 达标</span>'+alignBtn+'</div>'+goalCard(0)+desc,props:props(2)})},
+ create:{
+  now:()=>({box:cm(false,false)}),0:()=>({box:cm(true,false)}),1:()=>({box:cm(true,true)}),
+  2:()=>({box:'<div class="app" style="height:auto;background:none;box-shadow:none">'+panel('DENE-1102 聊天列表偶发点击无响应',CK,'孙悟空按你的描述起草了 3 条，改完确认')+'</div>'})},
+ chat:{now:()=>chat('now'),0:()=>chat(0),1:()=>chat(1),2:()=>chat(2)},
+ list:{now:()=>list(false),0:()=>list(true)},
+ align:{now:()=>align('now'),0:()=>align(0),1:()=>align(1)}
+};
+function cm(isNew,on){
+ const tog='<span class="gpill'+(on?' on':'')+'" onclick="go(\'create\','+(on?0:1)+')">'+G+'做到达标为止<span class="sw'+(on?' on':'')+'"></span></span>';
+ return '<div class="cm"><div class="top">kunkunya › <b>通过智能体创建</b><span style="flex:1"></span>⤢ ✕</div><div class="flow"><span>✓ 聊天</span>—<span>✓ 对齐</span>—<span class="on">任务</span></div><div class="who">创建者 <span class="avatar a1">孙</span> 孙悟空</div><textarea>聊天列表点一下有时没反应，要点两下才进去，帮我修掉</textarea>'+
+ (on?mk('<div class="hint" style="margin:0">打开后：孙悟空建好任务会先起草 2–3 条完成线请你确认，确认后一直做到全部达标才停（有预算上限，超了会停下来问你）。</div>','新'):'')+(on?'<div style="height:10px"></div>':'')+
+ '<div class="pills"><span class="gpill">▢ 无项目</span>'+(isNew?mk(tog,'新'):'')+'<span class="gpill">…</span></div><div class="foot"><span>📎</span><span style="flex:1"></span><span>⇆ 切换到手动</span><span class="sw"></span>继续创建<button class="btn primary"'+(on?' onclick="go(\'create\',2)"':'')+'>'+(on?'创建目标任务':'创建')+' ⌘↵</button></div></div>';
+}
+function chat(s){
+ const pos=document.querySelector('#chat-pos .on').dataset.p;
+ const btn=s===2?'<span class="gchip">'+G+'目标 DENE-1103 · 0/3</span>':'<button class="gbtn sm" onclick="go(\'chat\',1)">'+G+'转成目标任务</button>';
+ const head='<span class="t">Multica 魔改 · 聊天列表点了没反应</span><span class="cap">孙悟空</span><span style="flex:1"></span>'+(s!=='now'&&(pos==='header'||s===2)?mk(btn,s===2?'新':'B'):'');
+ let msgs='<div class="m u">聊天列表点一下有时没反应，要点两下才进去</div><div class="m a">复现了：列表在收到新消息时整行重渲染，第一下点击落在旧节点上。修法是把行的 key 固定住，再补一个连点测试。要我直接修吗？</div><div class="m u">修吧，修到彻底好为止</div>';
+ if(s===2) msgs+=mk('<div class="sysline">'+G+'已转成目标任务 <b style="color:var(--brand)">DENE-1103</b> · 完成线 3 条已锁定 · 孙悟空接着做</div>','新');
+ const tb=(s!=='now'&&pos==='composer'&&s!==2)?'<div class="tb">'+mk(btn,'A')+'<span class="cap">把这段聊天变成一张做到达标才停的任务</span></div>':'';
+ const comp='<div class="composer">'+tb+'<div class="tx">回复孙悟空…</div><div class="bt">📎 <span class="cap">孙悟空 · claude</span><span class="send">↑</span></div></div>';
+ return {ph:head,msgs,comp,modal:s===1?panel('聊天列表偶发点击无响应',CK,'孙悟空从这段聊天里起草的'):''};
+}
+function list(after){
+ const rows=[['DENE-1103','聊天列表偶发点击无响应','p','0/3'],['DENE-1098','附件上传断点续传线上验收','p','2/5'],['DENE-1096','收件箱状态可直接编辑','',''],['DENE-1090','目标模式入口提到明面上','',''],['DENE-1085','项目记忆整理','d','4/4']];
+ const r=rows.map(x=>'<div class="li"><span class="sc '+x[2]+'"></span><span class="id">'+x[0]+'</span><span class="tt">'+(after&&x[3]?'<span class="gchip" style="margin-right:6px">'+G+x[3]+'</span>':'')+x[1]+'</span><span class="avatar a1">孙</span></div>').join('');
+ const bar='<div class="crumb"><b>我的任务</b></div><span style="flex:1"></span>'+(after?mk('<button class="gbtn">'+G+'新建目标</button>','常驻'):'<span class="cap bad">「设为目标」只在有进行中任务时出现</span>')+'<button class="btn">筛选</button><button class="btn">显示</button>';
+ const f='<span class="pill">全部</span><span class="pill">进行中</span>'+(after?mk('<span class="pill" style="color:var(--brand)">'+G+'只看目标</span>','新'):'');
+ const narrow='<div class="bar"><b>我的任务</b><span style="flex:1"></span>'+(after?mk('<button class="gbtn" style="padding:0 7px">'+G+'</button>','窄屏'):'<span class="cap bad">窄屏：按钮被隐藏</span>')+'</div><div class="lst">'+rows.slice(0,3).map(x=>'<div class="li"><span class="sc '+x[2]+'"></span><span class="tt">'+(after&&x[3]?'<span class="gchip" style="margin-right:6px">'+G+x[3]+'</span>':'')+x[1]+'</span></div>').join('')+'</div>';
+ return {bar,filters:f,rows:r,narrow};
+}
+function align(s){
+ const tog=(on)=>'<span class="gpill'+(on?' on':'')+'">'+G+'做到达标为止<span class="sw'+(on?' on':'')+'"></span></span>';
+ const steps=(cur)=>['聊天','对齐','任务'].map((x,i)=>'<span'+(i===cur?' style="font-weight:600;color:var(--fg)"':'')+'>'+(i<cur?'✓ ':'')+x+'</span>').join(' — ');
+ if(s==='now') return '<div class="card2"><div class="hd">'+steps(2)+'</div><div class="bd"><b>对齐结论</b><br>· 列表行 key 固定，修掉第一下点击丢失<br>· Web 和桌面都要验<br>· 补连点回归测试</div><div class="ft">'+tog(false)+'<span class="cap bad">← 只有走到最后一步才看得到</span><span style="flex:1"></span><button class="btn primary">创建任务</button></div></div>';
+ if(s===0) return '<div class="card2"><div class="hd">'+steps(0)+'<span style="flex:1"></span>'+mk(tog(true),'挪到这')+'</div><div class="bd"><div class="m u" style="margin-left:auto;width:fit-content">聊天列表点一下有时没反应</div><div class="m a" style="margin-top:10px">好，我先确认问题范围。另外你开了「做到达标为止」，我会多问一句：<b>怎么算彻底修好？</b>比如连点多少次不丢、要在哪几端验。</div></div><div class="ft"><span class="cap">开关从第一步起就在，一路带到最后</span><span style="flex:1"></span><button class="btn">下一步</button></div></div>';
+ return '<div class="card2"><div class="hd">'+steps(2)+'<span style="flex:1"></span>'+tog(true)+'</div><div class="bd"><b>对齐结论</b><br>· 列表行 key 固定，修掉第一下点击丢失<br>· Web 和桌面都要验<br>'+('<div class="mk" style="margin-top:14px"><span class="tag">新</span><div class="goal" style="margin:0"><div class="ghd"><span class="brand">'+G+'</span><b>完成线（从对齐结论带出来的）</b></div>'+checks(0)+'</div></div>')+'</div><div class="ft"><span style="flex:1"></span><button class="btn primary">创建目标任务并锁定完成线</button></div></div>';
+}
+function go(k,s){
+ document.querySelectorAll('.seg[data-k="'+k+'"] button').forEach(b=>b.classList.toggle('on',b.dataset.s==String(s)));
+ const d=V[k][s]();
+ if(k==='detail'){q('detail-col').innerHTML=d.col;q('detail-props').innerHTML=d.props;q('detail-modal').innerHTML=d.modal||''}
+ if(k==='create'){q('create-box').innerHTML=d.box}
+ if(k==='chat'){q('chat-ph').innerHTML=d.ph;q('chat-msgs').innerHTML=d.msgs;q('chat-comp').innerHTML=d.comp;q('chat-modal').innerHTML=d.modal}
+ if(k==='list'){q('list-bar').innerHTML=d.bar;q('list-filters').innerHTML=d.filters;q('list-rows').innerHTML=d.rows;q('list-narrow').innerHTML=d.narrow}
+ if(k==='align'){q('align-body').innerHTML=d}
+ cur[k]=s;
+}
+const q=id=>document.getElementById(id);const cur={};
+document.querySelectorAll('.seg[data-k]').forEach(g=>g.querySelectorAll('button').forEach(b=>b.onclick=()=>go(g.dataset.k,b.dataset.s==='now'?'now':+b.dataset.s)));
+document.querySelectorAll('#chat-pos button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#chat-pos button').forEach(x=>x.classList.toggle('on',x===b));go('chat',cur.chat)});
+const tabs=document.querySelectorAll('#tabs button');
+tabs.forEach(b=>b.onclick=()=>{tabs.forEach(x=>x.classList.toggle('on',x===b));document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+b.dataset.v))});
+['detail','create','chat','list','align'].forEach(k=>go(k,0));
+</script></body></html>

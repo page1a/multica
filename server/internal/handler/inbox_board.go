@@ -208,16 +208,18 @@ func (h *Handler) gatherInboxBoard(
 			continue
 		}
 		in.Summons = append(in.Summons, inboxboard.Summon{
-			IssueID:     uuidToString(s.IssueID),
-			Identifier:  issueIdentifier(prefix, s.IssueNumber),
-			IssueTitle:  s.IssueTitle,
-			IssueStatus: s.IssueStatus,
-			CallerType:  s.CallerType,
-			CallerID:    uuidToString(s.CallerID),
-			CallerName:  s.CallerName,
-			Source:      s.Source,
-			Reason:      s.Reason,
-			CreatedAt:   s.CreatedAt.Time,
+			IssueID:      uuidToString(s.IssueID),
+			Identifier:   issueIdentifier(prefix, s.IssueNumber),
+			IssueTitle:   s.IssueTitle,
+			IssueStatus:  s.IssueStatus,
+			AssigneeType: s.IssueAssigneeType,
+			AssigneeID:   uuidToString(s.IssueAssigneeID),
+			CallerType:   s.CallerType,
+			CallerID:     uuidToString(s.CallerID),
+			CallerName:   s.CallerName,
+			Source:       s.Source,
+			Reason:       s.Reason,
+			CreatedAt:    s.CreatedAt.Time,
 		})
 	}
 

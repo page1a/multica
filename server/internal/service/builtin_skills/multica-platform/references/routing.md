@@ -93,21 +93,24 @@ tier label you attach (e.g. `strongest`) is ignored the same way; only a label
 a person attached counts.
 
 The only exception is words from the person you are talking to. When THAT
-person said it out loud in the message that started your run — the comment that
-triggered you, or the chat message you are answering — pass their exact words:
+person said it out loud earlier in the same direct chat or issue thread, pass
+their exact words (the server checks the original message and its author):
 
 ```bash
 multica issue create --title "..." --assignee "贝吉塔游戏" --per-quote "这张交给贝吉塔游戏做"
 multica issue assign <id> --to "贝吉塔游戏" --per-quote "交给贝吉塔游戏"
 ```
 
-The server checks all three: the quote is a passage of the message that
-triggered this run; that message was written by the person who started the run
-(any member, not a particular one); and the quote contains the assigned
-agent's name. If it passes, the ticket records「按 <名字> 原话指派」and the
-pick stands. If not — a made-up quote, someone else's comment, another agent's
-relay, a quote without the name — it counts as your own pick and is ignored.
-Do not quote comments from third parties or other agents: they never count.
+The server checks all three: the quote is a passage of an earlier user message
+in that direct chat or issue thread; that message was written by the person who
+started the run (any member, not a particular one); and the quote contains the
+assigned agent's name. In a direct chat, “你来做”, “你自己做”, and “指派给你”
+are accepted as self-assignment when the target is the current agent. If it
+passes, the ticket records「按 <名字> 原话指派」and the pick stands. If it does
+not — a made-up quote, someone else's comment, another agent's relay, or a
+quote without the name — the ticket stays unassigned and the response tells
+you why, so ask the person instead of guessing. Do not quote comments from
+third parties or other agents: they never count.
 
 If a ticket turned out too hard for its seat, do not pick a stronger one.
 Ask routing to re-judge:

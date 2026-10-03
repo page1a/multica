@@ -7,56 +7,34 @@ import { defaultStorage } from "../platform/storage";
 const EMPTY_IDS: string[] = [];
 
 /**
- * Which projects a person keeps at the front of the chat-list project bar,
- * and in what order.
+ * Legacy local project-bar pins kept by older builds.
  *
- * This belongs to the person, not the workspace: two people in the same
- * workspace pin independently, and the same person's order is one list
- * (project ids are unique, so each workspace just renders the ids it owns).
- * It lives on `defaultStorage` keyed by user id — never in a workspace draft.
- * The casual-chat dismissal is a different fact and is stored on the chat
- * itself, on the server.
+ * The current project bar reads the server-backed sidebar pin list. This
+ * store remains only long enough to migrate pins written by older builds;
+ * it is keyed by user id so another signed-in person on the same device is
+ * never migrated from this user's legacy data.
  */
 interface ChatProjectBarState {
   byUser: Record<string, string[]>;
-  pin: (userId: string, projectId: string) => void;
-  unpin: (userId: string, projectId: string) => void;
-  /** Move `fromId` to the slot currently occupied by `toId`. Both must be pinned. */
-  move: (userId: string, fromId: string, toId: string) => void;
+  /** Remove legacy local pins after they have been copied to the server. */
+  remove: (userId: string, projectIds: readonly string[]) => void;
 }
 
 export const useChatProjectBarStore = create<ChatProjectBarState>()(
   persist(
     (set) => ({
       byUser: {},
-      pin: (userId, projectId) =>
-        set((state) => {
-          if (!userId || !projectId) return state;
-          const current = state.byUser[userId] ?? EMPTY_IDS;
-          if (current.includes(projectId)) return state;
-          return { byUser: { ...state.byUser, [userId]: [...current, projectId] } };
-        }),
-      unpin: (userId, projectId) =>
+      remove: (userId, projectIds) =>
         set((state) => {
           const current = state.byUser[userId];
-          if (!current?.includes(projectId)) return state;
-          const next = current.filter((id) => id !== projectId);
+          if (!current || projectIds.length === 0) return state;
+          const remove = new Set(projectIds);
+          const next = current.filter((id) => !remove.has(id));
+          if (next.length === current.length) return state;
           if (next.length === 0) {
             const { [userId]: _, ...rest } = state.byUser;
             return { byUser: rest };
           }
-          return { byUser: { ...state.byUser, [userId]: next } };
-        }),
-      move: (userId, fromId, toId) =>
-        set((state) => {
-          const current = state.byUser[userId];
-          if (!current || fromId === toId) return state;
-          const from = current.indexOf(fromId);
-          const to = current.indexOf(toId);
-          if (from < 0 || to < 0) return state;
-          const next = current.slice();
-          next.splice(from, 1);
-          next.splice(to, 0, fromId);
           return { byUser: { ...state.byUser, [userId]: next } };
         }),
     }),

@@ -43,6 +43,8 @@ export function useTypeLabels(): Record<InboxItemType, string> {
     agent_access_approved: t(($) => $.types.agent_access_approved),
     agent_access_declined: t(($) => $.types.agent_access_declined),
     parking_unexplained: t(($) => $.types.parking_unexplained),
+    issue_stall_action: t(($) => $.types.issue_stall_action),
+    children_done: t(($) => $.types.children_done),
   };
 }
 
@@ -162,6 +164,12 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
           </span>
         );
       }
+      return <span>{typeLabels[item.type]}</span>;
+    }
+    case "children_done": {
+      // The stage arrives as a JSON number; details are typed as strings.
+      const stage = details.stage != null ? String(details.stage) : "";
+      if (stage) return <span>{t(($) => $.labels.children_done_stage, { stage })}</span>;
       return <span>{typeLabels[item.type]}</span>;
     }
     default:

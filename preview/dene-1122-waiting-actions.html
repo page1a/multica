@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DENE-1122 · 等你栏操作预览</title>
+    <style>
+      :root { color-scheme: light; font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --ink: #20232b; --muted: #707784; --line: #e6e8ed; --card: #fff; --page: #f5f6f8; --accent: #6757d9; --danger: #bd4b5b; --shadow: 0 16px 42px #25263b12; }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); background: var(--page); }
+      .page { max-width: 1180px; margin: 0 auto; padding: 46px 44px 64px; }
+      .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      h1 { margin: 8px 0 8px; font-size: 30px; letter-spacing: -.025em; }
+      .lede { max-width: 720px; margin: 0 0 30px; color: var(--muted); font-size: 15px; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+      .panel { min-height: 254px; padding: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+      .panel h2 { margin: 0 0 4px; font-size: 16px; }
+      .caption { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+      .lane { border: 1px solid var(--line); border-radius: 9px; background: #fbfbfc; }
+      .lane > .lane-head, .lane > .row:first-of-type { border-top-left-radius: 8px; border-top-right-radius: 8px; }
+      .lane > .row:last-child { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+      .lane-head { display: flex; justify-content: space-between; align-items: center; padding: 11px 13px; border-bottom: 1px solid var(--line); font-weight: 700; }
+      .count { color: var(--muted); font-weight: 500; }
+      .row { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 63px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+      .row:last-child { border-bottom: 0; }
+      .row.hover { background: #f0eefc; }
+      .check { width: 15px; height: 15px; accent-color: var(--accent); }
+      .tag { width: max-content; padding: 3px 7px; color: var(--danger); background: #fbecef; border-radius: 4px; font-size: 11px; font-weight: 700; }
+      .title { min-width: 0; font-weight: 650; }
+      .sub { margin-top: 3px; color: var(--muted); font-size: 12px; }
+      .actions { display: flex; align-items: center; gap: 3px; }
+      button { border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: default; font: inherit; }
+      .icon { width: 28px; height: 28px; font-size: 16px; }
+      .icon:hover, .icon.active { color: var(--ink); background: #fff; box-shadow: 0 1px 4px #23233518; }
+      .toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #dcd9f7; border-radius: 8px; background: #f5f3ff; }
+      .toolbar strong { font-size: 12px; }
+      .toolbar .spacer { flex: 1; }
+      .action { padding: 7px 9px; color: #4c43a5; font-size: 12px; font-weight: 650; }
+      .action:hover { background: #eae7ff; }
+      .toast { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 11px 13px; border: 1px solid #d9dbe3; border-radius: 8px; background: #252832; color: white; box-shadow: 0 14px 30px #11121c30; }
+      .toast small { color: #c8cad5; }
+      .toast .undo { margin-left: auto; padding: 5px 8px; color: #d6d1ff; background: #39365a; font-size: 12px; font-weight: 700; }
+      .menu-wrap { position: relative; display: inline-flex; }
+      .menu { position: absolute; top: 32px; right: 0; z-index: 2; width: 222px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 14px 30px #23233520; }
+      .menu-item { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 5px; font-size: 12px; }
+      .menu-item:hover { background: #f2f2f6; }
+      .menu-sep { height: 1px; margin: 5px 0; background: var(--line); }
+      .note { margin-top: 26px; color: var(--muted); font-size: 12px; }
+      @media (max-width: 800px) { .page { padding: 28px 18px 40px; } .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="eyebrow">DENE-1122 · Inbox board</div>
+      <h1>「等你」栏直接改状态和批量改</h1>
+      <p class="lede">悬停快捷按钮、批量工具栏、撤销 toast，以及交回去做时明确显示会叫醒的负责人。</p>
+      <section class="grid" aria-label="Waiting lane interaction states">
+        <article class="panel">
+          <h2>悬停一行</h2>
+          <p class="caption">快捷改为以后做、完成或不做了</p>
+          <div class="lane">
+            <div class="lane-head"><span>等你</span><span class="count">2</span></div>
+            <div class="row hover">
+              <input class="check" type="checkbox" aria-label="选择 DENE-822" />
+              <span class="tag">等你决定</span>
+              <div><div class="title">确认上线范围</div><div class="sub">Goku → 你</div></div>
+              <div class="actions"><button class="icon" aria-label="以后做">↶</button><button class="icon active" aria-label="完成">✓</button><button class="icon" aria-label="不做了">×</button><button class="icon" aria-label="更多">⋯</button></div>
+            </div>
+            <div class="row"><input class="check" type="checkbox" aria-label="选择 DENE-823" /><span class="tag">等你决定</span><div><div class="title">回答三个问题</div><div class="sub">Trunks → 你</div></div><span class="sub">刚刚</span></div>
+          </div>
+        </article>
+        <article class="panel">
+          <h2>多选工具栏</h2>
+          <p class="caption">一次把选中的票改到任一可用状态</p>
+          <div class="toolbar"><strong>已选 2 项</strong><span class="spacer"></span><button class="action">以后做</button><button class="action">完成</button><button class="action">不做了</button><button class="action">交回去做</button></div>
+          <div class="lane" style="margin-top: 16px"><div class="row"><input class="check" type="checkbox" checked aria-label="选择 DENE-822" /><span class="tag">等你决定</span><div><div class="title">确认上线范围</div><div class="sub">Goku → 你</div></div><span class="sub">选中</span></div><div class="row"><input class="check" type="checkbox" checked aria-label="选择 DENE-823" /><span class="tag">等你决定</span><div><div class="title">回答三个问题</div><div class="sub">Trunks → 你</div></div><span class="sub">选中</span></div></div>
+        </article>
+        <article class="panel">
+          <h2>改完以后</h2>
+          <p class="caption">成功的票离开「等你」，底部提示支持撤销</p>
+          <div class="lane"><div class="lane-head"><span>等你</span><span class="count">0</span></div><div style="padding: 22px 13px;color:var(--muted);font-size:12px">没有需要你处理的事</div></div>
+          <div class="toast"><span>状态已改为完成</span><small>这张票已从「等你」移走</small><button class="undo">撤销</button></div>
+        </article>
+        <article class="panel">
+          <h2>交回去做</h2>
+          <p class="caption">负责人是智能体时，菜单写明会叫醒谁</p>
+          <div class="lane"><div class="lane-head"><span>等你</span><span class="count">1</span></div><div class="row hover"><input class="check" type="checkbox" aria-label="选择 DENE-824" /><span class="tag">等你决定</span><div><div class="title">补齐验收证据</div><div class="sub">孙悟空 → 你</div></div><div class="menu-wrap"><button class="icon active" aria-label="更多">⋯</button><div class="menu"><div class="menu-item">↶　以后做</div><div class="menu-item">✓　完成</div><div class="menu-item">×　不做了</div><div class="menu-sep"></div><div class="menu-item">↶　交回去做（会叫醒 Trunks）</div></div></div></div></div>
+          </div>
+        </article>
+      </section>
+      <p class="note">交互原型对应生产页面的 waiting lane；服务端批量状态更新逐票复用单票校验，拒绝项会被放回列表。</p>
+    </main>
+  </body>
+</html>

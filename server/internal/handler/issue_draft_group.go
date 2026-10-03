@@ -453,6 +453,12 @@ func (h *Handler) issueGroupParamsFromDraft(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			return false
 		}
+		// The alignment entry stores goal_mode in the draft envelope. Carry it
+		// onto the shared issue-create service only for the root; child issues
+		// are ordinary work items and must not grow independent goal rules.
+		if node.Key == "" && payload.GoalMode {
+			params.GoalMode = true
+		}
 		if warning != "" {
 			warnings = append(warnings, IssueDraftAssignmentWarning{
 				Key:    node.Key,

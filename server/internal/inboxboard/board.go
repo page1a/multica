@@ -48,9 +48,12 @@ type Owner struct {
 
 // Row is one issue on the board.
 type Row struct {
-	IssueID       string  `json:"issue_id"`
-	Identifier    string  `json:"identifier"`
-	Title         string  `json:"title"`
+	IssueID    string `json:"issue_id"`
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	// Status is the issue's current lifecycle key. Clients use it to offer a
+	// reversible board action without fetching every issue detail separately.
+	Status        string  `json:"status"`
 	ParentIssueID *string `json:"parent_issue_id"`
 	Lane          Lane    `json:"lane"`
 	// Kind is what put the row in its lane: the summon source or
@@ -89,16 +92,18 @@ type Board struct {
 
 // Summon is an open call on the viewer.
 type Summon struct {
-	IssueID     string
-	Identifier  string
-	IssueTitle  string
-	IssueStatus string
-	CallerType  string
-	CallerID    string
-	CallerName  string
-	Source      string
-	Reason      string
-	CreatedAt   time.Time
+	IssueID      string
+	Identifier   string
+	IssueTitle   string
+	IssueStatus  string
+	AssigneeType string
+	AssigneeID   string
+	CallerType   string
+	CallerID     string
+	CallerName   string
+	Source       string
+	Reason       string
+	CreatedAt    time.Time
 }
 
 // Parking is an issue's latest parking record.
@@ -279,16 +284,21 @@ func Build(in Input) Board {
 		}
 		placed[s.IssueID] = true
 		record := records[s.IssueID]
+		next := owner(s.AssigneeType, s.AssigneeID)
+		if next == nil {
+			next = owner("member", in.UserID)
+		}
 		row := &Row{
 			IssueID:    s.IssueID,
 			Identifier: s.Identifier,
 			Title:      s.IssueTitle,
+			Status:     s.IssueStatus,
 			Lane:       LaneWaiting,
 			Kind:       s.Source,
 			Reason:     strings.TrimSpace(s.Reason),
 			Before:     spokenSummary(record),
 			FromName:   s.CallerName,
-			Next:       owner("member", in.UserID),
+			Next:       next,
 			At:         s.CreatedAt,
 			Timeline:   emptyTimeline,
 		}
@@ -320,6 +330,7 @@ func Build(in Input) Board {
 			IssueID:       r.IssueID,
 			Identifier:    r.Identifier,
 			Title:         r.Title,
+			Status:        r.CurrentStatus,
 			ParentIssueID: optional(r.ParentIssueID),
 			Lane:          LaneWaiting,
 			Kind:          "waiting_person",
@@ -345,6 +356,7 @@ func Build(in Input) Board {
 			IssueID:       r.IssueID,
 			Identifier:    r.Identifier,
 			Title:         r.Title,
+			Status:        r.CurrentStatus,
 			ParentIssueID: optional(r.ParentIssueID),
 			Lane:          LaneStalled,
 			Kind:          r.Category,
@@ -379,9 +391,9 @@ func Build(in Input) Board {
 		}
 		switch {
 		case hasIssue:
-			row.Identifier, row.Title, row.ParentIssueID = issue.Identifier, issue.Title, optional(issue.ParentIssueID)
+			row.Identifier, row.Title, row.Status, row.ParentIssueID = issue.Identifier, issue.Title, issue.Status, optional(issue.ParentIssueID)
 		case record != nil:
-			row.Identifier, row.Title, row.ParentIssueID = record.Identifier, record.Title, optional(record.ParentIssueID)
+			row.Identifier, row.Title, row.Status, row.ParentIssueID = record.Identifier, record.Title, record.CurrentStatus, optional(record.ParentIssueID)
 		}
 		if row.Identifier == "" {
 			continue
@@ -404,6 +416,7 @@ func Build(in Input) Board {
 			IssueID:       issue.ID,
 			Identifier:    issue.Identifier,
 			Title:         issue.Title,
+			Status:        issue.Status,
 			ParentIssueID: optional(issue.ParentIssueID),
 			Lane:          LaneTodo,
 			Kind:          "todo",
@@ -424,6 +437,7 @@ func Build(in Input) Board {
 			IssueID:       issue.ID,
 			Identifier:    issue.Identifier,
 			Title:         issue.Title,
+			Status:        issue.Status,
 			ParentIssueID: optional(issue.ParentIssueID),
 			Lane:          LaneDone,
 			Kind:          "done",

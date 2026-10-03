@@ -37,7 +37,9 @@
     "view_board_short": "ボード",
     "view_list_short": "リスト",
     "view_swimlane_short": "スイムレーン",
-    "sort_manual": "手動"
+    "sort_manual": "手動",
+    "new_goal": "新建目标",
+    "only_goals": "只看目标"
   },
   "errors": {
     "move_failed": "タスクを移動できませんでした"

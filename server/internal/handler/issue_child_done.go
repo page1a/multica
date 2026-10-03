@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -128,6 +130,9 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if parentStatus == "backlog" {
 		return
 	}
+	if h.childDoneRuleOwnsParent(ctx, parent) {
+		return
+	}
 
 	// Stage barrier (MUL-3508 / discussion #4320). The notification + assignee
 	// wake fire only when this completion *closes a stage* — i.e. every sibling
@@ -234,6 +239,9 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		if parentStatus == "backlog" {
 			continue
 		}
+		if h.childDoneRuleOwnsParent(ctx, parent) {
+			continue
+		}
 
 		children, err := h.Queries.ListChildIssues(ctx, parent.ID)
 		if err != nil {
@@ -283,6 +291,32 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		}
 		h.postChildDoneComment(ctx, parent, rep, children, true, rep.Stage.Int32, batch, statuses, g.children)
 	}
+}
+
+// childDoneRuleOwnsParent reports whether the upstream child_done system
+// rule is switched on for this parent. That rule and this handler path wake
+// the same assignee for the same fact, so only one may run: the handler path
+// by default, the rule only where a workspace or issue opted in (DENE-1184).
+// The rule row is created lazily when the parent's first sub-issue change is
+// processed, which happens after this path runs, so a parent without one
+// follows the workspace default the row will be created with.
+func (h *Handler) childDoneRuleOwnsParent(ctx context.Context, parent db.Issue) bool {
+	rule, err := h.Queries.GetSystemWakeup(ctx, db.GetSystemWakeupParams{
+		IssueID:    parent.ID,
+		SystemRule: pgtype.Text{String: service.SystemRuleChildDone, Valid: true},
+	})
+	if err == nil {
+		return rule.Enabled
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return false
+	}
+	ws, err := h.Queries.GetWorkspace(ctx, parent.WorkspaceID)
+	if err != nil {
+		return false
+	}
+	enabled, _ := service.SystemWakeupDefault(ws.Settings)
+	return enabled
 }
 
 // highestClosedBatchStage selects the first completed child in the highest

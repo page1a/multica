@@ -180,7 +180,7 @@ func init() {
 	agentCreateCmd.Flags().String("thinking-level", "", "Reasoning/effort level for the agent's runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Empty = runtime default.")
 	agentCreateCmd.Flags().String("routing-tier", "", "Seat strength for automatic dispatch: strongest|strong|medium|weak (the Chinese labels 最强/强/中/弱 are accepted too). Empty leaves the seat off the routing ladder; a specialisation with no value inherits its base role's tier.")
 	agentCreateCmd.Flags().String("service-tier", "", "Codex execution speed: empty = inherit local Codex configuration; default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast.")
-	agentCreateCmd.Flags().String("custom-args", "", "Custom CLI arguments as JSON array. For model selection prefer --model; some providers (codex app-server, openclaw) reject --model in custom_args.")
+	agentCreateCmd.Flags().String("custom-args", "", "Custom CLI arguments as JSON array. For model selection prefer --model; Codex-style -c key=value is rejected on runtimes that reserve -c for session continuation (Claude, CodeBuddy, OpenCode, Pi and others), and session-resume flags are always dropped because the daemon owns which session a run continues.")
 	agentCreateCmd.Flags().String("custom-env", "", "Custom environment variables as JSON object, e.g. '{\"KEY\":\"value\"}'. Treated as secret material — never logged by the CLI, but values passed on the command line are visible to shell history and 'ps'; prefer --custom-env-stdin or --custom-env-file for real secrets. Pass '{}' to set an empty map.")
 	agentCreateCmd.Flags().Bool("custom-env-stdin", false, "Read the --custom-env JSON object from stdin. Keeps secrets out of shell history and 'ps'. Mutually exclusive with --custom-env and --custom-env-file.")
 	agentCreateCmd.Flags().String("custom-env-file", "", "Read the --custom-env JSON object from a file path (suggested mode: 0600). Mutually exclusive with --custom-env and --custom-env-stdin.")
@@ -208,7 +208,7 @@ func init() {
 	agentUpdateCmd.Flags().String("routing-tier", "", "New seat strength for automatic dispatch: strongest|strong|medium|weak (the Chinese labels 最强/强/中/弱 are accepted too). Pass an empty string to take the seat off the routing ladder. A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
 	agentUpdateCmd.Flags().String("routing-usage", "", "New usage tag for automatic dispatch: tight|normal|ample (the Chinese labels 紧张/常规/充足 are accepted too). A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
 	agentUpdateCmd.Flags().String("service-tier", "", "New Codex execution speed: default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast. Pass an empty string to clear and inherit local Codex configuration.")
-	agentUpdateCmd.Flags().String("custom-args", "", "New custom CLI arguments as JSON array. For model selection prefer --model; some providers (codex app-server, openclaw) reject --model in custom_args.")
+	agentUpdateCmd.Flags().String("custom-args", "", "New custom CLI arguments as JSON array. For model selection prefer --model; Codex-style -c key=value is rejected on runtimes that reserve -c for session continuation (Claude, CodeBuddy, OpenCode, Pi and others), and session-resume flags are always dropped because the daemon owns which session a run continues.")
 	// custom_env is intentionally NOT part of `agent update`. Use
 	// `multica agent env set <id>` — that path admits the agent owner or a
 	// workspace owner/admin, denies agent actors, and writes a persisted
@@ -243,6 +243,8 @@ func init() {
 
 	// agent tasks
 	agentTasksCmd.Flags().String("output", "table", "Output format: table or json")
+	agentTasksCmd.Flags().Int("limit", 200, "Maximum runs per page (1-200)")
+	agentTasksCmd.Flags().String("before", "", "Cursor from the previous page")
 
 	// agent avatar
 	agentAvatarCmd.Flags().String("file", "", "Path to the avatar image file (required)")
@@ -991,17 +993,31 @@ func runAgentTasks(cmd *cobra.Command, args []string) error {
 	}
 
 	output, _ := cmd.Flags().GetString("output")
-	path := "/api/agents/" + args[0] + "/tasks"
-	if output == "json" {
-		path += "?include_usage=true"
+	params := url.Values{}
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 1 {
+		return fmt.Errorf("limit must be a positive integer")
 	}
+	params.Set("limit", fmt.Sprint(limit))
+	before, _ := cmd.Flags().GetString("before")
+	if before != "" {
+		params.Set("before", before)
+	}
+	if output == "json" {
+		params.Set("include_usage", "true")
+	}
+	path := "/api/agents/" + args[0] + "/tasks?" + params.Encode()
 
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var tasks []map[string]any
-	if err := client.GetJSON(ctx, path, &tasks); err != nil {
+	responseHeaders, err := client.GetJSONWithHeaders(ctx, path, &tasks)
+	if err != nil {
 		return fmt.Errorf("list agent runs: %w", err)
+	}
+	if cursor := responseHeaders.Get("X-Agent-Tasks-Next-Cursor"); cursor != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "More runs available; use --before %q to fetch the next page.\n", cursor)
 	}
 
 	if output == "json" {

@@ -139,7 +139,7 @@ func (h *Handler) persistReportedPullRequests(ctx context.Context, ws pgtype.UUI
 			if err != nil {
 				continue
 			}
-			_ = qtx.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{IssueID: issue.ID, PullRequestID: row.ID, CloseIntent: true})
+			_, _ = qtx.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{IssueID: issue.ID, PullRequestID: row.ID})
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return err
@@ -312,8 +312,8 @@ func (h *Handler) persistReportedVCSPull(ctx context.Context, ws pgtype.UUID, p 
 		if err != nil {
 			continue
 		}
-		_ = qtx.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
-			IssueID: issue.ID, PullRequestID: row.ID, CloseIntent: true,
+		_, _ = qtx.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
+			IssueID: issue.ID, PullRequestID: row.ID,
 		})
 	}
 	return tx.Commit(ctx)

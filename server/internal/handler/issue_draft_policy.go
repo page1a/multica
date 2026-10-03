@@ -58,6 +58,7 @@ Rules:
 - Preserve good existing draft fields supplied in the user's message unless the user asks to change them.
 - title is one concise line naming the outcome, not the activity.
 - description is Markdown: the problem, the acceptance criteria, and the constraints that are already known. Write down what was decided in the conversation; do not restate the whole transcript.
+- When the incoming draft has goal_mode=true, ask how success is measured and write the answer as concrete, verifiable completion-line language in the description so the human can review it in the shared completion-line panel.
 - Leave status and priority empty unless the user states them.
 - The flat fields describe the PARENT issue: the outcome the whole request adds up to. children are the separate sub-issues that parent is made of.
 - Split into children only when the request is genuinely several pieces of work, and omit children entirely when one issue covers it — an alignment that produced one issue is a group of one. Never emit an empty children array.

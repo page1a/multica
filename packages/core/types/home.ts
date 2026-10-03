@@ -115,6 +115,8 @@ export interface InboxBoardRowPayload {
   issue_id: string;
   identifier: string;
   title: string;
+  /** Current lifecycle key, used to make board status actions reversible. */
+  status?: string;
   parent_issue_id: string | null;
   lane: "waiting" | "stalled" | "running" | "todo" | "fresh" | "done";
   kind: string;

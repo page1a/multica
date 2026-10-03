@@ -322,6 +322,32 @@ type StaleState struct {
 	ReviewRemarks []string `json:"review_remarks"`
 }
 
+const stallCandidateSystemPrompt = `A quiet work ticket is being checked for automatic cleanup. Decide whether it is a duplicate or invalid ticket that should be announced for human review.
+
+candidate: true ONLY when the ticket is clearly duplicate or invalid from the ticket context. Use false when it may be valid, when its intent is unclear, or when the artifact check shows a delivery that could explain why it exists. Never infer that a ticket is invalid merely because it is old.
+
+The artifact_check is evidence that the server queried linked PRs, attachments, and other delivery artifacts. Mention that evidence in reason. Respond with JSON: {"candidate":true|false,"confidence":0..1,"reason":"one short sentence"}.`
+
+// Candidate asks the model for the duplicate/invalid cleanup decision.
+func (j LLMJudge) Candidate(ctx context.Context, target Target, st StallCandidateState) (StallCandidateDecision, error) {
+	raw, err := j.ask(ctx, target, stallCandidateSystemPrompt, st)
+	if err != nil {
+		return StallCandidateDecision{}, err
+	}
+	var out struct {
+		Candidate  bool    `json:"candidate"`
+		Confidence float64 `json:"confidence"`
+		Reason     string  `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return StallCandidateDecision{}, fmt.Errorf("%w: stall candidate decision was not JSON: %v", ErrJudgeUnavailable, err)
+	}
+	if strings.TrimSpace(out.Reason) == "" {
+		return StallCandidateDecision{}, fmt.Errorf("%w: stall candidate decision carried no reason", ErrJudgeUnavailable)
+	}
+	return StallCandidateDecision{Candidate: out.Candidate, Confidence: out.Confidence, Reason: strings.TrimSpace(out.Reason)}, nil
+}
+
 const staleSystemPrompt = `A work ticket has been sitting in "in review" with nothing happening on it, and no run is active. Decide one thing.
 
 action: "complete" ONLY IF review_remarks already contain an explicit acceptance from the reviewer — they checked the work and passed it. "wake" for everything else, including an empty review_remarks, remarks that ask for changes, remarks that are questions, and remarks you are unsure about.

@@ -33,7 +33,7 @@ function buildMyRelationPlan(
     case "assigned":
       return {
         scopeKey,
-        queryFilter: { assignee_id: scope.userId },
+        queryFilter: { assignee_id: scope.userId, ...(scope.goalOnly ? { goal_only: true } : {}) },
         createDefaults: {
           assignee_type: "member",
           assignee_id: scope.userId,
@@ -42,17 +42,17 @@ function buildMyRelationPlan(
     case "created":
       return {
         scopeKey,
-        queryFilter: { creator_id: scope.userId },
+        queryFilter: { creator_id: scope.userId, ...(scope.goalOnly ? { goal_only: true } : {}) },
         createDefaults: {},
       };
     case "involved":
       return {
         scopeKey,
-        queryFilter: { involves_user_id: scope.userId },
+        queryFilter: { involves_user_id: scope.userId, ...(scope.goalOnly ? { goal_only: true } : {}) },
         createDefaults: {},
       };
     case "all":
-      return { scopeKey, queryFilter: {}, createDefaults: {} };
+      return { scopeKey, queryFilter: scope.goalOnly ? { goal_only: true } : {}, createDefaults: {} };
   }
 }
 

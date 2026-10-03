@@ -176,7 +176,7 @@ func TestQuoteFromSomeoneElseOrAnAgentDoesNotCount(t *testing.T) {
 	}
 }
 
-func TestFabricatedQuoteIsDowngradedToTheAgentsOwnPick(t *testing.T) {
+func TestFabricatedQuoteIsRejectedAndCannotBeRerouted(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -187,9 +187,26 @@ func TestFabricatedQuoteIsDowngradedToTheAgentsOwnPick(t *testing.T) {
 	if resp["assignee_id"] != nil || resp["assignee_ignored"] != true {
 		t.Fatalf("assignee_id = %v ignored = %v, an invented quote must not stick", resp["assignee_id"], resp["assignee_ignored"])
 	}
+	if reason, _ := resp["assignee_ignored_reason"].(string); reason == "" {
+		t.Fatal("a rejected quote must explain why the pick was ignored")
+	}
 	_, source, _, quote := originOf(t, resp["id"].(string))
-	if source == nil || *source != "agent" || quote != nil {
-		t.Fatalf("source = %v quote = %v, want agent with no quote", source, quote)
+	if source == nil || *source != "quote_rejected" || quote != nil {
+		t.Fatalf("source = %v quote = %v, want quote_rejected with no quote", source, quote)
+	}
+}
+
+func TestDirectChatSelfAssignmentUsesSecondPersonQuote(t *testing.T) {
+	for _, quote := range []string{"你来做", "你自己做", "指派给你"} {
+		if !quoteNamesAssignee(quote, quote, "Origin Target", true) {
+			t.Fatalf("quoteNamesAssignee(%q) = false, want direct-chat self assignment", quote)
+		}
+	}
+	if quoteNamesAssignee("这张票先放着", "你来做", "Origin Target", true) {
+		t.Fatal("a second-person quote absent from the user's message must be rejected")
+	}
+	if quoteNamesAssignee("你来做", "你来做", "Origin Target", false) {
+		t.Fatal("a second-person quote must not self-assign outside a direct chat")
 	}
 }
 
