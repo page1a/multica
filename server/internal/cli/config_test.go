@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	// cli.ProfileDir prefers MULTICA_TASK_CONFIG_ROOT over HOME. The daemon
+	// sets it for every task, so a test that points HOME at a TempDir never
+	// reads that directory while the variable is inherited.
+	os.Unsetenv(TaskConfigRootEnv)
+	os.Exit(m.Run())
+}
+
 // TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends verifies that a
 // config.json written by an older daemon (no `backends` key at all) loads
 // correctly into the new schema, with Backends == nil. This is the most

@@ -9,7 +9,16 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/cli"
 )
+
+func TestMain(m *testing.M) {
+	// ProfileDir prefers MULTICA_TASK_CONFIG_ROOT over HOME. Inherited from
+	// the daemon, it makes HOME-based identity and config tests read the
+	// task config instead of the TempDir they just set.
+	os.Unsetenv(cli.TaskConfigRootEnv)
+	os.Exit(m.Run())
+}
 
 func TestEnsureDaemonID_Persists(t *testing.T) {
 	home := t.TempDir()

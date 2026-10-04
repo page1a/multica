@@ -1341,8 +1341,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("GitHub App Settings storage disabled (no MULTICA_GITHUB_APP_SECRET_KEY and no JWT_SECRET)")
 	}
-	if err := h.LoadGitHubAppCredential(context.Background()); err != nil {
-		slog.Error("github app: failed to load stored credential", "error", err)
+	// A nil pool is the in-memory test/embedder path. Queries still wraps it,
+	// and a process that has JWT_SECRET would build GitHubAppSecrets and then
+	// QueryRow on that nil pool.
+	if pool != nil {
+		if err := h.LoadGitHubAppCredential(context.Background()); err != nil {
+			slog.Error("github app: failed to load stored credential", "error", err)
+		}
 	}
 
 	// Plugin secrets use a dedicated deployment key. Keeping this separate from

@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -173,11 +174,57 @@ func Enable(ctx context.Context, repo string, scope Scope) error {
 	if err != nil {
 		return err
 	}
-	if rootOnly {
-		return gitStdin(ctx, repo, strings.NewReader(""), "sparse-checkout", "set", "--cone", "--stdin")
+	// Git 2.34 takes --cone on init, not on set. Passing it to set names a
+	// directory "--cone" and the cone drops root files (package.json, lockfiles).
+	// Newer git documents --cone on set; use that when the help text offers it.
+	if sparseSetSupportsConeFlag() {
+		if rootOnly {
+			return gitStdin(ctx, repo, strings.NewReader(""), "sparse-checkout", "set", "--cone", "--stdin")
+		}
+		args := append([]string{"sparse-checkout", "set", "--cone"}, dirs...)
+		return git(ctx, repo, args...)
 	}
-	args := append([]string{"sparse-checkout", "set", "--cone"}, dirs...)
+	// A later worktree of a bare cache already has extensions.worktreeConfig
+	// from the first sparse checkout. Git 2.34 then treats that worktree as
+	// bare, and init itself refuses. Clear core.bare first when that has
+	// already happened. init is what turns the extension on for the first
+	// worktree, so clear it again afterwards: set/checkout otherwise refuse
+	// with "must be run in a work tree".
+	if err := unbareWorktree(ctx, repo); err != nil {
+		return err
+	}
+	if err := git(ctx, repo, "sparse-checkout", "init", "--cone"); err != nil {
+		return err
+	}
+	if err := unbareWorktree(ctx, repo); err != nil {
+		return err
+	}
+	if rootOnly {
+		return nil
+	}
+	args := append([]string{"sparse-checkout", "set"}, dirs...)
 	return git(ctx, repo, args...)
+}
+
+var (
+	coneFlagOnce sync.Once
+	coneFlag     bool
+)
+
+func unbareWorktree(ctx context.Context, repo string) error {
+	bare, err := gitStdout(ctx, repo, "rev-parse", "--is-bare-repository")
+	if err != nil || strings.TrimSpace(bare) != "true" {
+		return err
+	}
+	return git(ctx, repo, "config", "--worktree", "core.bare", "false")
+}
+
+func sparseSetSupportsConeFlag() bool {
+	coneFlagOnce.Do(func() {
+		out, _ := exec.Command("git", "sparse-checkout", "set", "-h").CombinedOutput()
+		coneFlag = strings.Contains(string(out), "--cone")
+	})
+	return coneFlag
 }
 
 // CheckoutCurrent materializes the current branch under the cone Enable just

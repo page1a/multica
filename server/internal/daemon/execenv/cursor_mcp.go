@@ -317,6 +317,21 @@ func marshalJSONStringifyCompatible(value any) ([]byte, error) {
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
+// isGitMetadata reports whether path is a git dir or a worktree gitfile.
+// An empty directory named .git is not a repository; Stat alone treats it
+// as one and walks a temp dir under /tmp up to that stray directory.
+func isGitMetadata(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	if !info.IsDir() {
+		return true
+	}
+	_, err = os.Stat(filepath.Join(path, "HEAD"))
+	return err == nil
+}
+
 func cursorProjectRoot(workDir string) string {
 	if workDir == "" {
 		return workDir
@@ -331,7 +346,7 @@ func cursorProjectRoot(workDir string) string {
 	}
 	fallback := dir
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if isGitMetadata(filepath.Join(dir, ".git")) {
 			return dir
 		}
 		parent := filepath.Dir(dir)

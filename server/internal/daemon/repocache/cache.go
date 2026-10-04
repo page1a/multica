@@ -40,18 +40,32 @@ func gitEnv() []string {
 	// Find the existing GIT_CONFIG_COUNT so we append at the next index
 	// rather than overwriting any env-scoped git config (auth, URL
 	// rewrites, extra headers, etc.).
+	//
+	// Pin diagnostics to English. isBranchCollisionError matches
+	// "a branch named"; zh_CN git says "一个分支名" and the retry never runs.
+	// LC_ALL overrides LC_MESSAGES, so drop it. Same pin as execenv.gitCommandEnv.
 	existing := 0
+	filtered := make([]string, 0, len(base))
 	for _, e := range base {
+		key, _, _ := strings.Cut(e, "=")
+		switch key {
+		case "LC_ALL", "LC_MESSAGES", "LANGUAGE":
+			continue
+		}
 		if strings.HasPrefix(e, "GIT_CONFIG_COUNT=") {
 			if n, err := strconv.Atoi(strings.TrimPrefix(e, "GIT_CONFIG_COUNT=")); err == nil {
 				existing = n
 			}
 		}
+		filtered = append(filtered, e)
 	}
+	base = filtered
 
 	idx := strconv.Itoa(existing)
 	return append(base,
 		"GIT_TERMINAL_PROMPT=0",
+		"LC_MESSAGES=C",
+		"LANGUAGE=C",
 		"GIT_CONFIG_COUNT="+strconv.Itoa(existing+1),
 		"GIT_CONFIG_KEY_"+idx+"=safe.directory",
 		"GIT_CONFIG_VALUE_"+idx+"=*",

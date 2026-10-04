@@ -194,7 +194,7 @@ export function groupRowsBySquad<
   const active = squads
     .filter(isActiveSquad)
     .slice()
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name, "en"));
 
   let allKnown = true;
   for (const squad of active) {
