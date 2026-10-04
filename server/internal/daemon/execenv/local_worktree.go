@@ -2707,6 +2707,27 @@ func isMulticaSidecarPath(rel string) bool {
 	return false
 }
 
+// gitCommandEnv pins git's diagnostics to English. Callers match phrases
+// ("already checked out", "nothing to commit"). A zh_CN message such as
+// "已经检出到" misses that match, so a busy conversation branch is added
+// again instead of forked. LC_ALL is dropped because it overrides
+// LC_MESSAGES; LANGUAGE is set because GNU gettext prefers it. Charset
+// stays on LANG. glibc getenv returns the first duplicate, so the inherited
+// keys have to be removed, not appended over.
+func gitCommandEnv(extra []string) []string {
+	env := make([]string, 0, len(os.Environ())+len(extra)+2)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "LC_ALL", "LC_MESSAGES", "LANGUAGE":
+			continue
+		}
+		env = append(env, entry)
+	}
+	env = append(env, "LC_MESSAGES=C", "LANGUAGE=C")
+	return append(env, extra...)
+}
+
 // runGit runs git in dir and returns combined output. Callers inspect the
 // output for git's own error text, so stdout and stderr stay merged.
 func runGit(dir string, args ...string) (string, error) {
@@ -2721,9 +2742,7 @@ func runGitEnv(dir string, extraEnv []string, args ...string) (string, error) {
 
 	full := append([]string{"-C", dir}, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	cmd.Env = gitCommandEnv(extraEnv)
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.CombinedOutput()
 	return string(out), err
