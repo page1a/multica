@@ -1,7 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
+import type { StorageAdapter } from "./types/storage";
+import { createPersistedQueryCache } from "./query-persistence";
 
-export function createQueryClient(): QueryClient {
-  return new QueryClient({
+export function createQueryClient(options?: { storage?: StorageAdapter; userId?: string }): QueryClient {
+  const client = new QueryClient({
     defaultOptions: {
       queries: {
         staleTime: Infinity,
@@ -15,4 +17,6 @@ export function createQueryClient(): QueryClient {
       },
     },
   });
+  if (options?.storage && options.userId) createPersistedQueryCache(client, options.storage, options.userId);
+  return client;
 }

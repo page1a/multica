@@ -223,6 +223,46 @@ func TestQuoteThatDoesNotNameTheAssigneeIsRejected(t *testing.T) {
 	}
 }
 
+// specialisation seeds a direction seat under base and returns its id.
+func specialisation(t *testing.T, name, baseID string) string {
+	t.Helper()
+	id := createHandlerTestAgent(t, name, []byte("[]"))
+	dbfx.Exec(t, `UPDATE agent SET parent_agent_id = $1 WHERE id = $2`, baseID, id)
+	return id
+}
+
+func TestQuoteNamingTheBaseRoleCoversItsSpecialisations(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	enableDraftSuggestRouting(t, tierJudge{tier: "medium", confidence: 0.95})
+	f := originRun(t, "base", "交给 Origin Base 做，别的不用管", "member", testUserID, testUserID)
+	base := createHandlerTestAgent(t, "Origin Base", []byte("[]"))
+	f.target = specialisation(t, "Origin Base 出海", base)
+
+	resp := agentCreate(t, f, "base role said", "交给 Origin Base 做")
+	assignee, source, _, _ := originOf(t, resp["id"].(string))
+	if assignee == nil || *assignee != f.target || source == nil || *source != "quote" {
+		t.Fatalf("assignee = %v source = %v, want the specialisation on the base role's name", assignee, source)
+	}
+}
+
+func TestQuoteNamingOneSpecialisationDoesNotReachItsSibling(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	enableDraftSuggestRouting(t, tierJudge{tier: "medium", confidence: 0.95})
+	f := originRun(t, "sibling", "交给 Origin Sib 出海 做", "member", testUserID, testUserID)
+	base := createHandlerTestAgent(t, "Origin Sib", []byte("[]"))
+	specialisation(t, "Origin Sib 出海", base)
+	f.target = specialisation(t, "Origin Sib 游戏", base)
+
+	resp := agentCreate(t, f, "sibling not named", "交给 Origin Sib 出海 做")
+	if resp["assignee_id"] != nil || resp["assignee_ignored"] != true {
+		t.Fatalf("assignee_id = %v ignored = %v, a sibling direction must not ride on another's name", resp["assignee_id"], resp["assignee_ignored"])
+	}
+}
+
 func TestAgentPickStaysWhenRoutingIsOff(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

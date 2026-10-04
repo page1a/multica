@@ -94,7 +94,7 @@ var workspaceUpdateCmd = &cobra.Command{
 var workspaceNamingCmd = &cobra.Command{
 	Use:   "naming [workspace-id|slug|prefix]",
 	Short: "Read or change the chat naming source",
-	Long:  "Reads the current chat naming source. Pass --source server_llm, runtime, or rules to change it (owner/admin only).",
+	Long:  "Reads the current chat naming source, whether it is working (health: ok, degraded, idle) and the last chat it named. Pass --source server_llm, runtime, or rules to change it (owner/admin only).",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runWorkspaceNaming,
 }
@@ -255,6 +255,12 @@ func runWorkspaceNaming(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		fmt.Printf("Source: %v\n", out["source"])
+		if health, ok := out["health"]; ok {
+			fmt.Printf("Health: %v\n", health)
+		}
+		if last, ok := out["last"].(map[string]any); ok {
+			fmt.Printf("Last: %v (%v, %v)\n", last["title"], last["source"], last["created_at"])
+		}
 		if options, ok := out["options"].([]any); ok {
 			for _, option := range options {
 				if item, ok := option.(map[string]any); ok {

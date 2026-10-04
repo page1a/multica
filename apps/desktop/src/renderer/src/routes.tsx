@@ -1,36 +1,34 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { createMemoryRouter, Outlet, useMatches } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
-import { IssueDetailPage } from "./pages/issue-detail-page";
-import { ProjectDetailPage } from "./pages/project-detail-page";
-import { AutopilotDetailPage } from "./pages/autopilot-detail-page";
-import { SkillDetailPage } from "./pages/skill-detail-page";
-import { AgentDetailPage } from "./pages/agent-detail-page";
-import { AiBuilderSessionPage } from "./pages/ai-builder-session-page";
-import { IssueDraftPage } from "./pages/issue-draft-page";
-import { MemberDetailPage } from "./pages/member-detail-page";
-import {
-  RuntimeDetailPage,
-  RuntimeSettingsPage,
-} from "./pages/runtime-detail-page";
-import { AttachmentPreviewRoute } from "./pages/attachment-preview-page";
-import { IssuesPage } from "@multica/views/issues/components";
-import { ProjectsPage } from "@multica/views/projects/components";
-import { DashboardPage } from "@multica/views/dashboard";
-import { AutopilotsPage } from "@multica/views/autopilots/components";
-import { MyIssuesPage } from "@multica/views/my-issues";
-import { SkillsPage } from "@multica/views/skills";
-import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
-import { DesktopAgentsPage } from "./components/desktop-agents-page";
-import {
-  AiCreateAgentPage,
-  ChooseCreateMethodPage,
-  ManualCreateAgentPage,
-} from "@multica/views/agents";
-import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
-import { InboxPage } from "@multica/views/inbox";
-import { ChatPage } from "@multica/views/chat";
-import { SettingsPage } from "@multica/views/settings";
+const IssueDetailPage = lazy(() => import("./pages/issue-detail-page").then((m) => ({ default: m.IssueDetailPage })));
+const ProjectDetailPage = lazy(() => import("./pages/project-detail-page").then((m) => ({ default: m.ProjectDetailPage })));
+const AutopilotDetailPage = lazy(() => import("./pages/autopilot-detail-page").then((m) => ({ default: m.AutopilotDetailPage })));
+const SkillDetailPage = lazy(() => import("./pages/skill-detail-page").then((m) => ({ default: m.SkillDetailPage })));
+const AgentDetailPage = lazy(() => import("./pages/agent-detail-page").then((m) => ({ default: m.AgentDetailPage })));
+const AiBuilderSessionPage = lazy(() => import("./pages/ai-builder-session-page").then((m) => ({ default: m.AiBuilderSessionPage })));
+const IssueDraftPage = lazy(() => import("./pages/issue-draft-page").then((m) => ({ default: m.IssueDraftPage })));
+const MemberDetailPage = lazy(() => import("./pages/member-detail-page").then((m) => ({ default: m.MemberDetailPage })));
+const RuntimeDetailPage = lazy(() => import("./pages/runtime-detail-page").then((m) => ({ default: m.RuntimeDetailPage })));
+const RuntimeSettingsPage = lazy(() => import("./pages/runtime-detail-page").then((m) => ({ default: m.RuntimeSettingsPage })));
+const AttachmentPreviewRoute = lazy(() => import("./pages/attachment-preview-page").then((m) => ({ default: m.AttachmentPreviewRoute })));
+const IssuesPage = lazy(() => import("@multica/views/issues/components").then((m) => ({ default: m.IssuesPage })));
+const ProjectsPage = lazy(() => import("@multica/views/projects/components").then((m) => ({ default: m.ProjectsPage })));
+const DashboardPage = lazy(() => import("@multica/views/dashboard").then((m) => ({ default: m.DashboardPage })));
+const LinkedWorkspacesPage = lazy(() => import("@multica/views/workspace-links").then((m) => ({ default: m.LinkedWorkspacesPage })));
+const AutopilotsPage = lazy(() => import("@multica/views/autopilots/components").then((m) => ({ default: m.AutopilotsPage })));
+const MyIssuesPage = lazy(() => import("@multica/views/my-issues").then((m) => ({ default: m.MyIssuesPage })));
+const SkillsPage = lazy(() => import("@multica/views/skills").then((m) => ({ default: m.SkillsPage })));
+const DesktopRuntimesPage = lazy(() => import("./components/desktop-runtimes-page").then((m) => ({ default: m.DesktopRuntimesPage })));
+const DesktopAgentsPage = lazy(() => import("./components/desktop-agents-page").then((m) => ({ default: m.DesktopAgentsPage })));
+const AiCreateAgentPage = lazy(() => import("@multica/views/agents").then((m) => ({ default: m.AiCreateAgentPage })));
+const ChooseCreateMethodPage = lazy(() => import("@multica/views/agents").then((m) => ({ default: m.ChooseCreateMethodPage })));
+const ManualCreateAgentPage = lazy(() => import("@multica/views/agents").then((m) => ({ default: m.ManualCreateAgentPage })));
+const SquadsPage = lazy(() => import("@multica/views/squads/components").then((m) => ({ default: m.SquadsPage })));
+const SquadDetailPageView = lazy(() => import("@multica/views/squads/components").then((m) => ({ default: m.SquadDetailPage })));
+const InboxPage = lazy(() => import("@multica/views/inbox").then((m) => ({ default: m.InboxPage })));
+const ChatPage = lazy(() => import("@multica/views/chat").then((m) => ({ default: m.ChatPage })));
+const SettingsPage = lazy(() => import("@multica/views/settings").then((m) => ({ default: m.SettingsPage })));
 import { useT } from "@multica/views/i18n";
 import { Download, Globe, Server } from "lucide-react";
 import { DaemonSettingsTab } from "./components/daemon-settings-tab";
@@ -97,7 +95,15 @@ function PageShell() {
   return (
     <>
       <TitleSync />
-      <Outlet />
+      <Suspense
+        fallback={
+          <div className="flex min-h-[40vh] items-center justify-center" aria-live="polite">
+            Loading…
+          </div>
+        }
+      >
+        <Outlet />
+      </Suspense>
     </>
   );
 }
@@ -248,6 +254,11 @@ export const appRoutes: RouteObject[] = [
             path: "usage",
             element: <DashboardPage />,
             handle: { title: "Usage" },
+          },
+          {
+            path: "linked",
+            element: <LinkedWorkspacesPage />,
+            handle: { title: "Linked workspaces" },
           },
           {
             path: "settings",

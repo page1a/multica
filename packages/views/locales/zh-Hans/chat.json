@@ -8,7 +8,8 @@
     "search_empty": "没有匹配的聊天",
     "back": "返回",
     "new_chat_in_project": "新对话会留在「{{title}}」",
-    "new_chat_unbound": "新对话不绑定项目"
+    "new_chat_unbound": "新对话不绑定项目",
+    "back_to_list": "返回聊天列表"
   },
   "goal_flow": {
     "hint": "先聊清楚，再创建任务。",
@@ -145,7 +146,9 @@
     "quick_actions_heading": "后续提问",
     "quick_actions_aria": "后续提问建议",
     "quick_actions_regenerate": "重新生成建议",
-    "quick_actions_regenerate_failed": "无法重新生成建议，请重试。"
+    "quick_actions_regenerate_failed": "无法重新生成建议，请重试。",
+    "spawned": "已派生会话",
+    "spawn_untitled": "新聊天"
   },
   "session_history": {
     "untitled": "无标题",
@@ -314,7 +317,8 @@
     "private_tag": "私密",
     "extra_tag": "额外成员",
     "show_more": "显示更多（{{count}}）",
-    "show_fewer": "收起"
+    "show_fewer": "收起",
+    "spawned": "由另一个聊天派生"
   },
   "header": {
     "view_profile": "查看智能体资料",
@@ -352,7 +356,14 @@
     "header_private": "仅自己可见",
     "header_project": "项目成员可见，也能发言",
     "header_extra": "项目成员可见，另有额外成员",
-    "search": "搜成员…"
+    "search": "搜成员…",
+    "trigger": {
+      "private": "仅自己",
+      "project": "项目成员",
+      "extra": "项目成员+额外",
+      "workspace": "全工作区"
+    },
+    "header_workspace": "工作区所有成员可见，也能发言"
   },
   "notice": {
     "title": "有些聊天现在项目成员能看到",
@@ -360,5 +371,10 @@
     "make_private": "把勾选的设为私密",
     "dismiss": "知道了"
   },
-  "title_locked": "标题已锁定，智能体不会再改名"
+  "title_locked": "标题已锁定，智能体不会再改名",
+  "origin": {
+    "from_prefix": "由",
+    "from_suffix": "聊天派生",
+    "from_hidden": "由另一个聊天派生"
+  }
 }

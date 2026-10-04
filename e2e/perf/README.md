@@ -18,6 +18,61 @@ behaviour is not exercised here.
 
 ## Running it
 
+### Page-load baseline
+
+The page baseline is a small, route-driven measurement that can run against
+Web, Desktop's renderer host, or the mobile web build. Start one target app
+first, then run:
+
+```bash
+node scripts/perf-baseline.mjs \
+  --url http://localhost:3000 \
+  --routes issues=/issues,chat=/chat,detail=/issues/<id> \
+  --storage-state .auth/perf.json \
+  --runs 3 \
+  --out perf-report/baseline.json
+```
+
+`cold` records the first navigation and `hot` records the immediate second
+visit in the same browser context. `foreground` brings the page back after a
+second tab has been in front, exercising the visibility/focus boundary without
+adding a navigation. Each navigation sample includes elapsed time,
+DOMContentLoaded, total requests, and `/api/*` request counts. The report also
+records Node, OS, architecture, and Chromium versions so results remain
+comparable. Keep the same routes, run count, auth state, and machine when
+comparing before and after.
+
+The script does not create or store credentials. `--storage-state` is optional
+for public routes and should point to a Playwright storage-state file for
+authenticated routes.
+
+### Repeat on each client
+
+The measurement entry point is the same for all three targets; only the URL
+and the app startup command change.
+
+| Target | Start the app | Example URL |
+| --- | --- | --- |
+| Web | `pnpm dev:web` (or a production server) | `http://localhost:3000` |
+| Desktop renderer | `pnpm dev:desktop` and expose its renderer URL | the renderer's local URL |
+| Mobile web | start the Expo web target (`pnpm -C apps/mobile web`) | the Expo web URL, often `http://localhost:8081` |
+
+Use the same command after the target is ready, adjusting route paths to the
+screen exposed by that client. For authenticated task detail and chat routes,
+reuse the same Playwright storage state:
+
+```bash
+node scripts/perf-baseline.mjs \
+  --url "$TARGET_URL" \
+  --routes task=/issues/<id>,chat=/chat \
+  --storage-state .auth/perf.json \
+  --runs 3 \
+  --out "perf-report/$(node -p 'process.platform').json"
+```
+
+Reports are intentionally plain JSON and can be checked in or attached to a
+task. Do not commit storage-state files or include their contents in a report.
+
 Against a frontend you already have running:
 
 ```bash

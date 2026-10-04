@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
   ArrowUpRight,
+  Circle,
   CircleHelp,
   Hash,
   MessageSquare,
@@ -20,9 +21,10 @@ import { Button } from "@multica/ui/components/ui/button";
 import { NumberFlow } from "@multica/ui/components/ui/number-flow";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
-import type { Agent, AgentTask, Issue } from "@multica/core/types";
+import type { Agent, AgentChat, AgentTask, Issue } from "@multica/core/types";
 import {
   type AgentActivity,
+  agentChatsOptions,
   agentTaskSnapshotOptions,
   agentTasksOptions,
   summarizeActivityWindow,
@@ -35,6 +37,7 @@ import { issueDetailOptions } from "@multica/core/issues/queries";
 import { AppLink } from "../../../navigation";
 import { TranscriptButton } from "../../../common/task-transcript";
 import { AttributionBadge } from "../../../issues/components/attribution-badge";
+import { ActorAvatar } from "../../../common/actor-avatar";
 import { taskStatusConfig } from "../../config";
 import { cancellationActorLabel, cancelReasonLabel, failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
@@ -47,6 +50,9 @@ const RECENT_PAGE = 20;
 // still in flight, so first paint of the tab is a skeleton rather than the
 // "nothing finished yet" empty state (which reads as a wrong answer).
 const RECENT_SKELETON_ROWS = 4;
+// Chats section (DENE-1310): a short list, grown on demand.
+const CHATS_INITIAL = 5;
+const CHATS_PAGE = 10;
 
 interface ActivityTabProps {
   agent: Agent;
@@ -54,12 +60,13 @@ interface ActivityTabProps {
 }
 
 /**
- * Right-pane Activity tab on the agent detail page. Three sections framed
- * around the user's three diagnostic questions, in scan order:
+ * Right-pane Activity tab on the agent detail page. Sections framed around
+ * the user's diagnostic questions, in scan order:
  *
- *   Now           — what's it doing right this second?
+ *   Now           — what's it doing right this second? (issue runs and chats)
+ *   Chats         — who is talking to it?
  *   Last 30 days  — how has it been doing in aggregate?
- *   Recent work   — what did it just finish?
+ *   Recent work   — what did it just finish? (issue runs only)
  *
  * "Now" and performance reuse workspace projections. Recent work loads
  * bounded history pages on demand; opening the tab never fetches all runs.
@@ -90,11 +97,11 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
   const activity = activityMap.get(agent.id);
 
   const [recentDisplayLimit, setRecentDisplayLimit] = useState(RECENT_INITIAL);
+  const [chatDisplayLimit, setChatDisplayLimit] = useState(CHATS_INITIAL);
 
-  // Chat tasks are intentionally hidden across every Agent-scoped surface
-  // (list / detail / activity). They have their own UI in the chat
-  // experience; mixing them in here muddies "what is this agent doing
-  // for the team" with "what is this agent doing in private chat".
+  // Chats share the agent's concurrency with issue runs, so Now lists both
+  // and matches the header's working count (DENE-1310). Recent work stays
+  // issue runs only; chats have their own section.
   const isWorkflowTask = (t: AgentTask) => !t.chat_session_id;
 
   const activeTasks = useMemo(() => {
@@ -109,7 +116,6 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
       .filter(
         (t) =>
           t.agent_id === agent.id &&
-          isWorkflowTask(t) &&
           (t.status === "running" ||
             t.status === "queued" ||
             t.status === "dispatched" ||
@@ -142,6 +148,29 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
           new Date(a.completed_at!).getTime(),
       );
   }, [agentTasks]);
+
+  // The server lists busy chats first, so asking for the visible page plus
+  // every chat that is busy now is enough to title each chat row in Now.
+  const activeChatCount = useMemo(
+    () => new Set(activeTasks.map((t) => t.chat_session_id).filter(Boolean)).size,
+    [activeTasks],
+  );
+  const {
+    data: chatPage,
+    isLoading: isLoadingChats,
+    isFetching: isFetchingChats,
+  } = useQuery(agentChatsOptions(wsId, agent.id, chatDisplayLimit + activeChatCount));
+  const chatMap = useMemo(() => {
+    const m = new Map<string, AgentChat>();
+    for (const chat of chatPage?.chats ?? []) m.set(chat.id, chat);
+    return m;
+  }, [chatPage]);
+  const shownChats = useMemo(
+    () => (chatPage?.chats ?? []).slice(0, chatDisplayLimit),
+    [chatPage, chatDisplayLimit],
+  );
+  const hasMoreChats =
+    !!chatPage && (chatPage.has_more || chatPage.chats.length > chatDisplayLimit);
 
   const recentTasks = useMemo(
     () => recentTasksAll.slice(0, recentDisplayLimit),
@@ -179,7 +208,19 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <NowSection tasks={activeTasks} issueMap={issueMap} agent={agent} />
+      <NowSection
+        tasks={activeTasks}
+        issueMap={issueMap}
+        chatMap={chatMap}
+        agent={agent}
+      />
+      <ChatsSection
+        chats={shownChats}
+        loading={isLoadingChats}
+        hasMore={hasMoreChats}
+        fetchingMore={isFetchingChats}
+        onShowMore={() => setChatDisplayLimit((n) => n + CHATS_PAGE)}
+      />
       {showPerformance && (
         <Last30dSection activity={activity} avgDurationMs={avgDurationMs} />
       )}
@@ -321,10 +362,12 @@ function SuccessRate({
 function NowSection({
   tasks,
   issueMap,
+  chatMap,
   agent,
 }: {
   tasks: AgentTask[];
   issueMap: Map<string, Issue>;
+  chatMap: Map<string, AgentChat>;
   agent: Agent;
 }) {
   const { t } = useT("agents");
@@ -343,12 +386,143 @@ function NowSection({
         <TaskList
           tasks={tasks}
           issueMap={issueMap}
+          chatMap={chatMap}
           timeMode="active"
           agent={agent}
         />
       )}
     </Section>
   );
+}
+
+function ChatsSection({
+  chats,
+  loading,
+  hasMore,
+  fetchingMore,
+  onShowMore,
+}: {
+  chats: AgentChat[];
+  loading: boolean;
+  hasMore: boolean;
+  fetchingMore: boolean;
+  onShowMore: () => void;
+}) {
+  const { t } = useT("agents");
+  const subtitle = loading
+    ? ""
+    : chats.length === 0
+      ? t(($) => $.tab_body.activity.subtitle_no_chats)
+      : t(($) => $.tab_body.activity.subtitle_chats_latest, { count: chats.length });
+  return (
+    <Section title={t(($) => $.tab_body.activity.section_chats)} subtitle={subtitle}>
+      {loading ? (
+        <RecentWorkSkeleton />
+      ) : chats.length === 0 ? (
+        <EmptyText>{t(($) => $.tab_body.activity.empty_chats)}</EmptyText>
+      ) : (
+        <div className="overflow-hidden rounded-lg border divide-y">
+          {chats.map((chat) => (
+            <ChatRow key={chat.id} chat={chat} />
+          ))}
+        </div>
+      )}
+      {!loading && hasMore && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onShowMore}
+          disabled={fetchingMore}
+          aria-busy={fetchingMore}
+          className="self-start"
+        >
+          {t(($) => $.tab_body.activity.show_more)}
+        </Button>
+      )}
+    </Section>
+  );
+}
+
+function ChatRow({ chat }: { chat: AgentChat }) {
+  const { t } = useT("agents");
+  const timeAgo = useTimeAgo();
+  const StatusIcon =
+    chat.status === "running"
+      ? taskStatusConfig.running!.icon
+      : chat.status === "queued"
+        ? taskStatusConfig.queued!.icon
+        : Circle;
+  const statusColor =
+    chat.status === "running" ? "text-brand" : "text-muted-foreground";
+  return (
+    <div
+      className="flex items-center gap-3 px-3 py-3 transition-colors hover:bg-muted/30"
+      title={chat.visible ? undefined : t(($) => $.tab_body.activity.chat_hidden_hint)}
+    >
+      <StatusIcon
+        className={`h-4 w-4 shrink-0 ${statusColor} ${
+          chat.status === "running" ? "animate-spin motion-reduce:animate-none" : ""
+        }`}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`truncate text-body ${chat.visible ? "" : "text-muted-foreground"}`}
+          >
+            {chatTitle(chat, t)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-muted-foreground">
+          <span className={statusColor}>{chatStatusLabel(chat.status, t)}</span>
+          <Sep />
+          <span>{timeAgo(chat.last_activity_at)}</span>
+          {chat.creator_id && (
+            <>
+              <Sep />
+              <ActorAvatar actorType="member" actorId={chat.creator_id} size="xs" />
+            </>
+          )}
+        </div>
+      </div>
+      {chat.visible && <OpenChatLink chatId={chat.id} />}
+    </div>
+  );
+}
+
+/** Always visible, unlike the hover actions: on a phone there is no hover,
+ *  and the label shrinks to the arrow there. */
+function OpenChatLink({ chatId }: { chatId: string }) {
+  const { t } = useT("agents");
+  const paths = useWorkspacePaths();
+  return (
+    <AppLink
+      href={paths.chatSession(chatId)}
+      aria-label={t(($) => $.tab_body.activity.open_chat)}
+      className="ml-2 flex shrink-0 items-center gap-1 rounded-xs p-1 text-caption text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+    >
+      <span className="hidden sm:inline">{t(($) => $.tab_body.activity.open_chat)}</span>
+      <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+    </AppLink>
+  );
+}
+
+function chatTitle(chat: AgentChat | undefined, t: AgentsT): string {
+  if (!chat) return t(($) => $.tab_body.activity.source_chat_session);
+  if (!chat.visible) return t(($) => $.tab_body.activity.chat_hidden);
+  return chat.title?.trim() || t(($) => $.tab_body.activity.chat_untitled);
+}
+
+function chatStatusLabel(status: AgentChat["status"], t: AgentsT): string {
+  switch (status) {
+    case "running":
+      return t(($) => $.tab_body.activity.chat_status.running);
+    case "queued":
+      return t(($) => $.tab_body.activity.chat_status.queued);
+    case "idle":
+      return t(($) => $.tab_body.activity.chat_status.idle);
+  }
 }
 
 function Last30dSection({
@@ -522,11 +696,13 @@ function RecentWorkSkeleton() {
 function TaskList({
   tasks,
   issueMap,
+  chatMap,
   timeMode,
   agent,
 }: {
   tasks: AgentTask[];
   issueMap: Map<string, Issue>;
+  chatMap?: Map<string, AgentChat>;
   timeMode: "active" | "completed";
   agent: Agent;
 }) {
@@ -543,6 +719,7 @@ function TaskList({
           key={task.id}
           task={task}
           issueMap={issueMap}
+          chat={task.chat_session_id ? chatMap?.get(task.chat_session_id) : undefined}
           timeMode={timeMode}
           agent={agent}
         />
@@ -554,11 +731,14 @@ function TaskList({
 function TaskRow({
   task,
   issueMap,
+  chat,
   timeMode,
   agent,
 }: {
   task: AgentTask;
   issueMap: Map<string, Issue>;
+  /** Set for a chat run whose chat the server listed (DENE-1310). */
+  chat?: AgentChat;
   timeMode: "active" | "completed";
   agent: Agent;
 }) {
@@ -571,13 +751,19 @@ function TaskRow({
   const hasIssue = task.issue_id !== "";
   const issue = hasIssue ? issueMap.get(task.issue_id) : undefined;
   const isRunning = task.status === "running";
+  // A chat run belongs to someone's conversation: its transcript, trigger
+  // text and cancel stay behind the chat's own visibility.
+  const isChat = !!task.chat_session_id;
+  const chatOpenable = isChat && !!chat?.visible;
+  const chatHidden = isChat && !chatOpenable;
   // Queued tasks have no messages yet — hiding the transcript button avoids
   // a guaranteed "No execution data recorded." dialog open.
-  const showTranscript = task.status !== "queued";
+  const showTranscript = task.status !== "queued" && !chatHidden;
   // Cancel only makes sense for the three active states. Terminal rows
   // (completed / failed / cancelled) hide the button entirely.
   const showCancel =
     timeMode === "active" &&
+    !chatHidden &&
     (task.status === "queued" ||
       task.status === "dispatched" ||
       task.status === "running");
@@ -601,15 +787,15 @@ function TaskRow({
     task.status === "failed" ||
     task.status === "cancelled";
   const sourceFallback = !hasIssue
-    ? task.kind === "quick_create"
+    ? isChat
+      ? chatTitle(chat, t)
+      : task.kind === "quick_create"
       ? isTerminalStatus
         ? t(($) => $.tab_body.activity.source_quick_create)
         : t(($) => $.tab_body.activity.source_creating_issue)
-      : task.chat_session_id
-        ? t(($) => $.tab_body.activity.source_chat_session)
-        : task.autopilot_run_id
-          ? t(($) => $.tab_body.activity.source_autopilot_run)
-          : t(($) => $.tab_body.activity.source_untracked)
+      : task.autopilot_run_id
+        ? t(($) => $.tab_body.activity.source_autopilot_run)
+        : t(($) => $.tab_body.activity.source_untracked)
     : null;
 
   const SourceIcon = hasIssue
@@ -684,7 +870,7 @@ function TaskRow({
               {issue.identifier}
             </span>
           )}
-          {task.trigger_summary ? (
+          {task.trigger_summary && !isChat ? (
             // Hover surfaces "why this task ran" — the snapshot lets the
             // agent-side row stay anchored on issue.title (the
             // identification axis here) while still letting the user
@@ -711,7 +897,10 @@ function TaskRow({
               </TooltipContent>
             </Tooltip>
           ) : (
-            <span className="truncate text-body">
+            <span
+              className={`truncate text-body ${chatHidden ? "text-muted-foreground" : ""}`}
+              title={chatHidden ? t(($) => $.tab_body.activity.chat_hidden_hint) : undefined}
+            >
               {issue?.title ??
                 (hasIssue
                   ? t(($) => $.tab_body.activity.issue_short_fallback, { prefix: task.issue_id.slice(0, 8) })
@@ -760,6 +949,8 @@ function TaskRow({
           )}
         </div>
       </div>
+
+      {chatOpenable && <OpenChatLink chatId={task.chat_session_id!} />}
 
       {/* Hover-only actions. The row is intentionally non-clickable so
           neither destination is privileged — issue detail and transcript

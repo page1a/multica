@@ -1269,7 +1269,7 @@ describe("IssueDetail (shared)", () => {
     renderPeek("nonexistent-id");
     await waitFor(() => {
       expect(
-        screen.getByText("It may have been deleted, or it hasn't been shared with you."),
+        screen.getByText(enLayout.unavailable.description),
       ).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Close preview" })).toBeInTheDocument();
@@ -1858,9 +1858,10 @@ describe("IssueDetail (shared)", () => {
     await waitFor(() => {
       expect(screen.getByTestId("resource-not-found")).toBeInTheDocument();
     });
-    expect(screen.getByText("Page not found")).toBeInTheDocument();
+    expect(screen.getByText(enLayout.unavailable.title.issue)).toBeInTheDocument();
+    expect(screen.getByTestId("resource-not-found-guide")).toHaveTextContent(enLayout.unavailable.guide.issue);
     expect(
-      screen.getByText("It may have been deleted, or it hasn't been shared with you."),
+      screen.getByText(enLayout.unavailable.description),
     ).toBeInTheDocument();
   });
 

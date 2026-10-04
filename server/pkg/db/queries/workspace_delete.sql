@@ -359,6 +359,11 @@ deleted_chat_session_progress AS (
 deleted_chat_naming_events AS (
     DELETE FROM chat_naming_event WHERE workspace_id = $1
 ),
+-- Agent spawn ledger (DENE-1271) only counts per-run budgets; it cascades
+-- with the workspace but is swept explicitly like the other audit rows.
+deleted_agent_spawn_records AS (
+    DELETE FROM agent_spawn_record WHERE workspace_id = $1
+),
 deleted_issue_progress AS (
     DELETE FROM issue_progress WHERE workspace_id = $1
 ),

@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Multica platform actions: asks, goals, inbox, project board, issues, sub-issues, wakeups, comment charts, routing, close protocol, stall actions, mentions, agents, specialisations, squads, autopilots, projects, runtimes, progress, skill import, transfers, GitHub App. Not product code."
+description: "Multica platform actions: asks, open a chat, goals, inbox, project board, issues, sub-issues, wakeups, charts, routing, close protocol, stalls, mentions, agents, specialisation, squads, autopilot, projects, runtimes, progress, skill import, transfer, linked workspace, GitHub App. Not product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -36,6 +36,8 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/inbox.md` | The user asks about their inbox or what is stuck: `multica inbox board` (optionally `--project`) and the fixed five-part answer |
 | `references/project-board.md` | The user asks for the full open-ticket panorama by project: `multica project board` (one or more projects, or the whole workspace) |
+| `references/chat-spawn.md` | Opening a chat with another agent from a chat (`multica chat open`): task-or-chat table, limits, refusal codes |
+| `references/workspace-links.md` | Reading another workspace's shared projects through a link: `multica workspace link list` / `view`, what the view contains, why it says link not found |
 | `references/transfer.md` | `multica transfer export` / `import` / `bind-runtimes`, and the kun `/transfer/*` endpoints |
 | `references/skill-import.md` | Importing a skill into this workspace from a URL or a local archive |
 | `references/github-app.md` | GitHub App identity for this deployment: status, and a setup link a person opens to create the App |
@@ -75,6 +77,18 @@ mentioning, triggering and status changes mutate durable workspace state or
 start agent runs that cost real budget. Never run one to see what happens. When
 the user has not asked for a specific mutation, propose it instead of making it.
 
+**A chat agent dispatches; it does not do the work.** By default it creates the
+ticket and leaves the executor to routing. Only when the person said 「你来做」
+(or named you) does it assign itself with `--per-quote "<原话>"` and start.
+
+**The owner of a ticket owns it to the end.** Once it is yours: post a start
+comment first (how you read the ask, which direction you will take), comment at
+key milestones, and finish only with `multica issue close`. Too hard →
+`multica issue escalate`. Someone else should take it → close `blocked` and let
+routing advise. A person must decide → `multica issue summon`. **Never assign
+the ticket to someone else yourself**; with routing on, the server refuses it
+once the ticket is past `todo` (details in `references/routing.md`).
+
 **Status keys identify workflow states; categories describe lifecycle only.**
 Custom statuses do not inherit built-in automation behavior. For status side
 effects and API field meanings, read `references/issues.md`.
@@ -97,6 +111,11 @@ To promote the current conversation into a goal task, use
 the chat's agent as executor; confirm the completion line through the shared
 `multica goal` commands. Add `--output json` when another tool needs the new
 issue id.
+
+To talk to another agent without creating work, open a chat from your chat:
+`multica chat open --agent <name> --brief-file ./brief.md`. Work with an owner
+and a deliverable is still an issue. Limits and refusal codes:
+`references/chat-spawn.md`.
 
 **Comment reads stay bounded.** Scan the threads cheaply
 (`--roots-only --summary --compact`), then expand only what matters

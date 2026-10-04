@@ -105,13 +105,15 @@ func (r *Router) SweepWorkspace(ctx context.Context, workspaceID string, report 
 	// eligible seat, reviewer declined) stays empty and comes back every pass,
 	// so without a reserved share enough of them would starve the acceptance
 	// row for good. Todo tickets are still routed first — they have never been
-	// given a seat — and take whatever the reviews left. Repeated sweeps are
-	// safe because Route only fills empty slots.
+	// given a seat — and take whatever the reviews left. A blocked ticket with
+	// no executor rides in the same list: Route's blocked row seats it without
+	// starting a run (DENE-1255). Repeated sweeps are safe because Route only
+	// fills empty slots.
 	ids, err := r.Store.StaleReviews(ctx, workspaceID, now.Add(-settings.StaleAfter()), staleSweepLimit/2)
 	if err != nil {
 		return 0, err
 	}
-	todoIDs, err := r.Store.UnassignedTodos(ctx, workspaceID, now.Add(-todoSweepQuietAfter), staleSweepLimit-len(ids))
+	todoIDs, err := r.Store.UnseatedIssues(ctx, workspaceID, now.Add(-todoSweepQuietAfter), staleSweepLimit-len(ids))
 	if err != nil {
 		return 0, err
 	}

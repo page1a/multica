@@ -7,6 +7,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@media (pointer: coarse) and (max-width: 767px) {
+  .toaster {
+    bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+    left: 0.5rem !important;
+    right: 0.5rem !important;
+  }
+
+  .cn-toast {
+    width: min(100%, 28rem);
+    margin-inline: auto;
+  }
+}
+
 @source "../../../packages/ui/**/*.{ts,tsx}";
 @source "../../../packages/core/**/*.{ts,tsx}";
 @source "../../../packages/views/**/*.{ts,tsx}";

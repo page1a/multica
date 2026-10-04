@@ -280,13 +280,13 @@ function InvitationsShell({ children }: { children: ReactNode }) {
       <Button
         variant="ghost"
         size="sm"
-        className="absolute top-16 right-12 text-muted-foreground hover:text-destructive"
+        className="absolute top-[max(1rem,env(safe-area-inset-top))] right-4 text-muted-foreground hover:text-destructive sm:top-16 sm:right-12"
         onClick={logout}
       >
         <LogOut />
         {t(($) => $.batch.log_out)}
       </Button>
-      <div className="flex flex-1 flex-col items-center justify-center px-6 pb-12">
+      <div className="flex flex-1 flex-col items-center justify-center px-4 pb-[max(3rem,env(safe-area-inset-bottom))] pt-24 sm:px-6 sm:pb-12 sm:pt-0">
         {children}
       </div>
     </div>

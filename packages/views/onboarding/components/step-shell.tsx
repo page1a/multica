@@ -17,7 +17,8 @@ import { StepProgressBar, StepSidebar } from "./step-sidebar";
  * to break out of it says so locally rather than picking a different global.
  */
 export const STEP_COLUMN = "mx-auto flex min-h-full w-full max-w-[28rem] flex-col";
-export const STEP_GUTTER = "px-6 py-8 sm:px-10 lg:px-14 lg:py-10";
+export const STEP_GUTTER =
+  "px-4 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))] sm:px-10 sm:py-8 lg:px-14 lg:py-10";
 
 /**
  * Title + supporting line for a step.

@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ROUTING_TIER_KEYS,
   ROUTING_USAGE_KEYS,
   routingTierKeyOf,
   routingUsageKeyOf,
@@ -11,6 +10,8 @@ import {
   type RoutingTierKey,
   type RoutingUsageKey,
 } from "@multica/core/agents";
+import { paths, useCurrentWorkspace } from "@multica/core/paths";
+import { runtimeListOptions } from "@multica/core/runtimes";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { Agent } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -32,6 +33,7 @@ import {
 } from "@multica/ui/components/ui/table";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { AppLink } from "../../navigation";
 import {
   ROUTING_TIER_CHOICES,
   routingTierLabel,
@@ -52,23 +54,27 @@ function tierWire(choice: TierChoice): string {
   return choice === TIER_OFF ? "" : choice;
 }
 
-/** Laddered seats first, strongest to weakest, then off-ladder; by name inside. */
+/**
+ * Fixed position inside a runtime: creation order, never tier, so a row stays
+ * put while its tier is being edited.
+ */
 function seatOrder(a: Agent, b: Agent): number {
-  const rank = (agent: Agent) => {
-    const key = routingTierKeyOf(agent.routing_tier);
-    return key ? ROUTING_TIER_KEYS.indexOf(key) : ROUTING_TIER_KEYS.length;
-  };
-  return rank(a) - rank(b) || a.name.localeCompare(b.name);
+  return a.created_at.localeCompare(b.created_at) || a.name.localeCompare(b.name);
 }
 
 type SeatRow = { agent: Agent; depth: 0 | 1 };
+type SeatGroup = { runtimeId: string; runtimeName: string; rows: SeatRow[] };
 
 /**
- * Base roles in ladder order, each followed by its specialisations. A
- * specialisation whose base role is not in the live list stays a root, so
- * archiving the parent does not hide it.
+ * One group per runtime, groups by runtime name. Inside a group, base roles in
+ * creation order, each followed by its specialisations. A specialisation whose
+ * base role is not in the live list stays a root, so archiving the parent does
+ * not hide it.
  */
-function nestSeats(agents: Agent[]): SeatRow[] {
+function groupSeats(
+  agents: Agent[],
+  runtimeName: (runtimeId: string) => string,
+): SeatGroup[] {
   const live = agents.filter((agent) => !agent.archived_at);
   const liveIds = new Set(live.map((agent) => agent.id));
   const children = new Map<string, Agent[]>();
@@ -87,14 +93,23 @@ function nestSeats(agents: Agent[]): SeatRow[] {
   for (const list of children.values()) {
     list.sort((a, b) => a.name.localeCompare(b.name));
   }
-  const rows: SeatRow[] = [];
+  const groups = new Map<string, SeatRow[]>();
   for (const root of roots) {
+    const rows = groups.get(root.runtime_id) ?? [];
     rows.push({ agent: root, depth: 0 });
     for (const child of children.get(root.id) ?? []) {
       rows.push({ agent: child, depth: 1 });
     }
+    groups.set(root.runtime_id, rows);
   }
-  return rows;
+  return [...groups.entries()]
+    .map(([runtimeId, rows]) => ({ runtimeId, runtimeName: runtimeName(runtimeId), rows }))
+    .sort((a, b) => a.runtimeName.localeCompare(b.runtimeName));
+}
+
+/** Work switched off on the agent page: routing skips it, so its tier is moot here. */
+function workOff(agent: Agent): boolean {
+  return agent.work_enabled === false;
 }
 
 /** Open follow: tier and usage are the base role's, and this row cannot edit them. */
@@ -117,16 +132,27 @@ export function RoutingSeatsTable({
   const { t } = useT("settings");
   const { t: ta } = useT("agents");
   const agentsQuery = useQuery({ ...agentListOptions(wsId), enabled: !!wsId });
+  const runtimesQuery = useQuery({ ...runtimeListOptions(wsId), enabled: !!wsId });
   const write = useBulkUpdateAgentRouting(wsId);
+  const slug = useCurrentWorkspace()?.slug ?? "";
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
-  const seats = useMemo(
-    () => nestSeats(agentsQuery.data ?? []),
-    [agentsQuery.data],
+  const unknownRuntime = t(($) => $.routing.seats_runtime_unknown);
+  const groups = useMemo(() => {
+    const names = new Map(
+      (runtimesQuery.data ?? []).map((runtime) => [runtime.id, runtime.name]),
+    );
+    return groupSeats(
+      agentsQuery.data ?? [],
+      (runtimeId) => names.get(runtimeId) ?? unknownRuntime,
+    );
+  }, [agentsQuery.data, runtimesQuery.data, unknownRuntime]);
+  const seats = groups.flatMap((group) => group.rows);
+  // Followers and work-off seats are read-only, so they never join a bulk
+  // write: the server would refuse a follower, and a work-off tier is moot.
+  const editable = seats.filter(
+    (row) => !followsParent(row.agent) && !workOff(row.agent),
   );
-  // Followers are read-only, so they never join a bulk write: the server
-  // would refuse the whole batch.
-  const editable = seats.filter((row) => !followsParent(row.agent));
   // Drop ids that left the list (archived elsewhere) so the count stays true.
   const selectedIds = editable
     .filter((row) => selected.has(row.agent.id))
@@ -264,16 +290,34 @@ export function RoutingSeatsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {seats.map(({ agent: seat, depth }) => {
+          {groups.map((group) => [
+            <TableRow key={`runtime-${group.runtimeId}`} className="hover:bg-transparent">
+              <TableCell
+                colSpan={canManage ? 5 : 4}
+                className="bg-muted/40 px-4 py-1.5 text-caption font-medium text-muted-foreground"
+              >
+                {group.runtimeName}
+              </TableCell>
+            </TableRow>,
+            ...group.rows.map(({ agent: seat, depth }) => {
             const tier = tierChoiceOf(seat);
             const usage = routingUsageKeyOf(seat.routing_usage);
             const follows = followsParent(seat);
-            const followLabel = follows
+            const off = workOff(seat);
+            // Work-off wins over follow: it is the reason routing skips the row.
+            const note = off
+              ? t(($) => $.routing.seats_work_off)
+              : follows
+                ? seat.parent_agent_name
+                  ? t(($) => $.routing.seats_follows, { name: seat.parent_agent_name })
+                  : t(($) => $.routing.seats_follows_base)
+                : "";
+            const followLabel = follows && !off
               ? seat.parent_agent_name
                 ? t(($) => $.routing.seats_follows, { name: seat.parent_agent_name })
                 : t(($) => $.routing.seats_follows_base)
               : "";
-            const locked = !canManage || follows || write.isPending;
+            const locked = !canManage || follows || off || write.isPending;
             return (
               <TableRow
                 key={seat.id}
@@ -284,7 +328,7 @@ export function RoutingSeatsTable({
                   <TableCell className="pl-4">
                     <Checkbox
                       checked={selected.has(seat.id)}
-                      disabled={follows}
+                      disabled={follows || off}
                       onCheckedChange={(on) => toggle(seat.id, on)}
                       aria-label={t(($) => $.routing.seats_select_row, {
                         name: seat.name,
@@ -297,10 +341,30 @@ export function RoutingSeatsTable({
                     "max-w-56 truncate font-medium",
                     !canManage && depth === 0 && "pl-4",
                     depth === 1 && "pl-10",
-                    tier === TIER_OFF && "text-muted-foreground",
+                    (tier === TIER_OFF || off) && "text-muted-foreground",
                   )}
                 >
-                  {seat.name}
+                  {follows ? (
+                    <span className="block truncate">{seat.name}</span>
+                  ) : (
+                    seat.name
+                  )}
+                  {follows ? (
+                    <span className="block truncate text-caption font-normal text-muted-foreground">
+                      <span>{followLabel}</span>
+                      {slug ? (
+                        <>
+                          {" · "}
+                          <AppLink
+                            href={paths.workspace(slug).agentDetail(seat.id)}
+                            className="underline underline-offset-2 hover:text-foreground"
+                          >
+                            {t(($) => $.routing.seats_follows_unlock)}
+                          </AppLink>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </TableCell>
                 <TableCell className="max-w-48 truncate font-mono text-caption text-muted-foreground">
                   {seat.model || "—"}
@@ -363,16 +427,17 @@ export function RoutingSeatsTable({
                         ))}
                       </SelectContent>
                     </Select>
-                    {follows ? (
+                    {off ? (
                       <span className="whitespace-nowrap text-caption text-muted-foreground">
-                        {followLabel}
+                        {note}
                       </span>
                     ) : null}
                   </div>
                 </TableCell>
               </TableRow>
             );
-          })}
+            }),
+          ])}
         </TableBody>
       </Table>
     </div>

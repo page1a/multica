@@ -34,6 +34,7 @@ func (s routingStore) RoutingFacts(ctx context.Context, workspaceID string, agen
 	}
 
 	seats := map[string]routing.SeatSnapshot{}
+	running := map[string]int{}
 	if len(agentIDs) > 0 {
 		ids := make([]pgtype.UUID, 0, len(agentIDs))
 		for _, raw := range agentIDs {
@@ -50,6 +51,13 @@ func (s routingStore) RoutingFacts(ctx context.Context, workspaceID string, agen
 		spans, err := s.h.Queries.ListRecentTaskSpansByAgents(ctx, ids)
 		if err != nil {
 			return routing.RoutingFacts{}, err
+		}
+		counts, err := s.h.Queries.CountUnfinishedTasksByAgents(ctx, ids)
+		if err != nil {
+			return routing.RoutingFacts{}, err
+		}
+		for _, c := range counts {
+			running[util.UUIDToString(c.AgentID)] = int(c.Running)
 		}
 		latencies := map[string][]int64{}
 		for _, span := range spans {
@@ -99,6 +107,7 @@ func (s routingStore) RoutingFacts(ctx context.Context, workspaceID string, agen
 	return routing.RoutingFacts{
 		Seats:     seats,
 		Providers: providerQuotas(runtimes, providers, now),
+		Running:   running,
 	}, nil
 }
 

@@ -469,6 +469,21 @@ func TestMemoryRoundCrossProjectAndConcurrency(t *testing.T) {
 	if n := dbfx.Count(t, `SELECT count(*) FROM comment WHERE issue_id = $1 AND content = '项目 B 的重复回调'`, bID); n != 1 {
 		t.Fatalf("repeat reason comments = %d", n)
 	}
+
+	// DENE-1154: the daemon re-reports an unchanged gap on every run. The
+	// same reason right after itself is not appended again; a different
+	// reason is, and the old reason returning after it is news again.
+	for _, reason := range []string{"项目 B 的重复回调", "项目 B 的重复回调", "项目 B 的新缺口", "项目 B 的重复回调"} {
+		if _, err := testHandler.EnsureMemoryRound(context.Background(), b, reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM comment WHERE issue_id = $1 AND content = '项目 B 的重复回调'`, bID); n != 2 {
+		t.Fatalf("unchanged reason stacked: %d copies, want 2", n)
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM comment WHERE issue_id = $1 AND content = '项目 B 的新缺口'`, bID); n != 1 {
+		t.Fatalf("changed reason comments = %d, want 1", n)
+	}
 }
 
 func TestMemoryRoundSkipsParkedParentAndOpenPull(t *testing.T) {

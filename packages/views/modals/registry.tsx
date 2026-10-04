@@ -15,6 +15,7 @@ import { CloseIssueDialog } from "./close-issue";
 import { RunConfirmModal } from "./run-confirm";
 import { IssueLimitUpgradeDialog } from "./issue-limit-upgrade-dialog";
 import { GoalCompletionModal } from "./goal-completion";
+import { PrivateLinkModal } from "./private-link";
 
 /**
  * Which face the create-issue dialog opens on.
@@ -87,6 +88,9 @@ export function ModalRegistry() {
       break;
     case "goal-completion":
       activeModal = <GoalCompletionModal onClose={close} data={data} />;
+      break;
+    case "private-link":
+      activeModal = <PrivateLinkModal onClose={close} data={data} />;
       break;
   }
 

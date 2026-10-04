@@ -142,6 +142,7 @@ vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
 vi.mock("../../navigation", () => ({
   AppLink: ({ children }: { children: ReactNode }) => <>{children}</>,
   useNavigation: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useBackOrReplace: () => vi.fn(),
 }));
 
 import { RuntimeDetail } from "./runtime-detail";

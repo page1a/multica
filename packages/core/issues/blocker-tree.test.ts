@@ -167,3 +167,72 @@ describe("orderBlockerRootCauses", () => {
     expect(orderBlockerRootCauses(tree).map((x) => x.identifier)).toEqual(["DENE-5", "DENE-4"]);
   });
 });
+
+describe("deriveBlockerTree — DENE-1301 false alarms", () => {
+  const answered = {
+    "close.conclusion": "blocked", "close.status": "blocked", "close.at": "2026-10-03T16:35:25Z",
+    "close.block_kind": "decision", "close.block_action": "等 Kun 拍板", "close.next_owner_type": "member",
+    "close.next_owner_id": "kun",
+  };
+
+  it("drops a blocked close once a reply superseded it", () => {
+    const child = issue("DENE-2", { status: "in_progress", metadata: { ...answered, "close.superseded": answered["close.at"] } });
+    const root = issue("DENE-1");
+    const result = deriveBlockerTree(root, { childrenByParent: new Map([[root.id, [child]]]) });
+    expect(result.state).toBe("CLEAR");
+    expect(result.userActionCount).toBe(0);
+  });
+
+  it("drops a blocked close whose status already moved on", () => {
+    const child = issue("DENE-2", { status: "in_progress", metadata: answered });
+    expect(deriveBlockerTree(child).state).toBe("CLEAR");
+  });
+
+  it("counts a ticket blocked again even with an older superseded mark", () => {
+    const child = issue("DENE-2", { status: "blocked", metadata: {
+      ...answered, "close.superseded": "2026-10-03T10:00:00Z",
+    }});
+    const result = deriveBlockerTree(child);
+    expect(result.state).toBe("ROOT");
+    expect(result.userActionCount).toBe(1);
+  });
+
+  it("does not report wake_missed when the waiter was woken for the target", () => {
+    const target = issue("DENE-9", { status: "done", updated_at: "2026-10-03T15:44:00Z" });
+    const waiting = issue("DENE-2", { status: "in_progress", last_activity_at: "2026-10-03T15:00:00Z", metadata: {
+      "close.waiting_on": target.identifier, "block.woken_by": target.identifier,
+    }});
+    expect(deriveBlockerTree(waiting, { issueByIdentifier: { [target.identifier]: target } }).state).toBe("CLEAR");
+  });
+
+  it("does not report wake_missed when the waiter was active after the target finished", () => {
+    const target = issue("DENE-9", { status: "done", updated_at: "2026-10-03T15:44:00Z" });
+    const waiting = issue("DENE-2", { status: "in_progress", last_activity_at: "2026-10-03T16:10:00Z", metadata: {
+      "close.waiting_on": target.identifier,
+    }});
+    expect(deriveBlockerTree(waiting, { issueByIdentifier: { [target.identifier]: target } }).state).toBe("CLEAR");
+  });
+
+  it("still reports wake_missed when nothing happened after the target finished", () => {
+    const target = issue("DENE-9", { status: "done", updated_at: "2026-10-03T15:44:00Z" });
+    const waiting = issue("DENE-2", { status: "in_progress", last_activity_at: "2026-10-03T15:00:00Z", metadata: {
+      "close.waiting_on": target.identifier,
+    }});
+    const result = deriveBlockerTree(waiting, { issueByIdentifier: { [target.identifier]: target } });
+    expect(result.attribution?.kind).toBe("wake_missed");
+  });
+
+  it("roots a status-blocked ticket and counts a waiting person as needing you", () => {
+    const child = issue("DENE-2", { status: "blocked", metadata: {
+      "close.conclusion": "continuing", "close.status": "in_progress",
+      "block.needs_human": "kun", "close.block_kind": "external", "close.block_action": "等 Kun 手动退款",
+    }});
+    const root = issue("DENE-1");
+    const result = deriveBlockerTree(root, { childrenByParent: new Map([[root.id, [child]]]) });
+    expect(result.rootCauses.map((x) => x.id)).toEqual([child.id]);
+    expect(result.userActionCount).toBe(1);
+    const node = result.nodes.get(child.id);
+    expect(node?.attribution).toMatchObject({ kind: "external", action: "等 Kun 手动退款", needsUserAction: true });
+    expect(node?.derived).toBe(false);
+  });
+});

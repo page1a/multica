@@ -8,7 +8,8 @@
     "search_empty": "Aucune discussion ne correspond",
     "back": "Retour",
     "new_chat_in_project": "Les nouvelles discussions restent dans « {{title}} »",
-    "new_chat_unbound": "Les nouvelles discussions ne sont liées à aucun projet"
+    "new_chat_unbound": "Les nouvelles discussions ne sont liées à aucun projet",
+    "back_to_list": "Retour aux discussions"
   },
   "goal_flow": {
     "hint": "Clarifiez-la avant de créer la tâche.",
@@ -150,7 +151,9 @@
     "quick_actions_heading": "Questions de suivi",
     "quick_actions_aria": "Suggestions pour continuer",
     "quick_actions_regenerate": "Régénérer les suggestions",
-    "quick_actions_regenerate_failed": "Impossible d'actualiser les suggestions. Veuillez réessayer."
+    "quick_actions_regenerate_failed": "Impossible d'actualiser les suggestions. Veuillez réessayer.",
+    "spawned": "Discussion ouverte",
+    "spawn_untitled": "Nouvelle discussion"
   },
   "session_history": {
     "untitled": "Sans titre",
@@ -319,7 +322,8 @@
     "private_tag": "Privé",
     "extra_tag": "Personnes en plus",
     "show_more": "Afficher plus ({{count}})",
-    "show_fewer": "Afficher moins"
+    "show_fewer": "Afficher moins",
+    "spawned": "Ouvert depuis une autre discussion"
   },
   "header": {
     "view_profile": "Voir le profil de l'agent",
@@ -357,7 +361,14 @@
     "header_private": "Vous seul",
     "header_project": "Les membres du projet peuvent voir et écrire",
     "header_extra": "Membres du projet, plus des personnes en plus",
-    "search": "Chercher une personne…"
+    "search": "Chercher une personne…",
+    "trigger": {
+      "private": "Moi seul",
+      "project": "Membres du projet",
+      "extra": "Projet + autres",
+      "workspace": "Tout l’espace de travail"
+    },
+    "header_workspace": "Tous les membres de l’espace de travail peuvent voir et écrire"
   },
   "notice": {
     "title": "Certaines discussions sont visibles par les membres du projet",
@@ -365,5 +376,10 @@
     "make_private": "Rendre la sélection privée",
     "dismiss": "Compris"
   },
-  "title_locked": "Titre verrouillé — l’agent ne le renommera pas"
+  "title_locked": "Titre verrouillé — l’agent ne le renommera pas",
+  "origin": {
+    "from_prefix": "Ouvert depuis",
+    "from_suffix": "",
+    "from_hidden": "Ouvert depuis une autre discussion"
+  }
 }

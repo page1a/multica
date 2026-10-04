@@ -245,6 +245,17 @@ func (v visibilityViewer) canSeeProject(p db.Project) bool {
 // write side: a viewer let in by them must also be able to reshare. Without
 // this the owner could see a private project nobody created (or one an owned
 // agent leads) yet every PUT /visibility answered 403.
+// canChangeIssueVisibility is the tier rule SetIssueVisibility enforces; the
+// access read (GET /api/issues/{id}/access) answers with the same call so
+// the share button never promises a save the server would refuse.
+func (v visibilityViewer) canChangeIssueVisibility(issue db.Issue) bool {
+	if v.bypasses() {
+		return true
+	}
+	rel := v.relation(issue.CreatorType, issue.CreatorID, issue.ProjectID)
+	return permission.Allowed(v.role, permission.ActionChangeVisibility, permission.Visibility(issue.Visibility), rel)
+}
+
 func (v visibilityViewer) canChangeProjectVisibility(p db.Project) bool {
 	if v.bypasses() || v.role == permission.RoleOwner {
 		return true

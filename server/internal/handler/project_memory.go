@@ -185,11 +185,35 @@ func (h *Handler) projectMemoryIssue(ctx context.Context, issue db.Issue) *Proje
 
 func stringPtr(value string) *string { return &value }
 
+// SedimentBuiltinInstruction opens a sediment ticket's description unless the
+// workspace sets settings.memory.sediment_instruction. The round's reason
+// follows it either way, so a custom instruction never hides why it opened.
+const SedimentBuiltinInstruction = "补齐项目的五个记忆位置。"
+
+const maxSedimentInstructionBytes = 4000
+
+func sedimentInstruction(settings []byte) string {
+	var parsed struct {
+		Memory struct {
+			SedimentInstruction string `json:"sediment_instruction"`
+		} `json:"memory"`
+	}
+	if json.Unmarshal(settings, &parsed) == nil {
+		if s := strings.TrimSpace(parsed.Memory.SedimentInstruction); s != "" {
+			return s
+		}
+	}
+	return SedimentBuiltinInstruction
+}
+
 // ListProjectMemoryLocations is the checklist the close dialog and any other
 // client submit against. It is the same list projectmemory.Locations owns;
 // callers must not keep a second copy of the keys.
 func (h *Handler) ListProjectMemoryLocations(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"locations": projectmemory.Locations()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"locations":                    projectmemory.Locations(),
+		"builtin_sediment_instruction": SedimentBuiltinInstruction,
+	})
 }
 
 // GetProjectMemory is the read-only status endpoint used by `project memory
@@ -317,10 +341,7 @@ func (h *Handler) EnsureMemoryRound(ctx context.Context, project db.Project, rea
 		WorkspaceID: project.WorkspaceID, Column2: uuidToString(project.ID),
 	})
 	if findErr == nil {
-		if _, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
-			IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AuthorType: "agent", AuthorID: agentID,
-			Content: reason, Type: "progress_update", ID: dbid.NewV7(),
-		}); err != nil {
+		if err := h.appendMemoryReason(ctx, issue, agentID, reason); err != nil {
 			return MemoryRoundResult{}, err
 		}
 		return MemoryRoundResult{Issue: &issue}, nil
@@ -333,7 +354,7 @@ func (h *Handler) EnsureMemoryRound(ctx context.Context, project db.Project, rea
 	created, createErr := h.IssueService.Create(ctx, service.IssueCreateParams{
 		WorkspaceID:    project.WorkspaceID,
 		Title:          title,
-		Description:    pgtype.Text{String: "补齐项目的五个记忆位置。\n\n" + reason, Valid: true},
+		Description:    pgtype.Text{String: sedimentInstruction(workspace.Settings) + "\n\n" + reason, Valid: true},
 		Status:         "todo",
 		Priority:       "medium",
 		AssigneeType:   pgtype.Text{String: "agent", Valid: true},
@@ -367,14 +388,32 @@ func (h *Handler) EnsureMemoryRound(ctx context.Context, project db.Project, rea
 		return MemoryRoundResult{}, err
 	}
 	if created.DuplicateIssue != nil {
-		if _, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
-			IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AuthorType: "agent", AuthorID: agentID,
-			Content: reason, Type: "progress_update", ID: dbid.NewV7(),
-		}); err != nil {
+		if err := h.appendMemoryReason(ctx, issue, agentID, reason); err != nil {
 			return MemoryRoundResult{}, err
 		}
 	}
 	return MemoryRoundResult{Issue: &issue, Created: created.DuplicateIssue == nil}, nil
+}
+
+// appendMemoryReason adds the reason to an open round unless the round's
+// newest progress note already says the same thing. The daemon re-reports the
+// checklist on every run in the project, so an unchanged gap would otherwise
+// stack one identical note per run while the ticket waits (DENE-1154).
+func (h *Handler) appendMemoryReason(ctx context.Context, issue db.Issue, agentID pgtype.UUID, reason string) error {
+	same, err := h.Queries.LatestProgressUpdateMatches(ctx, db.LatestProgressUpdateMatchesParams{
+		Content: reason, IssueID: issue.ID, AuthorType: "agent", AuthorID: agentID,
+	})
+	if err != nil {
+		return err
+	}
+	if same {
+		return nil
+	}
+	_, err = h.Queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AuthorType: "agent", AuthorID: agentID,
+		Content: reason, Type: "progress_update", ID: dbid.NewV7(),
+	})
+	return err
 }
 
 // noteMemoryProgress opens or extends the project's sediment round. A missing

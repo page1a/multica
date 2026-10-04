@@ -72,6 +72,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const issueId = issue?.id ?? null;
   const issueIdentifier = issue?.identifier ?? null;
+  const issueVisibility = issue?.visibility;
   const issueProjectId = issue?.project_id ?? null;
   const issueAssigneeType = issue?.assignee_type ?? null;
   const issueAssigneeId = issue?.assignee_id ?? null;
@@ -174,12 +175,24 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     // say which issue it points at. The UUID form stays valid, so links copied
     // before this still resolve.
     const url = navigation.getShareableUrl(paths.issueDetail(issueIdentifier || issueId));
+    // A private issue's link opens as "not found" for whoever receives it, so
+    // ask first (DENE-1214).
+    if (issueVisibility === "private") {
+      openModal("private-link", {
+        kind: "issue",
+        id: issueId,
+        url,
+        label: issueIdentifier ?? undefined,
+        projectId: issueProjectId,
+      });
+      return;
+    }
     if (await copyText(url)) {
       toast.success(t(($) => $.detail.link_copied));
     } else {
       toast.error(t(($) => $.detail.link_copy_failed));
     }
-  }, [paths, issueId, issueIdentifier, navigation, t]);
+  }, [paths, issueId, issueIdentifier, issueVisibility, issueProjectId, navigation, openModal, t]);
 
   // Built during render so `copyCommentLink` depends on this string alone:
   // `paths` is rebuilt on every render, and the handler is passed to every

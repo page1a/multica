@@ -193,6 +193,12 @@ type Seat struct {
 	// served by an ample seat from the rung above (「允许上调一档」). TierKey
 	// still names the rung that was asked for.
 	Upshifted bool
+	// Continues is set when the 接着做 rule placed this seat, and names the
+	// earlier work, e.g. "DENE-12（上一阶段）的执行人".
+	Continues string
+	// Balanced is set when the 负载 rule placed this seat, and says why the
+	// ladder's own pick was passed over, e.g. "孙悟空 正在跑 2 个活，克林 空着".
+	Balanced string
 }
 
 // SeatName is the naming convention that links a tier to its
@@ -376,6 +382,9 @@ type Agent struct {
 	// Usage is the headroom a person tagged this seat with: tight, normal or
 	// ample. Empty reads as normal.
 	Usage string
+	// Model is the model id configured on the seat. It decides the seat's
+	// model family; ladder.json's per-seat copy is only a fallback.
+	Model string
 }
 
 // SeatByTier finds the candidate on a named rung.
@@ -462,9 +471,45 @@ func (l Ladder) SeatByName(name string) (TierSeat, string, bool) {
 	return TierSeat{}, "", false
 }
 
+// ProviderFor reports the model family of a seat. The model the person
+// configured on the seat — the one the agent page shows — decides; the name
+// lookup in ladder.json is only the fallback for a seat whose model string
+// names no known family. The ladder's copy of each seat's model goes stale
+// the moment someone switches a seat's model, and a stale copy would make a
+// same-tier handoff pick the very house it meant to leave.
+func (l Ladder) ProviderFor(name, model string) (string, bool) {
+	if provider := ModelProvider(model); provider != "" {
+		return provider, true
+	}
+	return l.ProviderOf(name)
+}
+
+// ModelProvider reads the model family off a model id: claude-* is
+// anthropic, gpt-* openai, and so on. A gateway prefix such as
+// command-code/deepseek%2F... is looked through. Empty when nothing matches.
+func ModelProvider(model string) string {
+	m := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(model), "%2F", "/"))
+	m = strings.ReplaceAll(m, "%2f", "/")
+	switch {
+	case m == "":
+		return ""
+	case strings.Contains(m, "deepseek"):
+		return "deepseek"
+	case strings.Contains(m, "claude"):
+		return "anthropic"
+	case strings.Contains(m, "gpt"), strings.Contains(m, "codex"):
+		return "openai"
+	case strings.Contains(m, "grok"):
+		return "xai"
+	case strings.Contains(m, "gemini"):
+		return "google"
+	}
+	return ""
+}
+
 // ProviderOf reports the provider family of a routable seat, including a
 // direction specialisation of a listed base. Empty means the name is not on
-// this ladder.
+// this ladder. Prefer ProviderFor when the seat's model is at hand.
 func (l Ladder) ProviderOf(name string) (string, bool) {
 	seat, _, ok := l.SeatByName(name)
 	if !ok || seat.Provider == "" {
@@ -556,7 +601,9 @@ func (l Ladder) RequestedTier(labels []string) (string, bool) {
 func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[string]Agent) (Seat, bool) {
 	tierKey := holder.TierKey
 	if tierKey == "" {
-		if key, ok := l.TierOf(holder.Name); ok {
+		if a, ok := agentByID(roster, holder.ID); ok {
+			tierKey = agentTierKey(l, a)
+		} else if key, ok := l.TierOf(holder.Name); ok {
 			tierKey = key
 		}
 	}
@@ -564,7 +611,11 @@ func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[stri
 	if !ok {
 		return Seat{}, false
 	}
-	holderProvider, _ := l.ProviderOf(holder.Name)
+	holderModel := ""
+	if a, ok := agentByID(roster, holder.ID); ok {
+		holderModel = a.Model
+	}
+	holderProvider, _ := l.ProviderFor(holder.Name, holderModel)
 	pool := make([]Seat, 0, len(roster))
 	agents := make(map[string]Agent, len(roster))
 	seen := map[string]bool{}
@@ -584,7 +635,7 @@ func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[stri
 		if seatTier != tier.Key {
 			continue
 		}
-		provider, known := l.ProviderOf(agent.Name)
+		provider, known := l.ProviderFor(agent.Name, agent.Model)
 		if !known || provider == "" || provider == holderProvider {
 			continue
 		}

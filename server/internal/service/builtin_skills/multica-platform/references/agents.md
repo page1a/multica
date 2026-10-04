@@ -23,7 +23,14 @@ These commands read state and have no side effects:
 multica agent get <agent-id> --output json      # full persisted agent record
 multica agent skills list <agent-id> --output json   # current skill bindings
 multica agent env get <agent-id> --output json  # plaintext env (agent owner or ws owner/admin; agents denied)
+multica agent chats <agent> --output json       # open chats, running → queued → idle
 ```
+
+`agent chats` is what the agent overview's Chats section shows (DENE-1310):
+chats share the agent's concurrency with issue runs, so this answers who holds
+a busy seat. A chat you may not open still appears with `visible: false` and
+`title` / `creator_id` null — the server redacts it, there is no flag to undo
+that. `--limit` defaults to 20 (max 100).
 
 An agent can also be **unbound**: `runtime_id` is `NULL` (served as `""` with
 `runtime_bound: false`) after its runtime was deleted, which unbinds instead of

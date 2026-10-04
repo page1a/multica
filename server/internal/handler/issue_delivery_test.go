@@ -13,7 +13,7 @@ import (
 )
 
 // A pass verdict on an issue with an unresolved rescue line does not merge:
-// the issue goes to blocked with the delivery blocker as its wait condition,
+// the issue stays in review and the executor is told the delivery blocker,
 // so the pass cannot silently pick one of two branches (DENE-820).
 func TestAcceptancePassBlocksOnUnresolvedRescueLine(t *testing.T) {
 	if testHandler == nil {
@@ -51,8 +51,8 @@ func TestAcceptancePassBlocksOnUnresolvedRescueLine(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issue.ID).Scan(&status); err != nil {
 		t.Fatalf("read status: %v", err)
 	}
-	if status != "blocked" {
-		t.Fatalf("status = %q, want blocked", status)
+	if status != "in_review" {
+		t.Fatalf("status = %q, want in_review", status)
 	}
 	body, _, _, _ := systemCommentOn(t, issue.ID)
 	if !strings.Contains(body, "agent/b/x") || !strings.Contains(body, "multica issue delivery") {

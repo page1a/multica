@@ -48,6 +48,8 @@ Run these from the repository root:
 
 Root frontend commands and `make check` do not verify mobile. Docs-only changes can use link/reference checks and `git diff --check`; state that code tests were not run.
 
+响应式 Web/Desktop 页面按 375 / 768 / 1280 三档做真实浏览器核验；先复用共享移动外壳的返回栈、安全区、44px 触控区和窄屏承载，再处理页面族自己的问题。静态 CSS 推断不能替代截图证据，当前盘点入口见 [DENE-1277 报告](docs/evidence/DENE-1277/report.html)。
+
 ## State Rules
 
 - TanStack Query owns API/server data. Zustand owns client state such as filters, drafts, modals, and tab layout; persist only durable preferences/drafts/layout, not server data or ephemeral UI state.
@@ -71,6 +73,8 @@ Root frontend commands and `make check` do not verify mobile. Docs-only changes 
 
 魔改功能按「三面齐」交付：服务端能力、Web/Desktop 界面、`multica` CLI 三处都能用，且都走同一个服务端接口和校验，不在某一面另写一份规则。界面要让人看得到、改得了，权限不足或被禁用时要说明原因；CLI 要让 Agent 不开浏览器就能查和改，`--help` 能查到用法，`--output json` 能拿到结果。Agent 需要主动调用的命令，要同步写进 `multica-platform` skill，改法见 `/multica`。某一面确实不该有（例如纯内部调度），在 PR 描述里写明缺哪一面、为什么缺；以后要补的，开票跟进，不默默省略。
 
+前端改动必须同时交代手机端：Web/Desktop 的改动要在手机网页（390px 宽）下能用、能关、内容不被截断，HTML 预览稿和自测截图都附手机版；`apps/mobile` 原生 App 有同一屏或同一入口时一起改，不改就在 PR 描述里写明缺哪一面、为什么缺。
+
 通用带选项提问是跨三面的共享契约：服务端 `/api/asks` 负责校验和回答状态，Web/Desktop 的任务动态、聊天、收件箱与 CLI `multica ask` 复用同一对象和接口；新增提问入口要同步更新 `server/internal/service/builtin_skills/multica-platform/references/asks.md`。
 
 ## 项目记忆入口
@@ -79,6 +83,12 @@ Root frontend commands and `make check` do not verify mobile. Docs-only changes 
 - 文档索引：[docs/README.md](docs/README.md)
 - 架构决定：[docs/adr/](docs/adr/)
 - 证据索引：[docs/evidence/INDEX.md](docs/evidence/INDEX.md)
+- 当前移动端适配盘点：[docs/evidence/DENE-1277/report.html](docs/evidence/DENE-1277/report.html)
+
+自动派票的执行席边界：
+- 路由开启时，服务端负责决定智能体或小队的执行席；`todo` / `backlog` 上智能体写入的执行人会被路由从零判断，不能把猜测当成人的指派。
+- 票过了 `todo` 后，智能体不能把执行席换成另一个智能体或小队；需要换人就关成 `blocked` 让路由给建议，工作太难用 `issue escalate`，有人的原话才用 `--per-quote`。验收交棒、额度接力等服务端内部动作不受这条限制。
+- 每条自动选派评论都要用统一的「为什么是他」来源标签（当前为 `原话`、`人工`、`档位`、`兜底`）。聊天智能体默认只派票；负责人接票后按开工评论、关键进展、`issue close` 收尾的路径推进，不能自行把票改给别人。
 
 ## Goal 模式边界
 

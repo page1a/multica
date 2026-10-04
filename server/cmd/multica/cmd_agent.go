@@ -82,6 +82,17 @@ var agentTasksCmd = &cobra.Command{
 	RunE:  runAgentTasks,
 }
 
+var agentChatsCmd = &cobra.Command{
+	Use:   "chats <agent>",
+	Short: "List an agent's open chats, busy first",
+	Long: `List an agent's open chats, running first, then queued, then idle.
+
+A chat you are not allowed to open is still listed, because it holds the
+agent's concurrency like any other, but without its title or creator.`,
+	Args: exactArgs(1),
+	RunE: runAgentChats,
+}
+
 var agentAvatarCmd = &cobra.Command{
 	Use:   "avatar <id>",
 	Short: "Upload an avatar image for an agent",
@@ -151,6 +162,7 @@ func init() {
 	agentCmd.AddCommand(agentRestoreCmd)
 	agentCmd.AddCommand(agentSolidifyCmd)
 	agentCmd.AddCommand(agentTasksCmd)
+	agentCmd.AddCommand(agentChatsCmd)
 	agentCmd.AddCommand(agentAvatarCmd)
 	agentCmd.AddCommand(agentSkillsCmd)
 	agentCmd.AddCommand(agentEnvCmd)
@@ -245,6 +257,10 @@ func init() {
 	agentTasksCmd.Flags().String("output", "table", "Output format: table or json")
 	agentTasksCmd.Flags().Int("limit", 200, "Maximum runs per page (1-200)")
 	agentTasksCmd.Flags().String("before", "", "Cursor from the previous page")
+
+	// agent chats
+	agentChatsCmd.Flags().String("output", "table", "Output format: table or json")
+	agentChatsCmd.Flags().Int("limit", 20, "Maximum chats to list (1-100)")
 
 	// agent avatar
 	agentAvatarCmd.Flags().String("file", "", "Path to the avatar image file (required)")
@@ -1032,6 +1048,59 @@ func runAgentTasks(cmd *cobra.Command, args []string) error {
 			strVal(t, "issue_id"),
 			strVal(t, "status"),
 			strVal(t, "created_at"),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+func runAgentChats(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 1 {
+		return fmt.Errorf("limit must be a positive integer")
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	agentID, err := resolveAgent(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Chats   []map[string]any `json:"chats"`
+		HasMore bool             `json:"has_more"`
+	}
+	path := "/api/agents/" + agentID + "/chats?" + url.Values{"limit": {fmt.Sprint(limit)}}.Encode()
+	if err := client.GetJSON(ctx, path, &resp); err != nil {
+		return fmt.Errorf("list agent chats: %w", err)
+	}
+	if resp.HasMore {
+		fmt.Fprintln(cmd.ErrOrStderr(), "More chats available; raise --limit to see them.")
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, resp)
+	}
+
+	headers := []string{"ID", "STATUS", "LAST_ACTIVITY", "CREATOR_ID", "TITLE"}
+	rows := make([][]string, 0, len(resp.Chats))
+	for _, c := range resp.Chats {
+		title := strVal(c, "title")
+		if visible, _ := c["visible"].(bool); !visible {
+			title = "(someone else's chat)"
+		}
+		rows = append(rows, []string{
+			strVal(c, "id"),
+			strVal(c, "status"),
+			strVal(c, "last_activity_at"),
+			strVal(c, "creator_id"),
+			title,
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)

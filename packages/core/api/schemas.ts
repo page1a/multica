@@ -902,13 +902,14 @@ export const ChatMessageSchema = z.object({
   failure_reason: z.string().nullable().optional(),
   elapsed_ms: z.number().nullable().optional(),
   message_kind: z
-    .enum(["message", "no_response", "onboarding_kickoff", "onboarding_opening"])
+    .enum(["message", "no_response", "onboarding_kickoff", "onboarding_opening", "chat_spawn", "chat_spawn_refused"])
     .catch("message")
     .optional(),
   // Optional additive data degrades independently: a malformed suggestion
   // must not hide the assistant reply that contains it.
   quick_actions: z.array(ChatQuickActionSchema).catch([]).optional().default([]),
   sender_user_id: z.string().nullable().optional(),
+  linked_session_id: z.string().nullable().optional().catch(undefined),
 }).loose();
 
 export const ChatMessageListSchema = z.array(ChatMessageSchema).default([]);
@@ -2507,6 +2508,9 @@ export const ChatSessionSchema: z.ZodType<ChatSession> = z.object({
   project_nudge_dismissed: z.boolean().optional().catch(undefined),
   channel_source: ChatChannelSourceSchema.optional().catch(undefined),
   is_current_channel_route: z.boolean().optional().catch(undefined),
+  origin_type: z.literal("chat").nullable().optional().catch(undefined),
+  origin_session_id: z.string().nullable().optional().catch(undefined),
+  origin_title: z.string().nullable().optional().catch(undefined),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
 }).loose();

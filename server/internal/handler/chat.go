@@ -239,6 +239,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			resp = append(resp, chatSessionListResponse(s.ID, s.WorkspaceID, s.AgentID, s.CreatorID, s.ProjectID, s.Title, s.Status, s.Visibility, s.ViewerAccess, s.AgentName, s.Pinned, s.ProjectNudgeDismissedAt, s.CreatedAt, s.UpdatedAt, s.UnreadCount, s.ExtraCount, s.AgentRuntimeBound, s.AgentArchived, s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind, s.LastMessageSenderID, s.TitleLocked, s.ProgressText, s.ProgressSource, s.ProgressTone, s.ProgressAuthorType, s.ProgressAuthorID, s.ProgressUpdatedAt))
+			resp[len(resp)-1].OriginSessionID = uuidToPtr(s.OriginSessionID)
 		}
 	} else {
 		rows, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
@@ -258,6 +259,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			resp = append(resp, chatSessionListResponse(s.ID, s.WorkspaceID, s.AgentID, s.CreatorID, s.ProjectID, s.Title, s.Status, s.Visibility, s.ViewerAccess, s.AgentName, s.Pinned, s.ProjectNudgeDismissedAt, s.CreatedAt, s.UpdatedAt, s.UnreadCount, s.ExtraCount, s.AgentRuntimeBound, s.AgentArchived, s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind, s.LastMessageSenderID, s.TitleLocked, s.ProgressText, s.ProgressSource, s.ProgressTone, s.ProgressAuthorType, s.ProgressAuthorID, s.ProgressUpdatedAt))
+			resp[len(resp)-1].OriginSessionID = uuidToPtr(s.OriginSessionID)
 		}
 	}
 	if err := h.hydrateChatSessionChannelMetadata(r.Context(), resp); err != nil {
@@ -423,6 +425,12 @@ func (h *Handler) ConvertChatSessionToGoal(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	spawnSlots, ok := h.gateAgentIssueSpawn(w, r, session.WorkspaceID, actorType, actorID, 1)
+	if !ok {
+		return
+	}
+	defer spawnSlots.release()
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID: session.WorkspaceID,
 		Title:       title,
@@ -437,6 +445,7 @@ func (h *Handler) ConvertChatSessionToGoal(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to create goal issue")
 		return
 	}
+	spawnSlots.fill(r.Context(), result.Issue.ID)
 	prefix := h.getIssuePrefix(r.Context(), session.WorkspaceID)
 	resp := issueToResponse(result.Issue, prefix)
 	// Leave a visible bridge in the conversation so the conversion is
@@ -2237,8 +2246,14 @@ type ChatSessionResponse struct {
 	// older Chat that remains readable and writable in Multica.
 	ChannelSource         *ChatSessionChannelSourceResponse `json:"channel_source,omitempty"`
 	IsCurrentChannelRoute *bool                             `json:"is_current_channel_route,omitempty"`
-	CreatedAt             string                            `json:"created_at"`
-	UpdatedAt             string                            `json:"updated_at"`
+	// OriginSessionID names the chat an agent opened this one from
+	// (DENE-1271). OriginTitle is that chat's title, filled only on
+	// single-session reads and only when the viewer can open it.
+	OriginType      *string `json:"origin_type,omitempty"`
+	OriginSessionID *string `json:"origin_session_id,omitempty"`
+	OriginTitle     *string `json:"origin_title,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 // ProgressResponse is one goal/progress subtitle line (DENE-1037): what was
@@ -2537,6 +2552,8 @@ type ChatMessageResponse struct {
 	// SenderUserID names the person who typed a user message. Omitted on
 	// assistant rows and on messages from before chats could be shared.
 	SenderUserID *string `json:"sender_user_id,omitempty"`
+	// LinkedSessionID is the chat a chat_spawn card opens (DENE-1271).
+	LinkedSessionID *string `json:"linked_session_id,omitempty"`
 	// Attachments linked to this message via chat_message_id. The chat
 	// bubble renders file cards from these, and the daemon claim path
 	// (daemon.go) pulls structured metadata from the same source so the
@@ -2558,6 +2575,8 @@ func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
 		Status:      s.Status,
 		// Pinned is per viewer (DENE-866); decorateChatSession fills it in.
 		Visibility:            s.Visibility,
+		OriginType:            textToPtr(s.OriginType),
+		OriginSessionID:       uuidToPtr(s.OriginSessionID),
 		ProjectNudgeDismissed: s.ProjectNudgeDismissedAt.Valid,
 		CreatedAt:             timestampToString(s.CreatedAt),
 		UpdatedAt:             timestampToString(s.UpdatedAt),
@@ -2578,6 +2597,8 @@ func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) C
 		QuickActions:  decodeChatQuickActions(m.QuickActions),
 		Attachments:   attachments,
 		SenderUserID:  uuidToPtr(m.SenderUserID),
+
+		LinkedSessionID: uuidToPtr(m.LinkedSessionID),
 	}
 }
 
@@ -2626,6 +2647,10 @@ func normalizeMessageKind(kind string) string {
 		return protocol.ChatMessageKindOnboardingKickoff
 	case protocol.ChatMessageKindOnboardingOpening:
 		return protocol.ChatMessageKindOnboardingOpening
+	case protocol.ChatMessageKindChatSpawn:
+		return protocol.ChatMessageKindChatSpawn
+	case protocol.ChatMessageKindChatSpawnRefused:
+		return protocol.ChatMessageKindChatSpawnRefused
 	default:
 		return protocol.ChatMessageKindMessage
 	}

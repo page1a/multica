@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DENE-1277 全站响应式盘点</title>
+<style>
+:root{font:16px/1.55 system-ui,sans-serif;color:#202124;background:#fff}body{max-width:1100px;margin:0 auto;padding:32px}h1{font-size:28px}h2{margin-top:32px;font-size:20px}table{border-collapse:collapse;width:100%;margin:12px 0 20px}th,td{border:1px solid #d8dadd;padding:8px;text-align:left;vertical-align:top}th{background:#f4f5f6}code{background:#f1f2f3;padding:2px 4px;border-radius:3px}.screens{display:flex;gap:12px;flex-wrap:wrap}.screens figure{margin:0;width:31%}.screens img{display:block;max-width:100%;border:1px solid #ccd0d5}.screens figcaption{font-size:13px;margin-top:4px}
+</style>
+<h1>DENE-1277 全站页面手机与网页端适配盘点</h1>
+<p>盘点基线：仓库路由与共享页面静态清单 + Web 登录页真实浏览器截图。目标视口为 375px、768px、1280px；浏览器运行时报告的 CSS viewport 分别为 341px、698px、1163px（Ego Lite 保留浏览器滚动条）。</p>
+<h2>已验证的真实页面</h2>
+<table><thead><tr><th>页面</th><th>375</th><th>768</th><th>1280</th><th>结论</th></tr></thead><tbody>
+<tr><td><code>/login</code></td><td>无横向溢出；表单可见</td><td>无横向溢出</td><td>无横向溢出</td><td>基础布局通过；375px 卡片贴近边缘，需在登录/引导子票核对安全区与键盘顶起。</td></tr>
+</tbody></table>
+<div class="screens">
+<figure><img src="login-375.png"><figcaption>登录 · 375px</figcaption></figure>
+<figure><img src="login-768.png"><figcaption>登录 · 768px</figcaption></figure>
+<figure><img src="login-1280.png"><figcaption>登录 · 1280px</figcaption></figure>
+</div>
+<h2>页面 × 结论</h2>
+<table><thead><tr><th>页面组</th><th>覆盖页面</th><th>当前结论</th><th>子票</th></tr></thead><tbody>
+<tr><td>工作区核心</td><td>收件箱、我的任务、任务列表/看板、任务详情、新建任务草稿、项目列表/详情</td><td>待三档真实走查；共享任务表/看板已有横向滚动实现，需确认手机端入口与返回栈。</td><td>workspace-core</td></tr>
+<tr><td>协作与资源</td><td>聊天列表/会话、智能体列表/详情/新建、小队、技能、自动化、运行时、成员、用量、账单、设置、关联工作区、附件预览</td><td>待三档真实走查；详情页统一检查返回、表格/日志溢出和触屏操作。</td><td>resources</td></tr>
+<tr><td>全局外壳</td><td>侧边栏/抽屉、顶栏、全局搜索、弹窗/Sheet、浮动聊天、toast</td><td>抽共性优先；返回手势、安全区、44px 触控区影响多页面。</td><td>shell</td></tr>
+<tr><td>登录与引导</td><td>登录、注册、onboarding、新建工作区、邀请列表/单条、加入、auth 回调</td><td><code>/login</code> 已通过溢出初检；键盘、安全区与侧滑返回仍需现场走查。</td><td>auth</td></tr>
+<tr><td>第三方绑定</td><td>钉钉、飞书、Slack、Telegram、企业微信 bind、账单回跳</td><td>待三档真实走查；重点是回跳失败态和窄屏错误文案。</td><td>integrations</td></tr>
+<tr><td>官网落地页</td><td>首页、下载、用例、changelog 等</td><td>低优先级；独立页面族，需检查长文、代码块和下载 CTA。</td><td>landing</td></tr>
+</tbody></table>
+<h2>代码证据索引</h2>
+<ul><li>共享导航返回机制：<code>packages/views/navigation/use-back-or-replace.ts</code>、<code>use-back-to-dismiss.ts</code>。</li><li>状态与滚动保留：<code>packages/views/platform/scroll-restoration.tsx</code>。</li><li>任务表/看板横向承载：<code>packages/views/issues/surface/issue-surface.tsx</code>、<code>packages/views/issues/components/board-view.tsx</code>。</li><li>安全区与触控尺寸已有零散实现：<code>packages/views/common/scroll-to-bottom-button.tsx</code>，需抽成全局验收项。</li></ul>
+<h2>验收边界</h2>
+<p>本报告不把静态 CSS 推断当成“已修复”。除登录页截图外，页面组均标为待真实浏览器走查；各子票须附修复前截图、HTML 预览稿，并在 375/768/1280 三档补齐证据。</p>

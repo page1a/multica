@@ -34,7 +34,19 @@ const (
 	KeyAt                = "close.at"
 	KeyBlockKind         = "close.block_kind"
 	KeyBlockAction       = "close.block_action"
+	// KeySuperseded holds the close.at of a record that no longer describes
+	// the ticket: a person answered a blocked close and the executor was woken
+	// (DENE-1301). It is not a new close; the next close writes a new close.at
+	// and so falls out of it without anyone deleting the key.
+	KeySuperseded = "close.superseded"
 )
+
+// Superseded reports whether the close record in meta was overtaken by a
+// later reply rather than by a new close.
+func Superseded(meta map[string]string) bool {
+	at := strings.TrimSpace(meta[KeyAt])
+	return at != "" && strings.TrimSpace(meta[KeySuperseded]) == at
+}
 
 const (
 	ConclusionDelivered      = "delivered"
@@ -345,6 +357,9 @@ func allowedWake(v string) bool {
 	}
 	return false
 }
+
+// AllowedBlockKind reports whether v is one of the five close.block_kind values.
+func AllowedBlockKind(v string) bool { return allowedBlockKind(v) }
 
 func allowedBlockKind(v string) bool {
 	switch v {

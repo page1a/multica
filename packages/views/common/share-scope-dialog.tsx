@@ -10,6 +10,7 @@ import {
 } from "@multica/core/projects";
 import {
   resourceSharesOptions,
+  sharingAccessOptions,
   useAddResourceShare,
   useProjectVisibilityPreview,
   useRemoveResourceShare,
@@ -17,6 +18,7 @@ import {
   useSetProjectVisibility,
   useSetRepoVisibility,
   type ShareableResource,
+  type SharingAccessKind,
   type VisibilityScope,
 } from "@multica/core/visibility";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -35,6 +37,8 @@ import {
 } from "@multica/ui/components/ui/dialog";
 import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "./actor-avatar";
+import { SharingHoverCard } from "./sharing-guide";
+import { useGuestReadOnly } from "../layout/guest-readonly";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
@@ -461,26 +465,76 @@ function SpecificPeoplePicker({
   );
 }
 
+/**
+ * The share button on issue and project pages. Hovering explains who can see
+ * the resource and whether you may change that; when the server says you may
+ * not (a guest, or not the creator), the button stays visible but inert.
+ */
 export function ShareScopeTrigger({
   scope,
   audienceSize,
   onClick,
+  access,
 }: {
   scope?: VisibilityScope;
   audienceSize?: number;
   onClick: () => void;
+  access?: { kind: SharingAccessKind; id: string };
 }) {
   const { t } = useT("common");
-  const value = scope ?? "private";
-  return (
-    <Button variant="outline" size="sm" onClick={onClick} className="gap-1.5">
+  const wsId = useWorkspaceId();
+  const { isGuest } = useGuestReadOnly();
+  const { data: answer } = useQuery({
+    ...sharingAccessOptions(wsId, access?.kind ?? "issue", access?.id ?? ""),
+    enabled: !!access?.id,
+  });
+  const value = answer?.visibility ?? scope ?? "private";
+  const reach = audienceSize ?? answer?.audience_size;
+  const canChange = isGuest ? false : answer?.can_change;
+  const reason = isGuest ? "guest" : answer?.reason ?? null;
+  const disabled = canChange === false;
+
+  const button = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={disabled ? undefined : onClick}
+      aria-disabled={disabled || undefined}
+      data-testid="share-scope-trigger"
+      className={cn("gap-1.5", disabled && "cursor-not-allowed opacity-60 hover:bg-transparent")}
+    >
       {value === "private" ? <LockKeyhole className="size-3.5" /> : value === "project" ? <Users className="size-3.5" /> : <Globe2 className="size-3.5" />}
       {t(($) => $.share_scope[SCOPE_META[value].labelKey])}
-      {audienceSize !== undefined && (
+      {reach !== undefined && (
         <span className="text-caption text-muted-foreground">
-          · {t(($) => $.share_scope.audience_count, { count: audienceSize })}
+          · {t(($) => $.share_scope.audience_count, { count: reach })}
         </span>
       )}
     </Button>
+  );
+  if (!access) return button;
+
+  const kind = access.kind;
+  return (
+    <SharingHoverCard
+      trigger={button}
+      title={
+        reach !== undefined
+          ? t(($) => $.share_guide.audience_title, { count: reach })
+          : t(($) => $.share_scope[SCOPE_META[value].labelKey])
+      }
+      description={t(($) => $.share_guide.scope[value])}
+      note={kind === "project" ? t(($) => $.share_guide.project_inherits) : undefined}
+      canChange={canChange}
+      changeLine={
+        canChange === undefined
+          ? undefined
+          : canChange
+            ? t(($) => $.share_guide.can_change)
+            : reason === "guest"
+              ? t(($) => $.share_guide.cannot_change_guest)
+              : t(($) => $.share_guide.cannot_change_not_creator[kind])
+      }
+    />
   );
 }

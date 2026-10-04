@@ -28,6 +28,8 @@ import {
   Zap,
   FolderKanban,
   Link2,
+  Network,
+  BotMessageSquare,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -67,11 +69,13 @@ import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { ConfigTransferTab } from "./config-transfer-tab";
 import { ProjectSharingTab } from "./project-sharing-tab";
+import { WorkspaceLinksTab } from "./workspace-links-tab";
 import { SETTINGS_ANCHOR_ATTR } from "./settings-layout";
 import { searchSettings } from "./settings-search";
 import { HighlightText } from "../../search/highlight-text";
 import { useSettingsSearchIndex } from "./use-settings-search-index";
 import { WakeupsTab } from "./wakeups-tab";
+import { AgentPermissionsTab } from "./agent-permissions-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
@@ -213,10 +217,23 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
             }),
             ...(isOwner ? [membersEntry] : []),
             entry(
+              "agent-permissions",
+              t(($) => $.page.tabs.agent_permissions),
+              BotMessageSquare,
+              <AgentPermissionsTab />,
+            ),
+            entry(
               "project-sharing",
               t(($) => $.page.tabs.project_sharing),
               FolderKanban,
               <ProjectSharingTab />,
+              { wide: true },
+            ),
+            entry(
+              "workspace-links",
+              t(($) => $.page.tabs.workspace_links),
+              Network,
+              <WorkspaceLinksTab />,
               { wide: true },
             ),
             ...(billingEnabled

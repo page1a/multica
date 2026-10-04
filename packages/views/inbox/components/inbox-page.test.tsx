@@ -1076,13 +1076,13 @@ describe("InboxPage", () => {
       expect(rows().map((r) => r.textContent)).toEqual(["n-run", "n-wait", "n-loose"]);
     });
 
-    it("opens a board row in the detail pane, or as its own page when it has no notification", () => {
+    it("keeps board row clicks in the inbox for preview", () => {
       setup();
       render(<InboxPage merged />);
       fireEvent.click(screen.getByTestId("board-row-issue-wait"));
-      expect(replace).toHaveBeenLastCalledWith(expect.stringContaining("issue=issue-wait"));
+      expect(replace).not.toHaveBeenCalledWith(expect.stringContaining("issue=issue-wait"));
       fireEvent.click(screen.getByTestId("board-row-issue-gone"));
-      expect(push).toHaveBeenCalledWith("/acme/issues/issue-gone");
+      expect(push).not.toHaveBeenCalledWith("/acme/issues/issue-gone");
     });
 
     it("gives the open detail a way back to the board, which marks the issue just read", () => {

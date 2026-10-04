@@ -111,6 +111,7 @@ import { BoardProjectControls, InboxBoardLanes, LANE_TAG_CLASS } from "../../hom
 import type { InboxRowDecoration } from "./inbox-list-item";
 import { useIssueLimitUpgradePrompt } from "../../modals/use-issue-limit-upgrade-prompt";
 import { AskPrompt } from "../../common/ask-prompt";
+import { IssuePeekHost } from "../../issues/components/issue-peek";
 
 const INBOX_LIST_DEFAULT_SIZE = 320;
 const INBOX_LIST_MIN_SIZE = 240;
@@ -121,7 +122,7 @@ const INBOX_LIST_MAX_SIZE = 400;
  * inbox (`merged`, DENE-1004): the list on the left, the board beside it
  * whenever no notification is open, the two linked by lane.
  */
-export function InboxActivityPage({ merged = false }: { merged?: boolean } = {}) {
+function InboxActivityPageContent({ merged = false }: { merged?: boolean } = {}) {
   const { t } = useT("inbox");
   const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
   const showAutopilotQuotaRecoveryPrompt = useIssueLimitUpgradePrompt(
@@ -409,8 +410,20 @@ export function InboxActivityPage({ merged = false }: { merged?: boolean } = {})
   // here; otherwise there is nothing to select, so it opens as its own page.
   const handleSelectBoardIssue = (issueId: string) => {
     const item = selectionItems.find((i) => i.issue_id === issueId);
-    if (item) handleSelect(item);
-    else push(wsPaths.issueDetail(issueId));
+    // Board rows are preview targets in the merged inbox. Mark the matching
+    // notification read here, while the shared IssuePeekHost opens the card.
+    // Issues without a notification still preview in place and stay in the
+    // inbox instead of being sent to a separate issue route.
+    if (item && !item.read) {
+      markReadMutation.mutate(item.id, {
+        onError: (err) =>
+          toast.error(
+            err instanceof Error && err.message
+              ? err.message
+              : t(($) => $.errors.mark_read_failed),
+          ),
+      });
+    }
   };
 
   const handleMarkRead = (id: string) => {
@@ -1092,4 +1105,9 @@ export function InboxActivityPage({ merged = false }: { merged?: boolean } = {})
       </ResizablePanel>
     </ResizablePanelGroup>
   );
+}
+
+export function InboxActivityPage({ merged = false }: { merged?: boolean } = {}) {
+  const content = <InboxActivityPageContent merged={merged} />;
+  return merged ? <IssuePeekHost>{content}</IssuePeekHost> : content;
 }

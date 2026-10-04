@@ -119,6 +119,18 @@ type workspaceNamingResponse struct {
 	Source  string           `json:"source"`
 	Options []map[string]any `json:"options"`
 	Stats   map[string]int   `json:"stats"`
+	// Health answers "is naming actually working" for the selected source:
+	// ok, degraded (the chosen source named nothing in 24h while chats still
+	// arrived, or it cannot run at all), or idle (no new chats to judge by).
+	Health string               `json:"health"`
+	Last   *workspaceNamingLast `json:"last"`
+}
+
+// workspaceNamingLast is the most recent successful naming in the workspace.
+type workspaceNamingLast struct {
+	Title     string `json:"title"`
+	Source    string `json:"source"`
+	CreatedAt string `json:"created_at"`
 }
 
 type updateWorkspaceNamingRequest struct {
@@ -160,14 +172,50 @@ func (h *Handler) GetWorkspaceNaming(w http.ResponseWriter, r *http.Request) {
 			source = value
 		}
 	}
-	stats := map[string]int{"titled": 0, "runtime": 0, "rules": 0, "failed": 0}
+	writeJSON(w, http.StatusOK, h.workspaceNamingState(r.Context(), id, source))
+}
+
+// workspaceNamingState reads the last 24 hours of chat_naming_event for the
+// workspace and judges whether the selected source is doing its job.
+func (h *Handler) workspaceNamingState(ctx context.Context, id pgtype.UUID, source string) workspaceNamingResponse {
+	stats := map[string]int{"titled": 0, "server_llm": 0, "runtime": 0, "rules": 0, "failed": 0}
+	var last *workspaceNamingLast
 	if h.DB != nil {
-		var titled, runtime, rules, failed int
-		if err := h.DB.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE status = 'success'), count(*) FILTER (WHERE status = 'success' AND source = 'runtime'), count(*) FILTER (WHERE status = 'success' AND source = 'rules'), count(*) FILTER (WHERE status = 'failure') FROM chat_naming_event WHERE workspace_id = $1 AND created_at >= now() - interval '24 hours'`, id).Scan(&titled, &runtime, &rules, &failed); err == nil {
-			stats = map[string]int{"titled": titled, "runtime": runtime, "rules": rules, "failed": failed}
+		var titled, serverLLM, runtime, rules, failed int
+		if err := h.DB.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status = 'success'), count(*) FILTER (WHERE status = 'success' AND source = 'server_llm'), count(*) FILTER (WHERE status = 'success' AND source = 'runtime'), count(*) FILTER (WHERE status = 'success' AND source = 'rules'), count(*) FILTER (WHERE status = 'failure') FROM chat_naming_event WHERE workspace_id = $1 AND created_at >= now() - interval '24 hours'`, id).Scan(&titled, &serverLLM, &runtime, &rules, &failed); err == nil {
+			stats = map[string]int{"titled": titled, "server_llm": serverLLM, "runtime": runtime, "rules": rules, "failed": failed}
+		}
+		var item workspaceNamingLast
+		var at pgtype.Timestamptz
+		if err := h.DB.QueryRow(ctx, `SELECT s.title, e.source, e.created_at FROM chat_naming_event e JOIN chat_session s ON s.id = e.chat_session_id WHERE e.workspace_id = $1 AND e.status = 'success' AND s.title <> '' ORDER BY e.created_at DESC LIMIT 1`, id).Scan(&item.Title, &item.Source, &at); err == nil {
+			item.CreatedAt = timestampToString(at)
+			last = &item
 		}
 	}
-	writeJSON(w, http.StatusOK, workspaceNamingResponse{Source: source, Options: h.workspaceNamingOptions(), Stats: stats})
+	return workspaceNamingResponse{
+		Source:  source,
+		Options: h.workspaceNamingOptions(),
+		Stats:   stats,
+		Health:  namingHealth(source, h.LLM != nil && h.LLM.Enabled(), stats),
+		Last:    last,
+	}
+}
+
+// namingHealth is "ok" when the selected source named at least one chat in
+// the window, "idle" when there was nothing to name, and "degraded" when
+// chats arrived but the selected source named none of them — the case where
+// rules quietly covered for a runtime that never took the job.
+func namingHealth(source string, serverReady bool, stats map[string]int) string {
+	if source == "server_llm" && !serverReady {
+		return "degraded"
+	}
+	if stats["titled"]+stats["failed"] == 0 {
+		return "idle"
+	}
+	if stats[source] > 0 {
+		return "ok"
+	}
+	return "degraded"
 }
 
 func (h *Handler) UpdateWorkspaceNaming(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +254,7 @@ func (h *Handler) UpdateWorkspaceNaming(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.publish(protocol.EventWorkspaceUpdated, uuidToString(updated.ID), "member", requestUserID(r), map[string]any{"workspace": h.workspaceToResponse(updated)})
-	writeJSON(w, http.StatusOK, workspaceNamingResponse{Source: req.Source, Options: h.workspaceNamingOptions(), Stats: map[string]int{"titled": 0, "runtime": 0, "rules": 0, "failed": 0}})
+	writeJSON(w, http.StatusOK, h.workspaceNamingState(r.Context(), id, req.Source))
 }
 
 func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
@@ -547,13 +595,20 @@ func validateWorkspaceMemorySettings(ctx context.Context, q *db.Queries, workspa
 	}
 	var parsed struct {
 		Memory *struct {
-			SedimentAgent *string `json:"sediment_agent"`
+			SedimentAgent       *string `json:"sediment_agent"`
+			SedimentInstruction *string `json:"sediment_instruction"`
 		} `json:"memory"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil
 	}
-	if parsed.Memory == nil || parsed.Memory.SedimentAgent == nil {
+	if parsed.Memory == nil {
+		return nil
+	}
+	if s := parsed.Memory.SedimentInstruction; s != nil && len(strings.TrimSpace(*s)) > maxSedimentInstructionBytes {
+		return fmt.Errorf("memory.sediment_instruction is longer than %d bytes", maxSedimentInstructionBytes)
+	}
+	if parsed.Memory.SedimentAgent == nil {
 		return nil
 	}
 	agentStr := strings.TrimSpace(*parsed.Memory.SedimentAgent)
@@ -649,6 +704,11 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable,
 				"this deployment cannot store a log export git token (no MULTICA_LOG_EXPORT_SECRET_KEY or JWT_SECRET)")
 			return
+		}
+		// An agent run must not be able to raise its own limits through the
+		// generic settings write: agent_spawn is carried forward unchanged.
+		if r.Header.Get("X-Actor-Source") == "task_token" {
+			merged = keepStoredAgentSpawn(merged, stored)
 		}
 		s, _ := json.Marshal(merged)
 		params.Settings = s

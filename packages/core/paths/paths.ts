@@ -71,6 +71,8 @@ function workspaceScoped(slug: string) {
     // `?session=`; those still open (see chatSessionIdFromLocation).
     chatSession: (sessionId: string) => `${ws}/chat/${encode(sessionId)}`,
     myIssues: () => `${ws}/my-issues`,
+    // Read-only panel over workspaces linked to this one (DENE-1225).
+    linked: () => `${ws}/linked`,
     runtimes: () => `${ws}/runtimes`,
     runtimeDetail: (id: string) => `${ws}/runtimes/${encode(id)}`,
     runtimeSettings: (machineId: string, runtimeId: string) =>

@@ -186,11 +186,15 @@ func TestReleaseDoesNotStayInReview(t *testing.T) {
 		t.Fatalf("clean PR action = %s", clean.Action)
 	}
 	dirty := DecideRelease([]PRSnapshot{{Number: 12, State: "open", Mergeable: "dirty", URL: "https://example/pull/12"}}, now)
-	if dirty.Action != ReleaseBlock || !dirty.Record.Structured() {
+	if dirty.Action != ReleaseHold || dirty.Kind != HoldConflict || dirty.Record.HasWakeAt || dirty.Record.HasWaitTimeout {
 		t.Fatalf("conflict = %#v", dirty)
 	}
-	if !strings.Contains(dirty.Reason, "不继续停在待验收") {
+	if !strings.Contains(dirty.Reason, "先不合并") {
 		t.Fatalf("reason = %q", dirty.Reason)
+	}
+	running := DecideRelease([]PRSnapshot{{Number: 12, State: "open", Mergeable: "clean", Checks: "success", RunningChecks: 1}}, now)
+	if running.Action != ReleaseHold || running.Kind != HoldChecksPending || !strings.Contains(running.Record.WaitCondition, "还没出结果") {
+		t.Fatalf("running checks must hold the merge: %#v", running)
 	}
 }
 
@@ -208,11 +212,11 @@ func TestDecideCloseMergesGreenAndBlocksTheRest(t *testing.T) {
 		t.Fatalf("clean green PR = %#v", clean)
 	}
 	dirty := DecideClose([]PRSnapshot{{Number: 51, State: "open", Mergeable: "dirty", URL: "https://example/pull/51"}}, now)
-	if dirty.Action != ReleaseBlock || !dirty.Record.Structured() || !strings.Contains(dirty.Reason, "不标完成") {
+	if dirty.Action != ReleaseHold || dirty.Kind != HoldConflict || dirty.Record.HasWakeAt || !strings.Contains(dirty.Reason, "先不标完成") {
 		t.Fatalf("conflict = %#v", dirty)
 	}
 	pending := DecideClose([]PRSnapshot{{Number: 51, State: "open", Mergeable: "clean", Checks: "PENDING"}}, now)
-	if pending.Action != ReleaseBlock || !strings.Contains(pending.Record.WaitCondition, "还没出结果") {
+	if pending.Action != ReleaseHold || pending.Kind != HoldChecksPending || !strings.Contains(pending.Record.WaitCondition, "还没出结果") {
 		t.Fatalf("pending checks = %#v", pending)
 	}
 }
@@ -458,40 +462,40 @@ func TestGateLetsThroughOnlyBaselineFailures(t *testing.T) {
 		}
 
 		green := gate([]PRSnapshot{red(&BaseChecks{Branch: "kun"}, "frontend-test")}, now)
-		if green.Action != ReleaseBlock || !strings.Contains(green.Record.WaitCondition, "新引入：frontend-test") {
+		if green.Action != ReleaseHold || green.Kind != HoldChecksRed || !strings.Contains(green.Record.WaitCondition, "新引入：frontend-test") || !strings.Contains(green.Record.WaitCondition, "日志") {
 			t.Fatalf("%s: baseline green + red = %#v", name, green)
 		}
 
 		extra := gate([]PRSnapshot{red(kunRed, "frontend-test", "migration-lint")}, now)
-		if extra.Action != ReleaseBlock || !strings.Contains(extra.Record.WaitCondition, "新引入：migration-lint") || len(extra.Inherited) != 0 {
+		if extra.Action != ReleaseHold || !strings.Contains(extra.Record.WaitCondition, "新引入：migration-lint") || len(extra.Inherited) != 0 {
 			t.Fatalf("%s: baseline red + extra red = %#v", name, extra)
 		}
 
 		unknown := gate([]PRSnapshot{red(nil, "frontend-test")}, now)
-		if unknown.Action != ReleaseBlock || !strings.Contains(unknown.Record.WaitCondition, "没拿到主线基线") {
+		if unknown.Action != ReleaseHold || !strings.Contains(unknown.Record.WaitCondition, "没拿到主线基线") {
 			t.Fatalf("%s: no baseline = %#v", name, unknown)
 		}
 
 		running := red(kunRed, "frontend-test")
 		running.RunningChecks = 1
-		if d := gate([]PRSnapshot{running}, now); d.Action != ReleaseBlock {
+		if d := gate([]PRSnapshot{running}, now); d.Action != ReleaseHold {
 			t.Fatalf("%s: still running = %#v", name, d)
 		}
 
 		conflict := red(kunRed, "frontend-test")
 		conflict.Mergeable = "dirty"
-		if d := gate([]PRSnapshot{conflict}, now); d.Action != ReleaseBlock || !strings.Contains(d.Record.WaitCondition, "合并冲突") {
+		if d := gate([]PRSnapshot{conflict}, now); d.Action != ReleaseHold || !strings.Contains(d.Record.WaitCondition, "合并冲突") {
 			t.Fatalf("%s: conflict = %#v", name, d)
 		}
 
 		protected := red(kunRed, "frontend-test")
 		protected.Mergeable = "blocked"
-		if d := gate([]PRSnapshot{protected}, now); d.Action != ReleaseBlock || !strings.Contains(d.Record.WaitCondition, "分支保护") {
+		if d := gate([]PRSnapshot{protected}, now); d.Action != ReleaseHold || !strings.Contains(d.Record.WaitCondition, "分支保护") {
 			t.Fatalf("%s: branch rule = %#v", name, d)
 		}
 
 		namesMissing := red(kunRed)
-		if d := gate([]PRSnapshot{namesMissing}, now); d.Action != ReleaseBlock {
+		if d := gate([]PRSnapshot{namesMissing}, now); d.Action != ReleaseHold {
 			t.Fatalf("%s: red rollup without names = %#v", name, d)
 		}
 	}

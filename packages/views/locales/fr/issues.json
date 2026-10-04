@@ -388,7 +388,8 @@
     "previous": "Tâche précédente",
     "next": "Tâche suivante",
     "open_full_page": "Ouvrir la page complète",
-    "close": "Fermer l'aperçu"
+    "close": "Fermer l'aperçu",
+    "back": "Retour au tableau"
   },
   "detail": {
     "not_found": "Cette tâche n'existe pas ou a été supprimée dans cet espace de travail.",

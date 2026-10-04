@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
-import { ChevronDown, ChevronUp, Maximize2, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Maximize2, X } from "lucide-react";
 import { Button, buttonVariants } from "@multica/ui/components/ui/button";
 import {
   Tooltip,
@@ -11,6 +11,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 import { cn } from "@multica/ui/lib/utils";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { UI_EASE_OUT, UI_MOTION_DURATION } from "@multica/ui/lib/motion";
 import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -141,6 +142,9 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
   // clicks or keys, so the board is usable the moment the peek is dismissed.
   const isPresent = useIsPresent();
   const reduceMotion = useReducedMotion() ?? false;
+  // On a phone the card has no board beside it to float over: it opens as a
+  // full screen of its own, with a back button where the step buttons sit.
+  const isMobile = useIsMobile();
 
   return (
     <motion.aside
@@ -148,11 +152,16 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
       aria-label={t(($) => $.peek.panel_label)}
       data-issue-peek=""
       className={cn(
-        "absolute right-2 top-2 z-30 flex w-[min(var(--issue-peek-width),calc(100%-1rem))] flex-col overflow-hidden",
-        "rounded-xl bg-background shadow-[var(--floating-shadow)] ring-1 ring-surface-border",
-        // Stops above the chat launcher, which owns the dashboard's
-        // bottom-right corner — the panel's composer would sit under it.
-        "above-chat-launcher",
+        "z-30 flex flex-col overflow-hidden bg-background",
+        isMobile
+          ? "fixed inset-0 z-50"
+          : [
+              "absolute right-2 top-2 w-[min(var(--issue-peek-width),calc(100%-1rem))]",
+              "rounded-xl shadow-[var(--floating-shadow)] ring-1 ring-surface-border",
+              // Stops above the chat launcher, which owns the dashboard's
+              // bottom-right corner — the panel's composer would sit under it.
+              "above-chat-launcher",
+            ],
         !isPresent && "pointer-events-none",
       )}
       // Slides in from the edge it is anchored to; the exit is shorter and
@@ -169,7 +178,7 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
         transition: { duration: UI_MOTION_DURATION.fast, ease: UI_EASE_OUT },
       }}
     >
-      {isPresent && <IssuePeekFollow issueId={issueId} panelRef={panelRef} />}
+      {isPresent && <IssuePeekFollow issueId={issueId} panelRef={panelRef} fullScreen={isMobile} />}
       <ErrorBoundary
         resetKeys={[issueId]}
         // The default fallback is a bare message card; here it would be a
@@ -177,7 +186,7 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
         fallback={({ error }) => (
           <div className="flex flex-1 min-h-0 flex-col">
             <div className={cn("flex h-12 shrink-0 items-center justify-end gap-1 border-b", PAGE_GUTTER)}>
-              <IssuePeekTrailingActions issueId={issueId} />
+              <IssuePeekTrailingActions issueId={issueId} fullScreen={isMobile} />
             </div>
             <div className="flex flex-1 min-h-0 items-center justify-center px-4 text-center text-body text-muted-foreground">
               {error.message}
@@ -190,8 +199,8 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
           issueId={issueId}
           variant="peek"
           defaultSidebarOpen={false}
-          leadingAction={<IssuePeekNav />}
-          trailingActions={<IssuePeekTrailingActions issueId={issueId} />}
+          leadingAction={isMobile ? <IssuePeekMobileLeading /> : <IssuePeekNav />}
+          trailingActions={<IssuePeekTrailingActions issueId={issueId} fullScreen={isMobile} />}
           onDelete={actions.close}
         />
       </ErrorBoundary>
@@ -199,13 +208,18 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
   );
 });
 
-/** The panel's keyboard (Esc, J / K / H / L, arrows) and keeping the peeked issue in view. */
+/**
+ * The panel's keyboard (Esc, J / K / H / L, arrows), closing on a click on
+ * the empty board, and keeping the peeked issue in view.
+ */
 function IssuePeekFollow({
   issueId,
   panelRef,
+  fullScreen,
 }: {
   issueId: string;
   panelRef: RefObject<HTMLElement | null>;
+  fullScreen: boolean;
 }) {
   const actions = useIssuePeekActions()!;
   const position = useIssuePeekPosition();
@@ -248,13 +262,36 @@ function IssuePeekFollow({
       event.preventDefault();
       actions.open(target);
     };
+    // A click on the empty board closes the peek. It counts only when the press
+    // and the release both land on bare board, so a card drag (which ends in a
+    // click on the column) or a text selection never dismisses it; cards peek
+    // or toggle themselves, and anything interactive keeps its own click.
+    let pressedOnBoard = false;
+    const onBoardPointerDown = (event: PointerEvent) => {
+      pressedOnBoard = event.button === 0 && isBareBoardTarget(event.target, panelRef.current);
+    };
+    const onBoardClick = (event: MouseEvent) => {
+      const pressed = pressedOnBoard;
+      pressedOnBoard = false;
+      if (!pressed || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (!isBareBoardTarget(event.target, panelRef.current)) return;
+      if (useModalStore.getState().modal) return;
+      actions.close();
+    };
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown);
+    if (!fullScreen) {
+      document.addEventListener("pointerdown", onBoardPointerDown, true);
+      document.addEventListener("click", onBoardClick, true);
+    }
     return () => {
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onBoardPointerDown, true);
+      document.removeEventListener("click", onBoardClick, true);
     };
-  }, [actions, panelRef]);
+  }, [actions, panelRef, fullScreen]);
 
   // Keep the peeked issue in sight: scroll it into its column, then scroll the
   // board sideways if the panel covers it (the board reserves room for this
@@ -289,6 +326,22 @@ function IssuePeekFollow({
   return null;
 }
 
+const INTERACTIVE_SELECTOR =
+  "a, button, input, textarea, select, summary, label, [role='button'], [role='menuitem'], [role='tab'], [role='checkbox'], [contenteditable]";
+
+/**
+ * Whether a press landed on the peek host's empty board: inside the host (so
+ * the page header and toolbar above it, and every popup portaled to the body,
+ * are out), outside the panel, not on a card, and not on a control.
+ */
+function isBareBoardTarget(target: EventTarget | null, panel: HTMLElement | null) {
+  const host = panel?.parentElement;
+  if (!(target instanceof Element) || !panel || !host) return false;
+  if (!target.isConnected || !host.contains(target) || panel.contains(target)) return false;
+  if (target.closest(`[${PEEK_TARGET_ATTR}]`)) return false;
+  return target.closest(INTERACTIVE_SELECTOR) === null;
+}
+
 function isArrowWidgetTarget(target: EventTarget | null) {
   return (
     target instanceof Element &&
@@ -305,7 +358,7 @@ function isControlTarget(target: EventTarget | null) {
 }
 
 /** Previous / next card in the peeked issue's board column. */
-function IssuePeekNav() {
+function IssuePeekNav({ showPosition = true }: { showPosition?: boolean } = {}) {
   const { t } = useT("issues");
   const actions = useIssuePeekActions()!;
   const position = useIssuePeekPosition();
@@ -338,7 +391,7 @@ function IssuePeekNav() {
           </TooltipContent>
         </Tooltip>
       ))}
-      {position && (
+      {showPosition && position && (
         <span className="ml-1 text-caption tabular-nums text-muted-foreground">
           {`${position.index} / ${position.total}`}
         </span>
@@ -347,7 +400,34 @@ function IssuePeekNav() {
   );
 }
 
-function IssuePeekTrailingActions({ issueId }: { issueId: string }) {
+/** Phone full screen: the way back to the board, where the step buttons sit on a desktop. */
+function IssuePeekBack() {
+  const { t } = useT("issues");
+  const actions = useIssuePeekActions()!;
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className="shrink-0 text-muted-foreground"
+      aria-label={t(($) => $.peek.back)}
+      onClick={actions.close}
+    >
+      <ArrowLeft />
+    </Button>
+  );
+}
+
+/** Phone full screen: keep the board trip beside the same previous/next controls. */
+function IssuePeekMobileLeading() {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <IssuePeekBack />
+      <IssuePeekNav showPosition={false} />
+    </div>
+  );
+}
+
+function IssuePeekTrailingActions({ issueId, fullScreen = false }: { issueId: string; fullScreen?: boolean }) {
   const { t } = useT("issues");
   const actions = useIssuePeekActions()!;
   const paths = useWorkspacePaths();
@@ -368,6 +448,8 @@ function IssuePeekTrailingActions({ issueId }: { issueId: string }) {
         </TooltipTrigger>
         <TooltipContent side="bottom">{t(($) => $.peek.open_full_page)}</TooltipContent>
       </Tooltip>
+      {/* Full screen has the back button; a second way out would only cost room. */}
+      {!fullScreen && (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -387,6 +469,7 @@ function IssuePeekTrailingActions({ issueId }: { issueId: string }) {
           <ShortcutKeycaps shortcut={CLOSE_KEY} decorative className="ml-1.5" />
         </TooltipContent>
       </Tooltip>
+      )}
     </>
   );
 }

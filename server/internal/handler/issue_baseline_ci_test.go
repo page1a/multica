@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/blockwait"
 	"net/http"
 	"strings"
 	"testing"
@@ -148,13 +149,13 @@ func TestNewFailureOrMissingBaselineStillBlocks(t *testing.T) {
 	}
 	useBaseline(t, fakeBaseChecks{base: baselineBranch()})
 	_, green := passAcceptance(t, "baseline green", 998924, "frontend-test")
-	if green.Status != "blocked" || green.Merged || !strings.Contains(green.Note, "新引入：frontend-test") {
+	if green.Status != "in_review" || green.Merged || green.Hold != blockwait.HoldChecksRed || !strings.Contains(green.Note, "新引入：frontend-test") {
 		t.Fatalf("green baseline = %+v", green)
 	}
 
 	testHandler.PRBaseChecks = fakeBaseChecks{err: fmt.Errorf("github down")}
 	_, unknown := passAcceptance(t, "baseline unknown", 998925, "frontend-test")
-	if unknown.Status != "blocked" || !strings.Contains(unknown.Note, "没拿到主线基线") {
+	if unknown.Status != "in_review" || !strings.Contains(unknown.Note, "没拿到主线基线") {
 		t.Fatalf("missing baseline = %+v", unknown)
 	}
 	if n := len(baselineFixIssues(t)); n != 0 {

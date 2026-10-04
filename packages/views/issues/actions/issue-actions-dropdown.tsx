@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactElement } from "react";
+import { useState, type ReactElement, type ReactNode } from "react";
 import type { Issue } from "@multica/core/types";
 import {
   DropdownMenu,
@@ -22,6 +22,12 @@ interface IssueActionsDropdownProps {
   /** If set, leave the page after the issue is deleted — back to wherever the
    *  user came from, or to this path when there is no in-app history. */
   onDeletedFallbackPath?: string;
+  /**
+   * Controls placed above the menu items: header actions that did not fit the
+   * bar. Kept mounted while the menu is closed so a dialog one of them opened
+   * outlives the menu.
+   */
+  menuHeader?: ReactNode;
 }
 
 export function IssueActionsDropdown({
@@ -29,6 +35,7 @@ export function IssueActionsDropdown({
   trigger,
   align = "end",
   onDeletedFallbackPath,
+  menuHeader,
 }: IssueActionsDropdownProps) {
   const actions = useIssueActions(issue);
   const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -41,7 +48,8 @@ export function IssueActionsDropdown({
     <span className="relative inline-flex">
       <DropdownMenu>
         <DropdownMenuTrigger render={trigger} />
-        <DropdownMenuContent align={align} className="w-auto">
+        <DropdownMenuContent align={align} className="w-auto" keepMounted={!!menuHeader}>
+          {menuHeader}
           <IssueActionsMenuItems
             issue={issue}
             actions={actions}

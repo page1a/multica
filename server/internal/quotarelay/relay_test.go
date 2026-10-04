@@ -239,3 +239,60 @@ func TestPickPrefersUsageHeadroomAfterDemotion(t *testing.T) {
 		t.Fatalf("pick = %+v, want b by name", got)
 	}
 }
+
+// DENE-1203: routing's 负载 rule reuses the same-tier order. Fewer unfinished
+// runs goes first, after demotion and before usage; a caller that leaves
+// Running zero sees the order it always had.
+func TestBestOnTierOrdersByRunningAfterDemotion(t *testing.T) {
+	roster := []Seat{
+		{ID: "b", Name: "克林", Tier: "strong", Eligible: true, Running: 2},
+		{ID: "c", Name: "孙悟天", Tier: "strong", Eligible: true, Running: 0, UsageRank: 2},
+		{ID: "d", Name: "比克", Tier: "strong", Eligible: true, Running: 0, Demoted: true},
+	}
+	got, ok := BestOnTier(roster, Seat{}, "strong")
+	if !ok || got.ID != "c" {
+		t.Fatalf("pick = %+v ok=%v, want the idle seat c over the busy ample one", got, ok)
+	}
+	roster[1].Running = 2
+	got, _ = BestOnTier(roster, Seat{}, "strong")
+	if got.ID != "b" {
+		t.Fatalf("pick = %+v, want b: equal load falls back to usage headroom", got)
+	}
+}
+
+// DENE-1159: Claude Code's session window resets within hours. Reading it as
+// a weekly limit kept the seat shut until Monday.
+func TestPlanForClaudeSessionLimitRecoversAtTheNamedClock(t *testing.T) {
+	quota := string(taskfailure.ReasonAgentProviderQuotaLimit)
+	// 14:19 UTC is 22:19 in Taipei; the reset is 23:10 Taipei the same day.
+	now := time.Date(2026, 10, 2, 14, 19, 0, 0, time.UTC)
+	plan, ok := PlanFor(quota, "You've hit your session limit · resets 11:10pm (Asia/Taipei)", Binding{}, now)
+	if !ok {
+		t.Fatal("session limit must open a breaker")
+	}
+	if want := time.Date(2026, 10, 2, 15, 10, 0, 0, time.UTC); !plan.RecoverAt.Equal(want) {
+		t.Fatalf("recover_at = %v, want %v", plan.RecoverAt, want)
+	}
+	if plan.Condition != ConditionParsedReset {
+		t.Fatalf("condition = %q, want parsed reset", plan.Condition)
+	}
+
+	// Past the named clock today: the next one is tomorrow.
+	late := time.Date(2026, 10, 2, 16, 0, 0, 0, time.UTC)
+	plan, _ = PlanFor(quota, "You've hit your session limit · resets 11:10pm (Asia/Taipei)", Binding{}, late)
+	if want := time.Date(2026, 10, 3, 15, 10, 0, 0, time.UTC); !plan.RecoverAt.Equal(want) {
+		t.Fatalf("after the clock: recover_at = %v, want %v", plan.RecoverAt, want)
+	}
+
+	// No zone to read: a session window still is not a week.
+	plan, _ = PlanFor(quota, "You've hit your session limit · resets 3pm", Binding{}, now)
+	if plan.Condition != ConditionSessionWindow || !plan.RecoverAt.Equal(now.Add(sessionQuotaWindow)) {
+		t.Fatalf("zoneless session limit = %+v, want the session window", plan)
+	}
+
+	// A dated reset is a weekly window and keeps the weekly default.
+	plan, _ = PlanFor(quota, "You've hit your weekly limit · resets Oct 6, 9am", Binding{}, now)
+	if plan.Condition != ConditionWeekly {
+		t.Fatalf("weekly limit = %+v, want the weekly default", plan)
+	}
+}

@@ -608,6 +608,21 @@ SELECT EXISTS (
       AND created_at > sqlc.arg('since')::timestamptz
 ) AS exists;
 
+-- name: LatestProgressUpdateMatches :one
+-- Repeat guard for server-written progress notes (DENE-1154): true when the
+-- newest live progress_update this author left on the issue already carries
+-- exactly this content, so a repeated observation does not append a copy.
+SELECT COALESCE((
+    SELECT content = sqlc.arg('content')::text FROM comment
+    WHERE issue_id = sqlc.arg('issue_id')
+      AND author_type = sqlc.arg('author_type')
+      AND author_id = sqlc.arg('author_id')
+      AND type = 'progress_update'
+      AND deleted_at IS NULL
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+), false)::bool AS matches;
+
 -- name: LockCommentForDelete :one
 -- First statement of the comment delete transaction (#8296). Defense-in-depth:
 -- workspace_id is a SQL-layer tenant guard. See DeleteIssue.

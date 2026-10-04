@@ -28,6 +28,7 @@ import type { ChatSession, Project } from "@multica/core/types";
 import { useMeasuredRow } from "../../common/single-row-fit";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
+import { ProjectIcon } from "../../projects/components/project-icon";
 
 const CHIP_GAP = 6;
 /** Chip height (`h-7`). With the gap it caps the chip area at the allowed rows. */
@@ -116,6 +117,11 @@ export function ChatProjectBar({
 
   const titleById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
+    [projects],
+  );
+  // Chips and More rows carry the project's own icon, as the sidebar pins do.
+  const projectById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
     [projects],
   );
 
@@ -280,6 +286,7 @@ export function ChatProjectBar({
         onClick={() => select({ type: "project", id })}
       >
         {pinnedIds.includes(id) && <Pin className="size-3 shrink-0" aria-hidden />}
+        <ProjectIcon project={projectById.get(id)} size="sm" />
         {row?.hasUnread && (
           <span
             aria-label={t(($) => $.project_bar.unread)}
@@ -451,6 +458,7 @@ export function ChatProjectBar({
                       <ProjectRow
                         key={row.id}
                         title={titleById.get(row.id) ?? ""}
+                        icon={<ProjectIcon project={projectById.get(row.id)} size="sm" />}
                         countLabel={t(($) => $.project_bar.chat_count, { count: row.chatCount })}
                         pinned={pinned}
                         draggable={reorderable}
@@ -581,6 +589,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function ProjectRow({
   title,
+  icon,
   countLabel,
   pinned,
   draggable = pinned,
@@ -599,6 +608,8 @@ function ProjectRow({
   onDrop,
 }: {
   title: string;
+  /** The project's own icon; the no-project row has none. */
+  icon?: React.ReactNode;
   countLabel: string;
   pinned: boolean;
   /** Pins are dragged to reorder; defaults to `pinned`. */
@@ -646,6 +657,7 @@ function ProjectRow({
         {unread && (
           <span aria-label={unreadLabel} className="size-1.5 shrink-0 rounded-full bg-brand" />
         )}
+        {icon}
         <span className="min-w-0 flex-1 truncate text-body">{title}</span>
         {collapsedLabel && (
           <span className="shrink-0 rounded-sm border px-1 text-micro text-muted-foreground">

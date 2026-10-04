@@ -150,6 +150,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     chat: () => "/acme/chat",
     chatSession: (id: string) => `/acme/chat/${id}`,
     myIssues: () => "/acme/my-issues",
+    linked: () => "/acme/linked",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
     autopilots: () => "/acme/autopilots",

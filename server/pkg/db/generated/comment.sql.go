@@ -750,6 +750,41 @@ func (q *Queries) HasRecentWatchdogComment(ctx context.Context, arg HasRecentWat
 	return exists, err
 }
 
+const latestProgressUpdateMatches = `-- name: LatestProgressUpdateMatches :one
+SELECT COALESCE((
+    SELECT content = $1::text FROM comment
+    WHERE issue_id = $2
+      AND author_type = $3
+      AND author_id = $4
+      AND type = 'progress_update'
+      AND deleted_at IS NULL
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+), false)::bool AS matches
+`
+
+type LatestProgressUpdateMatchesParams struct {
+	Content    string      `json:"content"`
+	IssueID    pgtype.UUID `json:"issue_id"`
+	AuthorType string      `json:"author_type"`
+	AuthorID   pgtype.UUID `json:"author_id"`
+}
+
+// Repeat guard for server-written progress notes (DENE-1154): true when the
+// newest live progress_update this author left on the issue already carries
+// exactly this content, so a repeated observation does not append a copy.
+func (q *Queries) LatestProgressUpdateMatches(ctx context.Context, arg LatestProgressUpdateMatchesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, latestProgressUpdateMatches,
+		arg.Content,
+		arg.IssueID,
+		arg.AuthorType,
+		arg.AuthorID,
+	)
+	var matches bool
+	err := row.Scan(&matches)
+	return matches, err
+}
+
 const listChildCommentsForParents = `-- name: ListChildCommentsForParents :many
 SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, via_plugin_id, revision, recovery_settled_at, deleted_at, routing_kind, suppressed_agent_ids FROM comment
 WHERE parent_id = ANY($1::uuid[])

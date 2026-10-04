@@ -7,7 +7,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../locales/en/common.json";
 import enLayout from "../locales/en/layout.json";
 import { ShareScopeDialog, ShareScopeTrigger } from "./share-scope-dialog";
-import { GuestReadOnlyScope, WriteAction } from "../layout/guest-readonly";
+import { GuestReadOnlyScope } from "../layout/guest-readonly";
 
 const mutateIssue = vi.fn();
 const mutateRepo = vi.fn();
@@ -21,6 +21,12 @@ const data = vi.hoisted(() => ({
   projectMembers: [] as Array<{ member_id: string; name: string; email: string }>,
   shares: [] as Array<{ member_id: string; name: string; email: string }>,
   shareResources: [] as unknown[],
+  access: { visibility: "private", audience_size: 1, can_change: true, reason: null } as {
+    visibility: string;
+    audience_size: number;
+    can_change: boolean;
+    reason: string | null;
+  },
 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
@@ -54,6 +60,10 @@ vi.mock("@multica/core/visibility", () => ({
   },
   useAddResourceShare: () => ({ mutateAsync: addShare }),
   useRemoveResourceShare: () => ({ mutateAsync: removeShare }),
+  sharingAccessOptions: (_wsId: string, kind: string, id: string) => ({
+    queryKey: ["access", kind, id],
+    queryFn: () => data.access,
+  }),
 }));
 vi.mock("./actor-avatar", () => ({ ActorAvatar: () => <span data-testid="avatar" /> }));
 
@@ -186,16 +196,48 @@ describe("ShareScopeDialog", () => {
   it("keeps the sharing entry inert for guests", () => {
     const onClick = vi.fn();
     render(
-      <I18nProvider locale="en" resources={resources}>
-        <GuestReadOnlyScope isGuest>
-          <WriteAction>
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider locale="en" resources={resources}>
+          <GuestReadOnlyScope isGuest>
             <ShareScopeTrigger scope="private" onClick={onClick} />
-          </WriteAction>
-        </GuestReadOnlyScope>
-      </I18nProvider>,
+          </GuestReadOnlyScope>
+        </I18nProvider>
+      </QueryClientProvider>,
     );
-    fireEvent.click(screen.getByTestId("write-action"));
+    fireEvent.click(screen.getByTestId("share-scope-trigger"));
     expect(onClick).not.toHaveBeenCalled();
-    expect(screen.getByTestId("write-action")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByTestId("share-scope-trigger")).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("follows the server when it says the viewer cannot change the scope", async () => {
+    data.access = { visibility: "workspace", audience_size: 12, can_change: false, reason: "not_creator" };
+    const onClick = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider locale="en" resources={resources}>
+          <ShareScopeTrigger scope="workspace" onClick={onClick} access={{ kind: "issue", id: "issue-1" }} />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    const trigger = screen.getByTestId("share-scope-trigger");
+    await waitFor(() => expect(trigger).toHaveAttribute("aria-disabled", "true"));
+    fireEvent.click(trigger);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("stays clickable when the server allows the change", async () => {
+    data.access = { visibility: "private", audience_size: 1, can_change: true, reason: null };
+    const onClick = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider locale="en" resources={resources}>
+          <ShareScopeTrigger scope="private" onClick={onClick} access={{ kind: "project", id: "project-1" }} />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    const trigger = screen.getByTestId("share-scope-trigger");
+    await waitFor(() => expect(trigger).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(trigger);
+    expect(onClick).toHaveBeenCalled();
   });
 });

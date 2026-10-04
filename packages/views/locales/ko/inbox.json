@@ -195,6 +195,7 @@
       "mention": "Asked for you",
       "routing": "Nobody picked up",
       "patrol": "No reviewer",
+      "unseated": "No executor",
       "time_limit": "Timed out",
       "quota_relay": "Out of quota",
       "waiting_person": "Your call",

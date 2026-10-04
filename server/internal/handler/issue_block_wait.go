@@ -13,8 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/blockwait"
+	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/ghsnapshot"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -126,6 +129,7 @@ func (h *Handler) syncBlockWait(ctx context.Context, prev, next db.Issue) {
 	if prev.Status == "in_review" && next.Status != "in_review" {
 		h.deleteIssueMeta(ctx, next, blockwait.KeyReleased)
 		h.deleteIssueMeta(ctx, next, blockwait.KeyReviewNudged)
+		h.deleteIssueMeta(ctx, next, blockwait.KeyReleaseHold)
 	}
 	if prev.Status == "done" && next.Status != "done" {
 		h.deleteIssueMeta(ctx, next, blockwait.KeyReleased)
@@ -287,6 +291,10 @@ type releaseOutcome struct {
 	// Baseline is the "因主线原有失败放行" sentence when the merge let red
 	// checks through because the base branch already had them (DENE-892).
 	Baseline string
+	// Hold is the hold kind a pass that could not merge was kept in review
+	// for (DENE-1219); HoldNext is what clears it.
+	Hold     string
+	HoldNext string
 }
 
 // releaseOnAcceptance is the once-per-stay half of maybeReleaseOnAcceptance:
@@ -310,9 +318,11 @@ func (h *Handler) authorIsReviewer(issue db.Issue, comment db.Comment) bool {
 	return issue.ReviewerType.String == comment.AuthorType && issue.ReviewerID == comment.AuthorID
 }
 
-func (h *Handler) releaseAcceptedIssue(ctx context.Context, issue db.Issue, seed blockwait.Decision) releaseOutcome {
+// releasePlan is what a pass would do right now, without doing it: the
+// linked PRs, the release decision, and the delivery the merge is checked
+// against. ok is false when the PRs could not be read.
+func (h *Handler) releasePlan(ctx context.Context, issue db.Issue) (prs []db.ListPullRequestsByIssueRow, decision blockwait.Decision, delivery *service.IssueDelivery, ok bool) {
 	view, ensureErr := h.ensureIssueDeliveries(ctx, issue)
-	var prs []db.ListPullRequestsByIssueRow
 	var err error
 	if ensureErr != nil {
 		slog.Warn("block wait: delivery lookup failed", "error", ensureErr, "issue_id", uuidToString(issue.ID))
@@ -322,18 +332,15 @@ func (h *Handler) releaseAcceptedIssue(ctx context.Context, issue db.Issue, seed
 	}
 	if err != nil {
 		slog.Warn("block wait: list pull requests failed", "error", err, "issue_id", uuidToString(issue.ID))
-		return releaseOutcome{Status: issue.Status}
+		return nil, blockwait.Decision{}, nil, false
 	}
-	decision := blockwait.DecideRelease(h.gatePRSnapshots(ctx, prs), time.Now())
-	if seed.Reason != "" && decision.Reason != "" {
-		decision.Reason = seed.Reason + decision.Reason
-	}
+	decision = blockwait.DecideRelease(h.gatePRSnapshots(ctx, prs), time.Now())
 	// The delivery aggregate (DENE-820) decides whether anything is still
 	// unaccounted for before the pass is allowed to close or merge. An
-	// unresolved rescue line or an unclassified second line turns the pass
-	// into a structured block: the reviewer said the work is good, but the
-	// platform cannot yet say which branch that work is on.
-	var delivery *service.IssueDelivery
+	// unresolved rescue line or an unclassified second line holds the pass:
+	// the reviewer said the work is good, but the platform cannot yet say
+	// which branch that work is on, and the executor is the one who can sort
+	// it out.
 	if decision.Action == blockwait.ReleaseDone || decision.Action == blockwait.ReleaseMerge {
 		var deliveryErr error
 		delivery, deliveryErr = service.BuildIssueDelivery(ctx, h.Queries, issue)
@@ -347,23 +354,29 @@ func (h *Handler) releaseAcceptedIssue(ctx context.Context, issue db.Issue, seed
 			}
 		}
 		if blocker := service.DeliveryMergeBlocker(delivery, openHeads); blocker != "" {
-			decision.Action = blockwait.ReleaseBlock
-			decision.Reason = "验收已经通过，但交付线还没对齐：" + blocker + "。先标成阻塞，`multica issue delivery <issue>` 看现场。"
-			decision.Record.WaitCondition = "交付线对齐：" + blocker
-			if !decision.Record.HasWakeAt {
-				decision.Record.HasWakeAt = true
-				decision.Record.WakeAt = time.Now().Add(blockwait.QuietAfter).UTC()
+			decision = blockwait.Decision{
+				Action: blockwait.ReleaseHold,
+				Kind:   blockwait.HoldDelivery,
+				Record: blockwait.Record{WaitCondition: "交付线还没对齐：" + blocker + "（`multica issue delivery <issue>` 看现场）"},
 			}
-			out := h.blockAcceptedIssue(ctx, issue, decision)
-			h.wakeIssueOwner(ctx, issue, "验收已经通过，但这张票的交付线还没对齐："+blocker+"。请用 `multica issue delivery` 归类分支或换 canonical，再把票推回验收。", false)
-			return out
 		}
+	}
+	return prs, decision, delivery, true
+}
+
+func (h *Handler) releaseAcceptedIssue(ctx context.Context, issue db.Issue, seed blockwait.Decision) releaseOutcome {
+	prs, decision, delivery, ok := h.releasePlan(ctx, issue)
+	if !ok {
+		return releaseOutcome{Status: issue.Status}
+	}
+	if seed.Reason != "" && decision.Reason != "" {
+		decision.Reason = seed.Reason + decision.Reason
 	}
 	switch decision.Action {
 	case blockwait.ReleaseDone:
 		return h.finishAcceptedIssue(ctx, issue, decision.Reason)
-	case blockwait.ReleaseBlock:
-		return h.blockAcceptedIssue(ctx, issue, decision)
+	case blockwait.ReleaseHold:
+		return h.holdAcceptedIssue(ctx, issue, decision.Kind, decision.Record.WaitCondition, seed.Reason+passLead)
 	case blockwait.ReleaseMerge:
 		h.trackBaselineFix(ctx, issue, &decision, issue.ReviewerType.String, issue.ReviewerID)
 		out := h.mergeAcceptedIssue(ctx, issue, prs, delivery, decision)
@@ -412,6 +425,66 @@ func (h *Handler) blockAcceptedIssue(ctx context.Context, issue db.Issue, decisi
 	return releaseOutcome{Status: updated.Status, Note: decision.Reason}
 }
 
+// passLead opens the timeline sentence of a pass the platform could not merge.
+const passLead = "先不合并："
+
+// holdAcceptedIssue is a pass the platform could not merge yet (DENE-1219).
+// The ticket stays in review and keeps its pass; the next pass or patrol
+// round tries again, so checks that turn green merge without anyone acting.
+// A stop the executor has to clear wakes it once per distinct stop; checks
+// still running wake nobody.
+func (h *Handler) holdAcceptedIssue(ctx context.Context, issue db.Issue, kind, condition, lead string) releaseOutcome {
+	h.deleteIssueMeta(ctx, issue, blockwait.KeyReleased)
+	next := releaseHoldNext(kind)
+	note := lead + condition + "。" + next
+	out := releaseOutcome{Status: issue.Status, Note: note, Hold: kind, HoldNext: next}
+	signature := kind + "|" + condition
+	if blockwait.MetaString(parseIssueMetadata(issue.Metadata), blockwait.KeyReleaseHold) == signature {
+		return out
+	}
+	h.setIssueMetaString(ctx, issue, blockwait.KeyReleaseHold, signature)
+	if kind == blockwait.HoldChecksPending {
+		h.postBlockComment(ctx, issue, note)
+		return out
+	}
+	h.wakeExecutor(ctx, issue, note)
+	return out
+}
+
+// releaseHoldNext is the sentence that tells the executor how a held pass
+// ends. The ticket stays in review either way.
+func releaseHoldNext(kind string) string {
+	switch kind {
+	case blockwait.HoldChecksPending:
+		return "票保持待验收，检查跑完变绿后平台巡检会自动合并关单，不用人管。"
+	case blockwait.HoldChecksRed:
+		return "票保持待验收。请执行人看红的检查：这次改动引起的就修好推上去；不是这次改动的问题就处理掉后用 `gh pr merge --squash <PR 链接>` 合入。PR 变绿或已合并后，巡检按已通过收口。"
+	case blockwait.HoldConflict:
+		return "票保持待验收。请执行人把 origin/kun 合进分支、解决冲突推上去；PR 能干净合并后，巡检按已通过收口。"
+	case blockwait.HoldMergeFailed:
+		return "票保持待验收。请执行人用 `gh pr merge --squash <PR 链接>` 在本机合入；巡检看到已合并就关单。"
+	case blockwait.HoldDelivery:
+		return "票保持待验收。请执行人用 `multica issue delivery` 归类分支或换 canonical；对齐后巡检按已通过收口。"
+	default:
+		return "票保持待验收，巡检下一轮再试。"
+	}
+}
+
+// wakeExecutor posts note with the executor's mention and starts it. A
+// ticket in review would otherwise wake its reviewer, who passed already and
+// cannot fix the branch.
+func (h *Handler) wakeExecutor(ctx context.Context, issue db.Issue, note string) {
+	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid || (issue.AssigneeType.String != "agent" && issue.AssigneeType.String != "squad") {
+		h.postBlockComment(ctx, issue, note)
+		return
+	}
+	mention := h.buildParentAssigneeMention(ctx, issue)
+	comment := h.postBlockComment(ctx, issue, mention+note)
+	if comment.ID.Valid {
+		h.dispatchWaitingOnAssigneeTrigger(ctx, issue, comment.ID)
+	}
+}
+
 func (h *Handler) mergeAcceptedIssue(ctx context.Context, issue db.Issue, prs []db.ListPullRequestsByIssueRow, delivery *service.IssueDelivery, decision blockwait.Decision) releaseOutcome {
 	// The PR on the canonical branch is the delivery; only when no PR sits on
 	// it does the first open PR stand in, as before DENE-820.
@@ -430,33 +503,21 @@ func (h *Handler) mergeAcceptedIssue(ctx context.Context, issue db.Issue, prs []
 	if open == nil {
 		return h.finishAcceptedIssue(ctx, issue, decision.Reason)
 	}
-	err := h.mergeGatePull(ctx, issue.WorkspaceID, *open)
+	err := h.mergeOpenPulls(ctx, issue.WorkspaceID, []db.ListPullRequestsByIssueRow{*open})
 	if err == nil {
 		out := h.finishAcceptedIssue(ctx, issue, decision.Reason+" PR 已合并。")
 		out.Merged = true
 		out.PRURL = open.HtmlUrl
 		return out
 	}
-	decision.Action = blockwait.ReleaseBlock
+	condition := "合并 " + open.HtmlUrl + " 重试一次后还是没成功"
 	if errors.Is(err, errPullMergeUnavailable) {
-		decision.Reason = decision.Reason + " 这台服务没有合并权限，已改成阻塞并叫醒执行人去合并。"
-		decision.Record.WaitCondition = "验收已通过，等待执行人合并 " + open.HtmlUrl
+		condition = "这台服务没有合并权限，合不了 " + open.HtmlUrl
 	} else if errors.Is(err, errPullNotMergeable) {
-		decision.Reason = fmt.Sprintf("验收已经通过，但 %s 现在合不进去。先标成阻塞，到点再看。", open.HtmlUrl)
-		decision.Record.WaitCondition = open.HtmlUrl + " 合不进去"
-	} else {
-		decision.Reason = "验收已经通过，合并没有成功。先标成阻塞，到点再试。"
-		decision.Record.WaitCondition = "合并 " + open.HtmlUrl + " 没有成功"
+		condition = open.HtmlUrl + " 现在合不进去"
 	}
-	if !decision.Record.HasWakeAt {
-		decision.Record.HasWakeAt = true
-		decision.Record.WakeAt = time.Now().Add(blockwait.QuietAfter).UTC()
-	}
-	out := h.blockAcceptedIssue(ctx, issue, decision)
+	out := h.holdAcceptedIssue(ctx, issue, blockwait.HoldMergeFailed, condition, "验收已经通过，平台合并没成功：")
 	out.PRURL = open.HtmlUrl
-	if errors.Is(err, errPullMergeUnavailable) {
-		h.wakeIssueOwner(ctx, issue, "验收已经通过。请合并关联的 PR，然后把这张票关了。合不进去就让它停在阻塞上。", false)
-	}
 	return out
 }
 
@@ -772,8 +833,18 @@ func activityTime(issue db.Issue) time.Time {
 
 // wakeIssueOwner starts the assignee (or the reviewer, while in review) and
 // leaves a sentence. A disabled seat is named and not replaced here — that
-// handoff belongs to the disabled-seat path.
+// handoff belongs to the disabled-seat path. A ticket nobody holds is seated
+// by routing first; when routing cannot, a person is told exactly that.
 func (h *Handler) wakeIssueOwner(ctx context.Context, issue db.Issue, reason string, commentOnly bool) {
+	if !commentOnly && issue.Status != "in_review" && !issue.AssigneeID.Valid &&
+		blockwait.MetaString(parseIssueMetadata(issue.Metadata), blockwait.KeyNeedsHuman) == "" {
+		seated, why := h.seatBeforeWake(ctx, issue)
+		if !seated.AssigneeID.Valid {
+			h.reportUnseatedWake(ctx, issue, reason, why)
+			return
+		}
+		issue = seated
+	}
 	targetType, targetID := issue.AssigneeType, issue.AssigneeID
 	if issue.Status == "in_review" && issue.ReviewerType.Valid && issue.ReviewerID.Valid && issue.ReviewerType.String != "none" {
 		targetType, targetID = issue.ReviewerType, issue.ReviewerID
@@ -814,6 +885,78 @@ func (h *Handler) wakeIssueOwner(ctx context.Context, issue db.Issue, reason str
 	waker.AssigneeType = targetType
 	waker.AssigneeID = targetID
 	h.dispatchWaitingOnAssigneeTrigger(ctx, waker, comment.ID)
+}
+
+// seatBeforeWake asks routing to fill the empty executor slot of a ticket
+// whose wait just ended (DENE-1255). The seat is written parked; the wake
+// that follows starts it. The ticket is read again either way, so a slot a
+// person or another pass filled meanwhile counts too. why says, in words a
+// person can act on, why the slot is still empty.
+func (h *Handler) seatBeforeWake(ctx context.Context, issue db.Issue) (db.Issue, string) {
+	why := "这个工作区没有开自动派单"
+	if h.Routing != nil {
+		rctx, cancel := context.WithTimeout(ctx, routeTimeout)
+		out, err := h.Routing.SeatExecutor(rctx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID))
+		cancel()
+		switch {
+		case err != nil:
+			why = "路由这次出错了（" + err.Error() + "）"
+		case out.Action == routing.ActionSkipped && out.Reason == "routing not enabled":
+		case strings.TrimSpace(out.Reason) != "":
+			why = "路由没补上（" + out.Reason + "）"
+		default:
+			why = "路由没补上"
+		}
+	}
+	fresh, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	if err != nil {
+		return issue, why
+	}
+	return fresh, why
+}
+
+// reportUnseatedWake is the wake with nobody to start: the comment says
+// what ended, that the ticket has no executor, why routing left it empty,
+// and the one action that resumes it; the summon puts that same sentence on
+// a person's inbox card.
+func (h *Handler) reportUnseatedWake(ctx context.Context, issue db.Issue, reason, why string) {
+	recipient := h.unseatedRecipient(ctx, issue)
+	mention := ""
+	if recipient.Valid {
+		mention = h.memberWakeMention(ctx, recipient)
+	}
+	body := strings.TrimSpace(reason) + " 但这张票没有执行人，" + why + "，所以没有叫醒任何人。" + unseatedReason + "选好后平台会接着叫醒它。"
+	comment := h.postBlockComment(ctx, issue, mention+body)
+	if !recipient.Valid {
+		return
+	}
+	_, _ = h.summonPerson(ctx, service.SummonInput{
+		Issue:      issue,
+		Recipient:  recipient,
+		CallerType: "system",
+		Source:     service.SummonSourceUnseated,
+		Reason:     unseatedReason,
+		CommentID:  comment.ID,
+		NoComment:  !comment.ID.Valid,
+	})
+}
+
+// unseatedRecipient is who decides who holds a ticket nobody holds: the
+// person who created it, else a workspace manager — routing's notify rule.
+func (h *Handler) unseatedRecipient(ctx context.Context, issue db.Issue) pgtype.UUID {
+	if issue.CreatorType == "member" && issue.CreatorID.Valid {
+		return issue.CreatorID
+	}
+	managers, err := h.Queries.ListWorkspaceManagerUserIDs(ctx, issue.WorkspaceID)
+	if err != nil {
+		slog.Warn("block wait: list managers failed", "error", err, "issue_id", uuidToString(issue.ID))
+	}
+	for _, m := range managers {
+		if m.Valid {
+			return m
+		}
+	}
+	return pgtype.UUID{}
 }
 
 // coverDisabledWakeTarget keeps the patrol from waking a seat that is not
@@ -876,4 +1019,128 @@ func (h *Handler) memberWakeMention(ctx context.Context, userID pgtype.UUID) str
 		name = "member"
 	}
 	return fmt.Sprintf("[@%s](mention://member/%s) ", name, uuidToString(userID))
+}
+
+// blockAttributionRejection is the 400 an agent gets for moving a ticket to
+// blocked without saying what kind of stop it is and what happens next. The
+// sub-issue blocker card reads exactly these two fields; without them the row
+// is blank and never counts as "needs you" (DENE-1301). A member dragging a
+// card is not asked for them.
+func blockAttributionRejection(req UpdateIssueRequest, actorType string) string {
+	if actorType != "agent" {
+		return ""
+	}
+	kind := strings.TrimSpace(deref(req.BlockKind))
+	action := strings.TrimSpace(deref(req.BlockAction))
+	const hint = "智能体把票改成 blocked 要写明卡点类型和下一步：--block-kind（decision / permission / external / dependency / capacity）配 --block-action（一句话，80 字以内）。更推荐用 `multica issue close --outcome blocked`，它会一并写好。"
+	if kind == "" || action == "" {
+		return hint
+	}
+	if !closeprotocol.AllowedBlockKind(kind) {
+		return fmt.Sprintf("--block-kind %q 不是允许的值。", kind) + hint
+	}
+	if len([]rune(action)) > 80 {
+		return "--block-action 超过 80 字。" + hint
+	}
+	return ""
+}
+
+// persistBlockAttribution writes the kind and next step a status move into
+// blocked carried, so the blocker card has the same two fields a blocked
+// close writes.
+func (h *Handler) persistBlockAttribution(ctx context.Context, issue db.Issue, req UpdateIssueRequest) {
+	kind := strings.TrimSpace(deref(req.BlockKind))
+	action := strings.TrimSpace(deref(req.BlockAction))
+	if kind == "" || action == "" || !closeprotocol.AllowedBlockKind(kind) {
+		return
+	}
+	h.setIssueMetaString(ctx, issue, closeprotocol.KeyBlockKind, kind)
+	h.setIssueMetaString(ctx, issue, closeprotocol.KeyBlockAction, truncateRunes(action, 80))
+}
+
+// executorReached reports whether a comment's trigger results include a run
+// for the issue's own executor — its agent, or a leader run under its squad.
+// A run handed to someone else the comment happened to @ does not count.
+func executorReached(issue db.Issue, enqueued map[string]commentEnqueueResult) bool {
+	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return false
+	}
+	assignee := uuidToString(issue.AssigneeID)
+	for agentID, res := range enqueued {
+		switch res.status {
+		case DispatchQueued, DispatchCoalesced, DispatchSteered:
+		default:
+			continue
+		}
+		switch issue.AssigneeType.String {
+		case "agent":
+			if agentID == assignee {
+				return true
+			}
+		case "squad":
+			if res.execSquadID == assignee {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// resumeBlockedOnReply moves a blocked ticket back to in_progress when a
+// member's reply has just woken its executor (DENE-1301). Before this the
+// ticket kept saying "blocked, needs you" until the executor closed again,
+// although the person had already answered and the work was moving. The wait
+// keys are dropped as on any move out of blocked, and the blocked close record
+// is marked superseded rather than replaced: nobody closed anything.
+func (h *Handler) resumeBlockedOnReply(ctx context.Context, issue db.Issue, enqueued map[string]commentEnqueueResult, summonWoke bool) {
+	if issue.Status != issuestatus.Blocked || h.TxStarter == nil || !(summonWoke || executorReached(issue, enqueued)) {
+		return
+	}
+	var prev, updated db.Issue
+	err := func() error {
+		tx, err := h.TxStarter.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		qtx := h.Queries.WithTx(tx)
+		var status string
+		if err := tx.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1 AND workspace_id = $2 FOR UPDATE`, issue.ID, issue.WorkspaceID).Scan(&status); err != nil {
+			return err
+		}
+		if status != issuestatus.Blocked {
+			return pgx.ErrNoRows
+		}
+		prev, err = qtx.GetIssue(ctx, issue.ID)
+		if err != nil {
+			return err
+		}
+		updated, err = qtx.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Status: issuestatus.InProgress})
+		if err != nil {
+			return err
+		}
+		// §6.1: the blocker fields belong to a blocked ticket only.
+		drop := append(blockwait.WaitKeys(), blockwait.KeyWatched, closeprotocol.KeyBlockKind, closeprotocol.KeyBlockAction)
+		for _, key := range drop {
+			if _, err := qtx.DeleteIssueMetadataKey(ctx, db.DeleteIssueMetadataKeyParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: key}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		if at := blockwait.MetaString(parseIssueMetadata(prev.Metadata), closeprotocol.KeyAt); at != "" {
+			if err := setIssueMetaStringTx(ctx, qtx, updated, closeprotocol.KeySuperseded, at); err != nil {
+				return err
+			}
+		}
+		if updated, err = qtx.GetIssue(ctx, issue.ID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}()
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("block wait: resume on reply failed", "error", err, "issue_id", uuidToString(issue.ID))
+		}
+		return
+	}
+	h.publishBlockStatus(prev, updated)
 }

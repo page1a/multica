@@ -52,3 +52,40 @@ onlineManager.setEventListener((setOnline) => {
     setOnline(state.isConnected === true);
   });
 });
+
+import { useEffect, useRef } from "react";
+import { createPersistedQueryCache, clearPersistedQueryCache } from "@multica/core/query-persistence";
+import { useAuthStore } from "@/data/auth-store";
+import type { StorageAdapter } from "@multica/core/types";
+
+const mobileWebStorage: StorageAdapter = {
+  getItem: (key) => (typeof window === "undefined" ? null : window.localStorage.getItem(key)),
+  setItem: (key, value) => { if (typeof window !== "undefined") window.localStorage.setItem(key, value); },
+  removeItem: (key) => { if (typeof window !== "undefined") window.localStorage.removeItem(key); },
+  keys: () => (typeof window === "undefined" ? [] : Object.keys(window.localStorage)),
+};
+
+/** Persists safe page queries for the mobile web build; native has no sync StorageAdapter. */
+export function MobileQueryPersistence() {
+  const userId = useAuthStore((state) => state.user?.id ?? null);
+  const previousUser = useRef<string | null>(null);
+  const stop = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (previousUser.current === userId) return;
+    stop.current?.();
+    stop.current = null;
+    if (previousUser.current && previousUser.current !== userId) {
+      queryClient.clear();
+      if (!userId) clearPersistedQueryCache(mobileWebStorage, previousUser.current);
+    }
+    previousUser.current = userId;
+    if (userId && typeof window !== "undefined") {
+      stop.current = createPersistedQueryCache(queryClient, mobileWebStorage, userId);
+    }
+    return () => {
+      stop.current?.();
+      stop.current = null;
+    };
+  }, [userId]);
+  return null;
+}

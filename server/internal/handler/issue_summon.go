@@ -294,9 +294,10 @@ func mentionSummonReason(content string) string {
 // answerSummons marks the author's open calls on this ticket answered and,
 // when the comment itself started no run, wakes whoever is waiting on the
 // answer: the agent that made the call, or else the ticket's executor.
-func (h *Handler) answerSummons(ctx context.Context, issue db.Issue, comment db.Comment, actorType, actorID string, woke bool) {
+// It reports whether answering the call enqueued a run for the executor.
+func (h *Handler) answerSummons(ctx context.Context, issue db.Issue, comment db.Comment, actorType, actorID string, woke bool) bool {
 	if actorType != "member" {
-		return
+		return false
 	}
 	answered, err := h.Queries.AnswerIssueSummons(ctx, db.AnswerIssueSummonsParams{
 		IssueID:         issue.ID,
@@ -305,19 +306,18 @@ func (h *Handler) answerSummons(ctx context.Context, issue db.Issue, comment db.
 	})
 	if err != nil {
 		slog.Warn("summon: answer failed", "error", err, "issue_id", uuidToString(issue.ID))
-		return
+		return false
 	}
 	service.SettleSummonInbox(ctx, h.Queries, h.Bus, answered)
 	if len(answered) == 0 || woke {
-		return
+		return false
 	}
 	for _, s := range answered {
 		if s.CallerType == "agent" && s.CallerID.Valid {
-			h.triggerWaitingOnAgent(ctx, issue, s.CallerID, comment.ID)
-			return
+			return h.triggerWaitingOnAgent(ctx, issue, s.CallerID, comment.ID)
 		}
 	}
-	h.dispatchWaitingOnAssigneeTrigger(ctx, issue, comment.ID)
+	return h.dispatchWaitingOnAssigneeTrigger(ctx, issue, comment.ID)
 }
 
 func triggerOutcomesStartedRun(outcomes []CommentTriggerOutcome) bool {

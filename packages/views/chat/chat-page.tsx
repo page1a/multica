@@ -48,6 +48,7 @@ import { pinListOptions, useCreatePin, useDeletePin, useReorderPins } from "@mul
 import { useChatProjectBarStore, selectPinnedProjectIds } from "@multica/core/chat/project-bar-store";
 import type { Agent, ChatSession } from "@multica/core/types";
 import { PageHeader } from "../layout/page-header";
+import { ResourceNotFound } from "../layout/guest-readonly";
 import { useBackOrReplace, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { ChatMessageList, ChatMessageSkeleton } from "./components/chat-message-list";
@@ -67,6 +68,7 @@ import { useChatController } from "./components/use-chat-controller";
 import { OfflineBanner } from "./components/offline-banner";
 import { NoAgentBanner } from "./components/no-agent-banner";
 import { ArchivedAgentBanner } from "./components/archived-agent-banner";
+import { ChatOriginBar } from "./components/chat-origin-bar";
 import { AgentAccessRevokedBanner } from "./components/agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
 import { WorkThreadPanel } from "../common/work-thread-panel";
@@ -234,6 +236,12 @@ export function ChatPage() {
   // conversation pane is always mounted so it only needs to reset itself once a
   // real session takes over.
   const [composingNew, setComposingNew] = useState(false);
+  // A linked chat this person cannot open (see listedSessionIds). The pane
+  // explains it in place until they pick or start another chat.
+  const [unavailableLink, setUnavailableLink] = useState(false);
+  useEffect(() => {
+    if (c.activeSessionId || composingNew) setUnavailableLink(false);
+  }, [c.activeSessionId, composingNew]);
   // Project, search and archive view survive the list unmounting (a phone
   // opens a chat by replacing the list) and a discarded tab's reload.
   const projectFilter = useChatListViewStore((s) => s.projectFilter);
@@ -308,6 +316,16 @@ export function ChatPage() {
   // Set by a compact list pick so the store → URL sync below pushes instead of
   // replacing, giving the conversation its own step in the back stack.
   const pushNextSessionSync = useRef(false);
+  // Chats that have appeared in this person's list since the page mounted. A
+  // linked chat that never did is one they cannot open (someone else's private
+  // chat, or deleted); the controller's self-heal clears it and the sync below
+  // drops back to the list, whose pane must say why instead of a silent jump. One
+  // that was listed and then vanished (deleted or archived away here) needs no
+  // explanation.
+  const listedSessionIds = useRef(new Set<string>());
+  useEffect(() => {
+    for (const session of c.sessions) listedSessionIds.current.add(session.id);
+  }, [c.sessions]);
 
   // URL → store: deep link, refresh, notification click, back/forward.
   useEffect(() => {
@@ -327,6 +345,9 @@ export function ChatPage() {
     const pushSync = pushNextSessionSync.current;
     pushNextSessionSync.current = false;
     if (live !== current) {
+      if (!live && current && c.sessionsLoaded && !listedSessionIds.current.has(current)) {
+        setUnavailableLink(true);
+      }
       const target = live ? wsPaths.chatSession(live) : wsPaths.chat();
       if (pushSync && live) push(target);
       else replace(target);
@@ -735,6 +756,7 @@ export function ChatPage() {
           }
         />
       )}
+      {c.currentSession && <ChatOriginBar session={c.currentSession} />}
       {c.currentSession && (
         <ChatProjectNudge
           session={c.currentSession}
@@ -890,6 +912,21 @@ export function ChatPage() {
         </div>
       );
     }
+    if (unavailableLink) {
+      return (
+        <div className="flex flex-1 flex-col min-h-0">
+          <ResourceNotFound
+            kind="chat"
+            actions={
+              <Button variant="outline" size="sm" onClick={() => setUnavailableLink(false)}>
+                <ArrowLeft className="mr-1 h-3.5 w-3.5" />
+                {t(($) => $.page.back_to_list)}
+              </Button>
+            }
+          />
+        </div>
+      );
+    }
     return (
       <div className="flex flex-1 flex-col min-h-0">
         {listHeader}
@@ -933,6 +970,13 @@ export function ChatPage() {
         detail={
           hasTarget ? (
             conversation
+          ) : unavailableLink ? (
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex h-12 shrink-0 items-center justify-end border-b px-2">
+                {directNewChatButton}
+              </div>
+              <ResourceNotFound kind="chat" />
+            </div>
           ) : (
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex h-12 shrink-0 items-center justify-end border-b px-2">

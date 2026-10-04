@@ -71,7 +71,7 @@ func (h *Handler) substituteAgent(ctx context.Context, workspaceID pgtype.UUID, 
 		if agent.RoutingTier.Valid {
 			tier = agent.RoutingTier.String
 		}
-		roster[agent.Name] = routing.Agent{ID: id, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage}
+		roster[agent.Name] = routing.Agent{ID: id, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage, Model: agent.Model.String}
 		byID[id] = agent
 	}
 	holder := routing.Seat{ID: uuidToString(failed.ID), Name: failed.Name}

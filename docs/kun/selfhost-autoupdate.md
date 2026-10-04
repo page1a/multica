@@ -32,6 +32,26 @@ sudo scripts/install-selfhost-autoupdate.sh --repo-dir /srv/multica --branch mai
 sudo scripts/install-selfhost-autoupdate.sh --no-enable        # 只写 unit，先不启用
 ```
 
+## 镜像来源：本机编译或拉 CI 镜像
+
+`/etc/multica/autoupdate.env` 里的 `MULTICA_AUTOUPDATE_IMAGE_SOURCE` 决定新版本从哪来：
+
+- `build`（默认）—— 在本机 `docker compose build`。2 核机器上一次要 10 分钟以上，期间访问明显变慢（DENE-1182）。
+- `registry` —— `.github/workflows/selfhost-images.yml` 在 `kun` 每次 push 后用 GitHub Actions 编好 amd64 镜像，推到 `ghcr.io/jeff-kunkun/multica-{backend,web}:sha-<完整 commit>`（另带一个 `:kun` 指向最新）。脚本只 `docker pull` 这两个 tag，再改名成本地的 `multica-backend:dev` / `multica-web:dev`，所以 compose 文件、`:prev` 回滚和 `/health` 校验都和编译模式一样。部署成功后会删掉拉下来的 `sha-*` 标签并清理悬空镜像。
+
+`ai.ferryway.cc` 用的是 `registry`：
+
+```bash
+# /etc/multica/autoupdate.env
+MULTICA_AUTOUPDATE_IMAGE_SOURCE=registry
+# 可选，默认就是 fork 自己的命名空间；不要指向 ghcr.io/multica-ai
+# MULTICA_AUTOUPDATE_REGISTRY=ghcr.io/jeff-kunkun
+```
+
+两个包在 GHCR 上是公开的，服务器拉取不需要登录。仓库公开，Actions 分钟数和公开包的存储、流量都不收费。
+
+`kun` 刚 push 时镜像还没编完，这一轮会记成 `result=pending`、什么都不动，等下一轮再试；一般 push 后 10–20 分钟上线。一直 `pending` 就去看 Actions 里 `Self-host images` 那次运行是不是失败了。
+
 ## 确认它在跑
 
 ```bash
@@ -67,13 +87,14 @@ sudo systemctl start multica-autoupdate.service
 | `last_check_at` | 这一轮开始的时间（UTC） |
 | `deployed_commit` | 跑完后 `/health` 报的 commit，也就是**真正在服务**的版本 |
 | `target_commit` | 这一轮 `origin/<branch>` 的 SHA |
-| `result` | `noop` / `updated` / `rolled_back` / `failed` |
+| `result` | `noop` / `updated` / `pending` / `rolled_back` / `failed` |
 | `error` | 失败原文（构建日志尾部等），成功时为空 |
 | `duration_seconds` | 这一轮耗时 |
 
 `result` 怎么读：
 
 - `noop` —— 没有漂移，什么都没做（不重建）。
+- `pending` —— 只在 `registry` 模式出现：目标 commit 的镜像还拉不到（CI 没编完，或编失败了），什么都没动。`error` 里是 `docker pull` 的原文。
 - `updated` —— 升级成功，`/health` 的 commit 已经等于目标 SHA。
 - `rolled_back` —— 升级失败，但已经回滚：镜像 `:prev` 打回 `:dev`、checkout 回到旧 SHA、容器重建、健康检查重新通过。**退出码非零**，值得看一眼 `error`。
 - `failed` —— 没能回到旧版本（或失败发生在动手之前，比如 `git fetch` 失败）。机器现在处于需要人看的状态。
@@ -122,7 +143,6 @@ curl -s localhost:8080/readyz            # db / migrations 都要 ok
 
 ## 不做什么
 
-- 不做 GHCR 预构建镜像 + 服务器只拉取。现在本机构建能跑通，换 GHCR 要在盒子上放 registry 凭据、还要改 CI，收益只是省构建时间，不解决漂移。
 - 不做 push 触发部署（GitHub Actions ssh 进盒子）。要把 SSH 私钥放进 GitHub secrets，是仓库授权级变更，而 15 分钟轮询已经够用。
 - 不动数据库备份、不动 TLS、不改 compose 的服务拓扑。
 

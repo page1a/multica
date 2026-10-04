@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/routing"
@@ -155,6 +157,7 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 			}
 		}
 	}
+	out.Related = s.relatedTickets(ctx, row)
 	if !row.ParentIssueID.Valid {
 		// Only a top-level issue can be a group's coordinator, and the judge
 		// is told either way: a parent is a different job from a leaf.
@@ -163,8 +166,74 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 		}
 	}
 	out.Reviewer = s.reviewerRef(ctx, row)
+	if out.Status == "blocked" {
+		out.Wait = s.blockWait(ctx, row)
+	}
 	return out, nil
 }
+
+// blockWait reads the ticket's wait record and the live state of every
+// ticket it names, through the same reads the block patrol uses, so the
+// blocked row and the patrol cannot disagree about whether a blocker ended.
+func (s routingStore) blockWait(ctx context.Context, row db.Issue) routing.BlockWait {
+	rec := blockwait.ParseMetadata(parseIssueMetadata(row.Metadata))
+	out := routing.BlockWait{Registered: rec.Structured(), BlockedBy: rec.BlockedBy}
+	for _, view := range s.h.blockerViews(ctx, row, rec) {
+		if view.Cleared() {
+			out.Ended = append(out.Ended, view.Ref)
+		}
+	}
+	return out
+}
+
+// relatedTickets lists the agent-held tickets whose executor may continue
+// this one (接着做, DENE-1202): siblings one stage earlier, the parent, and
+// tickets the same agent run created. Read errors drop the relation rather
+// than fail the route: a missing candidate only means the ladder decides.
+func (s routingStore) relatedTickets(ctx context.Context, row db.Issue) []routing.RelatedTicket {
+	prefix := s.h.getIssuePrefix(ctx, row.WorkspaceID)
+	var out []routing.RelatedTicket
+	add := func(rel db.Issue, relation routing.Relation) {
+		if rel.ID == row.ID || !rel.AssigneeType.Valid || rel.AssigneeType.String != "agent" || !rel.AssigneeID.Valid {
+			return
+		}
+		out = append(out, routing.RelatedTicket{
+			Identifier: fmt.Sprintf("%s-%d", prefix, rel.Number),
+			Relation:   relation,
+			ExecutorID: util.UUIDToString(rel.AssigneeID),
+		})
+	}
+	if row.ParentIssueID.Valid {
+		if row.Stage.Valid && row.Stage.Int32 > 1 {
+			if siblings, err := s.h.Queries.ListChildIssues(ctx, row.ParentIssueID); err == nil {
+				for _, sib := range siblings {
+					if sib.Stage.Valid && sib.Stage.Int32 == row.Stage.Int32-1 {
+						add(sib, routing.RelationPreviousStage)
+					}
+				}
+			}
+		}
+		if parent, err := s.h.Queries.GetIssue(ctx, row.ParentIssueID); err == nil && parent.WorkspaceID == row.WorkspaceID {
+			add(parent, routing.RelationParent)
+		}
+	}
+	if row.OriginType.Valid && row.OriginType.String == routingBatchOrigin && row.OriginID.Valid {
+		if batch, err := s.h.Queries.ListIssuesByOrigins(ctx, db.ListIssuesByOriginsParams{
+			WorkspaceID: row.WorkspaceID,
+			OriginType:  row.OriginType,
+			OriginIds:   []pgtype.UUID{row.OriginID},
+		}); err == nil {
+			for _, b := range batch {
+				add(b, routing.RelationSameBatch)
+			}
+		}
+	}
+	return out
+}
+
+// routingBatchOrigin is the origin stamped on tickets an agent run created;
+// tickets sharing it are one batch.
+const routingBatchOrigin = "agent_create"
 
 // reviewerRef reads the reviewer pair off the issue and resolves the display
 // name from the roster. The name is resolved on every read and stored nowhere,
@@ -234,6 +303,7 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 			Tier:    a.RoutingTier.String,
 			Demoted: demoted[id],
 			Usage:   a.RoutingUsage,
+			Model:   a.Model.String,
 		}
 	}
 	return out, nil
@@ -343,7 +413,7 @@ func (s routingStore) OffRosterSeat(ctx context.Context, workspaceID, agentID st
 	if agent.RoutingTier.Valid {
 		tier = agent.RoutingTier.String
 	}
-	return routing.Agent{ID: agentID, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage}, true, nil
+	return routing.Agent{ID: agentID, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage, Model: agent.Model.String}, true, nil
 }
 
 func (s routingStore) ReplaceReviewer(ctx context.Context, workspaceID, issueID, currentID string, ref routing.ReviewerRef) (bool, error) {
@@ -606,18 +676,35 @@ func (s routingStore) writeAcceptanceNotice(ctx context.Context, q *db.Queries, 
 
 const routingSummonReason = "这张票需要你看一眼——路由没有人会继续推进它。"
 
+// routingSummonFor names, for the inbox card, the one fact that keeps this
+// ticket from moving and the action that clears it (DENE-1255). "需要你看一眼"
+// is only the answer when the record holds nothing more specific.
+func routingSummonFor(issue db.Issue) (source, reason string) {
+	if !issue.AssigneeID.Valid && issue.Status != "in_review" {
+		return service.SummonSourceUnseated, unseatedReason
+	}
+	if issue.Status == "blocked" && !blockwait.ParseMetadata(parseIssueMetadata(issue.Metadata)).Structured() {
+		return service.SummonSourceRouting, "挂在阻塞但没写在等什么：让执行人用 `multica issue close --outcome blocked --blocked-by <挡路的票>` 补上，没在等就改回待办。"
+	}
+	return service.SummonSourceRouting, routingSummonReason
+}
+
+// unseatedReason is the card for a ticket nobody holds.
+const unseatedReason = "缺执行人：在执行人栏选一个智能体即可（命令行 `multica issue assign <票号> --to <名字>`）。"
+
 // writeRoutingSummon calls the person through the summon entry (DENE-880) and
 // writes this stay's routing_needs_you row. The summon records the open call
 // so the person's reply wakes the executor and it shows on their waiting
 // list; the inbox row stays per stay (HasAcceptanceNoticeSince), so a later
 // stay notifies again even while an earlier call is still unanswered.
 func writeRoutingSummon(ctx context.Context, q *db.Queries, issue db.Issue, uid pgtype.UUID) error {
+	source, reason := routingSummonFor(issue)
 	res, err := service.SummonWith(ctx, q, service.SummonInput{
 		Issue:      issue,
 		Recipient:  uid,
 		CallerType: "system",
-		Source:     service.SummonSourceRouting,
-		Reason:     routingSummonReason,
+		Source:     source,
+		Reason:     reason,
 		NoComment:  true,
 		SkipInbox:  true,
 	})
@@ -628,7 +715,7 @@ func writeRoutingSummon(ctx context.Context, q *db.Queries, issue db.Issue, uid 
 	if res.Summon.ID.Valid {
 		details, _ = json.Marshal(map[string]any{
 			"summon_id": util.UUIDToString(res.Summon.ID),
-			"source":    service.SummonSourceRouting,
+			"source":    source,
 		})
 	}
 	if _, err := q.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
@@ -645,7 +732,7 @@ func writeRoutingSummon(ctx context.Context, q *db.Queries, issue db.Issue, uid 
 		Severity:      "action_required",
 		IssueID:       issue.ID,
 		Title:         issue.Title,
-		Body:          pgtype.Text{String: routingSummonReason, Valid: true},
+		Body:          pgtype.Text{String: reason, Valid: true},
 		ActorType:     pgtype.Text{String: "system", Valid: true},
 		Details:       details,
 	})
@@ -898,15 +985,16 @@ func (s routingStore) EnabledWorkspaces(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// UnassignedTodos lists quiet todo tickets with at least one empty routing
-// seat. The SQL filters the cheap, stable eligibility set; Route repeats the
-// human-held guard and applies the fill-only writes atomically.
-func (s routingStore) UnassignedTodos(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error) {
+// UnseatedIssues lists quiet todo tickets with at least one empty routing
+// seat, and quiet blocked tickets with no executor. The SQL filters the cheap,
+// stable eligibility set; Route repeats the human-held guard and applies the
+// fill-only writes atomically.
+func (s routingStore) UnseatedIssues(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error) {
 	wsID, err := util.ParseUUID(workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.h.Queries.ListUnassignedTodoIssues(ctx, db.ListUnassignedTodoIssuesParams{
+	rows, err := s.h.Queries.ListUnseatedIssues(ctx, db.ListUnseatedIssuesParams{
 		WorkspaceID: wsID,
 		Before:      pgtype.Timestamptz{Time: before, Valid: true},
 		Lim:         int32(limit),

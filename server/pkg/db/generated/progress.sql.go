@@ -236,7 +236,7 @@ WHERE id = $6 AND workspace_id = $7
        OR progress_source <> 'agent'
        OR progress_updated_at IS NULL
        OR progress_updated_at < $9::timestamptz)
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at, project_nudge_dismissed_at, visibility, title_locked, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at, project_nudge_dismissed_at, visibility, title_locked, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at, origin_type, origin_session_id, origin_task_id, origin_client_key
 `
 
 type UpdateChatSessionProgressParams struct {
@@ -293,6 +293,10 @@ func (q *Queries) UpdateChatSessionProgress(ctx context.Context, arg UpdateChatS
 		&i.ProgressAuthorType,
 		&i.ProgressAuthorID,
 		&i.ProgressUpdatedAt,
+		&i.OriginType,
+		&i.OriginSessionID,
+		&i.OriginTaskID,
+		&i.OriginClientKey,
 	)
 	return i, err
 }

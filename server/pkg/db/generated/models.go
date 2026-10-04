@@ -198,6 +198,16 @@ type AgentSkill struct {
 	Enabled   bool               `json:"enabled"`
 }
 
+type AgentSpawnRecord struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	SourceKind  string             `json:"source_kind"`
+	TargetKind  string             `json:"target_kind"`
+	TargetID    pgtype.UUID        `json:"target_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentTaskQueue struct {
 	ID                    pgtype.UUID        `json:"id"`
 	AgentID               pgtype.UUID        `json:"agent_id"`
@@ -613,6 +623,7 @@ type ChatMessage struct {
 	ChannelOutboundChatID         pgtype.Text        `json:"channel_outbound_chat_id"`
 	ChannelOutboundMessageIds     []string           `json:"channel_outbound_message_ids"`
 	SenderUserID                  pgtype.UUID        `json:"sender_user_id"`
+	LinkedSessionID               pgtype.UUID        `json:"linked_session_id"`
 }
 
 type ChatNamingEvent struct {
@@ -660,6 +671,10 @@ type ChatSession struct {
 	ProgressAuthorType      string             `json:"progress_author_type"`
 	ProgressAuthorID        pgtype.UUID        `json:"progress_author_id"`
 	ProgressUpdatedAt       pgtype.Timestamptz `json:"progress_updated_at"`
+	OriginType              pgtype.Text        `json:"origin_type"`
+	OriginSessionID         pgtype.UUID        `json:"origin_session_id"`
+	OriginTaskID            pgtype.UUID        `json:"origin_task_id"`
+	OriginClientKey         pgtype.Text        `json:"origin_client_key"`
 }
 
 type ChatSessionLinkReadAudit struct {
@@ -2195,6 +2210,34 @@ type WorkspaceInvitation struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+}
+
+type WorkspaceLink struct {
+	ID                pgtype.UUID        `json:"id"`
+	SourceWorkspaceID pgtype.UUID        `json:"source_workspace_id"`
+	TargetWorkspaceID pgtype.UUID        `json:"target_workspace_id"`
+	Status            string             `json:"status"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	AcceptedBy        pgtype.UUID        `json:"accepted_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	AcceptedAt        pgtype.Timestamptz `json:"accepted_at"`
+}
+
+type WorkspaceLinkAudit struct {
+	ID                pgtype.UUID        `json:"id"`
+	LinkID            pgtype.UUID        `json:"link_id"`
+	SourceWorkspaceID pgtype.UUID        `json:"source_workspace_id"`
+	TargetWorkspaceID pgtype.UUID        `json:"target_workspace_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ActorID           pgtype.UUID        `json:"actor_id"`
+	Action            string             `json:"action"`
+	Detail            []byte             `json:"detail"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkspaceLinkProject struct {
+	LinkID    pgtype.UUID `json:"link_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
 }
 
 type WorkspaceMcpServer struct {

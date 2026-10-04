@@ -83,7 +83,8 @@ type IssueResponse struct {
 	// instead of finding the slot empty later.
 	AssigneeIgnored bool `json:"assignee_ignored,omitempty"`
 	// AssigneeIgnoredReason explains a rejected per-quote proof so an agent can
-	// ask the person for an actual quote instead of guessing again.
+	// ask the person for an actual quote instead of guessing again, or a
+	// refused in-flight reassignment with the commands to use instead.
 	AssigneeIgnoredReason string `json:"assignee_ignored_reason,omitempty"`
 	// ReviewerType / ReviewerID are the acceptance slot, shaped exactly like
 	// the assignee pair: a REFERENCE to an agent or a member, not a copy of a
@@ -3661,6 +3662,14 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Agent permissions (DENE-1271): an agent run may only create an issue
+	// when the workspace table allows it for this kind of run.
+	spawnSlots, ok := h.gateAgentIssueSpawn(w, r, wsUUID, creatorType, actualCreatorID, 1)
+	if !ok {
+		return
+	}
+	defer spawnSlots.release()
+
 	// Whose pick is the executor (DENE-1033). A person's own hand stands; an
 	// agent's stands only with a quote the server can verify, and on a ticket
 	// routing will judge an unverified one is dropped so routing decides.
@@ -3668,7 +3677,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	assigneeIgnored := false
 	assigneeIgnoredReason := ""
 	if assigneeType.Valid {
-		ruling = h.rulePick(r, workspaceID, creatorType, actualCreatorID, assigneeType, assigneeID, deref(req.AssigneeQuote), status)
+		ruling = h.rulePick(r, workspaceID, creatorType, actualCreatorID, assigneeType, assigneeID, deref(req.AssigneeQuote), status, nil)
 		if !ruling.Apply {
 			assigneeType, assigneeID = pgtype.Text{}, pgtype.UUID{}
 			assigneeIgnored = true
@@ -3802,6 +3811,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issue := res.Issue
+	spawnSlots.fill(r.Context(), issue.ID)
 	if issue.Status == "blocked" || issue.Status == "in_review" {
 		h.setIssueMetaString(r.Context(), issue, blockwait.KeyWatched, blockwait.WatchedYes)
 	}
@@ -3898,6 +3908,11 @@ type UpdateIssueRequest struct {
 	WaitProbe     *string `json:"wait_probe,omitempty"`
 	WaitTimeout   *string `json:"wait_timeout,omitempty"`
 	NeedsHuman    *string `json:"needs_human,omitempty"`
+	// BlockKind and BlockAction are what the blocker card shows for this
+	// ticket: the kind of stop and the one-line next step. An agent moving
+	// the issue to blocked must send both (DENE-1301).
+	BlockKind   *string `json:"block_kind,omitempty"`
+	BlockAction *string `json:"block_action,omitempty"`
 	// NoCodeReason is the declared exit from the review gate (DENE-869). An
 	// agent moving an issue to in_review without a linked open/draft/merged PR
 	// is refused unless it says here why this ticket carries no code (docs,
@@ -4251,6 +4266,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if statusKeyForGuard == issuestatus.Blocked && prevIssue.Status != issuestatus.Blocked {
 		actorType := statusActorType
 		rec, persist, reject := h.gateBlockedStatus(r, prevIssue, req, actorType)
+		if reject == "" {
+			reject = blockAttributionRejection(req, actorType)
+		}
 		if reject != "" {
 			writeError(w, http.StatusBadRequest, reject)
 			return
@@ -4442,7 +4460,8 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			if params.Status.Valid {
 				resulting = params.Status.String
 			}
-			ruling := h.rulePick(r, workspaceID, actorType, actorID, params.AssigneeType, params.AssigneeID, deref(req.AssigneeQuote), resulting)
+			ruling := h.rulePick(r, workspaceID, actorType, actorID, params.AssigneeType, params.AssigneeID, deref(req.AssigneeQuote), resulting,
+				&heldExecutor{Type: prevIssue.AssigneeType, ID: prevIssue.AssigneeID})
 			if ruling.Apply {
 				stampRuling = &ruling
 			} else {
@@ -4492,7 +4511,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	tr := h.guardSilentStall(r.Context(), prevIssue, statusKeyForGuard, statusActorType, actorIDForGuard, deref(req.NoCodeReason), params.AssigneeType, params.AssigneeID, params.ReviewerType, params.ReviewerID, touchedReviewerType || touchedReviewerID)
 	if tr.refuse != "" {
-		writeError(w, http.StatusConflict, tr.refuse)
+		writeTransitionRefusal(w, tr)
 		return
 	}
 	if tr.status != "" {
@@ -4666,6 +4685,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// fails best-effort.
 	if statusChanged {
 		h.syncBlockWait(r.Context(), prevIssue, issue)
+	}
+	if statusChanged && issue.Status == issuestatus.Blocked {
+		h.persistBlockAttribution(r.Context(), issue, req)
 	}
 	if persistBlock {
 		h.persistBlockRecord(r.Context(), issue, blockRecord)
@@ -5459,7 +5481,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				if params.Status.Valid {
 					resulting = params.Status.String
 				}
-				ruling := h.rulePick(r, workspaceID, pickActorType, pickActorID, params.AssigneeType, params.AssigneeID, deref(req.Updates.AssigneeQuote), resulting)
+				ruling := h.rulePick(r, workspaceID, pickActorType, pickActorID, params.AssigneeType, params.AssigneeID, deref(req.Updates.AssigneeQuote), resulting,
+					&heldExecutor{Type: prevIssue.AssigneeType, ID: prevIssue.AssigneeID})
 				if ruling.Apply {
 					batchStamp = &ruling
 				} else {
@@ -5487,6 +5510,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if batchStatusKey == issuestatus.Blocked && prevIssue.Status != issuestatus.Blocked {
 			var rejection string
 			batchBlock, batchPersistBlock, rejection = h.gateBlockedStatus(r, prevIssue, req.Updates, batchActorType)
+			if rejection == "" {
+				rejection = blockAttributionRejection(req.Updates, batchActorType)
+			}
 			if rejection != "" {
 				reject(issueID, rejection)
 				continue
@@ -5538,6 +5564,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		issue = h.finishStatusTransition(r.Context(), issue, batchTransition)
 		if batchPersistBlock {
 			h.persistBlockRecord(r.Context(), issue, batchBlock)
+		}
+		if issue.Status == issuestatus.Blocked && prevIssue.Status != issuestatus.Blocked {
+			h.persistBlockAttribution(r.Context(), issue, req.Updates)
 		}
 		if batchTransition.persistBlock {
 			h.persistBlockRecord(r.Context(), issue, batchTransition.block)

@@ -26,9 +26,11 @@ import {
   ArrowUpRight,
   Copy,
   RotateCw,
+  MessagesSquare,
 } from "lucide-react";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { isTaskMessageTaskId, taskMessagesOptions } from "@multica/core/chat/queries";
+import { useChatStore } from "@multica/core/chat";
 import { RichContent } from "../../rich-content";
 import { RichContentScrollRootProvider } from "../../rich-content/scroll-root";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -599,6 +601,13 @@ const MessageBubble = memo(function MessageBubble({
     );
   }
 
+  if (message.message_kind === "chat_spawn") {
+    return <ChatSpawnCard message={message} />;
+  }
+  if (message.message_kind === "chat_spawn_refused") {
+    return <ChatSpawnRefusedNotice content={message.content} />;
+  }
+
   return (
     <AssistantMessage
       taskId={message.task_id ?? null}
@@ -948,6 +957,52 @@ function NoResponseNotice() {
   return (
     <div className="text-body italic text-muted-foreground">
       {t(($) => $.message_list.no_response)}
+    </div>
+  );
+}
+
+// The server writes "已派生会话 → <title>"; the title after the arrow is the
+// link text, the label in front is localized here.
+const SPAWN_ARROW = " → ";
+
+export function spawnedChatTitle(content: string): string {
+  const at = content.indexOf(SPAWN_ARROW);
+  return at >= 0 ? content.slice(at + SPAWN_ARROW.length).trim() : content.trim();
+}
+
+// Card an agent left in this chat when it opened another one (DENE-1271).
+function ChatSpawnCard({ message }: { message: ChatMessage }) {
+  const { t } = useT("chat");
+  const setActiveSession = useChatStore((s) => s.setActiveSession);
+  const linked = message.linked_session_id ?? null;
+  const title = spawnedChatTitle(message.content) || t(($) => $.message_list.spawn_untitled);
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-body">
+      <MessagesSquare className="size-4 shrink-0 text-muted-foreground" />
+      <span className="shrink-0 text-muted-foreground">{t(($) => $.message_list.spawned)}</span>
+      {linked ? (
+        <button
+          type="button"
+          className="flex min-w-0 items-center gap-1 font-medium hover:underline"
+          onClick={() => setActiveSession(linked)}
+        >
+          <span className="truncate">{title}</span>
+          <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      ) : (
+        <span className="truncate font-medium">{title}</span>
+      )}
+    </div>
+  );
+}
+
+// Why an agent's request to open a chat was turned down; the server writes the
+// reason in the chat's own words.
+function ChatSpawnRefusedNotice({ content }: { content: string }) {
+  return (
+    <div className="flex items-start gap-2 text-body text-muted-foreground">
+      <AlertCircle className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0 break-words">{content}</span>
     </div>
   );
 }

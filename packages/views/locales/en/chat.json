@@ -8,7 +8,8 @@
     "search_empty": "No chats match",
     "back": "Back",
     "new_chat_in_project": "New chats stay in \"{{title}}\"",
-    "new_chat_unbound": "New chats are not tied to a project"
+    "new_chat_unbound": "New chats are not tied to a project",
+    "back_to_list": "Back to chats"
   },
   "goal_flow": {
     "hint": "Clarify it before creating the issue.",
@@ -150,7 +151,9 @@
     "quick_actions_heading": "Follow-up questions",
     "quick_actions_aria": "Suggested follow-ups",
     "quick_actions_regenerate": "Regenerate suggestions",
-    "quick_actions_regenerate_failed": "Couldn't refresh suggestions. Please try again."
+    "quick_actions_regenerate_failed": "Couldn't refresh suggestions. Please try again.",
+    "spawned": "Opened chat",
+    "spawn_untitled": "New chat"
   },
   "session_history": {
     "untitled": "Untitled",
@@ -319,7 +322,8 @@
     "private_tag": "Private",
     "extra_tag": "Extra people",
     "show_more": "Show more ({{count}})",
-    "show_fewer": "Show fewer"
+    "show_fewer": "Show fewer",
+    "spawned": "Opened from another chat"
   },
   "header": {
     "view_profile": "View agent profile",
@@ -357,7 +361,14 @@
     "header_private": "Only you",
     "header_project": "Project members can see and speak",
     "header_extra": "Project members, plus extra people",
-    "search": "Search people…"
+    "search": "Search people…",
+    "trigger": {
+      "private": "Only me",
+      "project": "Project members",
+      "extra": "Project + extra",
+      "workspace": "Entire workspace"
+    },
+    "header_workspace": "Every workspace member can see and speak"
   },
   "notice": {
     "title": "Some of your chats are now visible to project members",
@@ -365,5 +376,10 @@
     "make_private": "Make selected private",
     "dismiss": "Got it"
   },
-  "title_locked": "Title locked — the agent will not rename it"
+  "title_locked": "Title locked — the agent will not rename it",
+  "origin": {
+    "from_prefix": "Opened from",
+    "from_suffix": "",
+    "from_hidden": "Opened from another chat"
+  }
 }

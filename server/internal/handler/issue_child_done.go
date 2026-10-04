@@ -508,6 +508,15 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 		return
 	}
 	comment := created.Comment()
+	// The barrier just told the parent this stage is over; a continuing
+	// close that named a child of it is answered (DENE-1301).
+	var finished []string
+	for _, child := range children {
+		if isTerminalChildStatus(statuses.status(child)) {
+			finished = append(finished, prefix+"-"+strconv.Itoa(int(child.Number)), uuidToString(child.ID))
+		}
+	}
+	h.consumeWaitingOn(ctx, parent, finished...)
 
 	h.publish(protocol.EventCommentCreated, uuidToString(parent.WorkspaceID), "system", "", map[string]any{
 		"comment":             commentToResponse(comment, nil, nil),

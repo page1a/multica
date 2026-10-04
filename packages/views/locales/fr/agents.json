@@ -804,7 +804,21 @@
       "cancel_failed_toast": "Échec de l'annulation de l'exécution",
       "started_prefix": "Démarrée {{when}}",
       "dispatched_prefix": "Envoyée {{when}}",
-      "queued_prefix": "Mise en file d'attente {{when}}"
+      "queued_prefix": "Mise en file d'attente {{when}}",
+      "section_chats": "Discussions",
+      "subtitle_chats_latest_one": "{{count}} plus récente",
+      "subtitle_chats_latest_other": "{{count}} plus récentes",
+      "subtitle_no_chats": "Aucune discussion",
+      "empty_chats": "Personne n'a encore discuté avec cet agent.",
+      "chat_status": {
+        "running": "En cours",
+        "queued": "En file d'attente",
+        "idle": "Inactive"
+      },
+      "chat_hidden": "Discussion d'un autre membre",
+      "chat_hidden_hint": "Vous n'avez pas accès à cette discussion",
+      "open_chat": "Ouvrir",
+      "chat_untitled": "Discussion sans titre"
     },
     "accounts": {
       "summary_current": "Compte actuel",

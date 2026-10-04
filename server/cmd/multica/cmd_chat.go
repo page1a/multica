@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -112,6 +116,31 @@ Project · topic shape and refuses to overwrite a title a member has renamed.
 	RunE: runChatTitle,
 }
 
+var chatOpenCmd = &cobra.Command{
+	Use:   "open",
+	Short: "Open a new chat with another agent from the current chat",
+	Long: `Open a new chat with an agent and send it a brief as the first message.
+The server creates the chat, records which chat it came from, and posts a
+card in the current chat linking to it, all in one step.
+
+Only a chat run can open a chat (a task run gets chat_spawn_task_mode: use
+"multica issue create" instead). A chat opened this way cannot open another
+one, and its visibility and project can only be narrower than the current
+chat. The workspace caps how many chats each chat and each run may open.
+
+Refusals come back as JSON with a code:
+  agent_spawn_disabled, agent_spawn_budget_exceeded, chat_spawn_depth_exceeded,
+  chat_spawn_task_mode, chat_spawn_scope_exceeded, chat_spawn_agent_only
+
+Retrying with the same --client-key (default: derived from agent, title and
+brief) returns the chat already opened instead of a second one.
+
+  multica chat open --agent 布尔玛 --brief-file ./brief.md --title "Billing · retry design"
+`,
+	Args: cobra.NoArgs,
+	RunE: runChatOpen,
+}
+
 func init() {
 	for _, c := range []*cobra.Command{chatListCmd, chatSearchCmd} {
 		c.Flags().String("project", "", "Filter to a project id (defaults to the current project)")
@@ -134,6 +163,14 @@ func init() {
 	chatToGoalCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
 	chatToGoalCmd.Flags().String("output", "json", "Output format: table or json")
 	chatCmd.AddCommand(chatTitleCmd)
+	chatCmd.AddCommand(chatOpenCmd)
+	chatOpenCmd.Flags().String("agent", "", "Agent to talk to: name or id (required)")
+	chatOpenCmd.Flags().String("brief-file", "", "File holding the first message for the agent (required)")
+	chatOpenCmd.Flags().String("title", "", "Chat title, Project · topic")
+	chatOpenCmd.Flags().String("project", "", "Project id or prefix (must be the current chat's project, or narrower)")
+	chatOpenCmd.Flags().String("visibility", "", "private or workspace (cannot be wider than the current chat)")
+	chatOpenCmd.Flags().String("client-key", "", "Idempotency key; defaults to a hash of agent, title and brief")
+	chatOpenCmd.Flags().String("output", "json", "Output format: table or json")
 	chatProgressCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
 	chatProgressCmd.Flags().String("output", "json", "Output format: table or json")
 	chatProgressCmd.Flags().String("tone", "", "Dot colour: working, waiting, stuck, or done (default working)")
@@ -485,4 +522,77 @@ func numVal(m map[string]any, key string) string {
 		return strconv.Itoa(int(v))
 	}
 	return ""
+}
+
+func runChatOpen(cmd *cobra.Command, _ []string) error {
+	agentRef, _ := cmd.Flags().GetString("agent")
+	briefPath, _ := cmd.Flags().GetString("brief-file")
+	if strings.TrimSpace(agentRef) == "" || strings.TrimSpace(briefPath) == "" {
+		return fmt.Errorf("chat open: --agent and --brief-file are required")
+	}
+	raw, err := os.ReadFile(briefPath)
+	if err != nil {
+		return fmt.Errorf("chat open: read brief: %w", err)
+	}
+	brief := strings.TrimSpace(string(raw))
+	if brief == "" {
+		return fmt.Errorf("chat open: brief file is empty")
+	}
+	title, _ := cmd.Flags().GetString("title")
+	visibility, _ := cmd.Flags().GetString("visibility")
+	project, _ := cmd.Flags().GetString("project")
+	clientKey, _ := cmd.Flags().GetString("client-key")
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	agentID, err := resolveAgent(ctx, client, agentRef)
+	if err != nil {
+		return fmt.Errorf("chat open: %w", err)
+	}
+	if strings.TrimSpace(clientKey) == "" {
+		sum := sha256.Sum256([]byte(agentID + "\x00" + title + "\x00" + brief))
+		clientKey = hex.EncodeToString(sum[:16])
+	}
+	body := map[string]any{
+		"agent_id":   agentID,
+		"brief":      brief,
+		"client_key": clientKey,
+	}
+	if title != "" {
+		body["title"] = title
+	}
+	if visibility != "" {
+		body["visibility"] = visibility
+	}
+	if project != "" {
+		p, err := resolveProjectID(ctx, client, project)
+		if err != nil {
+			return fmt.Errorf("chat open: %w", err)
+		}
+		body["project_id"] = p.ID
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	var out map[string]any
+	if err := client.PostJSON(ctx, "/api/chat/sessions/spawn", body, &out); err != nil {
+		var httpErr *cli.HTTPError
+		var refusal map[string]any
+		if errors.As(err, &httpErr) && json.Unmarshal([]byte(httpErr.Body), &refusal) == nil && refusal["code"] != nil {
+			if output != "table" {
+				_ = cli.PrintJSON(os.Stdout, refusal)
+			}
+			return fmt.Errorf("chat open refused (%v): %v", refusal["code"], refusal["error"])
+		}
+		return fmt.Errorf("open chat: %w", err)
+	}
+	if output == "table" {
+		session, _ := out["session"].(map[string]any)
+		fmt.Printf("Chat: %v (%v)\n", session["title"], session["id"])
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, out)
 }

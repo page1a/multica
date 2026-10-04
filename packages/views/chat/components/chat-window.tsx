@@ -42,6 +42,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { OfflineBanner } from "./offline-banner";
 import { NoAgentBanner } from "./no-agent-banner";
 import { ArchivedAgentBanner } from "./archived-agent-banner";
+import { ChatOriginBar } from "./chat-origin-bar";
 import { AgentAccessRevokedBanner } from "./agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./runtime-required-banner";
 import {
@@ -990,6 +991,7 @@ export function ChatWindow() {
         </div>
       </div>
 
+      {currentSession && <ChatOriginBar session={currentSession} />}
       {currentSession && (
         <ChatProjectNudge
           session={currentSession}

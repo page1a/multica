@@ -195,6 +195,7 @@
       "mention": "有人找你",
       "routing": "没人接手",
       "patrol": "验收席空缺",
+      "unseated": "缺执行人",
       "time_limit": "运行超时",
       "quota_relay": "额度用完",
       "waiting_person": "等你决定",

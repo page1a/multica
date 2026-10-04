@@ -10,6 +10,7 @@ import {
   Clock,
   Loader2,
   LockKeyhole,
+  CornerLeftUp,
   Pin,
   PinOff,
   Square,
@@ -449,6 +450,14 @@ export function ChatThreadList({
                 aria-label={t(($) => $.list.pinned)}
                 className="size-3 shrink-0 -rotate-45 fill-current text-muted-foreground"
               />
+            )}
+            {session.origin_session_id && (
+              <CornerLeftUp
+                aria-label={t(($) => $.list.spawned)}
+                className="size-3 shrink-0 text-muted-foreground"
+              >
+                <title>{t(($) => $.list.spawned)}</title>
+              </CornerLeftUp>
             )}
             <span className={cn("min-w-0 flex-1 truncate text-body", unread > 0 ? "font-semibold text-foreground" : "font-medium")}>
               {search ? <HighlightText text={titleText} query={search.query} /> : titleText}{session.title_locked && <span aria-label={t(($) => $.title_locked)} title={t(($) => $.title_locked)} className="ml-1 text-micro text-muted-foreground">🔒</span>}

@@ -31,6 +31,8 @@ decide permissions; the server does.
   multica settings get repo.shares --value-json '{"url":"https://github.com/acme/app.git"}'
   multica settings set repo.shares --value-json '{"url":"https://github.com/acme/app.git","member_id":"..."}'
   multica settings set repo.shares --value-json '{"url":"https://github.com/acme/app.git","member_id":"...","revoke":true}'
+  multica settings get agent.spawn
+  multica settings set agent.spawn --value-json '{"chat_chat":{"enabled":true,"per_chat":5,"per_run":3}}'
 
 Keys, methods, and which page each one belongs to: docs/kun/settings-cli-coverage.md`,
 }
@@ -145,6 +147,16 @@ var settingsKinds = map[string]settingsKind{
 		},
 		write: planAccessPassWrite,
 	},
+	"agent.spawn": {
+		handlers: []string{"GetWorkspaceAgentSpawn", "UpdateWorkspaceAgentSpawn"},
+		read: func(_ string, _ map[string]any, workspaceID string) (settingsCall, error) {
+			return settingsCall{Method: http.MethodGet, Path: "/api/workspaces/" + url.PathEscape(workspaceID) + "/agent-spawn"}, nil
+		},
+		// id is the workspace: planSettings fills it in for workspace-wide keys.
+		write: func(workspaceID string, value any) (settingsCall, error) {
+			return settingsCall{Method: http.MethodPut, Path: "/api/workspaces/" + url.PathEscape(workspaceID) + "/agent-spawn", Body: value}, nil
+		},
+	},
 	"agent.runtime-skill": {
 		handlers: []string{"GetAgent", "SetAgentRuntimeSkillEnabled"},
 		read: func(id string, _ map[string]any, _ string) (settingsCall, error) {
@@ -205,7 +217,7 @@ func settingsHandlerClaims() map[string]struct{} {
 
 func parseSettingsKey(key string) (kind, id string, err error) {
 	switch key {
-	case "modules.visibility", "repo.visibility", "repo.shares":
+	case "modules.visibility", "repo.visibility", "repo.shares", "agent.spawn":
 		return key, "", nil
 	}
 	parts := strings.Split(key, ".")
@@ -242,6 +254,12 @@ func planSettings(key string, write bool, value any, query map[string]any, works
 	if write {
 		if kind.write == nil {
 			return settingsCall{}, fmt.Errorf("setting %s is read-only; set a more specific key", key)
+		}
+		if kindName == "agent.spawn" {
+			if workspaceID == "" {
+				return settingsCall{}, fmt.Errorf("workspace id is required to set agent.spawn")
+			}
+			id = workspaceID
 		}
 		return kind.write(id, value)
 	}

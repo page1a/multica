@@ -60,28 +60,25 @@ func TestDoneWithOpenPullMergesOrBlocks(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	t.Run("dirty stays open and blocks", func(t *testing.T) {
+	t.Run("dirty is refused and the ticket stays as it was", func(t *testing.T) {
 		issue := createIssueHTTP(t, "dirty pr", "in_progress")
 		linkPull(t, issue.ID, 85101, "open", "dirty", "SUCCESS")
 		w := httptest.NewRecorder()
 		req := newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "done"})
 		req = withURLParam(req, "id", issue.ID)
 		testHandler.UpdateIssue(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"close_conflict"`) || !strings.Contains(w.Body.String(), "合并冲突") {
+			t.Fatalf("status = %d: %s, want 409 close_conflict", w.Code, w.Body.String())
 		}
-		var status, wake string
+		var status, wake, watched string
 		if err := testPool.QueryRow(context.Background(), `
-			SELECT status, COALESCE(metadata->>'block.wake_at', '') FROM issue WHERE id = $1
-		`, issue.ID).Scan(&status, &wake); err != nil {
+			SELECT status, COALESCE(metadata->>'block.wake_at', ''), COALESCE(metadata->>'block.watched', '')
+			FROM issue WHERE id = $1
+		`, issue.ID).Scan(&status, &wake, &watched); err != nil {
 			t.Fatalf("read issue: %v", err)
 		}
-		if status != "blocked" || wake == "" {
-			t.Fatalf("status = %q wake = %q, want blocked with a clock", status, wake)
-		}
-		body, _, _, _ := systemCommentOn(t, issue.ID)
-		if !strings.Contains(body, "不标完成") {
-			t.Fatalf("comment = %s", body)
+		if status != "in_progress" || wake != "" || watched != "" {
+			t.Fatalf("status = %q wake = %q watched = %q, want untouched", status, wake, watched)
 		}
 	})
 

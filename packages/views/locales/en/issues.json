@@ -433,7 +433,8 @@
     "previous": "Previous issue",
     "next": "Next issue",
     "open_full_page": "Open full page",
-    "close": "Close preview"
+    "close": "Close preview",
+    "back": "Back to board"
   },
   "detail": {
     "not_found": "Page not found",

@@ -843,16 +843,17 @@ function DailyBreakdownTable({ usage }: { usage: RuntimeUsage[] }) {
     byDate.set(u.date, existing);
   }
   return (
-    <div className="rounded-lg border">
-      <div className="grid grid-cols-[100px_1fr_80px_80px_80px_80px] gap-2 border-b px-3 py-2 text-caption font-medium text-muted-foreground">
+    <div className="overflow-x-auto rounded-lg border">
+      <div className="min-w-[600px]">
+        <div className="grid grid-cols-[100px_1fr_80px_80px_80px_80px] gap-2 border-b px-3 py-2 text-caption font-medium text-muted-foreground">
         <div>{t(($) => $.usage.table_date)}</div>
         <div>{t(($) => $.usage.table_model)}</div>
         <div className="text-right">{t(($) => $.usage.table_input)}</div>
         <div className="text-right">{t(($) => $.usage.table_output)}</div>
         <div className="text-right">{t(($) => $.usage.table_cache_r)}</div>
         <div className="text-right">{t(($) => $.usage.table_cache_w)}</div>
-      </div>
-      <div className="max-h-64 overflow-y-auto divide-y">
+        </div>
+        <div className="max-h-64 overflow-y-auto divide-y">
         {[...byDate.entries()].map(([date, rows]) =>
           rows.map((row, i) => (
             <div
@@ -876,6 +877,7 @@ function DailyBreakdownTable({ usage }: { usage: RuntimeUsage[] }) {
             </div>
           )),
         )}
+        </div>
       </div>
     </div>
   );

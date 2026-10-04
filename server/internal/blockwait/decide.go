@@ -85,6 +85,9 @@ type Decision struct {
 	// that branch.
 	Inherited  []string
 	BaseBranch string
+	// Kind is the hold kind of a ReleaseHold (DENE-1219): what the closing
+	// agent has to clear. A hold writes nothing; the close is refused with it.
+	Kind string
 }
 
 // DecidePatrol picks a single next step for one stalled issue.
@@ -326,16 +329,18 @@ func (d *Decision) letThrough(pr PRSnapshot, names []string) {
 	}
 }
 
-// Release actions.
+// Release actions. ReleaseHold is a stop the closing agent clears itself
+// (DENE-1219): the caller leaves the status alone and answers with Kind and
+// Reason, so the agent fixes it in the same turn and closes again.
 const (
 	ReleaseDone  = "done"
 	ReleaseMerge = "merge"
-	ReleaseBlock = "block"
+	ReleaseHold  = "hold"
 )
 
 // DecideRelease says what an acceptance pass should do with the linked PRs.
-// A pass never stays in in_review: no open PR closes the issue, a clean PR is
-// merged, and a conflict or a red check becomes a structured block.
+// No open PR closes the issue, a clean PR is merged, and a conflict or a red
+// check is a hold the caller reports without writing a status.
 func DecideRelease(prs []PRSnapshot, now time.Time) Decision {
 	if now.IsZero() {
 		now = time.Now()
@@ -356,17 +361,21 @@ func DecideRelease(prs []PRSnapshot, now time.Time) Decision {
 			continue
 		}
 		if prBlocked(pr) {
-			rec := Record{
-				WaitCondition:  prBlockReason(pr),
-				HasWaitTimeout: true,
-				WaitTimeout:    now.Add(QuietAfter),
-				HasWakeAt:      true,
-				WakeAt:         now.Add(QuietAfter),
-			}
+			rec := Record{WaitCondition: prBlockReason(pr)}
 			return Decision{
-				Action: ReleaseBlock,
-				Reason: fmt.Sprintf("验收已经通过，但 %s。先标成阻塞，到点再看，不继续停在待验收。", rec.WaitCondition),
+				Action: ReleaseHold,
+				Reason: fmt.Sprintf("验收已经通过，但 %s，先不合并。", rec.WaitCondition),
 				Record: rec,
+				Kind:   holdKindFor(pr),
+			}
+		}
+		if holdKindFor(pr) == HoldChecksPending {
+			rec := Record{WaitCondition: prLabel(pr) + " 的检查还没出结果"}
+			return Decision{
+				Action: ReleaseHold,
+				Reason: fmt.Sprintf("验收已经通过，但 %s，先不合并。", rec.WaitCondition),
+				Record: rec,
+				Kind:   HoldChecksPending,
 			}
 		}
 	}
@@ -382,7 +391,7 @@ func DecideRelease(prs []PRSnapshot, now time.Time) Decision {
 
 // DecideClose is the gate on a direct move to done. An open linked PR that is
 // cleanly mergeable and whose checks are green is merged by the caller; any
-// other open PR becomes a structured block. No open PR allows the close.
+// other open PR is a hold. No open PR allows the close.
 func DecideClose(prs []PRSnapshot, now time.Time) Decision {
 	if now.IsZero() {
 		now = time.Now()
@@ -405,17 +414,12 @@ func DecideClose(prs []PRSnapshot, now time.Time) Decision {
 			through.letThrough(pr, names)
 			continue
 		}
-		rec := Record{
-			WaitCondition:  prCloseBlockReason(pr),
-			HasWaitTimeout: true,
-			WaitTimeout:    now.Add(QuietAfter),
-			HasWakeAt:      true,
-			WakeAt:         now.Add(QuietAfter),
-		}
+		rec := Record{WaitCondition: prCloseBlockReason(pr)}
 		return Decision{
-			Action: ReleaseBlock,
-			Reason: fmt.Sprintf("这张票要关，但 %s。先改成阻塞，不标完成。", rec.WaitCondition),
+			Action: ReleaseHold,
+			Reason: fmt.Sprintf("这张票要关，但 %s，先不标完成。", rec.WaitCondition),
 			Record: rec,
+			Kind:   holdKindFor(pr),
 		}
 	}
 	label := prLabel(open[0])
@@ -444,6 +448,43 @@ func prReadyToMerge(pr PRSnapshot) bool {
 	default:
 		return false
 	}
+}
+
+// Hold kinds (DENE-1219): why a close with an open PR did not go through.
+// None of them writes a status; the closing agent clears it and closes again.
+// HoldChecksPending is the one the CLI waits out in place.
+const (
+	HoldChecksPending = "checks_pending"
+	HoldChecksRed     = "checks_red"
+	HoldConflict      = "conflict"
+	HoldMergeFailed   = "merge_failed"
+	HoldReadFailed    = "read_failed"
+	HoldDraft         = "draft"
+	HoldDelivery      = "delivery"
+)
+
+// holdKindFor names the stop a PR snapshot is held for. A branch rule
+// ("blocked") counts as checks still running while any are, so a required
+// check that has not finished is not mistaken for a conflict.
+func holdKindFor(pr PRSnapshot) string {
+	mergeable := strings.ToLower(strings.TrimSpace(pr.Mergeable))
+	switch mergeable {
+	case "dirty", "behind":
+		return HoldConflict
+	}
+	switch strings.ToLower(strings.TrimSpace(pr.Checks)) {
+	case "failure", "error", "failing", "cancelled":
+		return HoldChecksRed
+	case "pending", "expected", "queued", "in_progress":
+		return HoldChecksPending
+	}
+	if pr.RunningChecks > 0 {
+		return HoldChecksPending
+	}
+	if mergeable == "blocked" {
+		return HoldConflict
+	}
+	return HoldMergeFailed
 }
 
 func prCloseBlockReason(pr PRSnapshot) string {
@@ -486,9 +527,9 @@ func prBlockReason(pr PRSnapshot) string {
 	}
 	switch strings.ToLower(pr.Checks) {
 	case "failure", "error", "failing":
-		return label + " 的检查是红的" + redDetail(pr)
+		return label + " 的检查是红的" + redDetail(pr) + logsHint(pr)
 	case "cancelled":
-		return label + " 的检查被取消了"
+		return label + " 的检查被取消了" + logsHint(pr)
 	}
 	return label + " 现在合不进去"
 }
@@ -500,7 +541,7 @@ func redDetail(pr PRSnapshot) string {
 		return ""
 	}
 	if pr.Base == nil {
-		return "（" + strings.Join(uniqueSorted(pr.FailedChecks), "、") + "；没拿到主线基线，按新失败处理）"
+		return "（" + strings.Join(uniqueSorted(pr.FailedChecks), "、") + "；没拿到主线基线，按新失败处理。核实是主线原有的失败，就用 gh pr merge --squash 合入后再关一次）"
 	}
 	if fresh := newFailures(pr); len(fresh) > 0 {
 		return "（新引入：" + strings.Join(fresh, "、") + "，" + baseName(pr.Base) + " 上同名检查不是红的）"
@@ -509,6 +550,15 @@ func redDetail(pr PRSnapshot) string {
 		return "（和 " + baseName(pr.Base) + " 相同的失败，但还有检查没跑完）"
 	}
 	return ""
+}
+
+// logsHint says where the red check logs are, so the agent can decide whether
+// to fix the failure or show it is not this change's.
+func logsHint(pr PRSnapshot) string {
+	if pr.URL != "" {
+		return "；日志：gh pr checks " + pr.URL + "（或 " + strings.TrimRight(pr.URL, "/") + "/checks）"
+	}
+	return "；日志：gh pr checks"
 }
 
 func baseName(b *BaseChecks) string {

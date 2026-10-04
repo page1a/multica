@@ -138,6 +138,20 @@ export function agentTasksOptions(wsId: string, agentId: string) {
   });
 }
 
+// An agent's chats for the overview (DENE-1310). Keyed under agentTasksKeys so
+// the task: realtime events that already refresh run history also refresh
+// which chats are running.
+export function agentChatsOptions(wsId: string, agentId: string, limit: number) {
+  return queryOptions({
+    queryKey: [...agentTasksKeys.detail(wsId, agentId), "chats", limit],
+    queryFn: () => api.listAgentChats(agentId, { limit }),
+    placeholderData: (previous) => previous,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
+}
+
 /** Unfinished agent-creation conversations, scoped to the caller. */
 export const agentBuilderSessionKeys = {
   all: (wsId: string) => ["workspace", wsId, "agent-builder-sessions"] as const,

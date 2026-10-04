@@ -99,6 +99,35 @@ var projectMemorySeatSetCmd = &cobra.Command{
 	RunE:  runProjectMemorySeatSet,
 }
 
+var projectMemoryInstructionCmd = &cobra.Command{
+	Use:   "instruction",
+	Short: "View or customize the prompt that opens automatic sediment tickets",
+}
+
+var projectMemoryInstructionGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Show the sediment ticket prompt for the current workspace",
+	Args:  cobra.NoArgs,
+	RunE:  runProjectMemoryInstructionGet,
+}
+
+var projectMemoryInstructionSetCmd = &cobra.Command{
+	Use:   "set [<text>]",
+	Short: "Set a custom sediment ticket prompt",
+	Long:  "Sets the text that opens every automatic sediment ticket's description; the reason the round opened is appended after it. Pass the text as an argument or with --file. Up to 4000 bytes.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runProjectMemoryInstructionSet,
+}
+
+var projectMemoryInstructionClearCmd = &cobra.Command{
+	Use:   "clear",
+	Short: "Go back to the built-in sediment ticket prompt",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return writeProjectMemoryInstruction(cmd, "")
+	},
+}
+
 var projectMemorySeatClearCmd = &cobra.Command{
 	Use:   "clear",
 	Short: "Clear the memory sediment agent seat",
@@ -171,6 +200,10 @@ func init() {
 	projectMemorySeatCmd.AddCommand(projectMemorySeatGetCmd)
 	projectMemorySeatCmd.AddCommand(projectMemorySeatSetCmd)
 	projectMemorySeatCmd.AddCommand(projectMemorySeatClearCmd)
+	projectMemoryCmd.AddCommand(projectMemoryInstructionCmd)
+	projectMemoryInstructionCmd.AddCommand(projectMemoryInstructionGetCmd)
+	projectMemoryInstructionCmd.AddCommand(projectMemoryInstructionSetCmd)
+	projectMemoryInstructionCmd.AddCommand(projectMemoryInstructionClearCmd)
 	projectCmd.AddCommand(projectResourceCmd)
 
 	projectResourceCmd.AddCommand(projectResourceListCmd)
@@ -257,6 +290,10 @@ func init() {
 	projectMemorySeatSetCmd.Flags().Bool("clear", false, "Clear the memory sediment agent")
 	projectMemorySeatSetCmd.Flags().String("output", "table", "Output format: table or json")
 	projectMemorySeatClearCmd.Flags().String("output", "table", "Output format: table or json")
+	projectMemoryInstructionGetCmd.Flags().String("output", "table", "Output format: table or json")
+	projectMemoryInstructionSetCmd.Flags().String("file", "", "Read the prompt from this file")
+	projectMemoryInstructionSetCmd.Flags().String("output", "table", "Output format: table or json")
+	projectMemoryInstructionClearCmd.Flags().String("output", "table", "Output format: table or json")
 }
 
 // ---------------------------------------------------------------------------
@@ -792,6 +829,122 @@ func runProjectMemorySeatSetAgent(cmd *cobra.Command, agentArg string, clear boo
 		return nil
 	}
 	fmt.Fprintf(os.Stdout, "Configured memory sediment agent %s (%s) for workspace %s\n", targetAgentName, targetAgentID, client.WorkspaceID)
+	return nil
+}
+
+func runProjectMemoryInstructionGet(cmd *cobra.Command, _ []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	if client.WorkspaceID == "" {
+		return fmt.Errorf("workspace ID is required; use --workspace-id or set MULTICA_WORKSPACE_ID")
+	}
+	var ws map[string]any
+	if err := client.GetJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), &ws); err != nil {
+		return fmt.Errorf("get workspace: %w", err)
+	}
+	var locations map[string]any
+	if err := client.GetJSON(ctx, "/api/project-memory/locations", &locations); err != nil {
+		return fmt.Errorf("get built-in sediment prompt: %w", err)
+	}
+	settings, _ := ws["settings"].(map[string]any)
+	memory, _ := settings["memory"].(map[string]any)
+	custom := strings.TrimSpace(strVal(memory, "sediment_instruction"))
+	builtin := strVal(locations, "builtin_sediment_instruction")
+	effective := builtin
+	if custom != "" {
+		effective = custom
+	}
+	result := map[string]any{
+		"workspace_id": client.WorkspaceID,
+		"customized":   custom != "",
+		"instruction":  custom,
+		"builtin":      builtin,
+		"effective":    effective,
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	if custom == "" {
+		fmt.Fprintf(os.Stdout, "Using the built-in sediment prompt:\n%s\n", builtin)
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "Custom sediment prompt:\n%s\n", custom)
+	return nil
+}
+
+func runProjectMemoryInstructionSet(cmd *cobra.Command, args []string) error {
+	text := ""
+	if len(args) > 0 {
+		text = args[0]
+	}
+	if path, _ := cmd.Flags().GetString("file"); path != "" {
+		if text != "" {
+			return fmt.Errorf("pass the prompt as an argument or with --file, not both")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read --file: %w", err)
+		}
+		text = string(data)
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("prompt is empty; use `multica project memory instruction clear` to go back to the built-in one")
+	}
+	return writeProjectMemoryInstruction(cmd, text)
+}
+
+// writeProjectMemoryInstruction stores settings.memory.sediment_instruction;
+// "" falls back to the built-in prompt. The server checks the length.
+func writeProjectMemoryInstruction(cmd *cobra.Command, text string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	if client.WorkspaceID == "" {
+		return fmt.Errorf("workspace ID is required; use --workspace-id or set MULTICA_WORKSPACE_ID")
+	}
+	var ws map[string]any
+	if err := client.GetJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), &ws); err != nil {
+		return fmt.Errorf("get workspace: %w", err)
+	}
+	settings, _ := ws["settings"].(map[string]any)
+	if settings == nil {
+		settings = make(map[string]any)
+	}
+	memory, _ := settings["memory"].(map[string]any)
+	if memory == nil {
+		memory = make(map[string]any)
+	}
+	text = strings.TrimSpace(text)
+	memory["sediment_instruction"] = text
+	settings["memory"] = memory
+	var updated map[string]any
+	if err := client.PatchJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), map[string]any{
+		"settings": settings,
+	}, &updated); err != nil {
+		return fmt.Errorf("update sediment prompt: %w", err)
+	}
+	result := map[string]any{
+		"workspace_id": client.WorkspaceID,
+		"customized":   text != "",
+		"instruction":  text,
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	if text == "" {
+		fmt.Fprintf(os.Stdout, "Sediment tickets in workspace %s use the built-in prompt again\n", client.WorkspaceID)
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "Saved the custom sediment prompt for workspace %s\n", client.WorkspaceID)
 	return nil
 }
 

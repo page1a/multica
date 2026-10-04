@@ -1,0 +1,83 @@
+name: Self-host images
+
+# Builds the images the self-hosted instance (ai.ferryway.cc) runs, one pair
+# per commit on kun, so the 2-core box only pulls and recreates instead of
+# compiling next to the containers it serves (DENE-1186 / DENE-1205).
+#
+# scripts/selfhost-autoupdate.sh in registry mode pulls exactly
+# <registry>/multica-{backend,web}:sha-<full commit>; until both tags exist it
+# reports "pending" and keeps the running version. amd64 only: that is the box.
+
+on:
+  push:
+    branches: [kun]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# The box always targets the branch tip, so a superseded build is wasted work.
+concurrency:
+  group: selfhost-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            dockerfile: Dockerfile
+            build-args: |
+              VERSION=${{ github.sha }}
+              COMMIT=${{ github.sha }}
+          - name: web
+            dockerfile: Dockerfile.web
+            # Same values the box's local build used, so the swap changes where
+            # the image is built and nothing about what it contains.
+            build-args: |
+              NEXT_PUBLIC_APP_VERSION=dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/multica-${{ matrix.name }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=raw,value=kun
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build date
+        id: date
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=selfhost-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=selfhost-${{ matrix.name }}
+          build-args: |
+            ${{ matrix.build-args }}
+            DATE=${{ steps.date.outputs.value }}

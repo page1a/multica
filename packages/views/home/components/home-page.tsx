@@ -39,6 +39,12 @@ import { PickerItem, PropertyPicker, PICKER_TRIGGER_CLASS } from "../../issues/c
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useTimeAgo } from "../../inbox/components/inbox-list-item";
 import { ACTIVITY_LAYER_PARAM, LAYER_PARAM } from "../../inbox/components/inbox-view";
+import { IssuePeekHost } from "../../issues/components/issue-peek";
+import {
+  PEEK_TARGET_ATTR,
+  useIssuePeekActions,
+  useIsIssuePeeked,
+} from "../../issues/surface/peek-context";
 
 
 export const LANE_TAG_CLASS: Record<BoardLane, string> = {
@@ -273,10 +279,23 @@ function BoardRowView({
   const wsPaths = useWorkspacePaths();
   const { push } = useNavigation();
   const linking = useContext(BoardLinkingContext);
+  const peek = useIssuePeekActions();
+  const peeked = useIsIssuePeeked(row.issueId);
   const [open, setOpen] = useState(false);
   const href = wsPaths.issueDetail(row.issueId);
-  const activate = () => (linking ? linking.onSelectIssue(row.issueId) : push(href));
-  const highlighted = !!linking && linking.highlightIssueId === row.issueId;
+  const activate = () => {
+    if (peek) {
+      peek.open(row.issueId);
+      linking?.onSelectIssue(row.issueId);
+      return;
+    }
+    if (linking) {
+      linking.onSelectIssue(row.issueId);
+      return;
+    }
+    push(href);
+  };
+  const highlighted = peeked || (!!linking && linking.highlightIssueId === row.issueId);
   const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (highlighted) rowRef.current?.scrollIntoView({ block: "nearest" });
@@ -301,14 +320,19 @@ function BoardRowView({
       <div
         role="link"
         tabIndex={0}
+        {...{ [PEEK_TARGET_ATTR]: row.issueId }}
         onClick={activate}
         onKeyDown={(e) => {
           if (e.key === "Enter") activate();
         }}
         className={cn(
           "group grid cursor-pointer gap-3 px-4 py-3 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40",
-          row.lane === "waiting" && !nested ? "grid-cols-[auto_6.5rem_1fr_auto]" : "grid-cols-[6.5rem_1fr_auto]",
-          nested && "py-2 pl-8",
+          row.lane === "waiting" && !nested
+            ? "grid-cols-[auto_6.5rem_1fr_auto]"
+            : nested
+              ? "grid-cols-[auto_minmax(0,1fr)_auto] sm:grid-cols-[6.5rem_1fr_auto]"
+              : "grid-cols-[6.5rem_1fr_auto]",
+          nested && "py-2 pl-4 sm:pl-8",
           highlighted && "bg-accent/60 shadow-[inset_3px_0_0_var(--color-primary)]",
         )}
       >
@@ -332,12 +356,12 @@ function BoardRowView({
                 e.stopPropagation();
                 // A plain click stays in the merged inbox; modifier clicks
                 // still open the issue as its own page or tab.
-                if (linking && resolveClickIntent(e) === "push") {
+                if ((linking || peek) && resolveClickIntent(e) === "push") {
                   e.preventDefault();
-                  linking.onSelectIssue(row.issueId);
+                  activate();
                 }
               }}
-              className="truncate text-body font-medium hover:underline"
+              className="min-w-0 break-words text-body font-medium hover:underline sm:truncate"
             >
               {row.title}
             </AppLink>
@@ -391,7 +415,7 @@ function BoardRowView({
         </div>
       </div>
       {open && (
-        <div className={cn("space-y-3 px-4 pb-3 pl-[8.75rem]", nested && "pl-[10.75rem]")}>
+        <div className={cn("space-y-3 px-4 pb-3 sm:pl-[8.75rem]", nested && "sm:pl-[10.75rem]")}>
           {hasTimeline && <Timeline events={row.timeline} copy={copy} />}
           {canReply && <ReplyBox row={row} copy={copy} />}
           {row.children.length > 0 && (
@@ -500,6 +524,7 @@ export function InboxBoardLanes({
   const updateIssue = useUpdateIssue();
   const batchUpdate = useBatchUpdateIssues();
   const copy = useBoardCopy();
+  const peek = useIssuePeekActions();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
   const selected = useMemo(() => selectedIds, [selectedIds]);
@@ -636,6 +661,28 @@ export function InboxBoardLanes({
   // The issue being pointed at may sit among the folded rows.
   const highlightSeen = !!linking?.highlightIssueId && done.seen.some((r) => r.issueId === linking.highlightIssueId);
 
+  const peekOrder = useMemo(() => {
+    const ordered: string[] = [];
+    const visit = (rows: BoardRow[]) => rows.forEach((row) => {
+      ordered.push(row.issueId);
+      visit(row.children);
+    });
+    visit(filteredRows.waiting);
+    visit(filteredRows.stalled);
+    visit(filteredRows.running);
+    visit(filteredRows.todo);
+    visit(filteredRows.fresh);
+    visit(done.fresh);
+    if (showSeen || highlightSeen) visit(done.seen);
+    return ordered;
+  }, [filteredRows, done.fresh, done.seen, highlightSeen, showSeen]);
+
+  useEffect(() => {
+    if (!peek) return;
+    peek.publishColumns([peekOrder]);
+    return () => peek.publishColumns(null);
+  }, [peek, peekOrder]);
+
   const seenFooter =
     done.seen.length > 0 ? (
       <>
@@ -710,7 +757,7 @@ export function InboxBoardLanes({
  * The inbox board on its own page — the compact-width inbox (DENE-882). Wide
  * screens show it beside the notification list instead (DENE-1004).
  */
-export function HomePage() {
+function HomePageContent() {
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const copy = useBoardCopy();
@@ -739,6 +786,14 @@ export function HomePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export function HomePage() {
+  return (
+    <IssuePeekHost>
+      <HomePageContent />
+    </IssuePeekHost>
   );
 }
 

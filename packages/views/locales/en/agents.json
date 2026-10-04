@@ -1028,7 +1028,21 @@
       "queued_prefix": "Queued {{when}}",
       "success_hint": "Completed runs divided by completed and failed runs. Cancelled runs are excluded.",
       "success_unavailable": "No completed or failed runs in this period, so there is no success rate to show.",
-      "cancelled_count": "{{count}} cancelled"
+      "cancelled_count": "{{count}} cancelled",
+      "section_chats": "Chats",
+      "subtitle_chats_latest_one": "Latest {{count}}",
+      "subtitle_chats_latest_other": "Latest {{count}}",
+      "subtitle_no_chats": "No chats",
+      "empty_chats": "No one has chatted with this agent yet.",
+      "chat_status": {
+        "running": "Running",
+        "queued": "Queued",
+        "idle": "Idle"
+      },
+      "chat_hidden": "Someone else's chat",
+      "chat_hidden_hint": "You don't have access to this chat",
+      "open_chat": "Open",
+      "chat_untitled": "Untitled chat"
     }
   },
   "char_counter": {

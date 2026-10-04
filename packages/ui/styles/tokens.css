@@ -165,7 +165,7 @@
        action buttons, a floating toolbar — reserves --chat-launcher-clearance
        and stays correct if the launcher ever moves or changes size. */
     --chat-launcher-size: 2.5rem;
-    --chat-launcher-inset: 0.5rem;
+    --chat-launcher-inset: max(0.5rem, env(safe-area-inset-bottom));
     --chat-launcher-clearance: calc(
       var(--chat-launcher-size) + var(--chat-launcher-inset) * 2
     );
@@ -244,6 +244,16 @@
     --find-match: oklch(0.92 0.15 100);
     --find-match-active: oklch(0.82 0.17 62);
     --find-match-foreground: oklch(0.22 0.03 92);
+}
+
+@media (pointer: coarse) and (max-width: 767px) {
+    :root {
+        --button-height-xs: 2.75rem;
+        --button-height-sm: 2.75rem;
+        --button-height-default: 2.75rem;
+        --button-height-lg: 2.75rem;
+        --chat-launcher-size: 3rem;
+    }
 }
 
 .dark {

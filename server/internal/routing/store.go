@@ -52,6 +52,10 @@ type Issue struct {
 
 	ParentExecutor string
 	HasChildren    bool
+	// Related are the tickets whose executor may continue this one (接着做):
+	// the previous stage under the same parent, the parent, and tickets from
+	// the same batch. Only agent-held tickets are listed.
+	Related []RelatedTicket
 
 	// Reviewer is the ticket's reviewer slot. A zero Kind means the slot is
 	// empty — the only condition under which routing may write it.
@@ -62,6 +66,29 @@ type Issue struct {
 	// Zero means the store could not tell, which that row reads as "not
 	// stale" rather than as "stale forever".
 	LastActivityAt time.Time
+
+	// Wait is what a blocked ticket says it is waiting on. Only the blocked
+	// row reads it, to answer from the record before asking any model.
+	Wait BlockWait
+}
+
+// BlockWait is the slice of a ticket's wait record the blocked row can read
+// as plain fact: whether anything is registered at all, and which of the
+// tickets it names have already ended.
+type BlockWait struct {
+	// Registered — a blocker ticket, a wake time, a probed condition, or a
+	// person is on record. A blocked ticket without one waits on nothing the
+	// platform can watch.
+	Registered bool
+	// BlockedBy are the tickets the wait names, as written.
+	BlockedBy []string
+	// Ended are the BlockedBy entries that no longer hold the ticket.
+	Ended []string
+}
+
+// AllEnded reports a wait whose every named ticket has already ended.
+func (w BlockWait) AllEnded() bool {
+	return len(w.BlockedBy) > 0 && len(w.Ended) == len(w.BlockedBy)
 }
 
 // ReviewerTarget is what the reviewer slot holds. The values are the strings
@@ -271,9 +298,11 @@ type Store interface {
 	// switch can flip between this call and the pass.
 	EnabledWorkspaces(ctx context.Context) ([]string, error)
 
-	// UnassignedTodos lists quiet todo issues with at least one empty routing seat.
-	// It excludes human-held work and tickets with an active run.
-	UnassignedTodos(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error)
+	// UnseatedIssues lists quiet todo issues with at least one empty routing
+	// seat, and quiet blocked issues with no executor — a blocked ticket
+	// nobody holds is woken by nobody when its wait ends (DENE-1255). It
+	// excludes human-held work and tickets with an active run.
+	UnseatedIssues(ctx context.Context, workspaceID string, before time.Time, limit int) ([]string, error)
 
 	// StaleReviews lists issues in this workspace that sit in the in_review
 	// CATEGORY, carry no active run, and have had no activity since `before`.

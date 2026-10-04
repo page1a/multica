@@ -8,7 +8,8 @@
     "search_empty": "일치하는 채팅이 없습니다",
     "back": "뒤로",
     "new_chat_in_project": "새 채팅은 「{{title}}」에 남습니다",
-    "new_chat_unbound": "새 채팅은 프로젝트에 묶이지 않습니다"
+    "new_chat_unbound": "새 채팅은 프로젝트에 묶이지 않습니다",
+    "back_to_list": "채팅 목록으로"
   },
   "goal_flow": {
     "hint": "이슈를 만들기 전에 먼저 정리하세요.",
@@ -145,7 +146,9 @@
     "quick_actions_heading": "후속 질문",
     "quick_actions_aria": "추천 후속 질문",
     "quick_actions_regenerate": "제안 다시 생성",
-    "quick_actions_regenerate_failed": "제안을 다시 생성하지 못했습니다. 다시 시도해 주세요."
+    "quick_actions_regenerate_failed": "제안을 다시 생성하지 못했습니다. 다시 시도해 주세요.",
+    "spawned": "채팅을 열었습니다",
+    "spawn_untitled": "새 채팅"
   },
   "session_history": {
     "untitled": "제목 없음",
@@ -314,7 +317,8 @@
     "private_tag": "비공개",
     "extra_tag": "추가 멤버",
     "show_more": "더 보기 ({{count}})",
-    "show_fewer": "접기"
+    "show_fewer": "접기",
+    "spawned": "다른 채팅에서 생성됨"
   },
   "header": {
     "view_profile": "Agent 프로필 보기",
@@ -352,7 +356,14 @@
     "header_private": "나만",
     "header_project": "프로젝트 멤버는 보고 말할 수 있습니다",
     "header_extra": "프로젝트 멤버와 추가 인원",
-    "search": "멤버 검색…"
+    "search": "멤버 검색…",
+    "trigger": {
+      "private": "나만",
+      "project": "프로젝트 멤버",
+      "extra": "프로젝트+추가",
+      "workspace": "워크스페이스 전체"
+    },
+    "header_workspace": "워크스페이스 모든 멤버가 보고 말할 수 있습니다"
   },
   "notice": {
     "title": "일부 채팅이 이제 프로젝트 멤버에게 보입니다",
@@ -360,5 +371,10 @@
     "make_private": "선택한 항목을 비공개로",
     "dismiss": "알겠습니다"
   },
-  "title_locked": "제목 잠김 — 에이전트가 이름을 바꾸지 않습니다"
+  "title_locked": "제목 잠김 — 에이전트가 이름을 바꾸지 않습니다",
+  "origin": {
+    "from_prefix": "",
+    "from_suffix": "에서 생성됨",
+    "from_hidden": "다른 채팅에서 생성됨"
+  }
 }

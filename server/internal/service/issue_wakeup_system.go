@@ -46,10 +46,8 @@ var childDoneCondition = json.RawMessage(`{"type":"children_done","each_stage":t
 // ChildDoneDefaultInstruction is what the woken assignee is asked to do when
 // neither the issue nor the workspace sets an instruction. The trigger facts
 // say which stage closed, which one is next and how many were cancelled.
-const ChildDoneDefaultInstruction = "Sub-issues of this issue have closed; the trigger facts list each stage and which one is next. " +
-	"If a later stage is waiting, check that its dependencies are met, then move its sub-issues out of backlog so they start. " +
-	"If a sub-issue in the closed stages was cancelled rather than finished, decide whether its work is still needed before advancing. " +
-	"When every sub-issue is closed, bring their results together on this issue and move it forward, or mark it ready for review when nothing remains."
+const ChildDoneDefaultInstruction = "子任务已结束，触发信息里写了哪个阶段结束、下一个是哪个。" +
+	"还有后续阶段就推进它开工；全部结束就汇总结果，推进本任务。"
 
 // SystemWakeupDefault is the rule's workspace default: whether it is on and
 // the instruction set for the workspace ("" when none).

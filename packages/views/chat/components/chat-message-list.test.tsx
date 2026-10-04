@@ -997,3 +997,53 @@ describe("ChatMessageList onboarding starter cards", () => {
     expect(screen.getByRole("button", { name: "Later chip" })).toBeEnabled();
   });
 });
+
+describe("ChatMessageList opened-chat cards (DENE-1271)", () => {
+  function renderMessages(messages: Parameters<typeof ChatMessageList>[0]["messages"]) {
+    return render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList messages={messages} pendingTask={null} availability="online" />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+  }
+
+  it("links the card to the chat the agent opened", async () => {
+    const { registerChatStore } = await import("@multica/core/chat");
+    const { create } = await import("zustand");
+    const setActiveSession = vi.fn();
+    registerChatStore(
+      create(() => ({ setActiveSession })) as unknown as Parameters<typeof registerChatStore>[0],
+    );
+    renderMessages([{
+      id: "spawn-card",
+      chat_session_id: "session-1",
+      role: "assistant",
+      content: "已派生会话 → Pricing research",
+      message_kind: "chat_spawn",
+      linked_session_id: "child-1",
+      task_id: null,
+      created_at: "2026-10-04T00:00:00Z",
+    }]);
+
+    expect(screen.getByText("Opened chat")).toBeInTheDocument();
+    expect(screen.queryByText(/已派生会话/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Pricing research/ }));
+    expect(setActiveSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("shows why a chat was not opened", () => {
+    renderMessages([{
+      id: "spawn-refused",
+      chat_session_id: "session-1",
+      role: "assistant",
+      content: "没有新开聊天：这个聊天本身是派生出来的，不能再往下开。",
+      message_kind: "chat_spawn_refused",
+      task_id: null,
+      created_at: "2026-10-04T00:00:00Z",
+    }]);
+
+    expect(screen.getByText("没有新开聊天：这个聊天本身是派生出来的，不能再往下开。")).toBeInTheDocument();
+  });
+});

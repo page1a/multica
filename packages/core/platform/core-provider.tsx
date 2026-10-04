@@ -196,7 +196,7 @@ export function CoreProvider({
   // (locale, resources) to avoid hydration mismatch. Language switching goes
   // through window.location.reload(), never client-side changeLanguage.
   const tree = (
-    <QueryProvider>
+    <QueryProvider storage={storage}>
       <AuthInitializer
         onLogin={onLogin}
         storage={storage}

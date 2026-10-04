@@ -183,8 +183,8 @@ function CallbackContent() {
 
   if (desktopToken) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Card className="w-full max-w-sm">
+      <div className="flex min-h-svh flex-col items-center justify-center overflow-y-auto px-4 py-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:flex-row">
+        <Card className="my-auto w-full max-w-sm">
           <CardHeader className="text-center">
             <CardTitle className="text-display-sm">
               {t(($) => $.web.desktop_handoff.opening_title)}
@@ -210,8 +210,8 @@ function CallbackContent() {
 
   if (error) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Card className="w-full max-w-sm">
+      <div className="flex min-h-svh flex-col items-center justify-center overflow-y-auto px-4 py-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:flex-row">
+        <Card className="my-auto w-full max-w-sm">
           <CardHeader className="text-center">
             <CardTitle className="text-display-sm">
               {t(($) => $.web.callback.failed_title)}
@@ -231,8 +231,8 @@ function CallbackContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <Card className="w-full max-w-sm">
+    <div className="flex min-h-svh flex-col items-center justify-center overflow-y-auto px-4 py-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:flex-row">
+      <Card className="my-auto w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-display-sm">
             {t(($) => $.web.callback.signing_in)}

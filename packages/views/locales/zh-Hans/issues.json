@@ -429,7 +429,8 @@
     "previous": "上一个任务",
     "next": "下一个任务",
     "open_full_page": "打开完整页面",
-    "close": "关闭预览"
+    "close": "关闭预览",
+    "back": "返回看板"
   },
   "detail": {
     "not_found": "找不到这个页面",

@@ -83,6 +83,7 @@ import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
+import { workspaceLinksOptions } from "@multica/core/workspace-links";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import type { PinnedItem } from "@multica/core/types";
@@ -130,6 +131,7 @@ type NavKey =
   | "agents"
   | "squads"
   | "usage"
+  | "linked"
   | "runtimes"
   | "skills"
   | "settings";
@@ -146,6 +148,7 @@ type NavLabelKey =
   | "agents"
   | "squads"
   | "usage"
+  | "linked_workspaces"
   | "runtimes"
   | "skills"
   | "permissions"
@@ -412,6 +415,15 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     ...moduleVisibilityOptions(wsId ?? ""),
     enabled: !!wsId,
   });
+  // The read-only panel only earns a sidebar row once this workspace can
+  // actually see another one (DENE-1225).
+  const { data: workspaceLinks } = useQuery({
+    ...workspaceLinksOptions(wsId ?? ""),
+    enabled: !!wsId,
+  });
+  const hasLinkedView = !!workspaceLinks?.links?.some(
+    (link) => link.side === "viewer" && link.status === "active",
+  );
   const navVisible = (key: NavKey) => {
     const module = navItemModule(key);
     return module === null || canAccessModule(moduleAccess, module);
@@ -910,6 +922,18 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     </SidebarMenuItem>
                   );
                 })}
+                {hasLinkedView ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={!isActivePinnedRoute && isNavActive(pathname, p.linked())}
+                      render={<AppLink href={p.linked()} />}
+                      className={NAV_ITEM_CLASS_NAME}
+                    >
+                      {React.createElement(routeIconForPath(p.linked()))}
+                      <span>{t(($) => $.nav.linked_workspaces)}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

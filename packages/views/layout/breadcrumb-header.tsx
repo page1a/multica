@@ -1,10 +1,12 @@
 "use client";
 
 import { Fragment, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
+import { Button } from "@multica/ui/components/ui/button";
 import { PageHeader } from "./page-header";
-import { AppLink } from "../navigation";
+import { AppLink, useBackOrReplace } from "../navigation";
+import { useT } from "../i18n";
 
 /**
  * One ancestor crumb. Always a clickable link to the segment's container — the
@@ -44,8 +46,29 @@ interface BreadcrumbHeaderProps {
  * real containers and clicking one navigates up to it.
  */
 export function BreadcrumbHeader({ segments, leaf, actions, leading, className }: BreadcrumbHeaderProps) {
+  const backOrReplace = useBackOrReplace();
+  const { t } = useT("chat");
+  const backFallback = segments.at(-1)?.href;
+
   return (
-    <PageHeader leading={leading} className={cn("bg-background text-body", className)}>
+    <PageHeader
+      leading={
+        leading ??
+        (backFallback ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+            aria-label={t(($) => $.page.back)}
+            onClick={() => backOrReplace(backFallback)}
+          >
+            <ArrowLeft className="size-4" aria-hidden="true" />
+          </Button>
+        ) : undefined)
+      }
+      className={cn("bg-background text-body", className)}
+    >
       <div className="flex flex-1 items-center gap-1.5 min-w-0">
         {segments.map((segment) => (
           <Fragment key={segment.href}>
@@ -55,8 +78,8 @@ export function BreadcrumbHeader({ segments, leaf, actions, leading, className }
                 typeof segment.label === "string" ? segment.label : undefined
               }
               className={cn(
-                "text-muted-foreground hover:text-foreground transition-colors",
-                segment.className ?? "shrink-0",
+                "min-w-0 max-w-[28vw] truncate text-muted-foreground transition-colors hover:text-foreground sm:max-w-none",
+                segment.className ?? "sm:shrink-0",
               )}
             >
               {segment.label}
@@ -66,7 +89,11 @@ export function BreadcrumbHeader({ segments, leaf, actions, leading, className }
         ))}
         {leaf}
       </div>
-      {actions ? <div className="flex items-center gap-1 shrink-0">{actions}</div> : null}
+      {actions ? (
+        <div className="flex max-w-[45vw] shrink-0 items-center gap-1 overflow-x-auto sm:max-w-none">
+          {actions}
+        </div>
+      ) : null}
     </PageHeader>
   );
 }

@@ -44,6 +44,15 @@
   bottom: calc(var(--chat-launcher-clearance) + var(--chat-launcher-inset));
 }
 
+@media (pointer: coarse) and (max-width: 767px) {
+  button,
+  [role="button"],
+  [data-slot="button"]:not([data-touch-size="xs"]):not([data-touch-size="sm"]):not([data-touch-size="icon-xs"]):not([data-touch-size="icon-sm"]) {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
 /* Shiki dual themes: CSS-only light/dark switching via CSS variables */
 /* @see https://shiki.style/guide/dual-themes */
 .shiki,

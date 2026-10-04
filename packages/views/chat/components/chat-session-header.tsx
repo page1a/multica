@@ -6,14 +6,21 @@ import {
   Archive,
   ArchiveRestore,
   Copy,
+  Globe,
   Link2,
+  LockKeyhole,
   MoreHorizontal,
   Pencil,
   Trash2,
   UserRound,
+  Users,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { Button } from "@multica/ui/components/ui/button";
+import { cn } from "@multica/ui/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -46,6 +53,8 @@ import { useT } from "../../i18n";
 import { useAuthStore } from "@multica/core/auth";
 import { conversationToMarkdown } from "../lib/copy-text";
 import { ProgressLine } from "../../common/progress-line";
+import { PrivateLinkPrompt, SharingHoverCard } from "../../common/sharing-guide";
+import { ChatAccessDialog } from "./chat-access-dialog";
 
 /**
  * Per-session header for the conversation pane: agent avatar + chat title +
@@ -80,14 +89,29 @@ export function ChatSessionHeader({
   const { t } = useT("chat");
   const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const canManage = session.access === "owner" || session.creator_id === currentUserId;
-  const visibilityLabel =
-    session.visibility === "private"
-      ? t(($) => $.sharing.header_private)
+  const { t: tc } = useT("common");
+  const wsId = useWorkspaceId();
+  // Same query the access dialog reads, so the button, its hover card and the
+  // dialog agree; can_edit is the server's answer, not a client copy of it.
+  const { data: accessSettings } = useQuery({
+    queryKey: ["chat", wsId, "access", session.id],
+    queryFn: () => api.getChatAccess(session.id),
+  });
+  const accessMode =
+    accessSettings?.mode ??
+    (session.visibility === "private"
+      ? "private"
       : (session.extra_count ?? 0) > 0
-        ? t(($) => $.sharing.header_extra)
-        : session.visibility === "project"
-          ? t(($) => $.sharing.header_project)
-          : null;
+        ? "extra"
+        : "project");
+  const canEditAccess = accessSettings?.can_edit;
+  // Until the server answers, the session's own access field is the best guess.
+  const canOpenAccess = canEditAccess ?? canManage;
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [privateLinkOpen, setPrivateLinkOpen] = useState(false);
+  const shareLabel = t(($) => $.sharing.trigger[accessMode]);
+  const shareDescription = t(($) => $.sharing[`header_${accessMode}` as const]);
+  const ShareIcon = accessMode === "private" ? LockKeyhole : accessMode === "workspace" ? Globe : Users;
   const { getShareableUrl } = useNavigation();
   const wsPaths = useWorkspacePaths();
   const updateSession = useUpdateChatSession();
@@ -161,7 +185,13 @@ export function ChatSessionHeader({
       : setArchived.mutate({ sessionId: session.id, archived: true });
   const doUnarchive = () => setArchived.mutate({ sessionId: session.id, archived: false });
 
-  const copySessionLink = async () => {
+  const copySessionLink = async (force = false) => {
+    // A private chat opens as "can't open this" for whoever receives the link,
+    // so say so first (DENE-1214).
+    if (!force && accessMode === "private") {
+      setPrivateLinkOpen(true);
+      return;
+    }
     const url = getShareableUrl(wsPaths.chatSession(session.id));
     if (await copyText(url)) {
       toast.success(t(($) => $.header.link_copied));
@@ -260,19 +290,46 @@ export function ChatSessionHeader({
           <div className="truncate text-caption text-muted-foreground">
             {agent?.name || session.agent_name}
             {agent?.description ? ` · ${agent.description}` : ""}
-            {visibilityLabel ? ` · ${visibilityLabel}` : ""}
           </div>
         )}
-        {!agent && !session.agent_name && visibilityLabel && (
-          <div className="truncate text-caption text-muted-foreground">{visibilityLabel}</div>
-        )}
       </div>
+
+      <SharingHoverCard
+        trigger={
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="chat-share-trigger"
+            aria-disabled={canEditAccess === false || undefined}
+            className={cn(
+              "h-7 gap-1.5 px-2 text-caption text-muted-foreground",
+              canEditAccess === false && "cursor-not-allowed aria-disabled:opacity-60",
+            )}
+            onClick={canOpenAccess ? () => setAccessOpen(true) : undefined}
+            aria-label={`${t(($) => $.sharing.title)}: ${shareLabel}`}
+          >
+            <ShareIcon className="size-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">{shareLabel}</span>
+          </Button>
+        }
+        title={shareLabel}
+        description={shareDescription}
+        canChange={canEditAccess}
+        changeLine={
+          canEditAccess === undefined
+            ? undefined
+            : canEditAccess
+              ? tc(($) => $.share_guide.can_change)
+              : tc(($) => $.share_guide.cannot_change_not_creator.chat)
+        }
+      />
 
       <Button
         variant="ghost"
         size="icon-sm"
         className="text-muted-foreground"
         onClick={() => void copySessionLink()}
+        data-testid="chat-copy-link"
         aria-label={t(($) => $.header.copy_link)}
         title={t(($) => $.header.copy_link)}
       >
@@ -333,6 +390,22 @@ export function ChatSessionHeader({
         </DropdownMenuContent>
       </DropdownMenu>
       {trailing}
+
+      <ChatAccessDialog session={session} open={accessOpen} onOpenChange={setAccessOpen} />
+      <PrivateLinkPrompt
+        open={privateLinkOpen}
+        onOpenChange={setPrivateLinkOpen}
+        kind="chat"
+        canChange={canEditAccess === true}
+        onCopyAnyway={() => {
+          setPrivateLinkOpen(false);
+          void copySessionLink(true);
+        }}
+        onChangeScope={() => {
+          setPrivateLinkOpen(false);
+          setAccessOpen(true);
+        }}
+      />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>

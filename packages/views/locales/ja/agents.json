@@ -896,7 +896,20 @@
       "queued_prefix": "{{when}} に待機開始",
       "success_hint": "完了した実行数を、完了と失敗の実行数の合計で割った割合です。キャンセルした実行は含みません。",
       "success_unavailable": "この期間に完了または失敗した実行がないため、成功率を計算できません。",
-      "cancelled_count": "{{count}} 件キャンセル"
+      "cancelled_count": "{{count}} 件キャンセル",
+      "section_chats": "チャット",
+      "subtitle_chats_latest_other": "最新 {{count}} 件",
+      "subtitle_no_chats": "チャットなし",
+      "empty_chats": "まだ誰もこのエージェントとチャットしていません。",
+      "chat_status": {
+        "running": "実行中",
+        "queued": "待機中",
+        "idle": "アイドル"
+      },
+      "chat_hidden": "他のメンバーのチャット",
+      "chat_hidden_hint": "このチャットを表示する権限がありません",
+      "open_chat": "開く",
+      "chat_untitled": "無題のチャット"
     }
   },
   "char_counter": {

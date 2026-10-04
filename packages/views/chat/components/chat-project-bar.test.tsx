@@ -54,6 +54,29 @@ const projects = Array.from({ length: 20 }, (_, index) =>
 );
 
 describe("ChatProjectBar", () => {
+  it("shows each project's own icon on its chip and in More, like the sidebar pins", async () => {
+    const user = userEvent.setup();
+    const game = { ...project("p1", "game"), icon: "🎮" };
+    const { container } = render(
+      <I18nProvider locale="en" resources={RESOURCES}>
+        <ChatProjectBar
+          projects={[game]}
+          sessions={[session("s1", ["p1"], "2026-09-02T00:00:00Z")]}
+          pinnedIds={["p1"]}
+          onTogglePin={vi.fn()}
+          onMovePin={vi.fn()}
+          filter={{ type: "all" }}
+          onFilterChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    // The chip renderer also feeds the width mirror, so the icon is measured too.
+    expect(container.textContent).toContain("🎮game");
+    await user.click(screen.getByRole("button", { name: /More/ }));
+    expect(screen.getByRole("button", { name: "game, 1 chat" }).textContent).toContain("🎮");
+  });
+
   it("more can search, pin, and reorder", async () => {
     const user = userEvent.setup();
     const onFilterChange = vi.fn();
@@ -154,7 +177,8 @@ describe("ChatProjectBar", () => {
       const chips = () =>
         within(view.container.querySelector<HTMLElement>("[data-slot='chat-project-chips']")!)
           .getAllByRole("button")
-          .map((button) => button.textContent);
+          // The project icon is decoration; compare chips by their words.
+          .map((button) => button.textContent?.replace(/^📁/, ""));
       return { ...view, chips, onFilterChange, onFitWidthChange };
     }
 

@@ -719,6 +719,8 @@ func TestBlockedAdvisesWithoutChangingAnyValue(t *testing.T) {
 func TestBlockedAdvisesAtMostOnce(t *testing.T) {
 	store := newFakeStore()
 	store.issue.Status = "blocked"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-piccolo-g"
 	judge := &fakeJudge{advice: Advice{Cause: "human"}}
 	r := newRouter(store, judge)
 

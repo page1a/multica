@@ -168,12 +168,12 @@ func TestHandleCompletedTasksSignalsStalledIssue(t *testing.T) {
 }
 
 // TestHandleCompletedTasksSkipsStatusesThatAreNotInProgress pins the guard
-// carried over from the failure path: only in_progress is detected, so
-// in_review and blocked stay with whoever owns them and every terminal /
-// not-started status is silent.
+// carried over from the failure path: in_review and blocked stay with whoever
+// owns them and every terminal / not-started status is silent. todo is covered
+// by the two assignee tests below.
 func TestHandleCompletedTasksSkipsStatusesThatAreNotInProgress(t *testing.T) {
 	ctx := context.Background()
-	for _, status := range []string{"todo", "backlog", "in_review", "blocked", "done", "cancelled"} {
+	for _, status := range []string{"backlog", "in_review", "blocked", "done", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
 			fx, svc, _, agentID, runtimeID := newCompletionStallFixture(t)
 			issueID := fx.Issue(t, "Issue in "+status, testutil.Cols{
@@ -192,6 +192,60 @@ func TestHandleCompletedTasksSkipsStatusesThatAreNotInProgress(t *testing.T) {
 				t.Errorf("issue status = %q, want %q", got, status)
 			}
 		})
+	}
+}
+
+// TestHandleCompletedTasksSignalsTodoLeftByAssignee is DENE-1291: the agent
+// assignee finished a run on its own ticket without ever moving it off todo.
+// Parking already reads that as stopped without a close; the recovery run
+// must follow, the same as for in_progress.
+func TestHandleCompletedTasksSignalsTodoLeftByAssignee(t *testing.T) {
+	ctx := context.Background()
+	fx, svc, _, agentID, runtimeID := newCompletionStallFixture(t)
+	issueID := fx.Issue(t, "Never moved off todo", testutil.Cols{
+		"status":        "todo",
+		"assignee_type": "agent",
+		"assignee_id":   agentID,
+	})
+	completed := completedTaskFor(t, fx, agentID, runtimeID, issueID)
+	if got := svc.HandleCompletedTasks(ctx, []db.AgentTaskQueue{completed}); got != 1 {
+		t.Fatalf("HandleCompletedTasks signalled = %d, want 1", got)
+	}
+	comments := completionStallComments(t, fx, issueID)
+	if len(comments) != 1 {
+		t.Fatalf("signal comments = %d, want 1", len(comments))
+	}
+	if !strings.Contains(comments[0], "`todo`") {
+		t.Errorf("signal body does not state the live status:\n%s", comments[0])
+	}
+	if got := issueStatusOf(t, fx, issueID); got != "todo" {
+		t.Errorf("issue status = %q, want todo (the signal must not write status)", got)
+	}
+	var queued int
+	fx.QueryRow(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND status = 'queued'`, issueID).Scan(&queued)
+	if queued != 1 {
+		t.Errorf("recovery runs queued = %d, want 1", queued)
+	}
+}
+
+// TestHandleCompletedTasksSkipsTodoRunByAnotherAgent pins the other side: an
+// agent that was only @mentioned onto a todo ticket finishing its reply is not
+// the executor stalling, so the assignee is not woken.
+func TestHandleCompletedTasksSkipsTodoRunByAnotherAgent(t *testing.T) {
+	ctx := context.Background()
+	fx, svc, _, agentID, runtimeID := newCompletionStallFixture(t)
+	otherID := fx.Agent(t, "Mentioned helper", runtimeID, testutil.Cols{"work_enabled": true})
+	issueID := fx.Issue(t, "Todo with a helper reply", testutil.Cols{
+		"status":        "todo",
+		"assignee_type": "agent",
+		"assignee_id":   agentID,
+	})
+	completed := completedTaskFor(t, fx, otherID, runtimeID, issueID)
+	if got := svc.HandleCompletedTasks(ctx, []db.AgentTaskQueue{completed}); got != 0 {
+		t.Fatalf("HandleCompletedTasks signalled = %d, want 0 for another agent's run", got)
+	}
+	if comments := completionStallComments(t, fx, issueID); len(comments) != 0 {
+		t.Fatalf("signal comments = %d, want 0", len(comments))
 	}
 }
 
@@ -323,23 +377,27 @@ func TestHandleCompletedTasksIgnoresIssueLessTasks(t *testing.T) {
 // change to the guard fails here rather than only in the DB suite.
 func TestCompletionStallEligible(t *testing.T) {
 	cases := []struct {
-		status string
-		active bool
-		want   bool
+		status   string
+		active   bool
+		assignee bool
+		want     bool
 	}{
 		{status: "in_progress", active: false, want: true},
+		{status: "in_progress", active: false, assignee: true, want: true},
 		{status: "in_progress", active: true, want: false},
-		{status: "in_review", active: false, want: false},
-		{status: "blocked", active: false, want: false},
-		{status: "done", active: false, want: false},
+		{status: "in_review", active: false, assignee: true, want: false},
+		{status: "blocked", active: false, assignee: true, want: false},
+		{status: "done", active: false, assignee: true, want: false},
 		{status: "todo", active: false, want: false},
-		{status: "backlog", active: false, want: false},
-		{status: "cancelled", active: false, want: false},
+		{status: "todo", active: false, assignee: true, want: true},
+		{status: "todo", active: true, assignee: true, want: false},
+		{status: "backlog", active: false, assignee: true, want: false},
+		{status: "cancelled", active: false, assignee: true, want: false},
 		{status: "", active: false, want: false},
 	}
 	for _, tc := range cases {
-		if got := completionStallEligible(tc.status, tc.active); got != tc.want {
-			t.Errorf("completionStallEligible(%q, %v) = %v, want %v", tc.status, tc.active, got, tc.want)
+		if got := completionStallEligible(tc.status, tc.active, tc.assignee); got != tc.want {
+			t.Errorf("completionStallEligible(%q, %v, %v) = %v, want %v", tc.status, tc.active, tc.assignee, got, tc.want)
 		}
 	}
 }

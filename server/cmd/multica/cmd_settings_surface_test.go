@@ -28,6 +28,8 @@ func isSettingsSurface(path string) bool {
 		return true
 	case strings.Contains(path, "runtime-skills/"):
 		return true
+	case path == "/agent-spawn":
+		return true
 	case path == "/api/modules" || strings.Contains(path, "/api/modules/"):
 		return true
 	case path == "/visibility" || path == "/visibility/preview":

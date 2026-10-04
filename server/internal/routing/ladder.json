@@ -8,18 +8,18 @@
     "does not exist in the workspace is skipped at candidate-build time rather",
     "than failing the call.",
     "",
-    "`seats` is every routable base on that rung. `provider` is the model family",
-    "(openai, anthropic, deepseek, xai, google), so a same-tier handoff can tell",
-    "a GPT seat from any other house. A direction seat is not listed; it inherits",
-    "its base's provider. `model` and `thinking` are the live workspace seat",
-    "config this ladder was aligned to — not a guess from an older comment.",
+    "The rung a seat routes on is the tag a person put on it in the agent",
+    "settings (routing_tier), and its usage tag (紧张 / 常规 / 充足) orders",
+    "seats on a rung. Both tags always win over this file. Which rung a seat",
+    "is listed under below is only the fallback for an UNTAGGED seat; it is",
+    "not a statement of where a tagged seat routes today. Read the live tags",
+    "with `multica agent list --output json` (routing_tier / routing_usage).",
     "",
-    "孙悟饭 (gpt-6-astra) is strongest, 特兰克斯 (gpt-6-sol) is strong, 克林",
-    "(gpt-6-luna) is weak; all three are openai. 贝吉塔 and 比克 are different",
-    "rungs on purpose: their model strings are different command-code accounts",
-    "of deepseek-v4.1-flash, and thinking differs (贝吉塔 high → medium, 比克",
-    "low → weak). 孙悟天 (grok-4.7, xai) shares strong; 人造人18号",
-    "(gemini-3.8-flash-high, google) shares medium."
+    "`seats` is every routable base on that rung. `provider` is the model",
+    "family (openai, anthropic, deepseek, xai, google), used only when the",
+    "seat's configured model names no known family: the configured model",
+    "decides first. `model` and `thinking` record what the seat ran when this",
+    "file was last aligned; they are documentation, not routing input."
   ],
   "tiers": [
     {
@@ -37,7 +37,7 @@
       "label": "强",
       "seats": [
         { "base": "孙悟空", "provider": "anthropic", "model": "claude-opus-5-5", "thinking": "medium" },
-        { "base": "特兰克斯", "provider": "openai", "model": "gpt-6-sol", "thinking": "high" },
+        { "base": "特兰克斯", "provider": "openai", "model": "gpt-6.1-sol", "thinking": "high" },
         { "base": "孙悟天", "provider": "xai", "model": "grok-4.7", "thinking": "high" }
       ]
     },

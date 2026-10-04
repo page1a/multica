@@ -15,6 +15,7 @@ import { pinListOptions } from "@multica/core/pins";
 import { useCreatePin, useDeletePin } from "@multica/core/pins";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useModalStore } from "@multica/core/modals";
 import { useIssuesScope } from "@multica/core/issues/stores";
 import { chatDirectoryOptions, useRecentContextStore } from "@multica/core/chat";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -112,6 +113,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const router = useNavigation();
+  const openModal = useModalStore((s) => s.open);
   const userId = useAuthStore((s) => s.user?.id);
   const { data: project, isLoading } = useQuery(projectDetailOptions(wsId, projectId));
   const recordRecentContext = useRecentContextStore((s) => s.recordVisit);
@@ -249,7 +251,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   }
 
   if (!project) {
-    return <ResourceNotFound />;
+    return <ResourceNotFound kind="project" />;
   }
 
   const issueMetrics = getProjectIssueMetrics(project);
@@ -537,13 +539,12 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               >
                 {isPinned ? <PinOff /> : <Pin />}
               </Button>
-              <WriteAction>
-                <ShareScopeTrigger
-                  scope={project.visibility}
-                  audienceSize={shareAudienceSize}
-                  onClick={() => setShareScopeOpen(true)}
-                />
-              </WriteAction>
+              <ShareScopeTrigger
+                scope={project.visibility}
+                audienceSize={shareAudienceSize}
+                onClick={() => setShareScopeOpen(true)}
+                access={{ kind: "project", id: project.id }}
+              />
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -554,7 +555,13 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 />
                 <DropdownMenuContent align="end" className="w-auto">
                   <DropdownMenuItem onClick={() => {
-                    void copyText(router.getShareableUrl(currentPath(router))).then((ok) => {
+                    const url = router.getShareableUrl(currentPath(router));
+                    // Private: the recipient would land on "can't open this" (DENE-1214).
+                    if (project.visibility === "private") {
+                      openModal("private-link", { kind: "project", id: project.id, url, label: project.title });
+                      return;
+                    }
+                    void copyText(url).then((ok) => {
                       if (ok) toast.success(t(($) => $.detail.toast_link_copied));
                     });
                   }}>

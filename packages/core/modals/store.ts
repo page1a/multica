@@ -15,6 +15,7 @@ type ModalType =
   | "issue-close"
   | "issue-run-confirm"
   | "goal-completion"
+  | "private-link"
   | null;
 
 export type IssueLimitRecoveryReason = "issue_limit" | "autopilot_quota";

@@ -2584,6 +2584,37 @@ func (s *TaskService) SendDirectChatMessage(
 	uploaderType string,
 	uploaderID pgtype.UUID,
 ) (*DirectChatSendResult, error) {
+	return s.sendDirectChatMessage(ctx, session, agent, initiatorUserID, content, attachmentIDs, uploaderType, uploaderID, nil)
+}
+
+// SpawnDirectChat opens a chat that does not exist yet and sends its first
+// message in the same transaction (DENE-1271). createSession runs first inside
+// that transaction and must insert the chat_session row whose ID session
+// already carries, plus anything that has to commit with it (the parent card,
+// the spawn ledger). If any step fails, neither the session nor the brief nor
+// the task survives.
+func (s *TaskService) SpawnDirectChat(
+	ctx context.Context,
+	session db.ChatSession,
+	agent db.Agent,
+	initiatorUserID pgtype.UUID,
+	brief string,
+	createSession func(qtx *db.Queries) error,
+) (*DirectChatSendResult, error) {
+	return s.sendDirectChatMessage(ctx, session, agent, initiatorUserID, brief, nil, "", pgtype.UUID{}, createSession)
+}
+
+func (s *TaskService) sendDirectChatMessage(
+	ctx context.Context,
+	session db.ChatSession,
+	agent db.Agent,
+	initiatorUserID pgtype.UUID,
+	content string,
+	attachmentIDs []pgtype.UUID,
+	uploaderType string,
+	uploaderID pgtype.UUID,
+	beforeSend func(qtx *db.Queries) error,
+) (*DirectChatSendResult, error) {
 	// Build the per-task Composio overlay before the transaction — it can do
 	// network I/O and must not run with a DB transaction open.
 	overlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
@@ -2602,6 +2633,11 @@ func (s *TaskService) SendDirectChatMessage(
 
 	var out DirectChatSendResult
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if beforeSend != nil {
+			if err := beforeSend(qtx); err != nil {
+				return err
+			}
+		}
 		// Serialise this send against a concurrent runtime rebind of the same
 		// session (MUL-5163). The lock must be taken first and the agent re-read
 		// under it: the runtime_id the caller loaded can already be stale by the
@@ -5497,6 +5533,9 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 	capacityHeld := false
 	if retried == nil && task.IssueID.Valid {
 		capacityHeld = s.relayQuotaExhaustion(ctx, task, failureReason, errMsg)
+	}
+	if retried == nil && task.IssueID.Valid && !capacityHeld {
+		capacityHeld = s.relaySafetyRefusal(ctx, task, errMsg)
 	}
 
 	// A platform interrupt (daemon shutdown while the server still considered

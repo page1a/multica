@@ -1,6 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { ResourceShare } from "../types";
+import { visibilityKeys } from "./mutations";
 
 /**
  * Direct "specific people" shares for a single issue or repository. Projects
@@ -48,6 +49,7 @@ export function useAddResourceShare(wsId: string, resource: ShareableResource) {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: visibilityKeys.accessAll(wsId) });
     },
   });
 }
@@ -67,6 +69,7 @@ export function useRemoveResourceShare(wsId: string, resource: ShareableResource
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: visibilityKeys.accessAll(wsId) });
     },
   });
 }

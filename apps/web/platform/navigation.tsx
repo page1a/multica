@@ -75,6 +75,44 @@ function NavigationProviderInner({
   );
   useInternalLinkHandler(router);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(pointer: coarse) and (max-width: 767px)");
+    if (!media.matches) return;
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      tracking = touch.clientX <= 24 && canGoBackInApp();
+      startX = touch.clientX;
+      startY = touch.clientY;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!tracking) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      if (touch.clientX - startX < -8 || Math.abs(touch.clientY - startY) > 48) tracking = false;
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      if (!tracking) return;
+      const touch = event.changedTouches[0];
+      tracking = false;
+      if (!touch) return;
+      if (touch.clientX - startX >= 80 && Math.abs(touch.clientY - startY) < 72) router.back();
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [router]);
+
   const adapter: NavigationAdapter = {
     push: router.push,
     replace: router.replace,

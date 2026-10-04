@@ -177,5 +177,34 @@
     "new_messages_other": "{{count}} nouveaux messages",
     "new_comments_one": "{{count}} nouveau commentaire",
     "new_comments_other": "{{count}} nouveaux commentaires"
+  },
+  "share_guide": {
+    "audience_title": "{{count}} personnes peuvent le voir",
+    "scope": {
+      "private": "Vous seul le voyez pour l’instant.",
+      "project": "Seules les personnes choisies le voient.",
+      "workspace": "Tous les membres de l’espace de travail, sauf les invités, le voient."
+    },
+    "project_inherits": "Le partage d’un projet décide aussi qui voit ses tickets par défaut.",
+    "can_change": "Cliquez pour changer qui peut le voir.",
+    "cannot_change_guest": "Les invités ne peuvent pas modifier le partage.",
+    "cannot_change_not_creator": {
+      "issue": "Seul le créateur ou un admin de l’espace de travail peut modifier le partage de ce ticket.",
+      "project": "Seul le créateur ou un admin de l’espace de travail peut modifier le partage de ce projet.",
+      "chat": "Seule la personne qui a lancé cette discussion peut modifier son partage."
+    },
+    "private_link": {
+      "title": {
+        "issue": "Vous seul voyez ce ticket",
+        "project": "Vous seul voyez ce projet",
+        "chat": "Vous seul voyez cette discussion"
+      },
+      "description": "Les destinataires du lien verront « Impossible d’ouvrir ». Modifier le partage avant de copier ?",
+      "description_readonly": "Les destinataires du lien verront « Impossible d’ouvrir », et vous ne pouvez pas modifier le partage. Vous pouvez quand même copier, mais demandez d’abord au créateur de le partager.",
+      "copy_anyway": "Copier quand même",
+      "change_scope": "Modifier le partage d’abord",
+      "copied": "Lien copié",
+      "copy_failed": "Impossible de copier le lien"
+    }
   }
 }

@@ -9061,6 +9061,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// this repo's worktree root is not offered, and Prepare falls
 			// back to a fresh copy without deleting anything.
 			resumeWorkDir := ""
+			reclaimPriorCopy := false
 			if shouldContinueInterruptedSession(task) && task.PriorWorkDir != "" {
 				reusable, inUse := false, false
 				gitRoot, gitErr := execenv.ResolveGitRoot(localAssignment.AbsPath)
@@ -9068,16 +9069,27 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 					taskLog.Info("same-seat retry: repository not resolved; starting a fresh worktree", "error", gitErr)
 				} else if wtRoot, rootErr := execenv.ResolveWorktreeRoot(gitRoot, strings.TrimSpace(localAssignment.Ref.WorktreeRoot)); rootErr != nil {
 					taskLog.Info("same-seat retry: worktree root refused; starting a fresh worktree", "error", rootErr)
-				} else if dir, ok := execenv.ReusableWorktreeDir(wtRoot, gitRoot, localAssignment.AbsPath, task.PriorWorkDir); !ok {
-					taskLog.Info("same-seat retry: previous worktree unavailable; starting a fresh worktree",
-						"prior_work_dir", task.PriorWorkDir)
-				} else if d.worktreeCleanup.IsActive(dir) {
-					inUse = true
-					taskLog.Info("same-seat retry: previous worktree still in use; starting a fresh worktree", "path", dir)
 				} else {
-					reusable = true
+					dir, ok := execenv.ReusableWorktreeDir(wtRoot, gitRoot, localAssignment.AbsPath, task.PriorWorkDir)
+					if !ok {
+						// Still on disk: the interrupted run never finalized,
+						// and its copy holds the conversation's branch.
+						dir, ok = execenv.ReclaimableWorktreeDir(wtRoot, gitRoot, localAssignment.AbsPath, task.PriorWorkDir)
+						reclaimPriorCopy = ok
+					}
+					switch {
+					case !ok:
+						taskLog.Info("same-seat retry: previous worktree unavailable; starting a fresh worktree",
+							"prior_work_dir", task.PriorWorkDir)
+					case d.worktreeCleanup.IsActive(dir):
+						inUse = true
+						taskLog.Info("same-seat retry: previous worktree still in use; starting a fresh worktree", "path", dir)
+					default:
+						reusable = true
+					}
 				}
 				resumeWorkDir = sameSeatRetryWorkDir(task, reusable, inUse)
+				reclaimPriorCopy = reclaimPriorCopy && resumeWorkDir != ""
 			}
 			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{
 				LocalPath:     localAssignment.AbsPath,
@@ -9088,9 +9100,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				// that stripped it for a daemon lacking the capability, lands
 				// on the same default — which is what this daemon implements
 				// either way (DENE-617).
-				WorktreeRoot:    strings.TrimSpace(localAssignment.Ref.WorktreeRoot),
-				ResumeWorkDir:   resumeWorkDir,
-				CanonicalBranch: strings.TrimSpace(task.CanonicalBranch),
+				WorktreeRoot:     strings.TrimSpace(localAssignment.Ref.WorktreeRoot),
+				ResumeWorkDir:    resumeWorkDir,
+				ReclaimPriorCopy: reclaimPriorCopy,
+				CanonicalBranch:  strings.TrimSpace(task.CanonicalBranch),
 			}
 			// Take the per-path mutex for the snapshot alone, then hand it
 			// straight back — long enough to read a consistent tree, short
@@ -9453,6 +9466,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if env.LocalWorktree != nil && env.LocalWorktree.ReplaySkippedNotice != "" {
 		promptOptions = append(promptOptions, WithReplaySkipped(env.LocalWorktree.ReplaySkippedNotice))
+	}
+	if env.LocalWorktree != nil && env.LocalWorktree.InterruptedWorkNotice != "" {
+		promptOptions = append(promptOptions, WithInterruptedWork(env.LocalWorktree.InterruptedWorkNotice))
 	}
 	if command := dependencyInstallCommand(env.WorkDir); command != "" {
 		promptOptions = append(promptOptions, WithDependencyInstallCommand(command))

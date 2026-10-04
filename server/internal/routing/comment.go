@@ -71,9 +71,18 @@ func (r *Router) assignmentComment(
 	dec decision,
 	settings Settings,
 	ignored []string,
+	continuationNote string,
+	loadNote string,
 ) string {
 	var b strings.Builder
 	b.WriteString("## 自动选派\n\n")
+	b.WriteString(PickReasonLine(executorPickReason(issue, needExecutor, executor, executorSource)))
+	if continuationNote != "" {
+		b.WriteString(continuationNote + "\n\n")
+	}
+	if loadNote != "" {
+		b.WriteString(loadNote + "\n\n")
+	}
 	for _, note := range ignored {
 		b.WriteString("> " + note + "\n")
 	}
@@ -88,12 +97,20 @@ func (r *Router) assignmentComment(
 		next = "已就位，run 没启动——所在阶段提到待办时才开跑"
 	case fillCoordinator:
 		next = "已就位做**协调席**，run 没启动——子票推进到阶段收口时会叫醒它"
+	case fillBlocked:
+		next = "已就位，run 没启动——票还在阻塞，等的事解除后平台叫醒它"
 	}
 
 	// Executor slot.
 	switch {
 	case !needExecutor:
 		b.WriteString("- **执行席**：" + heldExecutorLine(issue) + "，未改动\n")
+	case executor != nil && executorSource == pickContinuation:
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，接着做：%s）→ %s\n",
+			executor.Name, executor.TierLabel, executor.Continues, next))
+	case executor != nil && executorSource == pickLoad:
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，负载：%s）→ %s\n",
+			executor.Name, executor.TierLabel, executor.Balanced, next))
 	case executor != nil && executorSource == pickLabel:
 		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，按票上的「%s」标签选的，没问模型）→ %s\n",
 			executor.Name, executor.TierLabel, executor.TierLabel, next))
@@ -272,6 +289,42 @@ func (r *Router) reviewerIsPersonComment(issue Issue, target Member, decidedHere
 	b.WriteString("- 不想再被 @，把验收席改成一个席位或「不需要验收」即可\n")
 	b.WriteString("\n**路由没有改过状态，也没有改过负责人。**")
 	return b.String()
+}
+
+// blockedFactComment is the blocked row's answer when the record already
+// says why the ticket cannot move (DENE-1255): nobody holds it, it waits on
+// nothing the platform can watch, or what it waited on has ended. Each fact
+// comes with the one action that clears it. ok is false when none holds and
+// the question goes to a model. mention is true when a person has to act.
+func blockedFactComment(issue Issue, fillWhy string) (body string, mention, ok bool) {
+	var facts []string
+	if issue.AssigneeType == "" {
+		line := "- **缺执行人**：执行席是空的，等的事解除时平台也叫不醒任何人。在执行人栏选一个智能体即可（命令行：`multica issue assign <票号> --to <名字>`）；选好后票仍是阻塞，等的事解除时平台会叫醒它。"
+		if why := strings.TrimSpace(fillWhy); why != "" {
+			line += "路由这次没补上：" + why + "。"
+		}
+		facts = append(facts, line)
+		mention = true
+	}
+	if !issue.Wait.Registered {
+		facts = append(facts, "- **没登记在等什么**：挡路的票、时间点、条件、等的人一样都没有，平台不知道什么时候该叫醒执行人。执行人用 `multica issue close <票号> --outcome blocked --blocked-by <挡路的票>`（或 `--wake-at` / `--needs-human`）补上；其实没在等，就把状态改回待办。")
+		mention = true
+	}
+	if issue.Wait.AllEnded() {
+		facts = append(facts, "- **挡路的票已结束**："+strings.Join(issue.Wait.Ended, "、")+" 已经不再挡着这张票。阻塞巡查会在票安静一阵后叫醒执行人；想马上继续就把状态改回待办。")
+	}
+	if len(facts) == 0 {
+		return "", false, false
+	}
+	var b strings.Builder
+	b.WriteString("## 建议\n\n")
+	b.WriteString("这张票卡住的原因直接读得出来，没有问模型：\n\n")
+	b.WriteString(strings.Join(facts, "\n"))
+	b.WriteString("\n\n**这条建议没有改动任何值**，状态保持阻塞。")
+	if mention {
+		b.WriteString("要人动一下才会继续，所以 @ 你一次。")
+	}
+	return b.String(), mention, true
 }
 
 // adviceComment is the blocked-row comment. It must state, in so many words,

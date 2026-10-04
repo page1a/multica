@@ -67,6 +67,12 @@ export type CloseProtocolView = {
   blockKind: string | null;
   blockAction: string | null;
   /**
+   * True when `close.superseded` names this record's `close.at`: a person
+   * answered and the executor was woken, so the record no longer describes
+   * the ticket (DENE-1301). The next close writes a new `close.at`.
+   */
+  superseded: boolean;
+  /**
    * Present only when this close wrote `close.knowledge_audit`. Missing on
    * older closes; not one of the eight keys that decide `complete`.
    */
@@ -143,8 +149,14 @@ export function readCloseProtocol(
     evidenceCommentId: metaString(metadata, "close.evidence_comment_id"),
     blockKind: metaString(metadata, "close.block_kind"),
     blockAction: metaString(metadata, "close.block_action"),
+    superseded: closeSuperseded(metadata),
     knowledgeAudit: readKnowledgeAudit(metaString(metadata, "close.knowledge_audit")),
   };
+}
+
+function closeSuperseded(metadata: IssueMetadata | null | undefined): boolean {
+  const at = metaString(metadata, "close.at")?.trim();
+  return !!at && metaString(metadata, "close.superseded")?.trim() === at;
 }
 
 /** Whether a close record is a stage blocker.

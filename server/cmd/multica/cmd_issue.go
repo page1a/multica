@@ -297,7 +297,14 @@ var issueStatusCmd = &cobra.Command{
 		"To cancel an issue because it duplicates another, mark it instead of only cancelling:\n" +
 		"  multica issue status <id> cancelled --duplicate-of <original>\n" +
 		"The original then lists it as a duplicate. Moving the issue to any status other\n" +
-		"than cancelled later removes the mark.",
+		"than cancelled later removes the mark.\n\n" +
+		"Moving to blocked without --blocked-by / --wake-at / --wait-condition / --needs-human\n" +
+		"prints a warning: the platform cannot tell when to wake the issue. An agent must\n" +
+		"also pass --block-kind and --block-action (what the parent's blocker card shows);\n" +
+		"the server refuses the move without them. Prefer\n" +
+		"  multica issue close <id> --outcome blocked --blocked-by <DENE-N> --evidence-file ./close.md\n" +
+		"A blocked issue with no executor is seated by routing (parked, no run starts);\n" +
+		"the command reports whether that happened and, if not, why.",
 	Args: exactArgs(2),
 	RunE: runIssueStatus,
 }
@@ -774,7 +781,7 @@ func init() {
 	issueCreateCmd.Flags().String("status", "", "Issue status")
 	issueCreateCmd.Flags().String("priority", "", "Issue priority")
 	issueCreateCmd.Flags().String("assignee", "", "Assignee name (member, agent, or squad; fuzzy match)")
-	issueCreateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
+	issueCreateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
 	issueCreateCmd.Flags().String("assignee-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueCreateCmd.Flags().String("parent", "", "Parent issue ID")
 	issueCreateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) grouping this sub-issue into an ordered barrier group under its parent; omit for unstaged. The parent assignee is woken only when every sub-issue in a stage finishes.")
@@ -799,7 +806,7 @@ func init() {
 	issueUpdateCmd.Flags().String("status", "", "New status")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
-	issueUpdateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
+	issueUpdateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
 	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueUpdateCmd.Flags().String("reviewer", "", "验收席 — who accepts this issue: a member or agent name, \"none\" for no acceptance pass, or \"\" to clear the slot")
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
@@ -823,6 +830,8 @@ func init() {
 	issueStatusCmd.Flags().String("wait-probe", "", "How to check the wait condition")
 	issueStatusCmd.Flags().String("wait-timeout", "", "RFC3339 deadline for the wait condition")
 	issueStatusCmd.Flags().String("needs-human", "", "Member UUID a blocked issue is waiting on")
+	issueStatusCmd.Flags().String("block-kind", "", "Kind of stop for blocked: decision, permission, external, dependency or capacity (required for agents)")
+	issueStatusCmd.Flags().String("block-action", "", "One-line next step for blocked, at most 80 characters (required for agents)")
 	registerIssueCloseFlags(issueCloseCmd)
 	registerIssueHandoffFlags(issueHandoffCmd)
 	issueStatusCmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
@@ -836,7 +845,7 @@ func init() {
 	issueAssignCmd.Flags().String("to", "", "Assignee name (member, agent, or squad; fuzzy match)")
 	issueAssignCmd.Flags().String("to-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --to)")
 	issueAssignCmd.Flags().Bool("unassign", false, "Remove current assignee")
-	issueAssignCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
+	issueAssignCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
 	issueAssignCmd.Flags().Bool("no-start", false, "Assign ownership without starting an agent run")
 	issueAssignCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -2256,6 +2265,8 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		{"wait-probe", "wait_probe"},
 		{"wait-timeout", "wait_timeout"},
 		{"needs-human", "needs_human"},
+		{"block-kind", "block_kind"},
+		{"block-action", "block_action"},
 		{"no-code", "no_code_reason"},
 	} {
 		if v, _ := cmd.Flags().GetString(pair.flag); v != "" {
@@ -2279,6 +2290,20 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Issue %s status changed to %s as a duplicate of %s.\n", issueDisplayKey(result), status, original)
 	} else {
 		fmt.Fprintf(os.Stderr, "Issue %s status changed to %s.\n", issueDisplayKey(result), status)
+	}
+
+	if status == "blocked" {
+		display := issueDisplayKey(result)
+		warnUnregisteredBlock(cmd, os.Stderr, display)
+		if assignee, _ := result["assignee_id"].(string); assignee == "" {
+			// Its own budget: the poll plus a synchronous route call must not
+			// eat the time the status write already used.
+			seatCtx, seatCancel := cli.APIContext(context.Background())
+			seat := reportBlockedSeat(seatCtx, client, issueRef.ID)
+			seatCancel()
+			printBlockedSeat(os.Stderr, display, seat)
+			result["routing_seat"] = seat
+		}
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -2435,15 +2460,30 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		if err := preflightIssueClose(ctx, client, issueRef.ID, body); err != nil {
 			return fmt.Errorf("close issue: %w", err)
 		}
-		declaredPR, _ := cmd.Flags().GetString("pr")
-		if strings.TrimSpace(declaredPR) == "" {
-			declaredPR = pullURLFromText(evidence)
-		}
-		refreshIssuePullRequestsWithURL(ctx, client, issueRef.ID, issueRef.Display, declaredPR, outcome == "done" && verdict == "pass", outcome == "done" && verdict == "")
 	}
+	declaredPR, _ := cmd.Flags().GetString("pr")
+	if strings.TrimSpace(declaredPR) == "" {
+		declaredPR = pullURLFromText(evidence)
+	}
+	// A PR whose checks are still running is waited out here (DENE-1219):
+	// the server answers close_checks_pending and changes nothing, so the
+	// CLI refreshes the PR snapshot and asks again until CI settles or the
+	// wait runs out. Every other answer is final for this call.
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/close", body, &result); err != nil {
-		return fmt.Errorf("close issue: %w", err)
+	deadline := closeNow().Add(closeWaitLimit)
+	for {
+		result, err = postIssueClose(client, issueRef, body, outcome, verdict, declaredPR)
+		if err == nil {
+			break
+		}
+		if !isCloseChecksPending(err) {
+			return fmt.Errorf("close issue: %w", err)
+		}
+		if !closeNow().Add(closeWaitInterval).Before(deadline) {
+			return fmt.Errorf("close issue: PR 的检查等了 %s 还没跑完，票没动。CI 出结果后再执行一次同样的 close：%w", closeWaitLimit, err)
+		}
+		fmt.Fprintf(os.Stderr, "PR 的检查还在跑，%s 后再试（最多等 %s）…\n", closeWaitInterval, closeWaitLimit)
+		closeSleep(closeWaitInterval)
 	}
 
 	status, _ := result["status"].(string)
@@ -2467,6 +2507,34 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return cli.PrintJSON(os.Stdout, result)
+}
+
+var (
+	closeWaitInterval = 30 * time.Second
+	closeWaitLimit    = 15 * time.Minute
+	closeSleep        = time.Sleep
+	closeNow          = time.Now
+)
+
+// postIssueClose refreshes the issue's PR snapshot and sends one close. Each
+// attempt gets its own request deadline, since the checks wait spans many.
+func postIssueClose(client *cli.APIClient, issueRef resolvedID, body map[string]any, outcome, verdict, declaredPR string) (map[string]any, error) {
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	if outcome == "done" || outcome == "in_review" {
+		refreshIssuePullRequestsWithURL(ctx, client, issueRef.ID, issueRef.Display, declaredPR, outcome == "done" && verdict == "pass", outcome == "done" && verdict == "")
+	}
+	var result map[string]any
+	err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/close", body, &result)
+	return result, err
+}
+
+// isCloseChecksPending reports the server's "checks still running" refusal,
+// the one close answer the CLI waits out instead of relaying.
+func isCloseChecksPending(err error) bool {
+	var httpErr *cli.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict &&
+		strings.Contains(httpErr.Body, `"code":"close_checks_pending"`)
 }
 
 func runIssueProgress(cmd *cobra.Command, args []string) error {
@@ -4267,7 +4335,13 @@ func noteIgnoredAssignee(result map[string]any) bool {
 	if reason == "" {
 		reason = "the person did not provide a verifiable quote"
 	}
-	fmt.Fprintf(os.Stderr, "Issue %s: the assignee you named was NOT applied; the issue remains unassigned. %s.\n",
-		issueDisplayKey(result), reason)
+	// An in-flight ticket keeps the executor it had (DENE-1201); only an empty
+	// slot is left for routing.
+	kept := "the issue remains unassigned"
+	if strVal(result, "assignee_id") != "" {
+		kept = "the issue keeps its current assignee"
+	}
+	fmt.Fprintf(os.Stderr, "Issue %s: the assignee you named was NOT applied; %s. %s.\n",
+		issueDisplayKey(result), kept, strings.TrimSuffix(reason, "."))
 	return true
 }

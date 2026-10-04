@@ -2622,3 +2622,64 @@ func TestAgentUpdateWorkEnabledFlag(t *testing.T) {
 		}
 	}
 }
+
+// DENE-1310: the CLI lists what the overview's Chats section shows, and a chat
+// the caller cannot open stays untitled in the table too.
+func TestAgentChatsResolvesNameAndKeepsHiddenChatsUntitled(t *testing.T) {
+	const agentID = "11111111-2222-3333-4444-555555555555"
+	var chatsQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents":
+			json.NewEncoder(w).Encode([]map[string]any{{"id": agentID, "name": "Builder"}})
+		case "/api/agents/" + agentID + "/chats":
+			chatsQuery = r.URL.RawQuery
+			json.NewEncoder(w).Encode(map[string]any{
+				"chats": []map[string]any{
+					{"id": "chat-mine", "visible": true, "title": "My busy chat", "creator_id": "user-1", "status": "running", "last_activity_at": "2026-10-04T00:00:00Z"},
+					{"id": "chat-other", "visible": false, "title": nil, "creator_id": nil, "status": "queued", "last_activity_at": "2026-10-04T00:00:00Z"},
+				},
+				"has_more": true,
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "chats"}
+	cmd.Flags().String("output", "table", "")
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().Int("limit", 3, "")
+	var stderr strings.Builder
+	cmd.SetErr(&stderr)
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	drainCh := make(chan []byte, 1)
+	go func() { b, _ := io.ReadAll(r); drainCh <- b }()
+
+	err := runAgentChats(cmd, []string{"build"})
+
+	w.Close()
+	os.Stdout = old
+	out := string(<-drainCh)
+
+	if err != nil {
+		t.Fatalf("runAgentChats: %v", err)
+	}
+	if chatsQuery != "limit=3" {
+		t.Fatalf("chats query = %q, want limit=3", chatsQuery)
+	}
+	if !strings.Contains(out, "My busy chat") || !strings.Contains(out, "(someone else's chat)") {
+		t.Fatalf("table output = %s", out)
+	}
+	if !strings.Contains(stderr.String(), "--limit") {
+		t.Fatalf("has_more note missing from stderr: %q", stderr.String())
+	}
+}

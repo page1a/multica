@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, AgentActivityBucket, AgentTask } from "@multica/core/types";
+import type { Agent, AgentActivityBucket, AgentChatPage, AgentTask } from "@multica/core/types";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
@@ -28,18 +28,34 @@ vi.mock("../../../common/task-transcript", () => ({
   TranscriptButton: ({ task }: { task: AgentTask }) => <span data-testid={`task-${task.id}`} />,
 }));
 
+vi.mock("../../../common/actor-avatar", () => ({
+  ActorAvatar: ({ actorId }: { actorId: string }) => <span data-testid={`avatar-${actorId}`} />,
+}));
+
 // Keep "Now" empty while varying activity outcomes and task-list loading.
 const agentTasksRef = vi.hoisted(() => ({
   current: (_before?: string) => new Promise<unknown>(() => {}),
 }));
 const activityRef = vi.hoisted(() => ({ current: [] as AgentActivityBucket[] }));
+const snapshotRef = vi.hoisted(() => ({ current: [] as AgentTask[] }));
+const chatsRef = vi.hoisted(() => ({
+  current: { chats: [], has_more: false } as AgentChatPage,
+  limits: [] as number[],
+}));
 vi.mock("@multica/core/agents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/agents")>();
   return {
     ...actual,
     agentTaskSnapshotOptions: () => ({
       queryKey: ["snapshot"],
-      queryFn: () => Promise.resolve([]),
+      queryFn: () => Promise.resolve(snapshotRef.current),
+    }),
+    agentChatsOptions: (_ws: string, _agent: string, limit: number) => ({
+      queryKey: ["agent-chats", limit],
+      queryFn: () => {
+        chatsRef.limits.push(limit);
+        return Promise.resolve(chatsRef.current);
+      },
     }),
     agentTasksOptions: () => ({
       queryKey: ["agent-tasks"],
@@ -95,6 +111,9 @@ function renderTab(performance = false) {
 beforeEach(() => {
   agentTasksRef.current = () => new Promise<unknown>(() => {});
   activityRef.current = [];
+  snapshotRef.current = [];
+  chatsRef.current = { chats: [], has_more: false };
+  chatsRef.limits = [];
 });
 
 describe("agent outcome presentation", () => {
@@ -293,5 +312,58 @@ describe("ActivityTab history completeness", () => {
     }
     expect(screen.getAllByTestId(/^task-/)).toHaveLength(50);
     expect(query.mock.calls[1]?.[0]).toBe("older");
+  });
+});
+
+function chatTask(id: string, chatId: string, status: AgentTask["status"]): AgentTask {
+  return {
+    ...historyTask(0), id, status, completed_at: null,
+    chat_session_id: chatId, trigger_summary: "private trigger text",
+  } as AgentTask;
+}
+
+// DENE-1310: chats share the agent's concurrency, so Now lists them and the
+// Chats section lists who is talking to it; what the server redacts stays
+// unopenable here.
+describe("ActivityTab chats", () => {
+  it("lists busy chats in Now and the Chats section, keeping someone else's chat closed", async () => {
+    snapshotRef.current = [
+      chatTask("t-mine", "chat-mine", "running"),
+      chatTask("t-other", "chat-other", "queued"),
+    ];
+    chatsRef.current = {
+      chats: [
+        { id: "chat-mine", visible: true, title: "My busy chat", creator_id: "user-1", status: "running", last_activity_at: new Date().toISOString() },
+        { id: "chat-other", visible: false, title: null, creator_id: null, status: "queued", last_activity_at: new Date().toISOString() },
+      ],
+      has_more: false,
+    };
+    agentTasksRef.current = () => Promise.resolve({ tasks: [], nextCursor: null });
+    renderTab();
+
+    expect(await screen.findByText("2 active runs")).toBeInTheDocument();
+    // Each chat appears once in Now and once in Chats.
+    expect(await screen.findAllByText("My busy chat")).toHaveLength(2);
+    expect(screen.getAllByText("Someone else's chat")).toHaveLength(2);
+    const opens = screen.getAllByRole("link", { name: "Open" });
+    expect(opens).toHaveLength(2);
+    for (const link of opens) expect(link).toHaveAttribute("href", "/acme/chat/chat-mine");
+    // The hidden chat's run exposes no transcript, trigger text or cancel.
+    expect(screen.getByTestId("task-t-mine")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-t-other")).not.toBeInTheDocument();
+    expect(screen.queryByText("private trigger text")).not.toBeInTheDocument();
+    // The page asks for the visible chats plus every busy one.
+    expect(chatsRef.limits).toContain(7);
+  });
+
+  it("grows the Chats list on demand", async () => {
+    chatsRef.current = {
+      chats: [{ id: "c1", visible: true, title: "First", creator_id: "user-1", status: "idle", last_activity_at: new Date().toISOString() }],
+      has_more: true,
+    };
+    renderTab();
+    expect(await screen.findByText("Latest 1")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /Show more/ })[0]!);
+    await waitFor(() => expect(chatsRef.limits).toContain(15));
   });
 });

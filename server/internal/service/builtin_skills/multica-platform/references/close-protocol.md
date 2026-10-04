@@ -18,7 +18,7 @@ the server's read-only shape check first. A refusal is the server's own
 sentence — fix what it names and run the same command again.
 
 ```bash
-multica issue close <id> --outcome done      --evidence-file ./close.md            # delivered; an open linked PR is merged first, or the close lands as blocked and says so
+multica issue close <id> --outcome done      --evidence-file ./close.md            # delivered; an open linked PR is merged first, or the ticket stays in_progress on a wake (see below)
 multica issue close <id> --outcome in_review --evidence-file ./close.md            # top-level, awaiting acceptance: needs a linked PR (or --no-code <reason>); empty reviewer slot is filled, then routing hands over
 multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # or --wake-at / --wait-condition + --wait-timeout / --needs-human
 multica issue close <id> --outcome cancelled --evidence-file ./close.md            # dropped on purpose: say why in the evidence
@@ -60,10 +60,31 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
   issue's assignee; `--needs-human` names the person instead.
 - `--verdict pass` is the acceptance seat's release and only pairs with
   `--outcome done` on an `in_review` ticket: the platform merges the open PR
-  and writes `done`; if the merge cannot happen it comes back as `blocked`
-  with the reason and `block_kind=external`. A failed acceptance is not a
-  close: `multica issue comment add <id> --verdict hold --content-file
-  ./review.md` wakes the executor.
+  and writes `done`; if the merge cannot happen it is a PR stop below, not
+  `blocked`. A failed acceptance is not a close: `multica issue comment
+  add <id> --verdict hold --content-file ./review.md` wakes the executor.
+- **PR stops are answered on the spot** (DENE-1219). `blocked` means a person
+  has to act: missing permission or `--needs-human`. Anything the executor can
+  clear never writes a status:
+  - Checks still running: the CLI waits in place (refreshes the PR and asks
+    again every 30 seconds, about 15 minutes at most) and merges when green.
+    If CI is still running after that, run the same close again later.
+  - Checks red, a conflict with the base, a draft PR, the PR or delivery line
+    unreadable: the close is refused with HTTP 409 and a `code`
+    (`close_checks_red`, `close_conflict`, `close_draft`, `close_read_failed`,
+    `close_delivery`). Red checks name the check and where its logs are
+    (`gh pr checks <url>`). Fix the cause and close again; if the same check is
+    already red on the base branch the gate lets it through by itself, and if
+    it could not read the base, merge with `gh pr merge --squash <url>` once
+    you have confirmed it, then close again.
+  - The platform's merge fails: it retries once; still failing, the close is
+    refused with `close_merge_failed` and the local command
+    `gh pr merge --squash <url>` — run it, then close again.
+  - A `--verdict pass` that hits a stop is refused before the pass is recorded
+    (same codes). A pass recorded earlier by comment whose merge then fails
+    keeps the ticket `in_review`, and the reply's `hold` (`kind`, `reason`,
+    `next`) says what is missing; the executor is woken to fix it and the
+    patrol merges once the PR can go in.
 - `--pr <pull-or-mr-url>` declares the delivery when the platform has not
   linked one yet (DENE-961). The server checks that URL against the
   repository connection, registers it when the check succeeds, then runs the

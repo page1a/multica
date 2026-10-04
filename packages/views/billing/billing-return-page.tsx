@@ -158,7 +158,7 @@ export function BillingReturnPage() {
 
   return (
     <div
-      className="flex min-h-dvh items-center justify-center bg-background p-6"
+      className="flex min-h-dvh w-full items-center justify-center bg-background p-4 sm:p-6"
       role="status"
       aria-live="polite"
     >
@@ -180,17 +180,17 @@ function ReturnMessage({
   action: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-background p-6">
+    <div className="flex min-h-dvh w-full items-center justify-center bg-background p-4 sm:p-6">
       <div
-        className="flex max-w-[60ch] flex-col items-start gap-3"
+        className="flex w-full max-w-[60ch] min-w-0 flex-col items-start gap-3"
         role="alert"
         aria-live="polite"
       >
         <div className="flex items-center gap-2 text-body font-medium">
           <AlertCircle className="size-4 text-destructive" />
-          <span>{title}</span>
+          <span className="break-words">{title}</span>
         </div>
-        <p className="text-caption leading-5 text-muted-foreground">
+        <p className="break-words text-caption leading-5 text-muted-foreground">
           {description}
         </p>
         {action}

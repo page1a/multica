@@ -42,6 +42,7 @@ import {
   X,
 } from "lucide-react";
 import { BreadcrumbHeader, type BreadcrumbSegment } from "../../layout/breadcrumb-header";
+import { OverflowActions, type OverflowItem } from "../../layout/overflow-actions";
 import { ResourceNotFound, WriteAction, useGuestReadOnly } from "../../layout/guest-readonly";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -184,7 +185,7 @@ import {
 } from "../../platform";
 import { cn } from "@multica/ui/lib/utils";
 import { AskPromptList } from "../../common/ask-prompt";
-import { PAGE_GUTTER } from "../../layout/page-header";
+import { PAGE_GUTTER, PageHeader } from "../../layout/page-header";
 import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
 import { WorkThreadPanel } from "../../common/work-thread-panel";
 import { GoalSection } from "./goal-section";
@@ -1232,6 +1233,7 @@ export function IssueNotFound({
         </div>
       )}
       <ResourceNotFound
+        kind="issue"
         actions={
           showBackLink ? (
             <Button variant="outline" size="sm" onClick={() => backOrReplace(paths.issues())}>
@@ -3368,6 +3370,128 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         ]
       : [];
 
+  // The header's controls, in display order. In the page they sit in a row
+  // beside the sidebar toggle; in the peek the card is too narrow for all of
+  // them, so `OverflowActions` keeps what fits (by `priority`, lower first)
+  // and moves the rest into the "⋯" menu.
+  const headerActionItems: OverflowItem[] = [
+    // Live "agent is working" chip, leftmost in the right cluster so it never
+    // overlaps the title (which truncates to make room). It self-hides when no
+    // agent is active.
+    { key: "agent", priority: 3, node: <IssueAgentHeaderChip issueId={id} /> },
+    // Exports the newest run's logs; self-hides when the issue has no runs.
+    // The range picker inside reaches the rest of the history, so the header
+    // needs no run picker of its own.
+    { key: "export", priority: 6, node: <IssueLogExportButton issueId={id} issueIdentifier={issue.identifier} /> },
+    { key: "thread", priority: 7, node: <WorkThreadPanel kind="issue" id={id} /> },
+    { key: "wakeup", priority: 4, node: <IssueWakeupHeaderChip issueId={id} onOpen={openWakeups} /> },
+    {
+      key: "done",
+      priority: 1,
+      node: (
+        <>
+          {onDone && !issueBehavesAsAny(issue, ["done", "closed"]) && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    onClick={() => { handleUpdateField({ status: "done" }); onDone?.(); }}
+                  >
+                    <CircleCheck />
+                  </Button>
+                }
+              />
+              <TooltipContent side="bottom">{t(($) => $.detail.mark_done_tooltip)}</TooltipContent>
+            </Tooltip>
+          )}
+          {onDone && issueBehavesAs(issue, "done") && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    onClick={() => { onDone(); }}
+                  >
+                    <Archive />
+                  </Button>
+                }
+              />
+              <TooltipContent side="bottom">{t(($) => $.detail.archive_tooltip)}</TooltipContent>
+            </Tooltip>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "pin",
+      priority: 2,
+      node: (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn("text-muted-foreground", actions.isPinned && "text-foreground")}
+                onClick={actions.togglePin}
+              >
+                {actions.isPinned ? <PinOff /> : <Pin />}
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom">{actions.isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}</TooltipContent>
+        </Tooltip>
+      ),
+    },
+    {
+      key: "share",
+      priority: 5,
+      node: (
+        <ShareScopeTrigger
+          scope={issue.visibility}
+          audienceSize={shareAudienceSize}
+          onClick={() => setShareScopeOpen(true)}
+          access={{ kind: "issue", id: issue.id }}
+        />
+      ),
+    },
+  ];
+
+  const breadcrumbLeaf = (
+    <AppLink
+      href={paths.issueDetail(issue.id)}
+      // In the peek the identifier is all the leaf says; it outranks the crumb
+      // before it, which truncates first.
+      className={cn("flex min-w-0 transition-opacity hover:opacity-80", isPeek && "shrink-0")}
+    >
+      <span className="truncate font-medium text-foreground">
+        {isPeek ? issue.identifier : `${issue.identifier} ${issue.title}`}
+      </span>
+    </AppLink>
+  );
+
+  const issueActionsMenu = (menuHeader?: ReactNode) => (
+    <IssueActionsDropdown
+      issue={issue}
+      align="end"
+      // When a parent passes `onDelete`, we detect deletion via effect
+      // above and skip navigation. Otherwise the modal takes us back
+      // to the list we came from, falling back to all issues.
+      onDeletedFallbackPath={onDelete ? undefined : paths.issues()}
+      menuHeader={menuHeader}
+      trigger={
+        <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
+          <MoreHorizontal />
+        </Button>
+      }
+    />
+  );
+
   const titleSizeClass = isPeek ? "text-title-lg font-semibold" : "text-display-sm font-bold";
 
   const detailContent = (
@@ -3388,122 +3512,66 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             className={cn("absolute top-14 z-30", isMobile ? "right-4" : "right-10")}
           />
         )}
+        {isPeek ? (
+          // The peek's controls fill what the card leaves them: the title and
+          // the pinned ones (⋯, full page, close) keep their room, and the
+          // bar between them hands what does not fit to the ⋯ menu — so the
+          // close button can never be cut off, whatever the header grows.
+          <PageHeader leading={leadingAction} className="bg-background text-body">
+            <div className="flex min-w-0 max-w-[55%] shrink items-center gap-1.5">
+              {breadcrumbSegments.map((segment) => (
+                <Fragment key={segment.href}>
+                  <AppLink
+                    href={segment.href}
+                    className={cn("text-muted-foreground transition-colors hover:text-foreground", segment.className ?? "shrink-0")}
+                  >
+                    {segment.label}
+                  </AppLink>
+                  <ChevronRight className="h-3 w-3 shrink-0 text-faint-foreground" />
+                </Fragment>
+              ))}
+              {breadcrumbLeaf}
+            </div>
+            <OverflowActions
+              items={headerActionItems}
+              renderMore={(overflow) => (
+                <div className="flex shrink-0 items-center gap-1">
+                  {issueActionsMenu(overflow)}
+                  {trailingActions}
+                </div>
+              )}
+            />
+          </PageHeader>
+        ) : (
         <BreadcrumbHeader
           leading={leadingAction}
           segments={breadcrumbSegments}
-          leaf={
-            <AppLink
-              href={paths.issueDetail(issue.id)}
-              className="flex min-w-0 transition-opacity hover:opacity-80"
-            >
-              <span className="truncate font-medium text-foreground">
-                {isPeek ? issue.identifier : `${issue.identifier} ${issue.title}`}
-              </span>
-            </AppLink>
-          }
+          leaf={breadcrumbLeaf}
           actions={
             <>
-            {/* Live "agent is working" chip, leftmost in the right cluster so
-                it never overlaps the title (which truncates to make room).
-                It self-hides when no agent is active. */}
-            <IssueAgentHeaderChip issueId={id} />
-            {/* Exports the newest run's logs; self-hides when the issue has
-                no runs. The range picker inside reaches the rest of the
-                history, so the header needs no run picker of its own. */}
-            <IssueLogExportButton issueId={id} issueIdentifier={issue.identifier} />
-            <WorkThreadPanel kind="issue" id={id} />
-            <IssueWakeupHeaderChip issueId={id} onOpen={openWakeups} />
-            {onDone && !issueBehavesAsAny(issue, ["done", "closed"]) && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-muted-foreground"
-                      onClick={() => { handleUpdateField({ status: "done" }); onDone?.(); }}
-                    >
-                      <CircleCheck />
-                    </Button>
-                  }
-                />
-                <TooltipContent side="bottom">{t(($) => $.detail.mark_done_tooltip)}</TooltipContent>
-              </Tooltip>
-            )}
-            {onDone && issueBehavesAs(issue, "done") && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-muted-foreground"
-                      onClick={() => { onDone(); }}
-                    >
-                      <Archive />
-                    </Button>
-                  }
-                />
-                <TooltipContent side="bottom">{t(($) => $.detail.archive_tooltip)}</TooltipContent>
-              </Tooltip>
-            )}
+            {headerActionItems.map((item) => (
+              <Fragment key={item.key}>{item.node}</Fragment>
+            ))}
+            {issueActionsMenu()}
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    variant="ghost"
+                    variant={sidebarOpen ? "secondary" : "ghost"}
                     size="icon-sm"
-                    className={cn("text-muted-foreground", actions.isPinned && "text-foreground")}
-                    onClick={actions.togglePin}
+                    className={sidebarOpen ? "" : "text-muted-foreground"}
+                    onClick={handleToggleSidebar}
                   >
-                    {actions.isPinned ? <PinOff /> : <Pin />}
+                    <PanelRight />
                   </Button>
                 }
               />
-              <TooltipContent side="bottom">{actions.isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}</TooltipContent>
+              <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
             </Tooltip>
-            <WriteAction>
-              <ShareScopeTrigger
-                scope={issue.visibility}
-                audienceSize={shareAudienceSize}
-                onClick={() => setShareScopeOpen(true)}
-              />
-            </WriteAction>
-            <IssueActionsDropdown
-              issue={issue}
-              align="end"
-              // When a parent passes `onDelete`, we detect deletion via effect
-              // above and skip navigation. Otherwise the modal takes us back
-              // to the list we came from, falling back to all issues.
-              onDeletedFallbackPath={onDelete ? undefined : paths.issues()}
-              trigger={
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
-                  <MoreHorizontal />
-                </Button>
-              }
-            />
-            {isPeek ? (
-              trailingActions
-            ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant={sidebarOpen ? "secondary" : "ghost"}
-                      size="icon-sm"
-                      className={sidebarOpen ? "" : "text-muted-foreground"}
-                      onClick={handleToggleSidebar}
-                    >
-                      <PanelRight />
-                    </Button>
-                  }
-                />
-                <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
-              </Tooltip>
-            )}
             </>
           }
         />
+        )}
 
         {/* scrollbar-gutter both-edges: with classic (space-taking) scrollbars —
             macOS with a mouse or "always show", Windows, Linux — the global

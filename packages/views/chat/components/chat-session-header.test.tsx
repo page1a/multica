@@ -1,10 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { ChatSession } from "@multica/core/types";
 import enChat from "../../locales/en/chat.json";
+import enCommon from "../../locales/en/common.json";
 
 const updateMutate = vi.hoisted(() => vi.fn());
+const copyTextMock = vi.hoisted(() => vi.fn(async () => true));
+const accessRef = vi.hoisted(() => ({
+  current: { mode: "project", visibility: "project", can_edit: true, has_project: true, shares: [] } as {
+    mode: string;
+    visibility: string;
+    can_edit: boolean;
+    has_project: boolean;
+    shares: unknown[];
+  },
+}));
+
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/api", () => ({
+  api: { getChatAccess: vi.fn(async () => accessRef.current) },
+}));
+vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: copyTextMock }));
+vi.mock("./chat-access-dialog", () => ({
+  ChatAccessDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="chat-access-dialog" /> : null,
+}));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
@@ -42,7 +64,7 @@ vi.mock("../../navigation", () => ({
 
 import { ChatSessionHeader } from "./chat-session-header";
 
-const TEST_RESOURCES = { en: { chat: enChat } };
+const TEST_RESOURCES = { en: { chat: enChat, common: enCommon } };
 const RENAME_LABEL = enChat.header.rename;
 const MORE_LABEL = enChat.list.row_actions_aria;
 const OUTSIDE_LABEL = "Outside control";
@@ -65,9 +87,11 @@ const session: ChatSession = {
 function startRename(): HTMLInputElement {
   render(
     <>
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <ChatSessionHeader session={session} agent={null} />
-      </I18nProvider>
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <ChatSessionHeader session={session} agent={null} />
+        </I18nProvider>
+      </QueryClientProvider>
       <button type="button">{OUTSIDE_LABEL}</button>
     </>,
   );
@@ -193,5 +217,65 @@ describe("ChatSessionHeader rename keyboard behavior", () => {
     expect(updateMutate).not.toHaveBeenCalled();
     expect(screen.queryByRole("textbox", { name: RENAME_LABEL })).not.toBeInTheDocument();
     expect(screen.getByText("Original title")).toBeInTheDocument();
+  });
+});
+
+describe("ChatSessionHeader sharing entry (DENE-1214)", () => {
+  function renderHeader(over: Partial<ChatSession> = {}) {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <ChatSessionHeader session={{ ...session, ...over }} agent={null} />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    copyTextMock.mockClear();
+  });
+
+  it("shows who can see the chat and opens the access editor for its creator", async () => {
+    accessRef.current = { mode: "project", visibility: "project", can_edit: true, has_project: true, shares: [] };
+    renderHeader({ visibility: "project" });
+    const trigger = screen.getByTestId("chat-share-trigger");
+    expect(trigger).toHaveTextContent(enChat.sharing.trigger.project);
+    await waitFor(() => expect(trigger).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("chat-access-dialog")).toBeInTheDocument();
+  });
+
+  it("keeps the entry inert when the server says the viewer cannot edit", async () => {
+    accessRef.current = { mode: "workspace", visibility: "workspace", can_edit: false, has_project: true, shares: [] };
+    renderHeader({ creator_id: "someone-else" });
+    const trigger = screen.getByTestId("chat-share-trigger");
+    await waitFor(() => expect(trigger).toHaveTextContent(enChat.sharing.trigger.workspace));
+    expect(trigger).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(trigger);
+    expect(screen.queryByTestId("chat-access-dialog")).not.toBeInTheDocument();
+  });
+
+  it("warns before copying a private chat's link and can switch to the editor", async () => {
+    accessRef.current = { mode: "private", visibility: "private", can_edit: true, has_project: false, shares: [] };
+    renderHeader({ visibility: "private" });
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-share-trigger")).not.toHaveAttribute("aria-disabled"),
+    );
+    fireEvent.click(screen.getByTestId("chat-copy-link"));
+    expect(await screen.findByTestId("private-link-prompt")).toBeInTheDocument();
+    expect(copyTextMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: enCommon.share_guide.private_link.change_scope }));
+    expect(screen.getByTestId("chat-access-dialog")).toBeInTheDocument();
+  });
+
+  it("copies a shared chat's link straight away", async () => {
+    accessRef.current = { mode: "project", visibility: "project", can_edit: true, has_project: true, shares: [] };
+    renderHeader({ visibility: "project" });
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-share-trigger")).not.toHaveAttribute("aria-disabled"),
+    );
+    fireEvent.click(screen.getByTestId("chat-copy-link"));
+    await waitFor(() => expect(copyTextMock).toHaveBeenCalledWith("https://example.test/acme/chat/session-1"));
+    expect(screen.queryByTestId("private-link-prompt")).not.toBeInTheDocument();
   });
 });

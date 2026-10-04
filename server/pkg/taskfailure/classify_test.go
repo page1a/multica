@@ -59,6 +59,7 @@ func TestClassifyRules(t *testing.T) {
 		{"unauthorized text", "Request unauthorized for this organization", ReasonAgentProviderAuthOrAccess},
 		{"login required", "login required: please run /login", ReasonAgentProviderAuthOrAccess},
 		{"not logged in", "Not logged in · Please run /login", ReasonAgentProviderAuthOrAccess},
+		{"account on hold", "Your account is on hold and can't use Claude Code. View details or appeal: https://claude.ai/restricted", ReasonAgentProviderAuthOrAccess},
 		{"please login again", "Session expired, please login again", ReasonAgentProviderAuthOrAccess},
 		{"refresh token", "refresh token has expired", ReasonAgentProviderAuthOrAccess},
 		{"invalid api key", "Invalid API key provided", ReasonAgentProviderAuthOrAccess},
@@ -76,6 +77,11 @@ func TestClassifyRules(t *testing.T) {
 		{"hit your limit ascii", "you've hit your limit; upgrade to continue", ReasonAgentProviderQuotaLimit},
 		{"hit your limit curly", "you\u2019ve hit your limit", ReasonAgentProviderQuotaLimit},
 		{"credits", "Your account has 0 credits remaining", ReasonAgentProviderQuotaLimit},
+		// Claude Code names the spent window; these used to land in unknown
+		// and the seat was never relayed (DENE-1159).
+		{"claude session limit", "You've hit your session limit · resets 11:10pm (Asia/Taipei)", ReasonAgentProviderQuotaLimit},
+		{"claude weekly limit", "You've hit your weekly limit · resets Oct 6, 9am", ReasonAgentProviderQuotaLimit},
+		{"claude opus limit", "You\u2019ve hit your Opus limit · resets 3pm", ReasonAgentProviderQuotaLimit},
 		{"quota", "quota exceeded for project foo", ReasonAgentProviderQuotaLimit},
 
 		// 5. Capacity / rate limit.
@@ -114,6 +120,7 @@ func TestClassifyRules(t *testing.T) {
 
 		// 7. Provider network.
 		{"stream disconnected", "stream disconnected before completion", ReasonAgentProviderNetwork},
+		{"claude stream interrupted", "The stream was interrupted. Please continue the task you were working on.", ReasonAgentProviderNetwork},
 		{"connection closed mid-response", "API Error: Connection closed mid-response. The response above may be incomplete.", ReasonAgentProviderNetwork},
 		{"connection closed with exit status wins over process failure", "claude exited with error: exit status 1\nAPI Error: Connection closed mid-response.", ReasonAgentProviderNetwork},
 		{"error sending request", "error sending request for url (https://api.example.com/v1)", ReasonAgentProviderNetwork},

@@ -12,7 +12,7 @@ import { ThemeProvider } from "@react-navigation/native";
 import { PortalHost } from "@rn-primitives/portal";
 import { api } from "@/data/api";
 import { maybeRenewSession } from "@/data/session-renewal";
-import { queryClient } from "@/data/query-client";
+import { MobileQueryPersistence, queryClient } from "@/data/query-client";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { SessionActivityBoundary } from "@/components/auth/session-activity-boundary";
@@ -84,6 +84,7 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <KeyboardProvider>
             <QueryClientProvider client={queryClient}>
+              <MobileQueryPersistence />
               <ThemeProvider value={NAV_THEME[colorScheme]}>
                 <AuthInitializer>
                   <SessionActivityBoundary>

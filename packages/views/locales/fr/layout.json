@@ -9,6 +9,7 @@
     "agents": "Agents",
     "squads": "Squads",
     "usage": "Statistiques",
+    "linked_workspaces": "Espaces liés",
     "runtimes": "Runtimes",
     "skills": "Skills",
     "settings": "Paramètres",
@@ -85,5 +86,20 @@
     "nothing_shared_description": "Le contenu apparaîtra ici dès que vous serez ajouté à un projet.",
     "not_found_title": "Page introuvable",
     "not_found_description": "Elle a peut-être été supprimée, ou elle n'a pas été partagée avec vous."
+  },
+  "unavailable": {
+    "title": {
+      "issue": "Impossible d’ouvrir ce ticket",
+      "project": "Impossible d’ouvrir ce projet",
+      "chat": "Impossible d’ouvrir cette discussion"
+    },
+    "description": "Il a peut-être été supprimé, ou il n’a pas été partagé avec vous.",
+    "guide_title": "Si quelqu’un vous a envoyé ce lien",
+    "guide": {
+      "issue": "Demandez-lui d’ouvrir le ticket, de cliquer sur le bouton de partage en haut à droite, puis de vous ajouter dans « Personnes choisies » ou de passer à « Tout l’espace de travail ». Il pourra ensuite vous renvoyer le lien.",
+      "project": "Demandez-lui d’ouvrir le projet, de cliquer sur le bouton de partage en haut à droite, puis de vous ajouter dans « Personnes choisies » ou de passer à « Tout l’espace de travail ». Il pourra ensuite vous renvoyer le lien. Les tickets du projet suivent.",
+      "chat": "Demandez-lui d’ouvrir la discussion, de cliquer sur le bouton de partage dans l’en-tête et de passer à « Suivre le projet » ou « Tout l’espace de travail ». Il pourra ensuite vous renvoyer le lien."
+    },
+    "guest_note": "Vous êtes invité : vous ne voyez que ce qui vous est partagé directement. « Tout l’espace de travail » n’inclut pas les invités."
   }
 }

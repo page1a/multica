@@ -9,8 +9,11 @@ import "github.com/multica-ai/multica/server/internal/quotarelay"
 // IDs in avoid are never chosen — the holder, and for an acceptance wake the
 // seat that did the work. The rule is the same one quota handoff already uses.
 func SubstituteSeat(l Ladder, holder Seat, roster map[string]Agent, avoid []string, direction string) (Seat, bool, bool) {
+	holderAgent, onRoster := agentByID(roster, holder.ID)
 	if holder.TierKey == "" {
-		if key, ok := l.TierOf(holder.Name); ok {
+		if onRoster {
+			holder.TierKey = agentTierKey(l, holderAgent)
+		} else if key, ok := l.TierOf(holder.Name); ok {
 			holder.TierKey = key
 		}
 	}
@@ -31,7 +34,7 @@ func SubstituteSeat(l Ladder, holder Seat, roster map[string]Agent, avoid []stri
 		}
 		relay = append(relay, seat)
 	}
-	provider, _ := l.ProviderOf(holder.Name)
+	provider, _ := l.ProviderFor(holder.Name, holderAgent.Model)
 	failedDir := l.seatDirection(holder.Name)
 	if failedDir == "" {
 		failedDir = direction
@@ -62,13 +65,8 @@ func SubstituteSeat(l Ladder, holder Seat, roster map[string]Agent, avoid []stri
 }
 
 func relaySeat(l Ladder, agent Agent) quotarelay.Seat {
-	tier := ""
-	if key, ok := l.NormalizeTier(agent.Tier); ok && key != "" {
-		tier = key
-	} else if key, ok := l.TierOf(agent.Name); ok {
-		tier = key
-	}
-	provider, _ := l.ProviderOf(agent.Name)
+	tier := agentTierKey(l, agent)
+	provider, _ := l.ProviderFor(agent.Name, agent.Model)
 	return quotarelay.Seat{
 		ID:        agent.ID,
 		Name:      agent.Name,

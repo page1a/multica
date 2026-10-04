@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -447,9 +448,9 @@ func TestCloseVerdictPassMergesAndCloses(t *testing.T) {
 	}
 }
 
-// A pass whose merge fails ends blocked, and the response says so instead
-// of claiming done.
-func TestCloseVerdictPassMergeFailureReportsBlocked(t *testing.T) {
+// A pass whose merge still fails after the retry keeps the ticket in review
+// (never blocked) and the response tells the seat how to finish (DENE-1219).
+func TestCloseVerdictPassMergeFailureStaysInReview(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -459,23 +460,10 @@ func TestCloseVerdictPassMergeFailureReportsBlocked(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `UPDATE issue SET reviewer_type = 'agent', reviewer_id = $2 WHERE id = $1`, issue.ID, agentID); err != nil {
 		t.Fatalf("set reviewer: %v", err)
 	}
-	var prID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO github_pull_request (workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, pr_created_at, pr_updated_at, head_sha, mergeable_state)
-		VALUES ($1, 1, 'multica-ai', 'multica', 999860, 'close PR', 'open', 'https://example.test/pr/860', now(), now(), 'abc860', 'clean')
-		RETURNING id
-	`, testWorkspaceID).Scan(&prID); err != nil {
-		t.Fatalf("seed PR: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue_pull_request WHERE pull_request_id = $1`, prID)
-		testPool.Exec(context.Background(), `DELETE FROM github_pull_request WHERE id = $1`, prID)
-	})
-	if _, err := testPool.Exec(ctx, `INSERT INTO issue_pull_request (issue_id, pull_request_id) VALUES ($1, $2)`, issue.ID, prID); err != nil {
-		t.Fatalf("link PR: %v", err)
-	}
+	seedOpenPullForIssue(t, issue.ID, 999860)
+	calls := 0
 	prev := testHandler.PRMerger
-	testHandler.PRMerger = fakeMerger{err: errPullNotMergeable}
+	testHandler.PRMerger = fakeMerger{err: errPullNotMergeable, calls: &calls}
 	t.Cleanup(func() { testHandler.PRMerger = prev })
 
 	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
@@ -487,14 +475,63 @@ func TestCloseVerdictPassMergeFailureReportsBlocked(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Merged || resp.Status != "blocked" {
-		t.Fatalf("merged = %v status = %q, want unmerged + blocked", resp.Merged, resp.Status)
+	if resp.Merged || resp.Status != "in_review" {
+		t.Fatalf("merged = %v status = %q, want unmerged + in_review", resp.Merged, resp.Status)
 	}
-	if got := issueMetaString(t, issue.ID, closeprotocol.KeyConclusion); got != closeprotocol.ConclusionBlocked {
-		t.Fatalf("close.conclusion = %q", got)
+	if calls != 2 {
+		t.Fatalf("merge attempts = %d, want one retry", calls)
 	}
-	if got := issueMetaString(t, issue.ID, closeprotocol.KeyBlockKind); got != closeprotocol.BlockExternal {
-		t.Fatalf("close.block_kind = %q", got)
+	if resp.Hold == nil || resp.Hold.Kind != blockwait.HoldMergeFailed || !strings.Contains(resp.Hold.Next, "gh pr merge --squash") {
+		t.Fatalf("hold = %+v, want merge_failed with the local merge hint", resp.Hold)
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "in_review" {
+		t.Fatalf("db status = %s, want in_review", got)
+	}
+	if got := issueMetaString(t, issue.ID, blockwait.KeyReleased); got != "" {
+		t.Fatalf("block.released = %q, want cleared so the next pass retries", got)
+	}
+	if got := issueMetaString(t, issue.ID, blockwait.KeyWakeAt); got != "" {
+		t.Fatalf("block.wake_at = %q, want no clock", got)
+	}
+}
+
+// A pass whose PR checks are still running is answered before the pass is
+// posted: 409 with the hold code, no comment, no status (DENE-1219).
+func TestCloseVerdictPassWithPendingChecksIsAnsweredFirst(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	issue := createIssueHTTP(t, "close verdict pending", "in_review")
+	agentID := handlerTestAgentID(t)
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET reviewer_type = 'agent', reviewer_id = $2 WHERE id = $1`, issue.ID, agentID); err != nil {
+		t.Fatalf("set reviewer: %v", err)
+	}
+	seedOpenPullForIssue(t, issue.ID, 999864)
+	var prID string
+	if err := testPool.QueryRow(ctx, `UPDATE github_pull_request SET checks_rollup_state = 'PENDING', snapshot_head_sha = head_sha WHERE workspace_id = $1 AND pr_number = 999864 RETURNING id`, testWorkspaceID).Scan(&prID); err != nil {
+		t.Fatalf("set checks: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM github_pull_request_check_run WHERE pr_id = $1`, prID)
+	})
+	if _, err := testPool.Exec(ctx, `INSERT INTO github_pull_request_check_run (pr_id, head_sha, ordinal, name, status) VALUES ($1, 'sha999864', 0, 'backend', 'in_progress')`, prID); err != nil {
+		t.Fatalf("seed check run: %v", err)
+	}
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "可以合。", "verdict": "pass"})
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"close_checks_pending"`) {
+		t.Fatalf("status = %d: %s, want 409 close_checks_pending", w.Code, w.Body.String())
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "in_review" {
+		t.Fatalf("db status = %s, want in_review", got)
+	}
+	var comments int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM comment WHERE issue_id = $1 AND content LIKE '%verdict: pass%'`, issue.ID).Scan(&comments); err != nil {
+		t.Fatalf("count comments: %v", err)
+	}
+	if comments != 0 {
+		t.Fatalf("pass comments = %d, want none before the PR can merge", comments)
 	}
 }
 
@@ -558,52 +595,82 @@ func TestCloseDoneWithOpenPullMergesFirst(t *testing.T) {
 	}
 }
 
-// The same close when the merge fails: the caller asked for done, the gate
-// rewrote it to a structured block, and the close record follows the status
-// actually written — the response carries the warning instead of a false done.
-func TestCloseDoneWithUnmergeablePullIsRewrittenToBlocked(t *testing.T) {
+// The same close when the merge fails: the gate retries once, then refuses
+// with the local merge command and writes nothing — no blocked, no clock
+// (DENE-1219).
+func TestCloseDoneWithUnmergeablePullIsRefusedWithHint(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	issue := createIssueHTTP(t, "close done PR merge fails", "in_progress")
 	agentID := handlerTestAgentID(t)
 	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
-	seedOpenPullForIssue(t, issue.ID, 999862)
+	url := seedOpenPullForIssue(t, issue.ID, 999862)
+	calls := 0
 	prev := testHandler.PRMerger
-	testHandler.PRMerger = fakeMerger{err: errPullNotMergeable}
+	testHandler.PRMerger = fakeMerger{err: errPullNotMergeable, calls: &calls}
+	t.Cleanup(func() { testHandler.PRMerger = prev })
+
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "PR 开着，测试全绿。"})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d: %s, want 409", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"code":"close_merge_failed"`) || !strings.Contains(w.Body.String(), "gh pr merge --squash "+url) {
+		t.Fatalf("refusal = %s, want close_merge_failed with the local merge command", w.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("merge attempts = %d, want one retry", calls)
+	}
+	if got := issueStatusDirect(t, issue.ID); got != "in_progress" {
+		t.Fatalf("db status = %s, want in_progress untouched", got)
+	}
+	for _, key := range []string{blockwait.KeyWakeAt, blockwait.KeyWaitCondition, blockwait.KeyWatched, blockwait.KeyNeedsHuman} {
+		if got := issueMetaString(t, issue.ID, key); got != "" {
+			t.Fatalf("%s = %q, want nothing written", key, got)
+		}
+	}
+}
+
+// A merge that fails once and goes through on the retry closes the ticket.
+func TestCloseDoneMergeRetrySucceeds(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueHTTP(t, "close done merge retry", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	seedOpenPullForIssue(t, issue.ID, 999865)
+	calls := 0
+	prev := testHandler.PRMerger
+	testHandler.PRMerger = fakeMerger{err: errPullNotMergeable, calls: &calls, failFirst: true}
 	t.Cleanup(func() { testHandler.PRMerger = prev })
 
 	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "PR 开着，测试全绿。"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	var resp CloseIssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	if calls != 2 || issueStatusDirect(t, issue.ID) != "done" {
+		t.Fatalf("calls = %d status = %s, want merged on the retry and done", calls, issueStatusDirect(t, issue.ID))
 	}
-	if resp.Merged || resp.Status != "blocked" || resp.PrevStatus != "in_progress" {
-		t.Fatalf("merged = %v status = %q prev = %q, want unmerged + blocked", resp.Merged, resp.Status, resp.PrevStatus)
+}
+
+// --needs-human is the one close that still writes blocked (DENE-1219).
+func TestCloseBlockedNeedsHumanStillBlocks(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
 	}
-	if len(resp.Warnings) == 0 || !strings.Contains(resp.Warnings[0], "实际落的是 blocked") {
-		t.Fatalf("warnings should name the rewrite, got %v", resp.Warnings)
+	issue := createIssueHTTP(t, "close needs human", "in_progress")
+	agentID := handlerTestAgentID(t)
+	taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
+	w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "blocked", "evidence": "要 Kun 决定用哪个方案。", "needs_human": testUserID})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
 	if got := issueStatusDirect(t, issue.ID); got != "blocked" {
 		t.Fatalf("db status = %s, want blocked", got)
 	}
-	if got := issueMetaString(t, issue.ID, closeprotocol.KeyConclusion); got != closeprotocol.ConclusionBlocked {
-		t.Fatalf("close.conclusion = %q", got)
-	}
-	if got := issueMetaString(t, issue.ID, closeprotocol.KeyStatus); got != "blocked" {
-		t.Fatalf("close.status = %q", got)
-	}
-	if got := issueMetaString(t, issue.ID, closeprotocol.KeyBlockKind); got != closeprotocol.BlockExternal {
-		t.Fatalf("close.block_kind = %q", got)
-	}
-	if got := issueMetaString(t, issue.ID, "block.wait_condition"); got == "" {
-		t.Fatalf("block.wait_condition should carry the merge failure")
-	}
-	if got := issueMetaString(t, issue.ID, closeprotocol.KeyKnowledgeAudit); got != `{"none":true}` {
-		t.Fatalf("rewritten close dropped the knowledge audit: %q", got)
+	if got := issueMetaString(t, issue.ID, blockwait.KeyNeedsHuman); got != testUserID {
+		t.Fatalf("block.needs_human = %q", got)
 	}
 }
 

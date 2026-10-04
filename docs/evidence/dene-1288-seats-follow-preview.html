@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1288 席位表：跟随行说明如何解除</title>
+<style>
+  body{margin:0;background:#f7f7f8;color:#202124;font:14px system-ui,sans-serif;padding:24px}
+  .card{max-width:720px;margin:0 auto 32px;background:#fff;border:1px solid #e3e3e7;border-radius:12px;overflow:hidden}
+  .scroll{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:560px}
+  th{font-weight:500;color:#6b6b73;text-align:left;padding:10px 12px;border-bottom:1px solid #e3e3e7}
+  td{padding:8px 12px;border-bottom:1px solid #f0f0f2;vertical-align:middle}
+  .name{font-weight:500;max-width:224px}
+  .name.child{padding-left:40px}
+  .sub{font-weight:400;font-size:12px;color:#6b6b73;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sub a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+  .model{font:12px ui-monospace,monospace;color:#6b6b73}
+  .sel{border:1px solid #d6d6db;border-radius:8px;padding:4px 10px;width:56px;display:inline-block}
+  .off .sel{opacity:.5}
+  h2{max-width:720px;margin:0 auto 8px;font-size:15px}
+  .phone{max-width:390px}
+</style>
+<h2>桌面</h2>
+<div class="card"><div class="scroll"><table>
+<tr><th>智能体</th><th>模型</th><th>档位</th><th>用量</th></tr>
+<tr><td class="name">布尔玛</td><td class="model">claude-opus</td><td><span class="sel">强</span></td><td><span class="sel">宽裕</span></td></tr>
+<tr class="off"><td class="name child"><div>布尔玛 · 分身</div><div class="sub">跟随 布尔玛 · <a href="#">关闭跟随后可改</a></div></td><td class="model">claude-opus</td><td><span class="sel">强</span></td><td><span class="sel">宽裕</span></td></tr>
+</table></div></div>
+<h2>手机 390px（表格横滑，说明单行截断不撑高）</h2>
+<div class="card phone"><div class="scroll"><table>
+<tr><th>智能体</th><th>模型</th><th>档位</th><th>用量</th></tr>
+<tr><td class="name">布尔玛</td><td class="model">claude-opus</td><td><span class="sel">强</span></td><td><span class="sel">宽裕</span></td></tr>
+<tr class="off"><td class="name child"><div>布尔玛 · 分身</div><div class="sub">跟随 布尔玛 · <a href="#">关闭跟随后可改</a></div></td><td class="model">claude-opus</td><td><span class="sel">强</span></td><td><span class="sel">宽裕</span></td></tr>
+</table></div></div>

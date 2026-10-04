@@ -8,7 +8,8 @@
     "search_empty": "一致するチャットはありません",
     "back": "戻る",
     "new_chat_in_project": "新しいチャットは「{{title}}」に残ります",
-    "new_chat_unbound": "新しいチャットはプロジェクトに紐づきません"
+    "new_chat_unbound": "新しいチャットはプロジェクトに紐づきません",
+    "back_to_list": "チャット一覧に戻る"
   },
   "goal_flow": {
     "hint": "タスクを作成する前に整理しましょう。",
@@ -145,7 +146,9 @@
     "quick_actions_heading": "フォローアップ質問",
     "quick_actions_aria": "フォローアップの候補",
     "quick_actions_regenerate": "候補を再生成",
-    "quick_actions_regenerate_failed": "候補を再生成できませんでした。もう一度お試しください。"
+    "quick_actions_regenerate_failed": "候補を再生成できませんでした。もう一度お試しください。",
+    "spawned": "チャットを作成",
+    "spawn_untitled": "新しいチャット"
   },
   "session_history": {
     "untitled": "無題",
@@ -314,7 +317,8 @@
     "private_tag": "非公開",
     "extra_tag": "追加メンバー",
     "show_more": "さらに表示（{{count}}）",
-    "show_fewer": "表示を減らす"
+    "show_fewer": "表示を減らす",
+    "spawned": "別のチャットから作成"
   },
   "header": {
     "view_profile": "Agent のプロフィール",
@@ -352,7 +356,14 @@
     "header_private": "自分だけ",
     "header_project": "プロジェクトのメンバーは閲覧も発言もできます",
     "header_extra": "プロジェクトのメンバーと追加の人",
-    "search": "メンバーを検索…"
+    "search": "メンバーを検索…",
+    "trigger": {
+      "private": "自分のみ",
+      "project": "プロジェクトメンバー",
+      "extra": "プロジェクト+追加",
+      "workspace": "ワークスペース全体"
+    },
+    "header_workspace": "ワークスペースの全メンバーが閲覧・発言できます"
   },
   "notice": {
     "title": "一部のチャットがプロジェクトメンバーに見えるようになりました",
@@ -360,5 +371,10 @@
     "make_private": "選択したものを非公開にする",
     "dismiss": "了解"
   },
-  "title_locked": "タイトルはロック済み（エージェントは変更しません）"
+  "title_locked": "タイトルはロック済み（エージェントは変更しません）",
+  "origin": {
+    "from_prefix": "",
+    "from_suffix": "から作成",
+    "from_hidden": "別のチャットから作成"
+  }
 }

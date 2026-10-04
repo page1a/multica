@@ -318,6 +318,13 @@ const (
 	// the opening self-describes: chat renders the starter cards under this
 	// kind instead of quick-action chips (MUL-5765).
 	ChatMessageKindOnboardingOpening = "onboarding_opening"
+	// ChatMessageKindChatSpawn is the card an agent's `multica chat open`
+	// leaves in the chat it was running in; linked_session_id names the new
+	// chat (DENE-1271). Server-authored, never part of a run's input.
+	ChatMessageKindChatSpawn = "chat_spawn"
+	// ChatMessageKindChatSpawnRefused explains in the same chat why the
+	// server refused to open a new one (depth, budget, permissions).
+	ChatMessageKindChatSpawnRefused = "chat_spawn_refused"
 )
 
 // ChatDonePayload is broadcast when an agent finishes responding to a chat

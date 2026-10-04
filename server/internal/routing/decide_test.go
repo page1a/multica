@@ -421,6 +421,8 @@ func TestBlockedAdviceCarriesTheStuckSummary(t *testing.T) {
 	// Nothing on: no advice call, no comment.
 	store := newCachingStore(noModels())
 	store.issue.Status = "blocked"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-piccolo-g"
 	judge := &fakeJudge{}
 	out := routeWith(t, store, judge, &fakeAnalyst{})
 	if judge.callCount() != 0 || store.commentCount() != 0 || out.Action != ActionNoop {

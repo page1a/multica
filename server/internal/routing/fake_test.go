@@ -72,6 +72,9 @@ func newFakeStore() *fakeStore {
 			CreatorType: "member",
 			CreatorID:   "user-1",
 			ProjectName: "game",
+			// A wait is on record unless a test says otherwise, so the
+			// blocked row reaches the model the way it always did.
+			Wait: BlockWait{Registered: true},
 		},
 		roster: map[string]Agent{
 			"布尔玛":   {ID: "a-bulma", Name: "布尔玛"},
@@ -267,9 +270,9 @@ func (f *fakeStore) EnabledWorkspaces(context.Context) ([]string, error) {
 	return f.workspaces, f.fail("enabled_workspaces")
 }
 
-func (f *fakeStore) UnassignedTodos(_ context.Context, _ string, _ time.Time, limit int) ([]string, error) {
+func (f *fakeStore) UnseatedIssues(_ context.Context, _ string, _ time.Time, limit int) ([]string, error) {
 	f.todoLimit = limit
-	return capIDs(f.todoIDs, limit), f.fail("unassigned_todos")
+	return capIDs(f.todoIDs, limit), f.fail("unseated_issues")
 }
 
 func (f *fakeStore) StaleReviews(_ context.Context, _ string, _ time.Time, limit int) ([]string, error) {

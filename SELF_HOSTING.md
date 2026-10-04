@@ -520,7 +520,7 @@ systemctl disable --now multica-autoupdate.timer       # stop following the bran
 journalctl -u multica-autoupdate.service -n 200        # what happened
 ```
 
-Requirements and limits worth knowing: this rebuilds from the checkout on the box (`docker-compose.selfhost.yml` + `docker-compose.selfhost.build.yml`), not from GHCR; it refuses to run against a checkout with modified tracked files rather than `git reset --hard` them away; and it uses the box's CPU and memory for the length of a build. Full runbook, including manual rollback, in [docs/kun/selfhost-autoupdate.md](docs/kun/selfhost-autoupdate.md).
+Requirements and limits worth knowing: by default this rebuilds from the checkout on the box (`docker-compose.selfhost.yml` + `docker-compose.selfhost.build.yml`) and uses the box's CPU and memory for the length of a build; set `MULTICA_AUTOUPDATE_IMAGE_SOURCE=registry` in `/etc/multica/autoupdate.env` to pull the per-commit images `.github/workflows/selfhost-images.yml` publishes to this fork's GHCR namespace instead. It refuses to run against a checkout with modified tracked files rather than `git reset --hard` them away. Full runbook, including manual rollback, in [docs/kun/selfhost-autoupdate.md](docs/kun/selfhost-autoupdate.md).
 
 
 ---

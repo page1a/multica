@@ -258,9 +258,7 @@ func (h *Handler) SetIssueVisibility(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rel := viewer.relation(issue.CreatorType, issue.CreatorID, issue.ProjectID)
-	if !viewer.bypasses() &&
-		!permission.Allowed(viewer.role, permission.ActionChangeVisibility, permission.Visibility(issue.Visibility), rel) {
+	if !viewer.canChangeIssueVisibility(issue) {
 		// The caller can see the issue, so naming the reason leaks nothing.
 		writeError(w, http.StatusForbidden, "you cannot change this issue's sharing scope")
 		return

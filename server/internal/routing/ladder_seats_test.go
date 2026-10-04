@@ -11,7 +11,7 @@ func TestLiveSeatsSitOnTheirTaggedRungsWithAProvider(t *testing.T) {
 		model    string
 	}{
 		{"孙悟饭", "strongest", "openai", "gpt-6-astra"},
-		{"特兰克斯", "strong", "openai", "gpt-6-sol"},
+		{"特兰克斯", "strong", "openai", "gpt-6.1-sol"},
 		{"克林", "weak", "openai", "gpt-6-luna"},
 		{"布尔玛", "strongest", "anthropic", "claude-fable-5-1"},
 		{"孙悟空", "strong", "anthropic", "claude-opus-5-5"},

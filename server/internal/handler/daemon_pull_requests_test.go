@@ -165,7 +165,7 @@ func TestDaemonSnapshotCloseWithoutApp(t *testing.T) {
 		cleanupDaemonSnapshotPR(t, pr.Number)
 		reportIssuePRsHTTP(t, issue.ID, []DaemonPullRequest{pr})
 		w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "PR " + pr.URL})
-		assertBlockedClose(t, issue.ID, w, "合并冲突")
+		assertHoldClose(t, issue.ID, w, "close_conflict", "合并冲突")
 	})
 
 	t.Run("red check blocks with the check name", func(t *testing.T) {
@@ -174,10 +174,7 @@ func TestDaemonSnapshotCloseWithoutApp(t *testing.T) {
 		cleanupDaemonSnapshotPR(t, pr.Number)
 		reportIssuePRsHTTP(t, issue.ID, []DaemonPullRequest{pr})
 		w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{"outcome": "done", "evidence": "PR " + pr.URL})
-		assertBlockedClose(t, issue.ID, w, "检查是红的")
-		if cond := issueMetaString(t, issue.ID, "block.wait_condition"); !strings.Contains(cond, "backend") {
-			t.Fatalf("wait condition = %q, want the check name", cond)
-		}
+		assertHoldClose(t, issue.ID, w, "close_checks_red", "backend")
 	})
 }
 
@@ -256,23 +253,26 @@ func cleanupDaemonSnapshotPR(t *testing.T, number int32) {
 	})
 }
 
-func assertBlockedClose(t *testing.T, issueID string, w *httptest.ResponseRecorder, reason string) {
+// assertHoldClose: a close held back by a stop the closing agent clears is
+// refused on the spot with the hold code, and nothing is written (DENE-1219).
+func assertHoldClose(t *testing.T, issueID string, w *httptest.ResponseRecorder, code, reason string) {
 	t.Helper()
-	if w.Code != http.StatusOK {
-		t.Fatalf("close = %d: %s, want 200 rewritten to blocked", w.Code, w.Body.String())
+	if w.Code != http.StatusConflict {
+		t.Fatalf("close = %d: %s, want 409", w.Code, w.Body.String())
 	}
-	var resp CloseIssueResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked: %s", resp.Status, w.Body.String())
+	if body["code"] != code || !strings.Contains(body["error"], reason) {
+		t.Fatalf("refusal = %+v, want code %s naming %q", body, code, reason)
 	}
-	if got := issueStatusDirect(t, issueID); got != "blocked" {
-		t.Fatalf("db status = %s, want blocked", got)
+	if got := issueStatusDirect(t, issueID); got != "in_progress" {
+		t.Fatalf("db status = %s, want in_progress untouched", got)
 	}
-	cond := issueMetaString(t, issueID, "block.wait_condition")
-	if !strings.Contains(cond, reason) {
-		t.Fatalf("wait condition = %q, want %q", cond, reason)
+	for _, key := range []string{"block.wake_at", "block.wait_condition", "block.watched"} {
+		if got := issueMetaString(t, issueID, key); got != "" {
+			t.Fatalf("%s = %q, want nothing written", key, got)
+		}
 	}
 }

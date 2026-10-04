@@ -904,7 +904,20 @@
       "queued_prefix": "{{when}} 대기 시작",
       "success_hint": "완료 및 실패한 실행 수 중 완료한 실행의 비율입니다. 취소한 실행은 제외됩니다.",
       "success_unavailable": "이 기간에 완료하거나 실패한 실행이 없어 성공률을 계산할 수 없습니다.",
-      "cancelled_count": "{{count}}개 취소됨"
+      "cancelled_count": "{{count}}개 취소됨",
+      "section_chats": "채팅",
+      "subtitle_chats_latest_other": "최근 {{count}}개",
+      "subtitle_no_chats": "채팅 없음",
+      "empty_chats": "아직 이 에이전트와 채팅한 사람이 없습니다.",
+      "chat_status": {
+        "running": "실행 중",
+        "queued": "대기 중",
+        "idle": "유휴"
+      },
+      "chat_hidden": "다른 사람의 채팅",
+      "chat_hidden_hint": "이 채팅을 볼 권한이 없습니다",
+      "open_chat": "열기",
+      "chat_untitled": "제목 없는 채팅"
     }
   },
   "char_counter": {

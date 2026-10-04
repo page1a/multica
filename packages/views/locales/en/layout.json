@@ -9,6 +9,7 @@
     "agents": "Agents",
     "squads": "Squads",
     "usage": "Analytics",
+    "linked_workspaces": "Linked workspaces",
     "runtimes": "Runtimes",
     "skills": "Skills",
     "settings": "Settings",
@@ -85,5 +86,20 @@
     "nothing_shared_description": "Content appears here once you're added to a project.",
     "not_found_title": "Page not found",
     "not_found_description": "It may have been deleted, or it hasn't been shared with you."
+  },
+  "unavailable": {
+    "title": {
+      "issue": "Can’t open this issue",
+      "project": "Can’t open this project",
+      "chat": "Can’t open this chat"
+    },
+    "description": "It may have been deleted, or it hasn’t been shared with you.",
+    "guide_title": "If someone sent you this link",
+    "guide": {
+      "issue": "Ask them to open the issue, click the share button at the top right, and either add you under “Specific people” or switch it to “Entire workspace”. Then have them send the link again.",
+      "project": "Ask them to open the project, click the share button at the top right, and either add you under “Specific people” or switch it to “Entire workspace”. Then have them send the link again. Issues in the project open up with it.",
+      "chat": "Ask them to open the chat, click the share button in its header, and switch it to “Follow the project” or “Entire workspace”. Then have them send the link again."
+    },
+    "guest_note": "You’re a guest, so you only see what is shared with you directly. “Entire workspace” doesn’t include guests."
   }
 }

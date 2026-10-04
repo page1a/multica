@@ -29,7 +29,7 @@ export function RuntimeSettingsPage({
     return (
       <div className="flex h-full flex-col p-6">
         <Skeleton className="h-12 w-1/2" />
-        <div className="mt-6 grid grid-cols-3 gap-3">
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Skeleton className="h-20 rounded-lg" />
           <Skeleton className="h-20 rounded-lg" />
           <Skeleton className="h-20 rounded-lg" />

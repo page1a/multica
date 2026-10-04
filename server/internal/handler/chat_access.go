@@ -128,6 +128,7 @@ func (h *Handler) decorateChatSession(ctx context.Context, userID string, sessio
 		return err
 	}
 	resp.ExtraCount = int(n)
+	resp.OriginTitle = h.chatOriginTitle(ctx, session, userID)
 	return nil
 }
 

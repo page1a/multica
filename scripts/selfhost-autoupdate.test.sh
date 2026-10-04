@@ -112,6 +112,15 @@ case " $args " in
   ;;
 esac
 case " $args " in
+*" pull "*)
+  if [ "${STUB_PULL_FAILS:-0}" = "1" ]; then
+    echo "stub docker: manifest unknown" >&2
+    exit 1
+  fi
+  exit 0
+  ;;
+esac
+case " $args " in
 *" image inspect "*)
   [ "${STUB_IMAGES_EXIST:-1}" = "1" ] || exit 1
   exit 0
@@ -192,6 +201,7 @@ run_status=0
 run_script() {
   set +e
   PATH="$stub_bin:$PATH" \
+    MULTICA_AUTOUPDATE_IMAGE_SOURCE="${IMAGE_SOURCE:-build}" \
     MULTICA_AUTOUPDATE_REPO_DIR="$checkout" \
     MULTICA_AUTOUPDATE_STATE_FILE="$state_dir/autoupdate.json" \
     MULTICA_AUTOUPDATE_LOCK_FILE="$state_dir/autoupdate.lock" \
@@ -276,6 +286,38 @@ require_contains "$state_file" "did not take effect" "the recorded error must na
 require_contains "$docker_log" "recreate-update" "the upgrade must have been attempted"
 require_eq "$(git -C "$checkout" rev-parse HEAD)" "$sha_a" "the rollback must restore the old commit"
 echo "ok: a build whose commit never reaches /health rolls back"
+
+# ---------------------------------------------------------------------------
+# 4b. Registry mode, images not published yet: pending, nothing touched.
+# ---------------------------------------------------------------------------
+reset_run 1 "$sha_a"
+unset STUB_UPDATE_COMMIT_VALUE STUB_ROLLBACK_COMMIT
+export STUB_OLD_COMMIT="" STUB_PULL_FAILS=1
+git -C "$checkout" reset -q --hard "$sha_a"
+IMAGE_SOURCE=registry run_script
+require_eq "$run_status" 0 "waiting for CI is not a failure"
+require_contains "$state_file" '"result": "pending"' "unpublished images must be pending"
+require_contains "$state_file" "manifest unknown" "the pull error must be recorded"
+require_contains "$docker_log" "docker pull ghcr.io/jeff-kunkun/multica-backend:sha-$sha_b" "the pull must name the target commit"
+require_not_contains "$docker_log" "docker tag" "a pending run must not retag anything"
+require_not_contains "$docker_log" "docker compose" "a pending run must not touch the stack"
+require_eq "$(git -C "$checkout" rev-parse HEAD)" "$sha_a" "a pending run must not move the checkout"
+echo "ok: registry mode waits for CI without touching the stack"
+
+# ---------------------------------------------------------------------------
+# 4c. Registry mode, images published: pull and retag, never build.
+# ---------------------------------------------------------------------------
+reset_run 1 "$sha_a"
+export STUB_PULL_FAILS=0
+git -C "$checkout" reset -q --hard "$sha_a"
+IMAGE_SOURCE=registry run_script
+require_eq "$run_status" 0 "a registry update must exit 0"
+require_contains "$state_file" '"result": "updated"' "a registry update must report updated"
+require_contains "$docker_log" "docker tag multica-backend:dev multica-backend:prev" "the rollback anchor must still be taken"
+require_contains "$docker_log" "docker tag ghcr.io/jeff-kunkun/multica-web:sha-$sha_b multica-web:dev" "the pulled image must become :dev"
+require_not_contains "$docker_log" " build" "registry mode must never build on the box"
+require_contains "$docker_log" "recreate-update" "the pulled image must be recreated into a container"
+echo "ok: registry mode pulls the target images instead of building"
 
 # ---------------------------------------------------------------------------
 # 5. Lock held by a live run: skip immediately, do not build, do not touch the

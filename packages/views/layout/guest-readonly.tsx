@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Eye, Inbox, Search } from "lucide-react";
+import { Eye, Inbox, LockKeyhole, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCanWrite } from "@multica/core/permissions";
@@ -229,16 +229,60 @@ export function NothingSharedEmpty() {
 /**
  * Direct URL to a resource the viewer cannot see. Deliberately "not found",
  * never "you don't have permission" — the latter confirms the resource exists.
+ * With a `kind` it also says what to ask the sender for, in the words the
+ * share button on that kind of page uses — without naming anyone.
  */
-export function ResourceNotFound({ actions }: { actions?: ReactNode }) {
+export function ResourceNotFound({
+  actions,
+  kind,
+}: {
+  actions?: ReactNode;
+  kind?: "issue" | "project" | "chat";
+}) {
   const { t } = useT("layout");
+  const { isGuest } = useGuestReadOnly();
+  if (!kind) {
+    return (
+      <GuestPageState
+        testId="resource-not-found"
+        icon={Search}
+        title={t(($) => $.guest.not_found_title)}
+        description={t(($) => $.guest.not_found_description)}
+        actions={actions}
+      />
+    );
+  }
   return (
-    <GuestPageState
-      testId="resource-not-found"
-      icon={Search}
-      title={t(($) => $.guest.not_found_title)}
-      description={t(($) => $.guest.not_found_description)}
-      actions={actions}
-    />
+    <div data-testid="resource-not-found" className="flex min-h-0 flex-1">
+      <Empty className="rounded-none border-0 px-6 py-16">
+        <EmptyHeader>
+          <EmptyMedia
+            variant="icon"
+            className="size-12 rounded-full text-muted-foreground [&_svg]:size-6"
+          >
+            <LockKeyhole aria-hidden="true" />
+          </EmptyMedia>
+          <EmptyTitle>{t(($) => $.unavailable.title[kind])}</EmptyTitle>
+          <EmptyDescription className="max-w-md">
+            {t(($) => $.unavailable.description)}
+          </EmptyDescription>
+        </EmptyHeader>
+        <div
+          data-testid="resource-not-found-guide"
+          className="w-full max-w-md rounded-lg border bg-muted/30 px-4 py-3 text-left text-caption leading-5"
+        >
+          <p className="font-medium text-foreground">{t(($) => $.unavailable.guide_title)}</p>
+          <p className="mt-1 text-muted-foreground">{t(($) => $.unavailable.guide[kind])}</p>
+          {isGuest && (
+            <p className="mt-1 text-muted-foreground">{t(($) => $.unavailable.guest_note)}</p>
+          )}
+        </div>
+        {actions ? (
+          <EmptyContent className="mt-1 flex-row justify-center">
+            {actions}
+          </EmptyContent>
+        ) : null}
+      </Empty>
+    </div>
   );
 }

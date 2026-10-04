@@ -705,7 +705,7 @@ func quotaRoster(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, f
 	for _, agent := range agents {
 		id := util.UUIDToString(agent.ID)
 		tier := quotaTierKey(agent.RoutingTier)
-		provider, _ := routing.DefaultLadder.ProviderOf(agent.Name)
+		provider, _ := routing.DefaultLadder.ProviderFor(agent.Name, agent.Model.String)
 		seat := quotarelay.Seat{
 			ID:        id,
 			Name:      agent.Name,
@@ -720,7 +720,7 @@ func quotaRoster(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, f
 		if id == failedID {
 			failedSeat = seat
 			failedSeat.Eligible = false
-			failedSeat.AvoidHouse = capacityAvoidHouse(task, agent.Name)
+			failedSeat.AvoidHouse = capacityAvoidHouse(task, agent)
 			failedSeat.StrictHouse = balanceFailure(task)
 		}
 		roster = append(roster, seat)
@@ -894,7 +894,7 @@ func planSeatTier(agent db.Agent) string {
 	return quotaTierKey(agent.RoutingTier)
 }
 
-func capacityAvoidHouse(task db.AgentTaskQueue, name string) string {
+func capacityAvoidHouse(task db.AgentTaskQueue, agent db.Agent) string {
 	// A seat whose account ran out of money leaves its house: Grok goes to
 	// Claude or GPT, GPT to Claude or Grok (DENE-870). Capacity no longer
 	// relays at all (DENE-1093), so balance is the only caller left.
@@ -903,7 +903,7 @@ func capacityAvoidHouse(task db.AgentTaskQueue, name string) string {
 	}
 	// Any house, not only GPT. One tier down still may land on the same
 	// house when the rung has nobody else.
-	provider, ok := routing.DefaultLadder.ProviderOf(name)
+	provider, ok := routing.DefaultLadder.ProviderFor(agent.Name, agent.Model.String)
 	if !ok || provider == "" {
 		return ""
 	}
@@ -938,7 +938,7 @@ func (s *TaskService) reassignUnstartedIssues(ctx context.Context, qtx *db.Queri
 	if task.IssueID.Valid {
 		sourceID = util.UUIDToString(task.IssueID)
 	}
-	crossHouse := capacityAvoidHouse(task, agent.Name) != ""
+	crossHouse := capacityAvoidHouse(task, agent) != ""
 	actor := task.AccountableUserID
 	if !actor.Valid {
 		actor = task.OriginatorUserID

@@ -1821,6 +1821,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/naming", h.GetWorkspaceNaming)
+					r.Get("/agent-spawn", h.GetWorkspaceAgentSpawn)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
 					// Listing GitHub installations is member-visible so the
@@ -1867,6 +1868,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/naming", h.UpdateWorkspaceNaming)
+					r.Put("/agent-spawn", h.UpdateWorkspaceAgentSpawn)
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					// The re-check button. It makes an outbound request, so it
@@ -2155,6 +2157,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
+			// Cross-workspace read-only links (DENE-1225). The header names
+			// the caller's own workspace; internal/workspacelink decides
+			// everything else, and /view is the only way source data leaves.
+			r.Route("/api/workspace-links", func(r chi.Router) {
+				r.Get("/", h.ListWorkspaceLinks)
+				r.Post("/", h.CreateWorkspaceLink)
+				r.Get("/audit", h.ListWorkspaceLinkAudit)
+				r.Patch("/{id}", h.UpdateWorkspaceLink)
+				r.Delete("/{id}", h.RevokeWorkspaceLink)
+				r.Get("/{id}/view", h.GetWorkspaceLinkView)
+			})
+
 			// Project-memory checklist (DENE-972). Not under /api/projects: that
 			// tree is behind the projects module, and a close must be able to
 			// read the same list the server validates against.
@@ -2217,6 +2231,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// ordinary edit: it has its own tier rule and its own
 					// audit row (DENE-698).
 					r.Put("/visibility", h.SetIssueVisibility)
+					r.Get("/access", h.GetIssueAccess)
 					// "Specific people": direct shares on this issue (kun fork).
 					r.Get("/shares", h.ListIssueShares)
 					r.Post("/shares", h.AddIssueShare)
@@ -2414,6 +2429,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// holds, so the frontend asks what it would sweep first.
 					r.Get("/visibility/preview", h.PreviewProjectVisibility)
 					r.Put("/visibility", h.SetProjectVisibility)
+					r.Get("/access", h.GetProjectAccess)
 					r.Get("/resources", h.ListProjectResources)
 					// Compact repository-only surface used by the CLI and agents.
 					r.Get("/repos", h.ListProjectRepos)
@@ -2559,6 +2575,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/solidify", h.SolidifyAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/tasks", h.ListAgentTasks)
+					r.Get("/chats", h.ListAgentChats)
 					r.Get("/dingtalk/groups", h.ListDingTalkGroupsForAgent)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
@@ -2753,6 +2770,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.ListChatSessions)
 				// Registered before /{sessionId} so "make-private" is not captured as an id.
 				r.Post("/make-private", h.MakeChatSessionsPrivate)
+				// Agent-only: open a chat from the chat this run belongs to (DENE-1271).
+				r.Post("/spawn", h.SpawnChatSession)
 				r.Get("/search", h.SearchChatMessages)
 				r.Route("/{sessionId}", func(r chi.Router) {
 					r.Get("/", h.GetChatSession)

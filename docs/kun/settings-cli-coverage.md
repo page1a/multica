@@ -29,6 +29,7 @@
 | 成员 | `/api/workspaces/{id}/members` | 界面有、接口是上游的 | 有：`workspace member` |
 | 项目共享 | `PUT /api/projects/{id}/visibility`（`SetProjectVisibility`），预览 `GET .../visibility/preview`（`PreviewProjectVisibility`） | 魔改、界面在用 | 没有。最小通用入口未收这一行，防漂移把它记为例外 |
 | 账单 | `/api/cloud-billing/*` | 界面有、接口是上游的 | 没有 |
+| 智能体权限 | `GET` / `PUT /api/workspaces/{id}/agent-spawn`；运行上限仍在 `PATCH /api/workspaces/{id}` | 魔改、界面在用 | 部分：新建权限走 `settings get/set agent.spawn`；运行上限两项还没有 CLI（搬页前就没有） |
 | 配置迁移 | `GET /api/workspaces/{id}/config/export`，`POST .../config/import` | 魔改、界面在用 | 没有。`multica transfer` 是另一条工作区迁移，不走这两条 |
 
 ### 任务

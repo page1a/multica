@@ -175,5 +175,34 @@
     "label": "回到底部",
     "new_messages_other": "{{count}} 条新消息",
     "new_comments_other": "{{count}} 条新评论"
+  },
+  "share_guide": {
+    "audience_title": "{{count}} 人能看到",
+    "scope": {
+      "private": "现在只有你能看到。",
+      "project": "只有被挑选的人能看到。",
+      "workspace": "工作区所有成员（不含访客）都能看到。"
+    },
+    "project_inherits": "项目的共享范围也决定了项目里任务默认谁能看到。",
+    "can_change": "你可以点这里修改谁能看到。",
+    "cannot_change_guest": "你是访客，不能修改共享范围。",
+    "cannot_change_not_creator": {
+      "issue": "只有创建人或工作区管理员能修改这个任务的共享范围。",
+      "project": "只有创建人或工作区管理员能修改这个项目的共享范围。",
+      "chat": "只有这条聊天的创建人能修改共享范围。"
+    },
+    "private_link": {
+      "title": {
+        "issue": "这个任务现在只有你能看到",
+        "project": "这个项目现在只有你能看到",
+        "chat": "这条聊天现在只有你能看到"
+      },
+      "description": "别人点开链接只会看到「打不开」。要先改共享范围，再复制链接吗？",
+      "description_readonly": "别人点开链接只会看到「打不开」，你也没有权限修改共享范围。仍然可以复制，但需要请创建人先放开。",
+      "copy_anyway": "仍然复制",
+      "change_scope": "先改共享范围",
+      "copied": "链接已复制",
+      "copy_failed": "复制链接失败"
+    }
   }
 }

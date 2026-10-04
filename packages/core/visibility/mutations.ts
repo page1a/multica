@@ -24,9 +24,32 @@ export interface ProjectVisibilityPreview {
   previously_private_count: number;
 }
 
+/** What the share button explains on hover: the scope, its reach, and
+ * whether the viewer may change it. `reason` comes from the server's rule. */
+export interface SharingAccess {
+  visibility: VisibilityScope;
+  audience_size: number;
+  can_change: boolean;
+  reason: "guest" | "not_creator" | null;
+}
+
+export type SharingAccessKind = "issue" | "project";
+
 export const visibilityKeys = {
   projectPreview: (projectId: string) => ["visibility", "projects", projectId, "preview"] as const,
+  accessAll: (wsId: string) => ["visibility", wsId, "access"] as const,
+  access: (wsId: string, kind: SharingAccessKind, id: string) =>
+    [...visibilityKeys.accessAll(wsId), kind, id] as const,
 };
+
+export function sharingAccessOptions(wsId: string, kind: SharingAccessKind, id: string, enabled = true) {
+  return {
+    queryKey: visibilityKeys.access(wsId, kind, id),
+    queryFn: (): Promise<SharingAccess> => api.getSharingAccess(kind, id),
+    enabled: enabled && !!id,
+    staleTime: 15_000,
+  };
+}
 
 export function projectVisibilityPreviewOptions(projectId: string, enabled = true) {
   return {
@@ -61,6 +84,7 @@ export function useSetIssueVisibility(wsId: string) {
         return { ...old, byStatus };
       });
       qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      qc.invalidateQueries({ queryKey: visibilityKeys.accessAll(wsId) });
     },
   });
 }
@@ -96,6 +120,7 @@ export function useSetProjectVisibility(wsId: string) {
       qc.invalidateQueries({ queryKey: projectKeys.list(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
       qc.invalidateQueries({ queryKey: workspaceKeys.list() });
+      qc.invalidateQueries({ queryKey: visibilityKeys.accessAll(wsId) });
     },
   });
 }

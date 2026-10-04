@@ -104,6 +104,9 @@ const storeListeners = vi.hoisted(() => new Set<() => void>());
 const availableAgentsRef = vi.hoisted(() => ({ current: [] as Agent[] }));
 const agentsSettledRef = vi.hoisted(() => ({ current: true }));
 const runtimeBoundRef = vi.hoisted(() => ({ current: true }));
+const sessionsRef = vi.hoisted(() => ({
+  current: { list: [] as { id: string }[], loaded: false },
+}));
 const mockStartNewChat = vi.hoisted(() => vi.fn());
 const mockHandleSend = vi.hoisted(() => vi.fn(async (_text: string) => true));
 const mockPrefill = vi.hoisted(() => vi.fn());
@@ -150,7 +153,8 @@ vi.mock("./components/use-chat-controller", async () => {
       agents: availableAgentsRef.current,
       availableAgents: availableAgentsRef.current,
       agentsSettled: agentsSettledRef.current,
-      sessions: [],
+      sessions: sessionsRef.current.list,
+      sessionsLoaded: sessionsRef.current.loaded,
       activeSessionId: useSyncExternalStore(
         subscribeToStore,
         () => storeRef.current,
@@ -284,6 +288,7 @@ beforeEach(() => {
   availableAgentsRef.current = [agent];
   agentsSettledRef.current = true;
   runtimeBoundRef.current = true;
+  sessionsRef.current = { list: [], loaded: false };
   platformWorkspace.slug = "acme";
   layout.width = DESKTOP;
 });
@@ -370,6 +375,34 @@ describe("ChatPage URL synchronization", () => {
       mockSetActiveSession(null);
     });
     expect(replace).toHaveBeenLastCalledWith("/acme/chat");
+  });
+
+  it("explains a linked chat that is not in the person's list before leaving it", () => {
+    sessionsRef.current = { list: [{ id: "session-1" }], loaded: true };
+    const { replace } = renderPage("", { pathname: "/acme/chat/session-private" });
+    expect(storeRef.current.activeSessionId).toBe("session-private");
+
+    // The controller's self-heal clears a session the list never had.
+    act(() => {
+      mockSetActiveSession(null);
+    });
+
+    expect(replace).toHaveBeenLastCalledWith("/acme/chat");
+    // Explained in place (DENE-1214), not by a toast that disappears.
+    expect(mockToastError).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("resource-not-found-guide").length).toBeGreaterThan(0);
+  });
+
+  it("leaves a listed chat that went away without a toast", () => {
+    sessionsRef.current = { list: [{ id: "session-1" }], loaded: true };
+    const { replace } = renderPage("", { pathname: "/acme/chat/session-1" });
+
+    act(() => {
+      mockSetActiveSession(null);
+    });
+
+    expect(replace).toHaveBeenLastCalledWith("/acme/chat");
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 
   it.each(["pathname", "rehydration"])(

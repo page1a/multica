@@ -126,6 +126,16 @@ type Settings struct {
 	// AllowUpshift is 「允许上调一档」: when every seat on the judged rung is
 	// tight, the rung above's ample seat takes the work. Off by default.
 	AllowUpshift bool `json:"allow_upshift,omitempty"`
+	// PreferContinuation is 「接着做」 (DENE-1202): a ticket continuing earlier
+	// work goes back to that work's executor when it can take it. Off by
+	// default, which is shadow mode — the ladder's pick is written and the
+	// assignment comment says who the rule would have picked.
+	PreferContinuation bool `json:"prefer_continuation,omitempty"`
+	// PreferIdle is 「负载分流」 (DENE-1203): inside the ladder's rung and
+	// direction, a seat with fewer unfinished runs goes before a busy one.
+	// Off by default, which is shadow mode, like PreferContinuation. With
+	// both on, 接着做 wins.
+	PreferIdle bool `json:"prefer_idle,omitempty"`
 
 	// JudgeEnabled switches the judge role — Model, BaseURL and the key above
 	// are that role's fields, because the judge is the only model routing had

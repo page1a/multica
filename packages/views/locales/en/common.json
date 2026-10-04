@@ -177,5 +177,34 @@
     "new_messages_other": "{{count}} new messages",
     "new_comments_one": "{{count}} new comment",
     "new_comments_other": "{{count}} new comments"
+  },
+  "share_guide": {
+    "audience_title": "{{count}} people can see it",
+    "scope": {
+      "private": "Only you can see it right now.",
+      "project": "Only the people picked can see it.",
+      "workspace": "Every workspace member except guests can see it."
+    },
+    "project_inherits": "A project’s sharing also decides who sees its issues by default.",
+    "can_change": "Click to change who can see it.",
+    "cannot_change_guest": "Guests can’t change sharing.",
+    "cannot_change_not_creator": {
+      "issue": "Only the creator or a workspace admin can change this issue’s sharing.",
+      "project": "Only the creator or a workspace admin can change this project’s sharing.",
+      "chat": "Only the person who started this chat can change its sharing."
+    },
+    "private_link": {
+      "title": {
+        "issue": "Only you can see this issue",
+        "project": "Only you can see this project",
+        "chat": "Only you can see this chat"
+      },
+      "description": "Anyone you send the link to will see “Can’t open”. Change who can see it before copying?",
+      "description_readonly": "Anyone you send the link to will see “Can’t open”, and you can’t change the sharing. You can still copy it, but ask the creator to share it first.",
+      "copy_anyway": "Copy anyway",
+      "change_scope": "Change sharing first",
+      "copied": "Link copied",
+      "copy_failed": "Couldn’t copy the link"
+    }
   }
 }

@@ -70,6 +70,10 @@ type ProviderQuota struct {
 type RoutingFacts struct {
 	Seats     map[string]SeatSnapshot
 	Providers []ProviderQuota
+	// Running is each asked-about seat's unfinished runs (queued, dispatched,
+	// running), read in the same pass. A seat with none is absent. It is the
+	// 负载 rule's input and stays out of the judge payload.
+	Running map[string]int
 }
 
 // SeatFacts is the raw observation the store gathered. The routing package

@@ -119,7 +119,7 @@ DENE-213 的任务说明要求「去 DENE-196 发一条评论，mention 验收�
 CLI（DENE-859 起）：一条命令做完整个收口。
 
 ```bash
-multica issue close <id> --outcome done      --evidence-file ./close.md --knowledge-none   # 交付：子票、或没有验收门的顶层票；关联 PR 还开着就先合并，合不进去落成 blocked 并在回复里说明。没有够格的项目记忆就加 --knowledge-none
+multica issue close <id> --outcome done      --evidence-file ./close.md --knowledge-none   # 交付：子票、或没有验收门的顶层票；关联 PR 还开着就先合并；检查在跑就原地等（最多约 15 分钟），红、冲突、合并失败当场说清要修什么，票状态不动（DENE-1219）。没有够格的项目记忆就加 --knowledge-none
 multica issue close <id> --outcome in_review --evidence-file ./close.md                     # 顶层票交付，等验收；要有关联 PR（纯文档票用 --no-code <原因>）；验收席为空则同一次调用补异族席位，再由路由交棒
 multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # 或 --wake-at / --wait-condition + --wait-timeout / --needs-human
 multica issue close <id> --outcome cancelled --evidence-file ./close.md                     # 有意取消：证据里写清为什么
@@ -138,7 +138,8 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
 - `--outcome in_review` 只给顶层票；子票用它会被拒绝（做完 `done`，卡住 `blocked`）。它走和 `issue status in_review` 同一道送审门禁（DENE-869）：智能体送审必须有关联的 open/draft/merged PR，纯文档或调研票用 `--no-code <原因>` 说明，否则被拒。带 `--needs-human <member>` 记成 `awaiting_human`；不带则是 `awaiting_review` + `wake_action=route`，由路由填验收席，不要求评论里 @ 谁。
 - `--outcome backlog` / `--outcome todo` 是有意放回：写成 `deferred` 结论，状态落在 `backlog` / `todo`，下一责任人 `none`、不叫醒任何人，也不需要 PR（什么都没交付）。证据里写清为什么放回去。**有原因但没人接着做**就用这两个，不要停在 `in_progress`。
 - `--outcome in_progress` 是本轮停下、事情继续：结论 `continuing`，并且**必须**写明「接下来谁继续」，复用 `--outcome blocked` 的同一组等待字段——`--wake-at <RFC3339>`、`--wait-condition "..." --wait-timeout <dur>`、`--blocked-by <issue>`、`--needs-human <member>`，一个都没有就被拒（「放回进行中必须写明「接下来谁继续」」）。带 `--wake-at` 时写 `wake_action=clock`：到点由巡检叫醒下一责任人，票会自己续起来。下一责任人默认取本票执行人；`--needs-human` 改成指定的人。
-- `--verdict pass` 只配 `--outcome done`，且票必须已在 `in_review`、调用者是验收席：平台先合并 PR 再写 `done`；合不进去（PR 脏、检查红、host 拒绝）回 `blocked` + `block_kind=external`，把原因写进评论。验收不通过不是收口：`multica issue comment add <id> --verdict hold --content-file ./review.md` 叫醒执行人。
+- `--verdict pass` 只配 `--outcome done`，且票必须已在 `in_review`、调用者是验收席：平台先合并 PR 再写 `done`；合不进去（PR 脏、检查红、host 拒绝）按下面的「PR 卡点当场答复」处理，不写 `blocked`。
+- PR 卡点当场答复（DENE-1219，取代 DENE-1212 的定时叫醒）：「已阻碍」只留给缺权限或 `--needs-human` 这类必须人来的情况。检查还在跑：CLI 原地每 30 秒刷新 PR 再问一次，最多约 15 分钟，变绿就合并关单；超时就过会儿再关一次。检查红、和主线冲突、草稿、读不到 PR 或交付线：服务端 409 拒绝并带 `code`（`close_checks_red`、`close_conflict`、`close_draft`、`close_read_failed`、`close_delivery`），红的点名是哪条检查、日志在哪（`gh pr checks <url>`），票状态和 `block.*` 都不动；同名检查在主线上本来就红的自动放行。平台合并失败先重试一次，还不行就 `close_merge_failed` 并给出本机命令 `gh pr merge --squash <url>`，合完再关一次。验收席的 `--verdict pass` 遇到卡点同样先拒绝、不记通过；已经用评论记过的通过合并失败时票保持 `in_review`，回复的 `hold` 说清缺什么并叫醒执行人。没有 30 分钟定时、没有轮次计数，巡检也不再因为机器卡点叫人。验收不通过不是收口：`multica issue comment add <id> --verdict hold --content-file ./review.md` 叫醒执行人。
 - `--pr <PR 或 MR 链接>`（DENE-961）：平台还没把交付关联上时，用它申报。服务端按仓库连接核实，核实成功就登记，再走原来的关单闸门。核不到也放行，票上记下 `close.pr_unverified`（未核实），这条链接不会被拿去合并。不要用「等平台关联 PR」卡住，这种等待会被拒绝。`multica issue pull-requests` 会给出同样的缺口和下一条命令。
 - 返回值如实报：实际写入的状态、PR 有没有合并、叫醒了谁。评论里照抄，不要凭记忆复述。
 
@@ -400,7 +401,7 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 
 阻塞扩展校验：`conclusion=blocked` 的新记录必须同时提供上述两个字段；旧记录缺少两字段时保持可读兼容。`block_kind=dependency` 必须有非空 `close.waiting_on`，且 `decision` / `permission` 必须指定具体的 `member`、`agent` 或 `squad` 责任人。非 blocked 收口的两个字段必须为空或不存在，避免解除阻塞后残留旧原因。人类审核逾期阈值按产品决策为 24 小时；`capacity` 阻塞不计入“需要你”摘要。
 
-切到 `blocked` 本身还要在 `multica issue status`（或 `multica issue close --outcome blocked`）上带上挡路说明（DENE-850）：`--blocked-by`、`--wake-at`、`--wait-condition` 加 `--wait-timeout`、或 `--needs-human`，至少一种。Agent 不带这些字段会被拒绝；上次用过、已经到点或已经叫醒过的记录不算。票离开 `blocked` 时整套 `block.*` 等待会被清掉。`close.waiting_on` 仍然会在被等票进入终态时叫醒等待方；`block.blocked_by` 是同一条边上的多票写法。验收通过只认单独一行的 `verdict: pass`（或 `multica issue comment add --verdict pass`），由平台合并并关票，合不进去就写成结构化阻塞，不留在 `in_review`。句子里的「通过」只提示怎么写这一行，不会合并。同一段等待最多叫醒一次；验收人是人、或票在等 `needs_human` 时只留言，不排运行。巡检只看本功能开始盯上之后才进入阻塞或待验收的票。这层不替代取消重试（DENE-813）、额度换席（DENE-836）或停用席位叫醒（DENE-848）。跑满工作区时限（`task_time_limit`）按重试预算在原会话和工作目录里续跑，续跑先收口已有进度再把剩余工作拆小；预算用尽改为 `blocked` 并留言，不再停在 `todo`。执行席是 agent 的父票切到 `in_review` 时如果验收席为空，补一个异族验收席并开始验收，选不出来就不进 `in_review`。直接写成 `done` 时，关联 PR 还开着：能干净合并且检查是绿的就先合并再关，否则改成带等待条件和到点叫醒的结构化阻塞。
+切到 `blocked` 本身还要在 `multica issue status`（或 `multica issue close --outcome blocked`）上带上挡路说明（DENE-850）：`--blocked-by`、`--wake-at`、`--wait-condition` 加 `--wait-timeout`、或 `--needs-human`，至少一种。Agent 不带这些字段会被拒绝；上次用过、已经到点或已经叫醒过的记录不算。票离开 `blocked` 时整套 `block.*` 等待会被清掉。`close.waiting_on` 仍然会在被等票进入终态时叫醒等待方；`block.blocked_by` 是同一条边上的多票写法。验收通过只认单独一行的 `verdict: pass`（或 `multica issue comment add --verdict pass`），由平台合并并关票，合不进去就保持 `in_review`，回复里的 `hold` 说清缺什么并叫醒执行人修，修好后巡检按已通过合并收口。句子里的「通过」只提示怎么写这一行，不会合并。同一段等待最多叫醒一次；验收人是人、或票在等 `needs_human` 时只留言，不排运行。巡检只看本功能开始盯上之后才进入阻塞或待验收的票。这层不替代取消重试（DENE-813）、额度换席（DENE-836）或停用席位叫醒（DENE-848）。跑满工作区时限（`task_time_limit`）按重试预算在原会话和工作目录里续跑，续跑先收口已有进度再把剩余工作拆小；预算用尽改为 `blocked` 并留言，不再停在 `todo`。执行席是 agent 的父票切到 `in_review` 时如果验收席为空，补一个异族验收席并开始验收，选不出来就不进 `in_review`。直接写成 `done` 时，关联 PR 还开着：能干净合并且检查是绿的就先合并再关，检查在跑就由 CLI 原地等，其余情况当场拒绝并说清要修什么，票状态不动。
 
 校验（Stage 2 测试写死）：
 
@@ -426,7 +427,7 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 | Builder（无验收门） | `delivered` | `done` | `stage_done`，禁止再 mention 父 assignee |
 | Builder（本轮做不完，但下一步已定） | `continuing` | `in_progress` | `issue close --outcome in_progress --wake-at <RFC3339>`（或其余等待字段之一）：写 `clock`，巡检到点叫醒下一责任人 |
 | Builder / Dispatcher（这轮决定不做） | `deferred` | `backlog` 或 `todo` | `issue close --outcome backlog|todo`：`none`，不叫醒任何人，不需要 PR |
-| Reviewer 通过，这次改动自己的检查是绿的，且没有显式人工保留 | `delivered` | `issue close --outcome done --verdict pass`（或发 `--verdict pass` 评论）：同一次调用里平台合并 PR 并置 `done`；合不进去平台改成 `blocked` 并叫醒执行人 | `stage_done` |
+| Reviewer 通过，这次改动自己的检查是绿的，且没有显式人工保留 | `delivered` | `issue close --outcome done --verdict pass`（或发 `--verdict pass` 评论）：同一次调用里平台合并 PR 并置 `done`；检查在跑 CLI 原地等；红、冲突、合并失败当场答复、不记通过 | `stage_done` |
 | Reviewer 通过，但票上写明在等某个人做某个只有这个人能做的决定 | `awaiting_human` | `in_review` | `none`。评论写出那个人和要定的事。路由评论里的「需要人拍板」不是这一行 |
 | Reviewer 通过，但这次改动自己的检查是红的 | 不收口 | `in_progress`，mention Builder | `mention` |
 | Reviewer 通过且已经合并 | `delivered` | 若 webhook 未把票打成 `done`，CLI 补 `done` | `stage_done` |

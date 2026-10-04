@@ -1569,6 +1569,7 @@ func TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic(t *testing.T) {
 				"do not run `gh pr checks --watch`, `gh run watch`, or sleep/retry polls",
 				"GitHub Actions after a successful push",
 				"NOT your delivery acceptance criteria",
+				"`multica issue close` handles CI",
 				"CI running: <PR link>",
 				"The one exception",
 				"ONE foreground blocking call (`gh pr checks <pr> --watch`)",

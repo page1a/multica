@@ -157,8 +157,8 @@ func TestOutcomeDoneMergesCleanDaemonSnapshot(t *testing.T) {
 		{name: "clean green daemon", source: "daemon", mergeable: "clean", rollup: "success", wantMerge: true, wantAction: blockwait.ReleaseDone},
 		{name: "clean green no linked row", source: "", mergeable: "clean", rollup: "", wantMerge: true, wantAction: blockwait.ReleaseDone},
 		{name: "clean green app row", source: "github_app", mergeable: "clean", rollup: "success", wantMerge: false, wantAction: blockwait.ReleaseMerge},
-		{name: "dirty", source: "daemon", mergeable: "dirty", rollup: "success", wantMerge: false, wantAction: blockwait.ReleaseBlock, wantReason: "合并冲突"},
-		{name: "red check", source: "daemon", mergeable: "clean", rollup: "failure", failed: []string{"backend"}, wantMerge: false, wantAction: blockwait.ReleaseBlock, wantReason: "检查是红的"},
+		{name: "dirty", source: "daemon", mergeable: "dirty", rollup: "success", wantMerge: false, wantAction: blockwait.ReleaseHold, wantReason: "合并冲突"},
+		{name: "red check", source: "daemon", mergeable: "clean", rollup: "failure", failed: []string{"backend"}, wantMerge: false, wantAction: blockwait.ReleaseHold, wantReason: "检查是红的"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

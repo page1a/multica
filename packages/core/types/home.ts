@@ -79,6 +79,7 @@ export interface WaitingSummon {
     | "needs_human"
     | "routing"
     | "patrol"
+    | "unseated"
     | "time_limit"
     | "quota_relay"
     | "mention"

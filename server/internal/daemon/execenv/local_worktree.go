@@ -78,6 +78,9 @@ const (
 	// localSupersededRefPrefix keeps the line a rebased delivery replaced on a
 	// continued branch, so earlier turns stay reachable (DENE-874).
 	localSupersededRefPrefix = "refs/multica/superseded/"
+	// localInterruptedRefPrefix keeps, per branch, what a run killed before
+	// Finalize left uncommitted in its copy, when a retry reclaims that copy.
+	localInterruptedRefPrefix = "refs/multica/interrupted/"
 
 	// snapshotCommitTitle is the subject of the commit captureUserSnapshot
 	// writes. The user's HEAD at that moment is its parent. Records written
@@ -147,6 +150,14 @@ type LocalWorktreeParams struct {
 	// ignored and a fresh directory is created. The daemon sets this only for
 	// a same-seat continuation; a different seat leaves it empty.
 	ResumeWorkDir string
+	// ReclaimPriorCopy says ResumeWorkDir's copy is still on disk, left by
+	// the run this task retries, and nothing on this machine is running in
+	// it. A run killed by a daemon restart never finalizes, so its copy keeps
+	// the conversation's branch checked out and every later turn had to fork
+	// a new branch beside it. Prepare saves what the copy left uncommitted,
+	// removes it, and rebuilds at the same path. The daemon sets this only
+	// after ReclaimableWorktreeDir agreed and the copy is not active.
+	ReclaimPriorCopy bool
 }
 
 // owner is the identity a branch created for this task is recorded under.
@@ -227,6 +238,10 @@ type LocalWorktree struct {
 	// version is right — so this is what the turn's prompt tells it to fix.
 	// Finalize refuses to deliver while any of them are still unmerged.
 	ReplayConflicts []string
+	// InterruptedWorkNotice is set when Prepare reclaimed the copy an
+	// interrupted run left behind and that copy held uncommitted changes. They
+	// are saved under a ref rather than replayed; the prompt says where.
+	InterruptedWorkNotice string `json:"interrupted_work_notice,omitempty"`
 	// ReplaySkippedNotice is set when this turn did not replay the user's
 	// uncommitted edits because that same replay already conflicted once.
 	// The worktree is clean. The prompt tells the agent to say so: the edits
@@ -255,8 +270,8 @@ type LocalWorktree struct {
 	// continuing it.
 	owner branchOwner
 	// tracksState is false for a branch no later turn will continue — a
-	// task-scoped branch, or the one a busy sibling forked. Recording a
-	// snapshot for those would leave a ref nothing ever reads.
+	// task-scoped branch. Recording a snapshot for it would leave a ref
+	// nothing ever reads.
 	tracksState bool
 	// priorState is the snapshot the branch carried when this turn started, and
 	// the one to record when this turn could not get its own into the branch.
@@ -432,7 +447,13 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	freshPath := filepath.Join(worktreeRoot, filepath.Base(params.EnvRoot))
 	worktreePath := freshPath
 	reusedPath := false
-	if pinned, ok := ReusableWorktreeDir(worktreeRoot, gitRoot, localPath, params.ResumeWorkDir); ok {
+	pinned, ok := ReusableWorktreeDir(worktreeRoot, gitRoot, localPath, params.ResumeWorkDir)
+	reclaim := false
+	if !ok && params.ReclaimPriorCopy {
+		pinned, ok = priorCopyDir(worktreeRoot, gitRoot, localPath, params.ResumeWorkDir)
+		reclaim = ok
+	}
+	if ok {
 		worktreePath = pinned
 		reusedPath = true
 	} else if params.ResumeWorkDir != "" && logger != nil {
@@ -452,6 +473,22 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	}
 	defer unlock()
 
+	interruptedNotice := ""
+	if reclaim {
+		// Re-checked under the lock: the daemon decided before it, and only a
+		// copy still provably ours and still registered may be removed.
+		if reclaimableCopy(worktreeRoot, gitRoot, worktreePath) {
+			notice, reclaimErr := reclaimInterruptedCopy(gitRoot, worktreePath, params.EnvRoot, logger)
+			if reclaimErr != nil {
+				if logger != nil {
+					logger.Warn("execenv: could not reclaim the interrupted run's worktree; starting a fresh one",
+						"path", worktreePath, "error", reclaimErr)
+				}
+			} else {
+				interruptedNotice = notice
+			}
+		}
+	}
 	if reusedPath {
 		if _, statErr := os.Lstat(worktreePath); statErr == nil || !os.IsNotExist(statErr) {
 			// Appeared between the check and the lock, or could not be
@@ -546,25 +583,29 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	}
 
 	wt := &LocalWorktree{
-		GitRoot:             gitRoot,
-		Path:                worktreePath,
-		WorktreeRoot:        worktreeRoot,
-		WorkDir:             filepath.Join(worktreePath, rel),
-		Branch:              actualBranch,
-		StaleBaselineNotice: staleBaselineNotice,
-		Upstream:            upstream,
-		PreparedAt:          preparedAt,
-		BaseCommit:          plan.base,
-		Continued:           plan.continues,
-		createdBranch:       createdBranch,
-		userState:           userState,
-		priorState:          plan.priorState,
-		userHead:            headSHA,
-		priorUserHead:       plan.priorUserHead,
-		owner:               plan.owner,
-		// A branch a sibling task forked because the conversation's own branch
-		// was busy is delivered once and never continued, so it records nothing.
-		tracksState: plan.tracksState && actualBranch == plan.name,
+		GitRoot:               gitRoot,
+		Path:                  worktreePath,
+		WorktreeRoot:          worktreeRoot,
+		WorkDir:               filepath.Join(worktreePath, rel),
+		Branch:                actualBranch,
+		StaleBaselineNotice:   staleBaselineNotice,
+		InterruptedWorkNotice: interruptedNotice,
+		Upstream:              upstream,
+		PreparedAt:            preparedAt,
+		BaseCommit:            plan.base,
+		Continued:             plan.continues,
+		createdBranch:         createdBranch,
+		userState:             userState,
+		priorState:            plan.priorState,
+		userHead:              headSHA,
+		priorUserHead:         plan.priorUserHead,
+		owner:                 plan.owner,
+		// A branch forked because the conversation's own branch was busy
+		// records its owner too. No conversation name ever resolves to it, but
+		// the server may make it the issue's canonical line, and an unrecorded
+		// canonical branch cannot be continued — every later turn then forked
+		// yet another one (DENE-1286 ended up with four).
+		tracksState: plan.tracksState,
 	}
 
 	// Tear the worktree back down on every failure below. A half-replayed tree
@@ -1252,6 +1293,119 @@ func ResolveGitRoot(dir string) (string, error) {
 // name, and the resume gate drops the session instead of pointing the CLI at
 // a directory it cannot find.
 func ReusableWorktreeDir(worktreeRoot, gitRoot, localPath, priorWorkDir string) (string, bool) {
+	copyDir, ok := priorCopyDir(worktreeRoot, gitRoot, localPath, priorWorkDir)
+	if !ok {
+		return "", false
+	}
+	if _, err := os.Lstat(copyDir); err == nil {
+		return "", false
+	} else if !os.IsNotExist(err) {
+		return "", false
+	}
+	return copyDir, true
+}
+
+// ReclaimableWorktreeDir is the other half of a same-seat retry: the previous
+// copy is still on disk because its run was killed before Finalize (a daemon
+// restart). It qualifies only when it is a real directory, its record proves
+// Multica made it from this repository, and git still lists it as a worktree.
+// Whether a task is running in it is the daemon's question, not this one's.
+func ReclaimableWorktreeDir(worktreeRoot, gitRoot, localPath, priorWorkDir string) (string, bool) {
+	copyDir, ok := priorCopyDir(worktreeRoot, gitRoot, localPath, priorWorkDir)
+	if !ok || !reclaimableCopy(worktreeRoot, gitRoot, copyDir) {
+		return "", false
+	}
+	return copyDir, true
+}
+
+// reclaimableCopy is the on-disk proof ReclaimableWorktreeDir relies on,
+// checked again by Prepare under the repository lock.
+func reclaimableCopy(worktreeRoot, gitRoot, copyDir string) bool {
+	info, err := os.Lstat(copyDir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	rec, err := readWorktreeRecord(worktreeRoot, copyDir)
+	if err != nil || !SameCanonicalPath(rec.Path, copyDir) || !SameCanonicalPath(rec.GitRoot, gitRoot) {
+		return false
+	}
+	out, err := runGit(gitRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if path, found := strings.CutPrefix(line, "worktree "); found && SameCanonicalPath(path, copyDir) {
+			return true
+		}
+	}
+	return false
+}
+
+// reclaimInterruptedCopy removes the copy a killed run left, keeping anything
+// it had not committed under localInterruptedRefPrefix+branch first. Saved,
+// not committed onto the branch: the copy still carries that run's sidecars
+// and runtime brief, and only the next agent can tell work from leftovers. The
+// returned notice is empty when there was nothing uncommitted.
+func reclaimInterruptedCopy(gitRoot, copyDir, envRoot string, logger *slog.Logger) (string, error) {
+	branch, err := runGitTrimmed(copyDir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil || branch == "" {
+		return "", fmt.Errorf("copy %s is not on a branch", copyDir)
+	}
+	head, err := runGitTrimmed(copyDir, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolve HEAD of %s: %w", copyDir, err)
+	}
+	if envRoot == "" {
+		return "", errors.New("reclaiming a copy needs an env root to build its index in")
+	}
+	indexPath := filepath.Join(envRoot, ".multica-interrupted-index")
+	_ = os.Remove(indexPath)
+	defer os.Remove(indexPath)
+	env := []string{"GIT_INDEX_FILE=" + indexPath}
+	if out, err := runGitEnv(copyDir, env, "read-tree", head); err != nil {
+		return "", fmt.Errorf("git read-tree: %s: %w", strings.TrimSpace(out), err)
+	}
+	addArgs := append([]string{"add", "-A", "--"}, snapshotExcludes()...)
+	if out, err := runGitEnv(copyDir, env, addArgs...); err != nil {
+		return "", fmt.Errorf("git add: %s: %w", strings.TrimSpace(out), err)
+	}
+	tree, err := runGitTrimmedEnv(copyDir, env, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("git write-tree: %w", err)
+	}
+	headTree, err := runGitTrimmed(copyDir, "rev-parse", head+"^{tree}")
+	if err != nil {
+		return "", fmt.Errorf("resolve tree of %s: %w", head, err)
+	}
+	notice := ""
+	if tree != headTree {
+		args := append(commitIdentityArgs(gitRoot), "commit-tree", tree, "-p", head, "-m",
+			"multica: uncommitted work of an interrupted run\n\nThe run in "+copyDir+" was killed before it could finalize. Its parent is the branch tip the run stood on.")
+		saved, err := runGitTrimmed(copyDir, args...)
+		if err != nil {
+			return "", fmt.Errorf("git commit-tree: %w", err)
+		}
+		ref := localInterruptedRefPrefix + branch
+		if out, err := runGit(gitRoot, "update-ref", ref, saved); err != nil {
+			return "", fmt.Errorf("git update-ref %s: %s: %w", ref, strings.TrimSpace(out), err)
+		}
+		notice = fmt.Sprintf("The previous run on this branch was interrupted before it could commit. What it left uncommitted is saved as commit %s (ref %s), not applied here. "+
+			"Compare with `git diff %s %s`, and bring back what belongs to the task with `git checkout %s -- <path>`; leave Multica's own files (CLAUDE.md runtime block, .multica/) out.",
+			saved, ref, head, saved, saved)
+	}
+	if err := removeLocalWorktreeDir(gitRoot, copyDir, logger); err != nil {
+		return "", err
+	}
+	if logger != nil {
+		logger.Info("execenv: reclaimed the worktree an interrupted run left behind",
+			"path", copyDir, "branch", branch, "saved_uncommitted", notice != "")
+	}
+	return notice, nil
+}
+
+// priorCopyDir maps a previous run's cwd to the copy that contains it, when
+// that copy is a direct child of worktreeRoot and outside the user's checkout.
+func priorCopyDir(worktreeRoot, gitRoot, localPath, priorWorkDir string) (string, bool) {
 	if strings.TrimSpace(worktreeRoot) == "" || strings.TrimSpace(gitRoot) == "" ||
 		strings.TrimSpace(localPath) == "" || strings.TrimSpace(priorWorkDir) == "" {
 		return "", false
@@ -1289,11 +1443,6 @@ func ReusableWorktreeDir(worktreeRoot, gitRoot, localPath, priorWorkDir string) 
 		return "", false
 	}
 	if inside, err := pathIsInside(repo, copyDir); err != nil || inside {
-		return "", false
-	}
-	if _, err := os.Lstat(copyDir); err == nil {
-		return "", false
-	} else if !os.IsNotExist(err) {
 		return "", false
 	}
 	return copyDir, true
@@ -2437,6 +2586,7 @@ func pruneOrphanedStateRefs(gitRoot string, logger *slog.Logger) {
 	pruneOrphanedRefs(gitRoot, localStateRefPrefix, logger)
 	pruneOrphanedRefs(gitRoot, localReplayAttemptRefPrefix, logger)
 	pruneOrphanedRefs(gitRoot, localSupersededRefPrefix, logger)
+	pruneOrphanedRefs(gitRoot, localInterruptedRefPrefix, logger)
 }
 
 func pruneOrphanedRefs(gitRoot, prefix string, logger *slog.Logger) {

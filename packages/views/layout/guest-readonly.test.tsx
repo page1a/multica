@@ -103,4 +103,21 @@ describe("ResourceNotFound", () => {
     expect(node).toHaveTextContent("没有共享给你");
     expect(node.textContent).not.toContain("权限");
   });
+
+  it("tells whoever got the link what to ask for, without naming anyone", () => {
+    renderWithI18n(<ResourceNotFound kind="issue" />, { locale: "zh-Hans" });
+    const node = screen.getByTestId("resource-not-found");
+    expect(node).toHaveTextContent("打不开这个任务");
+    expect(screen.getByTestId("resource-not-found-guide")).toHaveTextContent("共享按钮");
+    // No guest-only note for a member; never says "no permission".
+    expect(node).not.toHaveTextContent("你是访客");
+    expect(node.textContent).not.toContain("权限");
+  });
+
+  it("adds the guest note when the viewer is a guest", () => {
+    renderGuest(<ResourceNotFound kind="chat" />);
+    const node = screen.getByTestId("resource-not-found");
+    expect(node).toHaveTextContent("Can’t open this chat");
+    expect(node).toHaveTextContent("doesn’t include guests");
+  });
 });

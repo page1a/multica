@@ -2103,7 +2103,10 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	// a call nor makes a new one.
 	if len(forceFreshSession) == 0 || !forceFreshSession[0] {
 		h.recordMentionSummons(ctx, issue, comment, actorType, actorID)
-		h.answerSummons(ctx, issue, comment, actorType, actorID, triggerOutcomesStartedRun(outcomes))
+		summonWoke := h.answerSummons(ctx, issue, comment, actorType, actorID, triggerOutcomesStartedRun(outcomes))
+		if actorType == "member" {
+			h.resumeBlockedOnReply(ctx, issue, enqueued, summonWoke)
+		}
 	}
 	return outcomes
 }

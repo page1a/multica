@@ -45,7 +45,8 @@ const completionStallRepeatWindow = 30 * time.Minute
 //
 // This method closes that gap with the same guards the failure path uses:
 //
-//   - the issue's EFFECTIVE status must be in_progress, so in_review, blocked,
+//   - the issue's EFFECTIVE status must be in_progress (or todo when the run
+//     was the agent assignee's own — see completionStallEligible), so in_review, blocked,
 //     every terminal status, and any custom status inheriting one of them are
 //     excluded (MUL-6243 semantics — a custom review gate is excluded for the
 //     same reason In Review is);
@@ -95,8 +96,32 @@ func (s *TaskService) HandleCompletedTasks(ctx context.Context, tasks []db.Agent
 // issue's key inherits; hasActiveTask reports whether anything is queued
 // (including a queued auto-retry), dispatched, running, or waiting on a local
 // directory for the issue.
-func completionStallEligible(effectiveStatus string, hasActiveTask bool) bool {
-	return effectiveStatus == issuestatus.InProgress && !hasActiveTask
+//
+// A todo issue counts only when the run that just finished belonged to the
+// issue's own agent assignee: the executor worked the ticket and never moved
+// it, so parking already reads it as stopped without a close (DENE-1291 sat
+// there after a daemon-restart retry). A run by any other agent on a todo
+// issue — someone @mentioned to answer a question — is not the executor's
+// stall and must not wake the assignee.
+func completionStallEligible(effectiveStatus string, hasActiveTask, ranByAssignee bool) bool {
+	if hasActiveTask {
+		return false
+	}
+	switch effectiveStatus {
+	case issuestatus.InProgress:
+		return true
+	case issuestatus.Todo:
+		return ranByAssignee
+	default:
+		return false
+	}
+}
+
+// ranByAgentAssignee reports whether the finished run was the issue's own
+// agent assignee working it.
+func ranByAgentAssignee(issue db.Issue, task db.AgentTaskQueue) bool {
+	return issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid && task.AgentID.Valid &&
+		issue.AssigneeID == task.AgentID
 }
 
 // closeExplainsInProgressPause reports a deferred/continuing close record
@@ -157,7 +182,7 @@ func (s *TaskService) signalCompletionStall(ctx context.Context, issueKey string
 		slog.Warn("completion stall: active check failed", "issue_id", issueKey, "error", err)
 		return false
 	}
-	if !completionStallEligible(effectiveStatus, hasActive) {
+	if !completionStallEligible(effectiveStatus, hasActive, ranByAgentAssignee(issue, task)) {
 		return false
 	}
 	if s.hasOpenChildren(ctx, issue) {
@@ -231,7 +256,7 @@ func (s *TaskService) signalCompletionStall(ctx context.Context, issueKey string
 	return true
 }
 
-const completionStallRecoveryNote = `A previous run finished but left this issue in progress without another run queued. Continue the issue now: inspect the acceptance criteria and the work already recorded, finish any remaining work yourself, and close the issue through the close protocol. Move to done when delivery is complete; use in_review with close.conclusion=awaiting_human only when a human decision is genuinely required. Do not stop after reporting what is missing.`
+const completionStallRecoveryNote = `A previous run finished but left this issue open (todo or in progress) without another run queued. Continue the issue now: inspect the acceptance criteria and the work already recorded, finish any remaining work yourself, and close the issue through the close protocol. Move to done when delivery is complete; use in_review with close.conclusion=awaiting_human only when a human decision is genuinely required. Do not stop after reporting what is missing.`
 
 func (s *TaskService) enqueueCompletionRecovery(ctx context.Context, issue db.Issue) error {
 	switch issue.AssigneeType.String {
@@ -316,12 +341,13 @@ func (s *TaskService) completionStallNotice(ctx context.Context, issue db.Issue)
 	}
 
 	return fmt.Sprintf(
-		"%sStalled run: a run on this issue just completed, the issue is still `in_progress`, and nothing is "+
+		"%sStalled run: a run on this issue just completed, the issue is still `%s`, and nothing is "+
 			"queued for it — so no executor is working on it. Run completion is not delivery completion: the "+
 			"executor owns the issue status and did not terminate it. Assignee on record: %s.%s A bounded "+
 			"recovery run is being requested with a closeout instruction; the status is deliberately left untouched "+
 			"until that run records delivery or a real human wait.\n\n%s",
 		mention,
+		issue.Status,
 		assigneeLabel,
 		parent,
 		CompletionStallMarker,

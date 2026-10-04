@@ -75,6 +75,18 @@ type CloseIssueResponse struct {
 	Warnings       []string                      `json:"warnings,omitempty"`
 	// Summoned is true when --needs-human went through the summon entry.
 	Summoned bool `json:"summoned,omitempty"`
+	// Hold is set when an acceptance pass was posted but the PR could not be
+	// merged yet (DENE-1219): the ticket stays in review and Hold says what
+	// clears it.
+	Hold *CloseHold `json:"hold,omitempty"`
+}
+
+// CloseHold is a pass kept in review: the hold kind (checks_pending,
+// checks_red, conflict, merge_failed, ...), the stop, and the next step.
+type CloseHold struct {
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+	Next   string `json:"next"`
 }
 
 // closeRecord is the close.* metadata derived from the request plus the
@@ -201,7 +213,7 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	if outcome == issuestatus.Done || outcome == issuestatus.InReview {
 		tr = h.guardSilentStall(ctx, issue, statusKey, actorType, actorID, req.NoCodeReason, issue.AssigneeType, issue.AssigneeID, issue.ReviewerType, issue.ReviewerID, false)
 		if tr.refuse != "" {
-			writeError(w, http.StatusConflict, tr.refuse)
+			writeTransitionRefusal(w, tr)
 			return
 		}
 		if tr.status != "" && tr.status != statusKey {
@@ -458,6 +470,16 @@ func (h *Handler) closeIssueByVerdict(w http.ResponseWriter, r *http.Request, is
 		writeError(w, http.StatusBadRequest, auditRejection)
 		return
 	}
+	// A PR that cannot merge right now is answered before the pass is posted
+	// (DENE-1219): the reviewer waits out running checks (the CLI does it in
+	// place), or sends red checks and conflicts back with --verdict hold.
+	// Nothing is written, so the next pass starts clean.
+	if blockwait.MetaString(parseIssueMetadata(issue.Metadata), blockwait.KeyReleased) != blockwait.ReleasedPass {
+		if _, plan, _, ok := h.releasePlan(ctx, issue); ok && plan.Action == blockwait.ReleaseHold {
+			writeErrorCode(w, http.StatusConflict, closeHoldCode(plan.Kind), "验收通过先不记，PR 现在合不进去："+plan.Record.WaitCondition+"。"+verdictHoldNext(plan.Kind))
+			return
+		}
+	}
 	body, err := blockwait.AppendVerdict(body, "pass")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -540,6 +562,9 @@ func (h *Handler) closeIssueByVerdict(w http.ResponseWriter, r *http.Request, is
 		}
 	case updated.Status == issuestatus.Done:
 		resp.Woken = []string{"没有待合并的 PR，票已置 done"}
+	case out.Hold != "":
+		resp.Hold = &CloseHold{Kind: out.Hold, Reason: strings.TrimSpace(out.Note), Next: out.HoldNext}
+		resp.Woken = []string{"验收通过已记下，但 PR 还没合进去，票保持 in_review（没有写 blocked）：" + strings.TrimSpace(out.Note)}
 	case updated.Status == issuestatus.Blocked:
 		resp.Woken = []string{"验收通过但合并没成功，票改成 blocked 并写了等待条件：" + strings.TrimSpace(out.Note)}
 	default:
@@ -561,6 +586,21 @@ func (h *Handler) closeIssueByVerdict(w http.ResponseWriter, r *http.Request, is
 	h.fillStatusCategory(ctx, issue.WorkspaceID, &resp.Issue)
 	slog.Info("issue closed by verdict", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "status", updated.Status, "merged", out.Merged)...)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// verdictHoldNext tells the acceptance seat how to go on when the PR it
+// wants to pass cannot merge yet.
+func verdictHoldNext(kind string) string {
+	switch kind {
+	case blockwait.HoldChecksPending:
+		return "`multica issue close --verdict pass` 会就地等检查（最多约 15 分钟），变绿就合并关单；超时就过会儿再跑一次。"
+	case blockwait.HoldChecksRed, blockwait.HoldConflict, blockwait.HoldDelivery:
+		return "要执行人修的，用 `multica issue comment add <issue> --verdict hold` 写清要修什么打回；确认不是这次改动的问题，处理掉后用 `gh pr merge --squash <url>` 合入再跑一次 --verdict pass。"
+	case blockwait.HoldDraft:
+		return "PR 还是草稿，执行人标成准备好后再跑一次。"
+	default:
+		return "用 `gh pr merge --squash <url>` 在本机合入后再跑一次 --verdict pass。"
+	}
 }
 
 // deriveCloseRecord turns the outcome and wait fields into the close.* keys
@@ -680,8 +720,9 @@ func closeProbe(meta map[string]string) map[string]string {
 }
 
 // closeRecordFromGate is the record for a close the DENE-857 gate rewrote:
-// the caller asked for done, the linked PR did not merge, and the ticket is
-// blocked on the gate's wait record instead.
+// the gate turned the close into a block a person has to clear (an
+// acceptance seat nobody can fill). PR holds never get here: they are
+// refused without a write (DENE-1219).
 func closeRecordFromGate(statusKey string, tr statusTransition, knowledgeAudit string) closeRecord {
 	kind, action := blockKindFor(tr.block, "")
 	meta := map[string]string{
@@ -699,6 +740,11 @@ func closeRecordFromGate(statusKey string, tr statusTransition, knowledgeAudit s
 	}
 	if len(tr.block.BlockedBy) > 0 {
 		meta[closeprotocol.KeyWaitingOn] = tr.block.BlockedBy[0]
+	}
+	// A block that needs a person names them.
+	if human := strings.TrimSpace(tr.block.NeedsHuman); human != "" {
+		meta[closeprotocol.KeyNextOwnerType] = closeprotocol.OwnerMember
+		meta[closeprotocol.KeyNextOwnerID] = human
 	}
 	return closeRecord{meta: meta, block: tr.block}
 }
@@ -759,6 +805,10 @@ func closeRecordAfterRelease(issue db.Issue, meta map[string]any, evidenceID, kn
 		rec[closeprotocol.KeyBlockAction] = action
 		if len(block.BlockedBy) > 0 {
 			rec[closeprotocol.KeyWaitingOn] = block.BlockedBy[0]
+		}
+		if human := strings.TrimSpace(block.NeedsHuman); human != "" {
+			rec[closeprotocol.KeyNextOwnerType] = closeprotocol.OwnerMember
+			rec[closeprotocol.KeyNextOwnerID] = human
 		}
 	default:
 		return nil

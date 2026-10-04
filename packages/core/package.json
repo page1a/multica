@@ -26,6 +26,7 @@
     "./auth": "./auth/index.ts",
     "./workspace": "./workspace/index.ts",
     "./workspace/queries": "./workspace/queries.ts",
+    "./workspace/agent-spawn": "./workspace/agent-spawn.ts",
     "./workspace/mutations": "./workspace/mutations.ts",
     "./workspace/pending-delete": "./workspace/pending-delete.ts",
     "./workspace/hooks": "./workspace/hooks.ts",
@@ -155,6 +156,7 @@
     "./vcs": "./vcs/index.ts",
     "./vcs/queries": "./vcs/queries.ts",
     "./repo-links": "./repo-links/index.ts",
+    "./workspace-links": "./workspace-links/index.ts",
     "./repo-reach": "./repo-reach/index.ts",
     "./lark": "./lark/index.ts",
     "./lark/queries": "./lark/queries.ts",
@@ -197,7 +199,8 @@
     "./skills/frontmatter": "./skills/frontmatter.ts",
     "./skills/pack-archive": "./skills/pack-archive.ts",
     "./skills/stores": "./skills/stores/index.ts",
-    "./autopilots/stores": "./autopilots/stores/index.ts"
+    "./autopilots/stores": "./autopilots/stores/index.ts",
+    "./query-persistence": "./query-persistence.ts"
   },
   "dependencies": {
     "@formatjs/intl-localematcher": "catalog:",

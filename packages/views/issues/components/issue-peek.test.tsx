@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useModalStore } from "@multica/core/modals";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import {
@@ -9,6 +10,9 @@ import {
   type IssuePeekColumns,
 } from "../surface/peek-context";
 import { IssuePeekHost } from "./issue-peek";
+
+const mobile = vi.hoisted(() => ({ value: false }));
+vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsMobile: () => mobile.value }));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/acme/issues/${id}` }),
@@ -65,6 +69,10 @@ function FakeBoard({ columns = COLUMNS }: { columns?: IssuePeekColumns }) {
   // remounts its element.
   return (
     <>
+      <div data-testid="blank-board" />
+      <button type="button" data-testid="board-control">
+        control
+      </button>
       {columns.map((column, c) => (
         <div key={c}>
           {column.map((id) => (
@@ -109,7 +117,10 @@ const waitForClosed = () => waitFor(() => expect(panel()).toBeNull());
 const openCard = (id: string) => fireEvent.click(screen.getByText(`card ${id}`));
 
 describe("IssuePeekHost", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mobile.value = false;
+  });
 
   it("opens the peeked issue as a peek-variant detail and marks its card", () => {
     renderHost();
@@ -201,6 +212,74 @@ describe("IssuePeekHost", () => {
     openCard("i-1");
     fireEvent.click(screen.getByRole("button", { name: "delete" }));
     await waitForClosed();
+  });
+
+  describe("clicking outside the card", () => {
+    const click = (element: Element) => {
+      fireEvent.pointerDown(element, { button: 0 });
+      fireEvent.click(element, { button: 0 });
+    };
+
+    it("closes on the empty board", async () => {
+      renderHost();
+      openCard("i-1");
+      click(screen.getByTestId("blank-board"));
+      await waitForClosed();
+    });
+
+    it("keeps the peek for the card, the panel, board controls and popups", async () => {
+      renderHost();
+      openCard("i-1");
+      const popup = document.createElement("div");
+      document.body.appendChild(popup);
+
+      click(screen.getByText("card i-2"));
+      expect(screen.getByTestId("detail")).toHaveTextContent("i-2");
+      click(screen.getByTestId("detail"));
+      click(screen.getByTestId("board-control"));
+      click(popup);
+      fireEvent.click(screen.getByTestId("blank-board"), { shiftKey: true });
+      expect(panel()).not.toBeNull();
+      popup.remove();
+    });
+
+    it("does not close when a press on a card ends on the empty board (a drag)", () => {
+      renderHost();
+      openCard("i-1");
+      fireEvent.pointerDown(screen.getByText("card i-2"), { button: 0 });
+      fireEvent.click(screen.getByTestId("blank-board"), { button: 0 });
+      expect(panel()).not.toBeNull();
+    });
+
+    it("does not close while a modal is open", () => {
+      renderHost();
+      openCard("i-1");
+      useModalStore.setState({ modal: "create-issue" } as never);
+      click(screen.getByTestId("blank-board"));
+      useModalStore.setState({ modal: null } as never);
+      expect(panel()).not.toBeNull();
+    });
+  });
+
+  describe("on a phone", () => {
+    it("opens full screen with back and step buttons, without a close button", async () => {
+      mobile.value = true;
+      renderHost();
+      openCard("i-1");
+
+      expect(panel()).toHaveClass("fixed", "inset-0");
+      expect(screen.getByRole("button", { name: "Next issue" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Close preview" })).toBeNull();
+      expect(screen.getByRole("link", { name: "Open full page" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Next issue" }));
+      expect(screen.getByTestId("detail")).toHaveTextContent("i-2");
+      fireEvent.click(screen.getByRole("button", { name: "Previous issue" }));
+      expect(screen.getByTestId("detail")).toHaveTextContent("i-1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
+      await waitForClosed();
+    });
   });
 
   it("links to the full issue page", () => {

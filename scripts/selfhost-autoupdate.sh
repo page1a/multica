@@ -19,6 +19,12 @@
 #     leaves the containers on whatever image they were started from.
 #   - Every exit path writes the status file, including the EXIT trap. A timer
 #     whose state file goes stale is a timer nobody can debug.
+#   - IMAGE_SOURCE=registry pulls <registry>/multica-{backend,web}:sha-<target>
+#     (built by .github/workflows/selfhost-images.yml) instead of compiling on
+#     the box, and retags them to the local :dev names, so the compose files,
+#     :prev rollback and /health check stay exactly as in build mode. Images
+#     that are not published yet are "pending": nothing is touched and the next
+#     tick tries again.
 #
 # Usage: scripts/selfhost-autoupdate.sh
 # Runbook: docs/kun/selfhost-autoupdate.md
@@ -43,6 +49,10 @@ CURL_TIMEOUT="${MULTICA_AUTOUPDATE_CURL_TIMEOUT:-5}"
 # These must match the tags docker-compose.selfhost.build.yml builds.
 BACKEND_IMAGE="${MULTICA_AUTOUPDATE_BACKEND_IMAGE:-multica-backend:dev}"
 FRONTEND_IMAGE="${MULTICA_AUTOUPDATE_FRONTEND_IMAGE:-multica-web:dev}"
+# build: compile on this box (the original behaviour). registry: pull what CI
+# published for the target commit.
+IMAGE_SOURCE="${MULTICA_AUTOUPDATE_IMAGE_SOURCE:-build}"
+REGISTRY="${MULTICA_AUTOUPDATE_REGISTRY:-ghcr.io/jeff-kunkun}"
 
 STATE_WRITTEN=0
 TARGET_COMMIT=""
@@ -102,7 +112,7 @@ finish() {
   write_state "$result" "$error_text"
   log "result=$result ${error_text:+error=$error_text}"
   case "$result" in
-  noop | updated) exit 0 ;;
+  noop | updated | pending) exit 0 ;;
   *) exit 1 ;;
   esac
 }
@@ -270,7 +280,44 @@ rollback() {
   finish rolled_back "$REASON"
 }
 
+registry_ref() {
+  printf '%s/%s:sha-%s' "$REGISTRY" "$1" "$TARGET_COMMIT"
+}
+
+# Pull both images before anything is mutated. A missing tag is the normal
+# "CI has not finished this commit yet" case, so it ends the run as pending
+# with the pull output kept for when it is not.
+pull_target_images() {
+  local name
+  for name in multica-backend multica-web; do
+    if ! run_step "docker pull $(registry_ref "$name")" docker pull "$(registry_ref "$name")"; then
+      finish pending "images for $TARGET_COMMIT are not pullable yet: $(step_error_text)"
+    fi
+  done
+}
+
+# Point the local :dev names at the pulled images, then drop the registry tags
+# and anything left dangling, so the box keeps only :dev and :prev.
+adopt_target_images() {
+  run_step "docker tag $(registry_ref multica-backend) $BACKEND_IMAGE" \
+    docker tag "$(registry_ref multica-backend)" "$BACKEND_IMAGE" &&
+    run_step "docker tag $(registry_ref multica-web) $FRONTEND_IMAGE" \
+      docker tag "$(registry_ref multica-web)" "$FRONTEND_IMAGE"
+}
+
+prune_images() {
+  docker rmi "$(registry_ref multica-backend)" "$(registry_ref multica-web)" >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null 2>&1 || true
+}
+
 main() {
+  case "$IMAGE_SOURCE" in
+  build | registry) ;;
+  *)
+    log "MULTICA_AUTOUPDATE_IMAGE_SOURCE must be build or registry, got '$IMAGE_SOURCE'"
+    exit 1
+    ;;
+  esac
   if [ ! -f "$ROOT_DIR/docker-compose.selfhost.yml" ]; then
     log "no docker-compose.selfhost.yml under $ROOT_DIR; set MULTICA_AUTOUPDATE_REPO_DIR"
     exit 1
@@ -316,6 +363,8 @@ main() {
     finish failed "tracked files are modified in $ROOT_DIR; refusing to reset --hard: $(printf '%s' "$dirty" | tr '\n' ' ')"
   fi
 
+  if [ "$IMAGE_SOURCE" = registry ]; then pull_target_images; fi
+
   if retag_prev "$BACKEND_IMAGE" backend; then HAVE_BACKEND_PREV=1; fi
   if retag_prev "$FRONTEND_IMAGE" frontend; then HAVE_FRONTEND_PREV=1; fi
 
@@ -330,7 +379,11 @@ main() {
   # running container agrees.
   export VERSION="$TARGET_COMMIT" COMMIT="$TARGET_COMMIT" DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  if ! run_step "docker compose build" "${compose_cmd[@]}" "${compose_files[@]}" build; then
+  if [ "$IMAGE_SOURCE" = registry ]; then
+    if ! adopt_target_images; then
+      rollback "could not tag the pulled images: $(step_error_text)"
+    fi
+  elif ! run_step "docker compose build" "${compose_cmd[@]}" "${compose_files[@]}" build; then
     rollback "build failed: $(step_error_text)"
   fi
   if ! run_step "docker compose up -d" "${compose_cmd[@]}" "${compose_files[@]}" up -d --force-recreate backend frontend; then
@@ -344,6 +397,8 @@ main() {
   if [ "$DEPLOYED_COMMIT" != "$TARGET_COMMIT" ]; then
     rollback "/health reports '${DEPLOYED_COMMIT:-unknown}' but $TARGET_COMMIT was built (the build did not take effect)"
   fi
+
+  if [ "$IMAGE_SOURCE" = registry ]; then prune_images; fi
 
   log "updated to $TARGET_COMMIT"
   finish updated ""

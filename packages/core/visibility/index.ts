@@ -1,5 +1,6 @@
 export {
   projectVisibilityPreviewOptions,
+  sharingAccessOptions,
   useProjectVisibilityPreview,
   useSetIssueVisibility,
   useSetProjectVisibility,
@@ -8,6 +9,8 @@ export {
 } from "./mutations";
 export type {
   ProjectVisibilityPreview,
+  SharingAccess,
+  SharingAccessKind,
   VisibilityResult,
   VisibilityScope,
 } from "./mutations";

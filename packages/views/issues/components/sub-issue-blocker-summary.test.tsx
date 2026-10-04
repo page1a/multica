@@ -277,6 +277,72 @@ describe("SubIssueBlockerSummary", () => {
     ]);
   });
 
+  it("drops a blocked close the member's reply already superseded (DENE-1301)", () => {
+    installIssueApi();
+    const parent = issue("DENE-1");
+    const child = issue("child-2", {
+      identifier: "DENE-2",
+      parent_issue_id: parent.id,
+      status: "in_progress",
+      metadata: {
+        "close.conclusion": "blocked",
+        "close.status": "blocked",
+        "close.block_kind": "decision",
+        "close.at": "2026-09-15T00:00:00Z",
+        "close.superseded": "2026-09-15T00:00:00Z",
+      },
+    });
+
+    renderWithProviders(<BlockerSummary issue={parent} subIssues={[child]} />);
+
+    expect(screen.queryByTestId("sub-issue-blocker-summary")).not.toBeInTheDocument();
+  });
+
+  it("does not report a missed wake once the waiter was woken (DENE-1301)", () => {
+    installIssueApi();
+    const parent = issue("DENE-1");
+    const done = issue("child-3", {
+      identifier: "DENE-3",
+      parent_issue_id: parent.id,
+      status: "done",
+      updated_at: "2026-09-15T00:00:00Z",
+    });
+    const waiter = issue("child-2", {
+      identifier: "DENE-2",
+      parent_issue_id: parent.id,
+      status: "in_progress",
+      metadata: { "close.waiting_on": "DENE-3", "block.woken_by": "DENE-3" },
+    });
+
+    renderWithProviders(<BlockerSummary issue={parent} subIssues={[waiter, done]} />);
+
+    expect(screen.queryByText(/finished without a wake-up/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("sub-issue-blocker-summary")).not.toBeInTheDocument();
+  });
+
+  it("shows kind and action for a ticket blocked through the status path (DENE-1301)", () => {
+    installIssueApi();
+    const parent = issue("DENE-1");
+    const child = issue("child-2", {
+      identifier: "DENE-2",
+      title: "Waiting on a vendor",
+      parent_issue_id: parent.id,
+      status: "blocked",
+      metadata: {
+        "block.needs_human": "member-1",
+        "close.block_kind": "external",
+        "close.block_action": "confirm the vendor key",
+      },
+    });
+
+    renderWithProviders(<BlockerSummary issue={parent} subIssues={[child]} />);
+
+    expect(screen.getByTestId("sub-issue-blocker-action")).toHaveTextContent(
+      "Waiting on an external dependency: confirm the vendor key",
+    );
+    expect(screen.getByText("1 need you")).toBeInTheDocument();
+  });
+
   it("renders solid and hollow badges for ROOT and PROPAGATED states", () => {
     const { rerender } = renderWithProviders(<SubIssueBlockerBadge state="ROOT" rootCause="DENE-2" />);
     expect(screen.getByTestId("sub-issue-blocker-badge")).toHaveAttribute("data-blocker-state", "ROOT");

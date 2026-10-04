@@ -105,7 +105,7 @@ export function PageHeader({ children, leading, className }: PageHeaderProps) {
   return (
     <header
       className={cn(
-        "flex h-12 shrink-0 items-center gap-2 border-b",
+        "flex min-w-0 h-12 shrink-0 items-center gap-2 border-b",
         className,
         PAGE_GUTTER,
       )}

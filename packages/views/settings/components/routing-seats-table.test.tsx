@@ -7,21 +7,42 @@ import { renderWithI18n } from "../../test/i18n";
 
 const listAgents = vi.hoisted(() => vi.fn());
 const bulkUpdateAgentRouting = vi.hoisted(() => vi.fn());
+const listRuntimes = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/api")>();
-  return { ...actual, api: { listAgents, bulkUpdateAgentRouting } };
+  return { ...actual, api: { listAgents, bulkUpdateAgentRouting, listRuntimes } };
 });
+
+vi.mock("@multica/core/paths", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/paths")>()),
+  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
+}));
+
+vi.mock("../../navigation", () => ({
+  AppLink: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 
 import { RoutingSeatsTable } from "./routing-seats-table";
 
+let clock = 0;
 function agent(id: string, name: string, extra: Partial<Agent> = {}): Agent {
-  return { id, name, model: `${id}-model`, ...extra } as Agent;
+  clock += 1;
+  return {
+    id,
+    name,
+    model: `${id}-model`,
+    runtime_id: "rt-claude",
+    created_at: `2026-01-01T00:00:${String(clock).padStart(2, "0")}Z`,
+    ...extra,
+  } as Agent;
 }
 
 const ROSTER = [
-  agent("a-weak", "Krillin", { routing_tier: "weak", routing_usage: "tight" }),
   agent("a-strong", "Goku", { routing_tier: "strong", routing_usage: "ample" }),
+  agent("a-weak", "Krillin", { routing_tier: "weak", routing_usage: "tight" }),
   agent("a-off", "Bulma"),
   agent("a-gone", "Raditz", { routing_tier: "strong", archived_at: "2026-01-01" }),
 ];
@@ -37,12 +58,17 @@ function render(canManage = true) {
 
 async function rows() {
   await screen.findByText("Goku");
-  return screen.getAllByRole("row").slice(1);
+  return screen.getAllByRole("row").filter((row) => row.hasAttribute("data-seat-depth"));
 }
 
 beforeEach(() => {
   listAgents.mockReset();
   listAgents.mockResolvedValue(ROSTER);
+  listRuntimes.mockReset();
+  listRuntimes.mockResolvedValue([
+    { id: "rt-claude", name: "Claude (laptop)" },
+    { id: "rt-codex", name: "Codex (laptop)" },
+  ]);
   bulkUpdateAgentRouting.mockReset();
   bulkUpdateAgentRouting.mockImplementation(
     async (body: { agent_ids: string[]; routing_tier?: string; routing_usage?: string }) => ({
@@ -56,7 +82,7 @@ beforeEach(() => {
 });
 
 describe("RoutingSeatsTable", () => {
-  it("lists live seats strongest first, off-ladder last", async () => {
+  it("lists live seats in creation order, not by tier", async () => {
     render();
     const names = (await rows()).map((row) => within(row).getAllByRole("cell")[1]?.textContent);
     expect(names).toEqual(["Goku", "Krillin", "Bulma"]);
@@ -156,8 +182,8 @@ describe("RoutingSeatsTable", () => {
     render();
     const names = (await rows()).map((row) => within(row).getAllByRole("cell")[1]?.textContent);
     // Gohan sits under Goku even though Gohan's own rung is weak.
-    // Pan's base role is not in the list, so she stays a root on her rung.
-    expect(names).toEqual(["Goku", "Gohan", "Pan", "Krillin", "Bulma"]);
+    // Pan's base role is not in the list, so she stays a root in creation order.
+    expect(names).toEqual(["Goku", "Gohan", "Krillin", "Bulma", "Pan"]);
     const gohan = screen.getByText("Gohan").closest("tr");
     expect(gohan).toHaveAttribute("data-seat-depth", "1");
     expect(screen.getByText("Goku").closest("tr")).toHaveAttribute("data-seat-depth", "0");
@@ -187,6 +213,12 @@ describe("RoutingSeatsTable", () => {
     expect(screen.getByRole("combobox", { name: "Gohan · Tier" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Gohan · Usage" })).toBeDisabled();
     expect(screen.getByText("Follows Goku")).toBeInTheDocument();
+    // The grey row says how to get out: one link to the follower's own page.
+    expect(screen.getAllByRole("link", { name: "Turn off to edit" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Turn off to edit" })).toHaveAttribute(
+      "href",
+      "/acme/agents/a-gohan",
+    );
     // This checkbox is a Base UI span: disabled shows up as aria-disabled,
     // which is what a screen reader and the pointer both honor.
     expect(screen.getByRole("checkbox", { name: "Select Gohan" })).toHaveAttribute(
@@ -206,5 +238,51 @@ describe("RoutingSeatsTable", () => {
         routing_usage: "normal",
       }),
     );
+  });
+
+  it("groups seats by runtime and keeps a row in place after a tier change", async () => {
+    const user = userEvent.setup();
+    const roster = [
+      agent("a-gohan", "Gohan", { runtime_id: "rt-codex", routing_tier: "strong" }),
+      agent("a-goku", "Goku", { routing_tier: "strong" }),
+      agent("a-tien", "Tien", { routing_tier: "medium" }),
+      agent("a-trunks", "Trunks", { runtime_id: "rt-codex", routing_tier: "medium" }),
+    ];
+    listAgents.mockResolvedValue(roster);
+    render();
+    await screen.findByText("Goku");
+    const table = screen.getAllByRole("row").map((row) => row.textContent ?? "");
+    const order = ["Claude (laptop)", "Goku", "Tien", "Codex (laptop)", "Gohan", "Trunks"];
+    const positions = order.map((label) => table.findIndex((text) => text.includes(label)));
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+
+    // Tien moves up to strong; the refetched list must not reorder the rows.
+    listAgents.mockResolvedValue(
+      roster.map((a) => (a.id === "a-tien" ? { ...a, routing_tier: "strongest" } : a)),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Tien · Tier" }));
+    await user.click(await screen.findByRole("option", { name: "Strongest" }));
+    await waitFor(() => expect(bulkUpdateAgentRouting).toHaveBeenCalled());
+    const names = (await rows()).map((row) => within(row).getAllByRole("cell")[1]?.textContent);
+    expect(names).toEqual(["Goku", "Tien", "Gohan", "Trunks"]);
+  });
+
+  it("locks a seat whose work is off and says why", async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValue([
+      agent("a-goku", "Goku", { routing_tier: "strong" }),
+      agent("a-piccolo", "Piccolo", { routing_tier: "weak", work_enabled: false }),
+    ]);
+    render();
+    await screen.findByText("Piccolo");
+    expect(screen.getByRole("combobox", { name: "Piccolo · Tier" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Piccolo · Usage" })).toBeDisabled();
+    expect(screen.getByText("Work is off, so routing skips it")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Piccolo" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByRole("toolbar")).toHaveTextContent("1 selected");
   });
 });

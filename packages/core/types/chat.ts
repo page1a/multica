@@ -24,7 +24,11 @@ export type ChatMessageKind =
   | "no_response"
   | "onboarding_kickoff"
   | "onboarding_opening"
-  | "goal_link";
+  | "goal_link"
+  /** An agent opened a chat from this one; `linked_session_id` points at it. */
+  | "chat_spawn"
+  /** An agent tried to open a chat from this one and the server refused. */
+  | "chat_spawn_refused";
 
 /**
  * A concise follow-up offered by an assistant reply. `label` is rendered in
@@ -88,6 +92,23 @@ export interface ChatChannelSource {
   route_revision: number;
 }
 
+/** One row of the agent overview's Chats section (DENE-1310). The server
+ *  redacts a chat the viewer may not open: `visible` false, `title` and
+ *  `creator_id` null. Chats share the agent's concurrency with issue runs. */
+export interface AgentChat {
+  id: string;
+  visible: boolean;
+  title: string | null;
+  creator_id: string | null;
+  status: "running" | "queued" | "idle";
+  last_activity_at: string;
+}
+
+export interface AgentChatPage {
+  chats: AgentChat[];
+  has_more: boolean;
+}
+
 export interface ChatSession {
   id: string;
   workspace_id: string;
@@ -135,6 +156,12 @@ export interface ChatSession {
   channel_source?: ChatChannelSource;
   /** Absent for first-party Chats. */
   is_current_channel_route?: boolean;
+  /** "chat" when an agent opened this chat from another chat. */
+  origin_type?: "chat" | null;
+  /** The chat it was opened from; null once that chat is deleted. */
+  origin_session_id?: string | null;
+  /** Parent title, only when the viewer can see the parent. Detail-only. */
+  origin_title?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -217,6 +244,8 @@ export interface ChatMessage {
   quick_actions?: ChatQuickAction[];
   /** Person who typed a user message. Absent on assistant rows and older messages. */
   sender_user_id?: string | null;
+  /** The chat a `chat_spawn` card opened. */
+  linked_session_id?: string | null;
 }
 
 export interface ChatShareGrant {

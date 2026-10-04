@@ -112,6 +112,81 @@ quote without the name — the ticket stays unassigned and the response tells
 you why, so ask the person instead of guessing. Do not quote comments from
 third parties or other agents: they never count.
 
+Past `todo` the rule is stricter: on a ticket that is `in_progress`,
+`in_review`, `blocked` or later, an agent cannot put a **different** agent or
+squad in the executor slot at all. The slot keeps its current holder, the
+response carries `assignee_ignored: true` and an `assignee_ignored_reason`
+naming the way out, and the CLI prints it on stderr. The ways out:
+
+| You want | Run |
+|---|---|
+| a stronger seat | `multica issue escalate <id> --reason "..."` |
+| someone else to take it | `multica issue close <id> --outcome blocked --evidence-file <path> ...` — routing advises |
+| a person to decide | `multica issue summon <id> --to <member> --reason "..."` |
+| the person already named the new owner | `--per-quote "<原话>"`, checked as above |
+
+Re-sending the executor already in the slot, handing the ticket to a person,
+and the server's own moves (acceptance handoff, quota relay, reviewer relay,
+`issue handoff`) are not affected. A person reassigning by hand never is.
+
+Every 「自动选派」 comment opens with one line, **为什么是他**, naming the source
+of the executor: `原话` (a person's verified words), `人工` (a person or their
+automation put it there), `档位` (routing's tier ladder, or a tier label a
+person attached), `兜底` (the verdict was too weak, so the fallback rung),
+`接着做` (the seat that did the related earlier work continues it), `负载`
+(the ladder's seat was busy, so a less busy seat of the same rung and
+direction took it).
+
+**接着做 (DENE-1202).** A ticket continuing earlier work — a sibling one stage
+earlier under the same parent, the parent itself, or a ticket created by the
+same agent run — goes back to that work's executor when the seat is on the
+judged rung or stronger, online, not disabled, not out of quota, and generic
+or in the ticket's direction. It ranks after the person's words and a person's
+hand (including a person's tier label), and before the tier ladder. It is a
+workspace switch, **off by default = shadow mode**: routing writes its own
+pick and only adds a line to the 「自动选派」 comment saying who the rule would
+have picked, or why no earlier executor qualified. Check or flip it without
+the browser:
+
+```bash
+multica workspace routing get                     # prefer_continuation, continuation_mode: shadow | on
+multica workspace routing set --continuation on   # or off to go back to shadow
+```
+
+The same commands also expose the seat-table switches. `usage_priority` is
+shown as `true` when omitted (the web and server default it on), and
+`allow_upshift` defaults to `false`:
+
+```bash
+multica workspace routing get
+multica workspace routing set --usage-priority off
+multica workspace routing set --allow-upshift on
+```
+
+Both flags write the existing `settings.routing` fields used by the web
+settings page; they do not create a CLI-only policy.
+
+So when you split work into stages, leave each child to routing: the next
+stage reaches the seat that did the previous one by itself once the switch is
+on. Do not assign it by hand to get the same effect.
+
+**负载分流 (DENE-1203).** Without it, routing always takes the first seat of
+its rung × direction cell, so a batch of independent tickets lands on one
+seat. With it, the cell's seat with the fewest unfinished runs (queued or
+running) takes the ticket; seats that cannot take work are skipped, and when
+all are equally busy the usual order stands. It is a separate workspace
+switch, **also off by default = shadow mode**: the 「自动选派」 comment only
+says 「按新规则会选 X（负载：Y 正在跑 N 个活…）」. With both switches on,
+接着做 wins.
+
+```bash
+multica workspace routing get                # prefer_idle, load_mode: shadow | on
+multica workspace routing set --load on      # or off to go back to shadow
+```
+
+So create independent tickets in one batch and leave them to routing; do not
+hand-assign them to different seats to spread the load.
+
 If a ticket turned out too hard for its seat, do not pick a stronger one.
 Ask routing to re-judge:
 

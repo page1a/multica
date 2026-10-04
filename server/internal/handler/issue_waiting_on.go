@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/blockwait"
@@ -109,16 +110,30 @@ func (h *Handler) wakeWaitingIssue(ctx context.Context, waiter, completed db.Iss
 	if fresh.AssigneeType.Valid && fresh.AssigneeType.String == "member" {
 		return
 	}
-	if !fresh.AssigneeType.Valid || !fresh.AssigneeID.Valid {
-		return
-	}
 	woken := blockwait.MetaString(parseIssueMetadata(fresh.Metadata), blockwait.KeyWokenBy)
 	if blockwait.AlreadyWoken(woken, completedIdentifier) || blockwait.AlreadyWoken(woken, uuidToString(completed.ID)) {
 		return
 	}
+	title := sanitizeChildTitleForSystemComment(completed.Title)
+	if !fresh.AssigneeType.Valid || !fresh.AssigneeID.Valid {
+		// DENE-1255: nobody holds the waiter. Routing seats one first; when it
+		// cannot, a person is told why instead of the wake vanishing.
+		seated, why := h.seatBeforeWake(ctx, fresh)
+		if !seated.AssigneeType.Valid || !seated.AssigneeID.Valid {
+			h.reportUnseatedWake(ctx, fresh, fmt.Sprintf(
+				"你在等的 [%s](mention://issue/%s)「%s」已经结束。",
+				completedIdentifier, uuidToString(completed.ID), title,
+			), why)
+			h.setIssueMetaString(ctx, fresh, blockwait.KeyWokenBy, blockwait.MarkWoken(woken, completedIdentifier))
+			return
+		}
+		if seated.AssigneeType.String == "member" {
+			return
+		}
+		fresh = seated
+	}
 
 	mentionPrefix := h.buildParentAssigneeMention(ctx, fresh)
-	title := sanitizeChildTitleForSystemComment(completed.Title)
 	content := fmt.Sprintf(
 		"%s你在等的 [%s](mention://issue/%s)「%s」已经结束，这张票可以继续了。",
 		mentionPrefix, completedIdentifier, uuidToString(completed.ID), title,
@@ -153,6 +168,7 @@ func (h *Handler) wakeWaitingIssue(ctx context.Context, waiter, completed db.Iss
 	})
 
 	h.setIssueMetaString(ctx, fresh, blockwait.KeyWokenBy, blockwait.MarkWoken(woken, completedIdentifier))
+	h.consumeWaitingOn(ctx, fresh, completedIdentifier, uuidToString(completed.ID))
 	prefix := h.getIssuePrefix(ctx, fresh.WorkspaceID)
 	h.noteBlockClearedOnSource(ctx, completed, fresh, prefix+"-"+strconv.Itoa(int(fresh.Number)))
 	h.dispatchWaitingOnAssigneeTrigger(ctx, fresh, comment.ID)
@@ -163,59 +179,63 @@ func (h *Handler) wakeWaitingIssue(ctx context.Context, waiter, completed db.Iss
 // running / waiting_local_directory). Protocol §5.5 and DENE-232: skip
 // enqueue when that pair is already in flight; the system comment above is
 // still the observable wake.
-func (h *Handler) dispatchWaitingOnAssigneeTrigger(ctx context.Context, waiter db.Issue, triggerCommentID pgtype.UUID) {
+// It reports whether a run was enqueued.
+func (h *Handler) dispatchWaitingOnAssigneeTrigger(ctx context.Context, waiter db.Issue, triggerCommentID pgtype.UUID) bool {
 	if !waiter.AssigneeType.Valid || !waiter.AssigneeID.Valid {
-		return
+		return false
 	}
 	switch waiter.AssigneeType.String {
 	case "agent":
-		h.triggerWaitingOnAgent(ctx, waiter, waiter.AssigneeID, triggerCommentID)
+		return h.triggerWaitingOnAgent(ctx, waiter, waiter.AssigneeID, triggerCommentID)
 	case "squad":
-		h.triggerWaitingOnSquad(ctx, waiter, triggerCommentID)
+		return h.triggerWaitingOnSquad(ctx, waiter, triggerCommentID)
 	}
+	return false
 }
 
-func (h *Handler) triggerWaitingOnAgent(ctx context.Context, waiter db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) {
+func (h *Handler) triggerWaitingOnAgent(ctx context.Context, waiter db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) bool {
 	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          agentID,
 		WorkspaceID: waiter.WorkspaceID,
 	})
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid || !agent.WorkEnabled {
-		return
+		return false
 	}
 	hasActive, err := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
 		IssueID: waiter.ID,
 		AgentID: agentID,
 	})
 	if err != nil || hasActive {
-		return
+		return false
 	}
 	if _, err := h.TaskService.EnqueueTaskForMention(ctx, waiter, agentID, triggerCommentID, service.OriginDerived); err != nil {
 		slog.Warn("waiting_on: enqueue waiter agent task failed",
 			"error", err,
 			"waiter_id", uuidToString(waiter.ID),
 			"agent_id", uuidToString(agentID))
+		return false
 	}
+	return true
 }
 
-func (h *Handler) triggerWaitingOnSquad(ctx context.Context, waiter db.Issue, triggerCommentID pgtype.UUID) {
+func (h *Handler) triggerWaitingOnSquad(ctx context.Context, waiter db.Issue, triggerCommentID pgtype.UUID) bool {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          waiter.AssigneeID,
 		WorkspaceID: waiter.WorkspaceID,
 	})
 	if err != nil {
-		return
+		return false
 	}
 	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid || !agent.WorkEnabled {
-		return
+		return false
 	}
 	hasActive, err := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
 		IssueID: waiter.ID,
 		AgentID: squad.LeaderID,
 	})
 	if err != nil || hasActive {
-		return
+		return false
 	}
 	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, waiter, squad.LeaderID, squad.ID, triggerCommentID, service.OriginDerived); err != nil {
 		slog.Warn("waiting_on: enqueue waiter squad leader task failed",
@@ -223,5 +243,31 @@ func (h *Handler) triggerWaitingOnSquad(ctx context.Context, waiter db.Issue, tr
 			"waiter_id", uuidToString(waiter.ID),
 			"squad_id", uuidToString(squad.ID),
 			"leader_id", uuidToString(squad.LeaderID))
+		return false
+	}
+	return true
+}
+
+// consumeWaitingOn clears close.waiting_on once the platform has told the
+// waiter that what it waited on finished, whatever status the waiter holds
+// (DENE-1301). A continuing close that names a child keeps the pointer
+// otherwise, and the blocker card reports "finished, not woken" long after
+// the waiter was woken and moved on. The key stays present but empty, which
+// every reader treats as "no wait", so the eight-key close record stays
+// complete. block.woken_by keeps the token for the card to read.
+func (h *Handler) consumeWaitingOn(ctx context.Context, waiter db.Issue, tokens ...string) {
+	meta := parseIssueMetadata(waiter.Metadata)
+	waitingOn := strings.TrimSpace(blockwait.MetaString(meta, closeprotocol.KeyWaitingOn))
+	if waitingOn == "" {
+		return
+	}
+	for _, token := range tokens {
+		if strings.TrimSpace(token) != waitingOn {
+			continue
+		}
+		woken := blockwait.MetaString(meta, blockwait.KeyWokenBy)
+		h.setIssueMetaString(ctx, waiter, blockwait.KeyWokenBy, blockwait.MarkWoken(woken, waitingOn))
+		h.setIssueMetaString(ctx, waiter, closeprotocol.KeyWaitingOn, "")
+		return
 	}
 }

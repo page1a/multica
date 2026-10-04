@@ -1,12 +1,16 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/projectmemory"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestListProjectMemoryLocationsUsesTheChecklist(t *testing.T) {
@@ -30,5 +34,31 @@ func TestListProjectMemoryLocationsUsesTheChecklist(t *testing.T) {
 		if resp.Locations[i] != want[i] {
 			t.Fatalf("locations[%d] = %#v, want %#v", i, resp.Locations[i], want[i])
 		}
+	}
+}
+
+func TestSedimentInstructionFallsBackToBuiltin(t *testing.T) {
+	cases := map[string]string{
+		``:                                  SedimentBuiltinInstruction,
+		`{"memory":{"sediment_agent":"x"}}`: SedimentBuiltinInstruction,
+		`{"memory":{"sediment_instruction":"   "}}`:              SedimentBuiltinInstruction,
+		`{"memory":{"sediment_instruction":"  先读 AGENTS.md  "}}`: "先读 AGENTS.md",
+	}
+	for settings, want := range cases {
+		if got := sedimentInstruction([]byte(settings)); got != want {
+			t.Errorf("sedimentInstruction(%q) = %q, want %q", settings, got, want)
+		}
+	}
+}
+
+func TestValidateWorkspaceMemorySettingsBoundsInstruction(t *testing.T) {
+	long := strings.Repeat("字", maxSedimentInstructionBytes/3+1)
+	settings := map[string]any{"memory": map[string]any{"sediment_instruction": long}}
+	if err := validateWorkspaceMemorySettings(context.Background(), &db.Queries{}, pgtype.UUID{}, settings); err == nil {
+		t.Fatal("over-long sediment_instruction was accepted")
+	}
+	settings = map[string]any{"memory": map[string]any{"sediment_instruction": "先读 AGENTS.md"}}
+	if err := validateWorkspaceMemorySettings(context.Background(), &db.Queries{}, pgtype.UUID{}, settings); err != nil {
+		t.Fatalf("short sediment_instruction rejected: %v", err)
 	}
 }

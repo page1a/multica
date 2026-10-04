@@ -34,6 +34,10 @@ const (
 	KeyReviewNudged  = "block.review_nudged"
 	KeyReviewRound   = "block.review_round_at"
 	KeyFailNoted     = "block.fail_noted"
+	// KeyReleaseHold is the last hold a passed ticket was kept in review for
+	// (DENE-1219), so the patrol retrying the merge does not repeat the note
+	// or wake the executor again for the same stop.
+	KeyReleaseHold = "block.release_hold"
 
 	// QuietAfter is how long a blocked or in-review issue with nobody running
 	// may sit before the patrol picks it up. A segment is nudged at most once.

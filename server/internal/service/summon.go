@@ -24,6 +24,7 @@ const (
 	SummonSourceNeedsHuman = "needs_human" // close/status with --needs-human
 	SummonSourceRouting    = "routing"     // routing has nobody left to push the ticket
 	SummonSourcePatrol     = "patrol"      // block-wait patrol could not seat a reviewer
+	SummonSourceUnseated   = "unseated"    // nobody holds the ticket and routing could not seat one
 	SummonSourceTimeLimit  = "time_limit"  // a run hit the workspace time limit
 	SummonSourceQuotaRelay = "quota_relay" // quota tripped with no seat to relay to
 	SummonSourceMention    = "mention"     // a person or agent @-mentioned a member

@@ -106,11 +106,53 @@ function reviewOverdue(issue: Issue, options: BlockerTreeOptions, now: number): 
   return now - at >= threshold;
 }
 
+/**
+ * Whether the close record still describes the ticket: it matches the
+ * current status and no reply has superseded it (DENE-1301).
+ */
+function closeRecordCurrent(close: CloseProtocolView): boolean {
+  return !close.statusDrift && !close.superseded;
+}
+
+/**
+ * The ticket is blocked right now: by its status, or by a blocked close
+ * record that still describes it. A blocked close a person already answered
+ * (superseded, or the status moved on) is history, not a blocker.
+ */
+function isBlockedNow(issue: Issue, close: CloseProtocolView): boolean {
+  return issue.status === "blocked" || (close.conclusion === "blocked" && closeRecordCurrent(close));
+}
+
+function metaText(issue: Issue, key: string): string {
+  const value = issue.metadata?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * A finished wait target only means a missed wake when nothing happened on
+ * the waiter afterwards (DENE-1301): the platform did not record waking it
+ * for that target, it has no run in flight, and it has no activity since the
+ * target last changed. A waiter that was woken and moved on by comments
+ * without closing again is not stuck.
+ */
+function wakeMissedOn(issue: Issue, target: Issue, waiting: string, options: BlockerTreeOptions): boolean {
+  if (!TERMINAL.has(target.status)) return false;
+  const woken = metaText(issue, "block.woken_by").split(",").map((token) => token.trim());
+  if (woken.includes(waiting) || woken.includes(target.identifier) || woken.includes(target.id)) return false;
+  if (hasActiveRun(options, issue)) return false;
+  const activity = Date.parse(issue.last_activity_at ?? issue.updated_at);
+  const finished = Date.parse(target.updated_at);
+  return !(Number.isFinite(activity) && Number.isFinite(finished) && activity > finished);
+}
+
 /** §3.3 / §3.4 "needs you": a member owner, or a decision/permission kind. */
-function attributionNeedsUserAction(close: CloseProtocolView, overdue: boolean): boolean {
+function attributionNeedsUserAction(issue: Issue, close: CloseProtocolView, overdue: boolean): boolean {
   if (overdue) return close.nextOwnerType === "member";
-  if (close.conclusion !== "blocked") return false;
-  return close.nextOwnerType === "member" || close.blockKind === "decision" || close.blockKind === "permission";
+  if (!isBlockedNow(issue, close)) return false;
+  return (closeRecordCurrent(close) && close.nextOwnerType === "member") ||
+    close.blockKind === "decision" ||
+    close.blockKind === "permission" ||
+    metaText(issue, "block.needs_human") !== "";
 }
 
 /**
@@ -146,10 +188,13 @@ export function deriveBlockerTree(
     // §3.4 precedence, first hit wins: a wait whose target already finished is
     // a wake_missed blocker, then a review nobody picked up, then a recorded
     // blocked conclusion. `dependency` is never its own root — the target is.
-    const wakeMissed = waitingIssue !== undefined && TERMINAL.has(waitingIssue.status);
+    const wakeMissed = waitingIssue !== undefined && waiting !== null && wakeMissedOn(issue, waitingIssue, waiting, options);
     const overdue = reviewOverdue(issue, options, now);
-    const own = wakeMissed || overdue || (close.conclusion === "blocked" && close.blockKind !== "dependency");
-    const needsUserAction = own && attributionNeedsUserAction(close, overdue);
+    const blockedNow = isBlockedNow(issue, close);
+    // A dependency block is rooted at its target, reached through waiting_on;
+    // without that edge the ticket itself is the only place to show it.
+    const own = wakeMissed || overdue || (blockedNow && !(close.blockKind === "dependency" && waiting));
+    const needsUserAction = own && attributionNeedsUserAction(issue, close, overdue);
     const children = lookupChildren(options, issue.id).filter((child) => !TERMINAL.has(child.status));
     const staged = children.filter((child) => child.stage !== null);
     const frontierStage = staged.length ? Math.min(...staged.map((child) => child.stage!)) : null;
@@ -176,7 +221,7 @@ export function deriveBlockerTree(
       (waitingResult?.userActionCount ?? 0);
     const prior = nodes.get(issue.id);
     if (prior?.cycle) return prior;
-    const result: BlockerTreeNode = { issue: ref(issue), state, rootCauses: unique, frontierStage, sideBlockers: children.filter((child) => !frontier.includes(child)).map(ref), userActionCount, derived: own && close.conclusion !== "blocked", cycle: false, attribution: own ? { kind: wakeMissed ? "wake_missed" : overdue ? "review_overdue" : close.blockKind ?? "blocked", action: close.blockAction, needsUserAction, nextOwnerType: close.nextOwnerType, nextOwnerId: close.nextOwnerId, waitingOn: waiting, at: close.at } : null, stage: issue.stage };
+    const result: BlockerTreeNode = { issue: ref(issue), state, rootCauses: unique, frontierStage, sideBlockers: children.filter((child) => !frontier.includes(child)).map(ref), userActionCount, derived: own && !blockedNow, cycle: false, attribution: own ? { kind: wakeMissed ? "wake_missed" : overdue ? "review_overdue" : close.blockKind ?? "blocked", action: close.blockAction, needsUserAction, nextOwnerType: close.nextOwnerType, nextOwnerId: close.nextOwnerId, waitingOn: waiting, at: close.at } : null, stage: issue.stage };
     nodes.set(issue.id, result);
     return result;
   }

@@ -65,10 +65,10 @@ func (r *Router) Escalate(ctx context.Context, workspaceID, issueID, reason stri
 		return esc, ErrNotEscalatable
 	}
 	esc.From = holder.Name
-	holderTier, ok := ladder.TierOf(holder.Name)
-	if !ok {
-		holderTier = holder.Tier
-	}
+	// The tag a person put on the seat is its rung; ladder.json's name table
+	// is only the fallback for an untagged seat. Reading the name first sent
+	// a seat tagged 中 but listed as 强 straight to the strongest rung.
+	holderTier := agentTierKey(ladder, holder)
 	holderRank := tierRank(ladder, holderTier)
 	if holderRank < 0 {
 		return esc, ErrNotEscalatable

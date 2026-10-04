@@ -91,3 +91,12 @@ func (i Issue) IgnoredAgentPick() bool {
 func (i Issue) RejectedQuote() bool {
 	return i.AssigneeSource == SourceQuoteRejected && i.AssigneeType == ""
 }
+
+// ReasonAgentReassignInFlight is what an agent hears when it tries to put a
+// different executor on a ticket that is already past todo while routing is
+// on (DENE-1201). The executor of a ticket in flight is not the agent's to
+// change: the ways out are escalating, or closing blocked so routing advises.
+const ReasonAgentReassignInFlight = "an agent cannot change the executor of an issue that is already in progress or in review while routing is on; " +
+	"if the work is too hard run `multica issue escalate <id> --reason \"...\"`, " +
+	"if someone else should take it run `multica issue close <id> --outcome blocked --evidence-file <path> ...` so routing can advise, " +
+	"or pass --per-quote with the person's own words naming the new assignee"

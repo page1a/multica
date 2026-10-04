@@ -61,6 +61,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"chat_session_link_read_audit":    workspaceDelete,
 	"chat_session_progress":           workspaceDelete,
 	"chat_naming_event":               workspaceDelete,
+	"agent_spawn_record":              workspaceDelete,
 	"chat_session_read":               workspaceDelete,
 	"chat_visibility_notice":          workspaceDelete,
 	"client_usage_daily":              workspaceDeleteDetach,
@@ -178,6 +179,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"work_thread":                        workspaceDelete,
 	"workspace":                          workspaceDelete,
 	"workspace_invitation":               workspaceDelete,
+	"workspace_link":                     workspaceDelete,
+	"workspace_link_audit":               workspaceDelete,
+	"workspace_link_project":             workspaceDelete,
 	"workspace_module_visibility":        workspaceDelete,
 	"workspace_share_link":               workspaceDelete,
 }

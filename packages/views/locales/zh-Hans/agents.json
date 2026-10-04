@@ -1002,7 +1002,20 @@
       "queued_prefix": "{{when}}排队",
       "success_hint": "成功率按已完成和失败的运行计算，不包含已取消的运行。",
       "success_unavailable": "本期间没有已完成或失败的运行，无法计算成功率。",
-      "cancelled_count": "{{count}} 次已取消"
+      "cancelled_count": "{{count}} 次已取消",
+      "section_chats": "对话",
+      "subtitle_chats_latest_other": "最近 {{count}} 个",
+      "subtitle_no_chats": "暂无对话",
+      "empty_chats": "还没有人和这个智能体聊过。",
+      "chat_status": {
+        "running": "运行中",
+        "queued": "排队中",
+        "idle": "空闲"
+      },
+      "chat_hidden": "他人的聊天",
+      "chat_hidden_hint": "你没有权限查看这个对话",
+      "open_chat": "打开",
+      "chat_untitled": "未命名对话"
     }
   },
   "char_counter": {

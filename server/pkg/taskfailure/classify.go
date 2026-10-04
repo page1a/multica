@@ -210,6 +210,9 @@ func Classify(rawError string) Reason {
 			"unauthorized",
 			"login required",
 			"not logged in",
+			// "Your account is on hold and can't use Claude Code" — the
+			// account owner has to act; no retry or relay can (DENE-960).
+			"account is on hold",
 			"please login again",
 			"refresh token",
 			"invalid api key",
@@ -234,6 +237,14 @@ func Classify(rawError string) Reason {
 			// would not match the curly form either, so this is a small
 			// in-flight improvement on top of the SQL classifier.
 			"you\u2019ve hit your limit",
+			// Claude Code names the window it ran out of: "You've hit
+			// your session limit · resets 11:10pm", "...weekly limit",
+			// "...Opus limit". These landed in unknown, so the seat was
+			// never relayed and the ticket sat with nobody on it
+			// (DENE-1159, DENE-1043).
+			"session limit",
+			"weekly limit",
+			"opus limit",
 			"credits",
 			"quota",
 		):
@@ -334,6 +345,10 @@ func Classify(rawError string) Reason {
 	case isPiProviderNetworkError(lower), isAdapterTransportError(lower), isCursorProviderNetworkError(lower),
 		containsAny(lower,
 			"stream disconnected",
+			// Claude Code's own cut-stream notice: "The stream was
+			// interrupted. Please continue the task you were working on."
+			// The CLI itself says the session continues (DENE-1112).
+			"stream was interrupted",
 			opencodeStreamEndedPrefix,
 			codeartsStreamEndedPrefix,
 			"stream ended without",

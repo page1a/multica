@@ -1472,7 +1472,7 @@ export function IssuesHeader({
   return (
     <>
     <div className={cn("min-h-12 shrink-0 py-2 [-webkit-overflow-scrolling:touch]", PAGE_GUTTER)}>
-      <div className="flex w-full min-w-0 items-start justify-between gap-2">
+      <div className="flex w-full min-w-0 flex-wrap items-start justify-between gap-2">
         {/* Left: the view bar — built-in tabs and saved views as one flat,
             per-user ordered row; wraps instead of overflowing. */}
         <div className="hidden min-w-0 flex-1 md:block">
@@ -1532,14 +1532,14 @@ export function IssuesHeader({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1">
           {onSearchChange && (
             <PageSearchInput
               value={search ?? ""}
               onChange={onSearchChange}
               placeholder={t(($) => $.table.search_placeholder)}
               clearLabel={t(($) => $.table.search_clear)}
-              className="mr-1 w-48 lg:w-56"
+              className="mr-1 w-32 sm:w-48 lg:w-56"
             />
           )}
           {agentRunningFilter && (
@@ -1567,6 +1567,7 @@ export function IssuesHeader({
             variant="ghost"
             size="sm"
             className="gap-1 text-muted-foreground"
+            aria-label={boardProjectIds.length === 1 ? tInbox(($) => $.board.ask_ai_project) : tInbox(($) => $.board.ask_ai)}
             nativeButton={false}
             render={
               <AppLink
@@ -1576,7 +1577,9 @@ export function IssuesHeader({
             }
           >
             <Sparkles className="size-4" />
-            {boardProjectIds.length === 1 ? tInbox(($) => $.board.ask_ai_project) : tInbox(($) => $.board.ask_ai)}
+            <span className="hidden sm:inline">
+              {boardProjectIds.length === 1 ? tInbox(($) => $.board.ask_ai_project) : tInbox(($) => $.board.ask_ai)}
+            </span>
           </Button>
           <IssueDisplayControls
             scopedIssues={scopedIssues}

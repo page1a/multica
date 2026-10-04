@@ -215,10 +215,11 @@ func TestStaleReviewStoreQueries(t *testing.T) {
 	})
 }
 
-// UnassignedTodos is the SQL half of the存量 todo sweep. In particular, child
+// UnseatedIssues is the SQL half of the存量 sweep. In particular, child
 // issues never have an acceptance seat, so treating a missing reviewer as an
 // empty seat would spend the shared 25-ticket budget on rows Route must ignore.
-func TestUnassignedTodoStoreQueries(t *testing.T) {
+// A blocked ticket counts only while its executor slot is empty (DENE-1255).
+func TestUnseatedIssueStoreQueries(t *testing.T) {
 	ctx := context.Background()
 	fx := testutil.New(testPool, testWorkspaceID, testUserID)
 	store := testHandler.RoutingStore()
@@ -230,7 +231,8 @@ func TestUnassignedTodoStoreQueries(t *testing.T) {
 
 	eligible := fx.Issue(t, "eligible top-level todo", testutil.Cols{"workspace_id": wsID, "status": "todo", "last_activity_at": quiet})
 	backlog := fx.Issue(t, "backlog", testutil.Cols{"workspace_id": wsID, "status": "backlog", "last_activity_at": quiet})
-	blocked := fx.Issue(t, "blocked", testutil.Cols{"workspace_id": wsID, "status": "blocked", "last_activity_at": quiet})
+	blocked := fx.Issue(t, "blocked with nobody holding it", testutil.Cols{"workspace_id": wsID, "status": "blocked", "last_activity_at": quiet})
+	blockedHeld := fx.Issue(t, "blocked and held", testutil.Cols{"workspace_id": wsID, "status": "blocked", "assignee_type": "agent", "assignee_id": agentID, "last_activity_at": quiet})
 	memberHeld := fx.Issue(t, "member held", testutil.Cols{"workspace_id": wsID, "status": "todo", "assignee_type": "member", "assignee_id": testUserID, "last_activity_at": quiet})
 	full := fx.Issue(t, "both seats filled", testutil.Cols{"workspace_id": wsID, "status": "todo", "assignee_type": "agent", "assignee_id": agentID, "reviewer_type": "agent", "reviewer_id": reviewerID, "last_activity_at": quiet})
 	running := fx.Issue(t, "active run", testutil.Cols{"workspace_id": wsID, "status": "todo", "last_activity_at": quiet})
@@ -240,9 +242,9 @@ func TestUnassignedTodoStoreQueries(t *testing.T) {
 		t.Fatal("fixture returned an empty child id")
 	}
 
-	ids, err := store.UnassignedTodos(ctx, wsID, time.Now().Add(-time.Hour), 25)
+	ids, err := store.UnseatedIssues(ctx, wsID, time.Now().Add(-time.Hour), 25)
 	if err != nil {
-		t.Fatalf("unassigned todos: %v", err)
+		t.Fatalf("unseated issues: %v", err)
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -251,9 +253,12 @@ func TestUnassignedTodoStoreQueries(t *testing.T) {
 	if !seen[eligible] {
 		t.Fatalf("eligible top-level todo missing from %v", ids)
 	}
+	if !seen[blocked] {
+		t.Fatalf("blocked ticket with no executor missing from %v", ids)
+	}
 	for label, id := range map[string]string{
 		"backlog":                       backlog,
-		"blocked":                       blocked,
+		"blocked and held":              blockedHeld,
 		"member-held":                   memberHeld,
 		"both seats filled":             full,
 		"active run":                    running,
@@ -267,9 +272,9 @@ func TestUnassignedTodoStoreQueries(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		fx.Issue(t, fmt.Sprintf("budget candidate %d", i), testutil.Cols{"workspace_id": wsID, "status": "todo", "last_activity_at": quiet.Add(-time.Duration(i) * time.Minute)})
 	}
-	ids, err = store.UnassignedTodos(ctx, wsID, time.Now().Add(-time.Hour), 25)
+	ids, err = store.UnseatedIssues(ctx, wsID, time.Now().Add(-time.Hour), 25)
 	if err != nil {
-		t.Fatalf("unassigned todo limit: %v", err)
+		t.Fatalf("unseated issue limit: %v", err)
 	}
 	if len(ids) != 25 {
 		t.Fatalf("query returned %d candidates, want shared budget limit 25", len(ids))

@@ -14,17 +14,19 @@ import (
 func TestBalanceExhaustionMovesWorkCrossHouseAndAlertsOnce(t *testing.T) {
 	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderQuotaLimit), "API Error: 402 Payment Required: insufficient balance", true)
 	ctx := context.Background()
-	rename := func(id, name, tier string) {
+	// The configured model decides a seat's house, so each seat gets the
+	// model it really runs alongside its ladder name.
+	rename := func(id, name, tier, model string) {
 		t.Helper()
-		if _, err := w.pool.Exec(ctx, `UPDATE agent SET name = $2, routing_tier = $3 WHERE id = $1`, id, name, tier); err != nil {
+		if _, err := w.pool.Exec(ctx, `UPDATE agent SET name = $2, routing_tier = $3, model = $4 WHERE id = $1`, id, name, tier, model); err != nil {
 			t.Fatalf("rename %s: %v", name, err)
 		}
 	}
-	rename(w.failedID, "孙悟天", "strong")   // Grok, account spent
-	rename(w.parentID, "孙悟天游戏", "strong") // same house: must not be picked
-	rename(w.sameID, "特兰克斯", "strong")    // GPT
-	rename(w.mediumID, "孙悟空", "strong")   // Claude, reviewer of the source ticket
-	rename(w.siblingID, "贝吉塔", "medium")
+	rename(w.failedID, "孙悟天", "strong", "grok-4.7")        // Grok, account spent
+	rename(w.parentID, "孙悟天游戏", "strong", "grok-4.7")      // same house: must not be picked
+	rename(w.sameID, "特兰克斯", "strong", "gpt-6.1-sol")      // GPT
+	rename(w.mediumID, "孙悟空", "strong", "claude-opus-5-5") // Claude, reviewer of the source ticket
+	rename(w.siblingID, "贝吉塔", "medium", "command-code/deepseek%2Fdeepseek-v4.1-flash")
 	if _, err := w.pool.Exec(ctx, `UPDATE issue SET reviewer_id = $2 WHERE id = $1`, w.issueID, w.mediumID); err != nil {
 		t.Fatalf("source reviewer: %v", err)
 	}

@@ -122,7 +122,7 @@ export type {
   CreateAgentAccessPassRequest,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES, RUNTIME_PROFILE_RUNTIME_TYPES } from "./agent";
-export type { Workspace, WorkspaceRepo, WorkspaceMcpServer, WorkspaceNaming, WorkspaceNamingOption, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo, ModuleKey, ModuleVisibility, ModuleVisibilityList } from "./workspace";
+export type { Workspace, WorkspaceRepo, WorkspaceMcpServer, WorkspaceNaming, WorkspaceNamingOption, WorkspaceNamingSource, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo, ModuleKey, ModuleVisibility, ModuleVisibilityList } from "./workspace";
 export { MODULE_KEYS } from "./workspace";
 export type {
   PluginInstallation,
@@ -197,6 +197,8 @@ export {
 } from "./attachment-url";
 export type {
   ChatSession,
+  AgentChat,
+  AgentChatPage,
   ChatDirectoryItem,
   ChatLastMessage,
   ChatShareGrant,
@@ -433,3 +435,18 @@ export type { Ask, AskOption, AskQuestion, CreateAskRequest, AnswerAskRequest } 
 export type { IssueWakeup, IssueWakeupInput, SystemWakeup, WorkspaceSystemWakeup, WakeupPreview, IssueWakeupSummaryRow, WakeupCondition, WakeupPausedReason, WakeupRun, PausedWakeup, WakeupSource } from "./issue-wakeup";
 
 export type { WorkspaceWakeup, WorkspaceWakeupPage, WorkspaceWakeupFilters, WakeupScope } from "./issue-wakeup";
+export type {
+  WorkspaceLink,
+  WorkspaceLinkSide,
+  WorkspaceLinkStatus,
+  WorkspaceLinkWorkspace,
+  WorkspaceLinkProject,
+  WorkspaceLinkAbilities,
+  ListWorkspaceLinksResponse,
+  WorkspaceLinkAuditEntry,
+  LinkedView,
+  LinkedViewProject,
+  LinkedViewIssue,
+  LinkedViewStatus,
+  LinkedViewParams,
+} from "./workspace-link";

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -312,5 +313,102 @@ func TestRunIssueCloseVerdictPassReportsMerge(t *testing.T) {
 	}
 	if result["pr_url"] != "https://github.com/o/r/pull/9" {
 		t.Fatalf("stdout = %#v", result)
+	}
+}
+
+// Checks still running are waited out in place (DENE-1219): the CLI asks
+// again until the server merges and closes, then reports that.
+func TestRunIssueCloseWaitsOutRunningChecks(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const issueID = "33333333-3333-4333-8333-333333333336"
+	origList := ghListPRs
+	origSleep, origNow := closeSleep, closeNow
+	t.Cleanup(func() { ghListPRs, closeSleep, closeNow = origList, origSleep, origNow })
+	ghListPRs = func(context.Context, string, ...string) ([]ghpr.PR, error) { return nil, nil }
+	clock := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	closeNow = func() time.Time { return clock }
+	slept := 0
+	closeSleep = func(d time.Duration) { slept++; clock = clock.Add(d) }
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"identifier": "DENE-4"})
+		case strings.HasSuffix(r.URL.Path, "/close/check"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case strings.HasSuffix(r.URL.Path, "/close"):
+			attempts++
+			if attempts < 3 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": "close_checks_pending", "error": "PR 的检查还没出结果"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "done", "merged": true})
+		default:
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueCloseTestCmd()
+	_ = cmd.Flags().Set("outcome", "done")
+	_ = cmd.Flags().Set("evidence", "PR #1")
+	_ = cmd.Flags().Set("knowledge-none", "true")
+	_ = cmd.Flags().Set("output", "table")
+	stderr := captureStderr(t)
+	defer stderr.restore()
+	if err := runIssueClose(cmd, []string{issueID}); err != nil {
+		t.Fatalf("runIssueClose: %v", err)
+	}
+	if attempts != 3 || slept != 2 {
+		t.Fatalf("attempts = %d, slept = %d; want 3 attempts with 2 waits", attempts, slept)
+	}
+}
+
+// A wait that outlasts the limit stops with the server's answer and an
+// instruction to close again, never a status write.
+func TestRunIssueCloseStopsWaitingAtTheLimit(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const issueID = "33333333-3333-4333-8333-333333333337"
+	origList := ghListPRs
+	origSleep, origNow := closeSleep, closeNow
+	t.Cleanup(func() { ghListPRs, closeSleep, closeNow = origList, origSleep, origNow })
+	ghListPRs = func(context.Context, string, ...string) ([]ghpr.PR, error) { return nil, nil }
+	clock := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	closeNow = func() time.Time { return clock }
+	closeSleep = func(d time.Duration) { clock = clock.Add(d) }
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"identifier": "DENE-5"})
+		case strings.HasSuffix(r.URL.Path, "/close/check"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case strings.HasSuffix(r.URL.Path, "/close"):
+			attempts++
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "close_checks_pending", "error": "PR 的检查还没出结果"})
+		default:
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueCloseTestCmd()
+	_ = cmd.Flags().Set("outcome", "done")
+	_ = cmd.Flags().Set("evidence", "PR #1")
+	_ = cmd.Flags().Set("knowledge-none", "true")
+	stderr := captureStderr(t)
+	defer stderr.restore()
+	err := runIssueClose(cmd, []string{issueID})
+	if err == nil || !strings.Contains(err.Error(), "再执行一次同样的 close") {
+		t.Fatalf("err = %v, want the wait-limit instruction", err)
+	}
+	if attempts != int(closeWaitLimit/closeWaitInterval) {
+		t.Fatalf("attempts = %d, want %d", attempts, int(closeWaitLimit/closeWaitInterval))
 	}
 }

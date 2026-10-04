@@ -70,6 +70,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	b.WriteString(buildSharedWorkspaceBlock(opts.sharedWorkspace))
 	b.WriteString(buildWorktreeReplayConflictBlock(opts.worktreeReplayConflicts))
 	b.WriteString(buildReplaySkippedBlock(opts.replaySkippedNotice))
+	b.WriteString(buildInterruptedWorkBlock(opts.interruptedWorkNotice))
 	b.WriteString(buildStaleLocalBaselineBlock(opts.staleLocalBaselineNotice))
 	b.WriteString(buildDeliveryBranchBlock(opts.deliveryBranch, opts.deliveryUpstream))
 	b.WriteString(buildDependencyInstallBlock(opts.dependencyInstallCommand))
@@ -101,6 +102,7 @@ type promptOpts struct {
 	sharedWorkspace          bool
 	worktreeReplayConflicts  []string
 	replaySkippedNotice      string
+	interruptedWorkNotice    string
 	staleLocalBaselineNotice string
 	deliveryBranch           string
 	deliveryUpstream         string
@@ -186,6 +188,19 @@ func buildSharedWorkspaceBlock(shared bool) string {
 	b.WriteString("Your working directory is a shared workspace: the project owner set it to run tasks concurrently, so other tasks on this machine may be working in it right now and no task holds a lock on it. Multica keeps its own runtime files out of this directory; nothing here was written for you except by the workspace itself.\n\n")
 	b.WriteString("Follow the workspace's own conventions for isolation — typically a task-specific branch or worktree inside the sub-repository you are changing. Do not edit a shared checkout's mainline (main/dev) in place, do not run commands that rewrite files across the whole directory, and when you must change a file other tasks may also touch, say so in your reply.\n\n")
 	return b.String()
+}
+
+// WithInterruptedWork tells a retry that the copy its interrupted run left
+// was reclaimed, and where that run's uncommitted changes were saved.
+func WithInterruptedWork(notice string) PromptOption {
+	return func(o *promptOpts) { o.interruptedWorkNotice = strings.TrimSpace(notice) }
+}
+
+func buildInterruptedWorkBlock(notice string) string {
+	if strings.TrimSpace(notice) == "" {
+		return ""
+	}
+	return "## Uncommitted work from the interrupted run\n\n" + strings.TrimSpace(notice) + "\n\n"
 }
 
 func buildReplaySkippedBlock(notice string) string {
