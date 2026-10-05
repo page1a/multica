@@ -456,6 +456,12 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 			}
 			body += block
 		}
+		if card := strings.TrimSpace(task.IssueHandoffCard); card != "" {
+			if !strings.HasSuffix(body, "\n\n") {
+				body += "\n"
+			}
+			body += "## Handoff\n\nThis issue was just handed to you. Start from the state card below; earlier comments are background.\n\n" + card + "\n\n"
+		}
 	}
 	// Run-scoped context is appended, never prepended: everything ahead of it
 	// is stable across runs of a resumed session, and appending keeps it after

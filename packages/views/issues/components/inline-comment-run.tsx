@@ -32,6 +32,7 @@ import { useStatusLabel } from "./task-run-labels";
 import { commentRunOutput, isActiveCommentRun, showCommentRunInHeader, type CommentRun } from "./comment-runs";
 
 import { useRunAnimationVisibility, useRunDisclosureMotion } from "./use-run-comment-motion";
+import { RunSessionCaption, useRunSessionLineage } from "./run-session-lineage";
 
 function thinkingPreview(content: string | undefined, formatText: (text: string) => string): string {
   // Redact the complete content before clipping so a split credential cannot leak.
@@ -56,9 +57,17 @@ export function useInlineCommentRunState() {
 export type InlineCommentRunState = ReturnType<typeof useInlineCommentRunState>;
 
 export function PlacedInlineCommentRun({ presentation = "inline", ...props }: Parameters<typeof InlineCommentRun>[0]) {
-  // A live reply compacts its run into the comment header.
-  if ((presentation === "header") !== showCommentRunInHeader(props.run)) return null;
+  // A live reply compacts its run into the comment header; its metadata slot
+  // still says how the run's session relates to the one before (DENE-1345).
+  if ((presentation === "header") !== showCommentRunInHeader(props.run)) {
+    return presentation === "inline" ? <PlacedRunSessionCaption task={props.run.task} /> : null;
+  }
   return <InlineCommentRun {...props} presentation={presentation} />;
+}
+
+function PlacedRunSessionCaption({ task }: { task: AgentTask }) {
+  const lineage = useRunSessionLineage(task.issue_id, task.id);
+  return <RunSessionCaption lineage={lineage} className="pb-1.5" />;
 }
 
 export function InlineCommentRun({ run, className, viewState, showIdentity = false, presentation = "inline", replyTo, replacesFailureNotice = false }: {
@@ -100,6 +109,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
   const cancel = useCancelIssueRun(task.issue_id);
   const retry = useRetryIssueRun(task.issue_id);
   const regionId = useId();
+  const sessionLineage = useRunSessionLineage(task.issue_id, task.id);
   // Keep one disclosure button mounted across queued, live, and historical states.
   // Historical, collapsed runs still don't fetch transcripts. Deferred is a
   // backoff wait on a new task id — not a live session — so it must not
@@ -226,6 +236,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
         </Button>}
       </div>
       <div className={cn(showIdentity && "pl-8")}>
+        <RunSessionCaption lineage={sessionLineage} />
         {replyTo}
         {output && <div className="mt-2 text-body"><ReadonlyContent content={redactSecrets(output)} /></div>}
         {needsAction && rawError && <p title={rawError}

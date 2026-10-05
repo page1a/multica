@@ -402,6 +402,19 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	processCtx, cancelProcess := context.WithCancel(runCtx)
 
 	args := buildPiArgs(sessionPath, opts, b.cfg.Logger)
+	// Task supplements ride a daemon-owned extension that queues them as Pi
+	// steering. A run whose extension cannot be installed simply runs without
+	// supplements, and the server keeps queueing them for the next turn.
+	var supplement *supplementInbox
+	if opts.EnableTaskSupplement {
+		inbox, extPath, err := newPiSupplementInbox()
+		if err != nil {
+			b.cfg.Logger.Warn(label+": task supplements disabled for this run", "error", err)
+		} else {
+			supplement = inbox
+			args = append(args, "--extension", extPath)
+		}
+	}
 	cmd, _, _ := b.cfg.commandAt(execName).execVia(processCtx, choosePiInvocation, lookedUp, args, b.cfg.Logger)
 	hideAgentWindow(cmd)
 	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))
@@ -410,11 +423,15 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		cmd.Dir = opts.Cwd
 	}
 	cmd.Env = buildEnv(b.cfg.Env)
+	if supplement != nil {
+		cmd.Env = append(cmd.Env, supplementInboxDirEnv+"="+supplement.dir)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		releasePiSessionFileLock(sessionLock)
 		cancelProcess()
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("%s stdout pipe: %w", label, err)
 	}
@@ -428,6 +445,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		closePiReadPipe(stdout)
 		releasePiSessionFileLock(sessionLock)
 		cancelProcess()
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("%s stdin pipe: %w", label, err)
 	}
@@ -445,6 +463,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		closePiReadPipe(stdout)
 		releasePiSessionFileLock(sessionLock)
 		cancelProcess()
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("%s stderr pipe: %w", label, err)
 	}
@@ -456,6 +475,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		closePiReadPipe(stderrRead)
 		releasePiSessionFileLock(sessionLock)
 		cancelProcess()
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("start %s: %w", label, err)
 	}
@@ -540,6 +560,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 			switch evt.Type {
 			case "agent_start":
+				supplement.start()
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 
 			case "turn_start":
@@ -658,6 +679,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 		waitErr := cmd.Wait()
 		releaseProcessGroup(cmd)
+		supplement.close()
 		duration := time.Since(startTime)
 		lastTurnError, turnErrorGraceExpired := turnErrors.finish()
 
@@ -747,11 +769,25 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 	}()
 
-	return &Session{
+	return supplement.bindSupplement(&Session{
 		Messages:         msgCh,
 		Result:           resCh,
 		TerminalObserved: turnErrors.terminalObserved,
-	}, nil
+	}), nil
+}
+
+// newPiSupplementInbox writes the steering extension into a fresh inbox.
+func newPiSupplementInbox() (*supplementInbox, string, error) {
+	inbox, err := newSupplementInbox("pi")
+	if err != nil {
+		return nil, "", err
+	}
+	extPath, err := inbox.writeExtension("multica-supplement.js", piSupplementExtension)
+	if err != nil {
+		inbox.close()
+		return nil, "", err
+	}
+	return inbox, extPath, nil
 }
 
 func piSessionBusyResult(label, sessionPath string) *Session {

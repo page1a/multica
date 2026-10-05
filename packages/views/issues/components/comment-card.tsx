@@ -39,7 +39,7 @@ import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useRecipientActions } from "../hooks/use-recipient-actions";
 import { SteerBadge, SteerReceipts } from "./steer-receipts";
-import type { AgentTask, TimelineEntry, Attachment } from "@multica/core/types";
+import type { AgentTask, CommentSendMode, TimelineEntry, Attachment } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { isDeletedComment } from "@multica/core/issues/comment-deletion";
 import { commentSupplementReceipts, isSupplementInFlight } from "@multica/core/issues/run-steering";
@@ -55,6 +55,7 @@ import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { InlineCommentRun, PlacedInlineCommentRun, useInlineCommentRunState, type InlineCommentRunState } from "./inline-comment-run";
+import { RunSessionDivider, useRunSessionLineage } from "./run-session-lineage";
 import { EMPTY_COMMENT_RUNS, isRunFailureNotice, orderThreadWithRuns, type CommentRun, type ThreadRunSlot } from "./comment-runs";
 import { descriptionPreview } from "./description-preview";
 import { useCommentAnnotations } from "./use-comment-annotations";
@@ -131,7 +132,7 @@ interface CommentCardProps {
    * `CommentRow` has to rerun the rule per row.
    */
   canModerate?: boolean;
-  onReply: (parentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[], steerTaskIds?: string[]) => Promise<string | boolean>;
+  onReply: (parentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[], steerTaskIds?: string[], mode?: CommentSendMode) => Promise<string | boolean>;
   onReplyAccepted?: (commentId: string) => void;
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[], contentBase?: string) => Promise<void>;
   onDelete: (commentId: string) => void;
@@ -993,7 +994,10 @@ export function AgentRunComment({ run, standalone = false, commentProps, enterin
   // The notice keeps its deep-link target and highlight in the run's slot.
   const slotEntry = reply ?? notice;
   const motionRef = useRunCommentMotion(entering, reply?.id, run.task.status);
+  const sessionLineage = useRunSessionLineage(run.task.issue_id, run.task.id);
   return (
+    <>
+    <RunSessionDivider agentId={run.task.agent_id} lineage={sessionLineage} />
     <div ref={motionRef} data-run-slot-id={run.task.id}
       data-run-comment-id={!reply ? run.task.id : undefined}
       id={!standalone && slotEntry ? `comment-${slotEntry.id}` : undefined}
@@ -1011,6 +1015,7 @@ export function AgentRunComment({ run, standalone = false, commentProps, enterin
         <InlineCommentRun run={run} viewState={viewState} showIdentity replyTo={replyTo} replacesFailureNotice={!!notice} />
       </div>}
     </div>
+    </>
   );
 }
 
@@ -1546,7 +1551,7 @@ function CommentCardImpl({
                   draftKey={`reply:${issueId}:${entry.id}`}
                   onEditAnnotation={(id) => annotation.editAnnotation(id, true)}
                   steerByDefault={steerThreadRunByDefault}
-                  onSubmit={(content, attachmentIds, suppressAgentIds, steerTaskIds) => replyTargetMissing ? Promise.resolve(false) : onReply(replyTargetId, content, attachmentIds, suppressAgentIds, steerTaskIds)}
+                  onSubmit={(content, attachmentIds, suppressAgentIds, steerTaskIds, mode) => replyTargetMissing ? Promise.resolve(false) : onReply(replyTargetId, content, attachmentIds, suppressAgentIds, steerTaskIds, mode)}
                   onAccepted={onReplyAccepted}
                 />
               </div>

@@ -18,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/oklog/ulid/v2"
 )
 
 // MembershipChecker verifies a user belongs to a workspace.
@@ -242,6 +243,13 @@ func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 
 // Client represents a single WebSocket connection with identity and the set
 // of scopes it is currently subscribed to.
+type replayEvent struct {
+	eventID string
+	frame   []byte
+}
+
+const replayCapacity = 256
+
 type Client struct {
 	hub         *Hub
 	conn        *websocket.Conn
@@ -312,6 +320,8 @@ type Hub struct {
 	// Subscription lifecycle hooks. Both can be nil.
 	onFirstSubscriber SubscriptionCallback
 	onLastSubscriber  SubscriptionCallback
+	historyMu         sync.RWMutex
+	history           map[scopeKey][]replayEvent
 }
 
 // NewHub creates a new Hub instance.
@@ -320,6 +330,7 @@ func NewHub() *Hub {
 		rooms:      make(map[scopeKey]map[*Client]bool),
 		clients:    make(map[*Client]bool),
 		broadcast:  make(chan []byte),
+		history:    make(map[scopeKey][]replayEvent),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
@@ -527,6 +538,66 @@ func (h *Hub) LocalScopes() []scopeKey {
 	return out
 }
 
+func eventIDFromFrame(frame []byte) string {
+	var v struct {
+		EventID string `json:"event_id"`
+	}
+	_ = json.Unmarshal(frame, &v)
+	return v.EventID
+}
+
+func (h *Hub) remember(scopeType, scopeID string, frame []byte) {
+	id := eventIDFromFrame(frame)
+	if id == "" {
+		return
+	}
+	key := sk(scopeType, scopeID)
+	h.historyMu.Lock()
+	defer h.historyMu.Unlock()
+	items := append(h.history[key], replayEvent{eventID: id, frame: append([]byte(nil), frame...)})
+	if len(items) > replayCapacity {
+		items = items[len(items)-replayCapacity:]
+	}
+	h.history[key] = items
+}
+
+func (h *Hub) replay(client *Client, after string) (int, bool) {
+	if after == "" {
+		return 0, false
+	}
+	key := sk(ScopeWorkspace, client.workspaceID)
+	h.historyMu.RLock()
+	items := append([]replayEvent(nil), h.history[key]...)
+	h.historyMu.RUnlock()
+	idx := -1
+	for i, e := range items {
+		if e.eventID == after {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return 0, false
+	}
+	count := 0
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.clients[client] {
+		return 0, false
+	}
+	for _, e := range items[idx+1:] {
+		if client.markSeen(e.eventID) {
+			select {
+			case client.send <- e.frame:
+				count++
+			default:
+				return count, false
+			}
+		}
+	}
+	return count, true
+}
+
 // BroadcastToScope sends a message to every client subscribed to
 // (scopeType, scopeID). Slow clients are evicted under write lock.
 func (h *Hub) BroadcastToScope(scopeType, scopeID string, message []byte) {
@@ -543,6 +614,14 @@ func (h *Hub) BroadcastToScope(scopeType, scopeID string, message []byte) {
 // send to a client that disconnected during the decision from racing the
 // close(c.send) in removeClient.
 func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, eventID string) {
+	if eventID == "" {
+		eventID = eventIDFromFrame(message)
+	}
+	if eventID == "" {
+		eventID = ulid.Make().String()
+	}
+	message = injectEventID(message, eventID)
+	h.remember(scopeType, scopeID, message)
 	if scopeType == "" || scopeID == "" {
 		return
 	}
@@ -1016,6 +1095,10 @@ type inboundFrame struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+type resumePayload struct {
+	EventID string `json:"event_id"`
+}
+
 type subPayload struct {
 	Scope string `json:"scope"`
 	ID    string `json:"id"`
@@ -1062,6 +1145,18 @@ func (c *Client) handleFrame(raw []byte) {
 		return
 	}
 	switch f.Type {
+	case "resume":
+		var p resumePayload
+		if err := json.Unmarshal(f.Payload, &p); err != nil || p.EventID == "" {
+			c.sendJSON(map[string]any{"type": "resume_failed", "payload": map[string]string{"reason": "invalid_position"}})
+			return
+		}
+		count, ok := c.hub.replay(c, p.EventID)
+		if !ok {
+			c.sendJSON(map[string]any{"type": "resume_failed", "payload": map[string]string{"reason": "position_expired"}})
+			return
+		}
+		c.sendJSON(map[string]any{"type": "resume_ack", "payload": map[string]any{"replayed": count}})
 	case "subscribe", "unsubscribe":
 		var p subPayload
 		if err := json.Unmarshal(f.Payload, &p); err != nil || p.Scope == "" || p.ID == "" {

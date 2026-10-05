@@ -412,8 +412,14 @@ func (b *codeartsBackend) processEvents(r io.Reader, ch chan<- Message) codeArts
 		}
 		parsedEvents++
 
-		if event.SessionID != "" {
+		// Pin the session as soon as it is known: a restart-tier message
+		// needs the id mid-run (DENE-1349). step_start carries it on the
+		// running status it already sends.
+		if event.SessionID != "" && event.SessionID != sessionID {
 			sessionID = event.SessionID
+			if event.Type != "step_start" {
+				trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
+			}
 		}
 
 		switch event.Type {
@@ -435,7 +441,7 @@ func (b *codeartsBackend) processEvents(r io.Reader, ch chan<- Message) codeArts
 			stepHasContinuationTool = false
 			awaitingContinuation = false
 			stepProducedOutput = false
-			trySend(ch, Message{Type: MessageStatus, Status: "running"})
+			trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 		case "step_finish":
 			openStep = false
 			sawStepFinish = true

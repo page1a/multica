@@ -283,6 +283,10 @@ export const ChatMessageSchema: z.ZodType<ChatMessage> = z.object({
   failure_reason: z.string().nullable().optional(),
   elapsed_ms: z.number().nullable().optional(),
   message_kind: z.enum(["message", "no_response"]).catch("message").optional(),
+  // DENE-1345: whether this reply's run carried the CLI session forward.
+  session_mode: z.enum(["new", "resumed"]).optional().catch(undefined),
+  resumed_from_run: z.string().optional().catch(undefined),
+  session_break_reason: z.string().optional().catch(undefined),
   // One malformed optional suggestion must not erase an otherwise valid
   // conversation. The server validates these too; this is mixed-version and
   // corrupted-cache defense at the mobile boundary.
@@ -303,6 +307,7 @@ const ChatQueuedTaskSchema = z.object({
   created_at: z.string().default(""),
   message_id: z.string().optional(),
   content: z.string().optional(),
+  steering: z.boolean().optional().catch(undefined),
 }).loose();
 
 const ChatQueuedTasksSchema = z.array(z.unknown()).transform((tasks) =>
@@ -321,6 +326,9 @@ export const ChatPendingTaskSchema: z.ZodType<ChatPendingTask> = z.object({
   created_at: z.string().optional(),
   supports_queue: z.boolean().optional(),
   queued_tasks: ChatQueuedTasksSchema.optional(),
+  steer_supported: z.boolean().optional().catch(undefined),
+  steer_provider: z.string().optional().catch(undefined),
+  steer_mode: z.string().optional().catch(undefined),
 }).loose();
 
 export const EMPTY_CHAT_PENDING_TASK: ChatPendingTask = {};
@@ -330,6 +338,7 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   task_id: z.string(),
   supports_queue: z.boolean().optional(),
   queued: z.boolean().optional().catch(undefined),
+  mode: z.enum(["steer", "queue", "restart", "start"]).optional().catch(undefined),
   created_at: z.string().default(""),
 }).loose();
 
@@ -458,6 +467,10 @@ export const AgentTaskSchema: z.ZodType<AgentTask> = z.object({
   trigger_summary: z.string().optional(),
   kind: z.enum(["comment", "autopilot", "chat", "quick_create", "direct"]).optional().catch("direct"),
   work_dir: z.string().optional(),
+  // DENE-1345: whether this run carried the CLI session forward.
+  session_mode: z.enum(["new", "resumed"]).optional().catch(undefined),
+  resumed_from_run: z.string().optional().catch(undefined),
+  session_break_reason: z.string().optional().catch(undefined),
 }).loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema).default([]);

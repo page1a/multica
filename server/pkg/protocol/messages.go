@@ -107,6 +107,17 @@ const (
 	// It is persisted when this exact task enters running; absence always means
 	// unsupported so mixed server/daemon versions fail closed.
 	DaemonCapabilityTaskSupplementV1 = "task-supplement-v1"
+	// DaemonCapabilitySteerRestartV1 qualifies task-supplement-v1: the run takes
+	// the additional text by stopping its CLI and resuming the same session with
+	// it (DENE-1349). Offered only together with task-supplement-v1. The server
+	// records it as the run's steer mode so clients can state the cost.
+	DaemonCapabilitySteerRestartV1 = "steer-restart-v1"
+
+	// Steer modes: how a run with task-supplement-v1 takes the text. "same"
+	// reads it inside the running process; "restart" restarts the CLI on the
+	// same session.
+	SteerModeSame    = "same"
+	SteerModeRestart = "restart"
 
 	TaskSupplementFailureTurnNotStarted   = "turn_not_started"
 	TaskSupplementFailureProviderRejected = "provider_rejected"

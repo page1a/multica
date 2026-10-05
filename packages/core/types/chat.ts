@@ -246,6 +246,10 @@ export interface ChatMessage {
   sender_user_id?: string | null;
   /** The chat a `chat_spawn` card opened. */
   linked_session_id?: string | null;
+  /** Session lineage of the run behind `task_id` (DENE-1345). */
+  session_mode?: import("./agent").SessionMode;
+  resumed_from_run?: string;
+  session_break_reason?: import("./agent").SessionBreakReason | (string & {});
 }
 
 export interface ChatShareGrant {
@@ -281,9 +285,18 @@ export interface ChatMessagesPage {
   next_cursor?: ChatMessagesCursor | null;
 }
 
+/**
+ * What a message does to a reply still in progress (DENE-1346): steer reads it
+ * mid-reply in the same process, queue answers it after the reply, restart
+ * stops the reply and starts over from it.
+ */
+export type ChatSendMode = "steer" | "queue" | "restart";
+
 export interface SendChatMessageResponse {
   message_id: string;
   task_id: string;
+  /** What actually happened; `start` when nothing was replying. */
+  mode?: ChatSendMode | "start";
   /** True when the server supports queued follow-up sends. */
   supports_queue?: boolean;
   /**
@@ -376,6 +389,8 @@ export interface ChatQueuedTask {
   created_at: string;
   message_id?: string;
   content?: string;
+  /** Steered into the running reply and waiting to be read there. */
+  steering?: boolean;
 }
 
 export interface PrioritizeQueuedChatTaskResponse {
@@ -403,4 +418,10 @@ export interface ChatPendingTask {
    * database status `queued` before claim, but is never duplicated here.
    */
   queued_tasks?: ChatQueuedTask[];
+  /** The running reply can read a message mid-reply. */
+  steer_supported?: boolean;
+  /** CLI of the running reply, for the steer cost/unsupported line. */
+  steer_provider?: string;
+  /** How a steer reaches the reply (DENE-1349): "same" in the running CLI, "restart" stops it and resumes the session. */
+  steer_mode?: string;
 }

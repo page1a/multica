@@ -28,6 +28,8 @@ import type {
   InboxItem,
   InboxWorkspaceUnread,
   Issue,
+  IssueStateCard,
+  StateCardDecision,
   IssueLabelsResponse,
   Label,
   IssueReaction,
@@ -48,6 +50,8 @@ import type {
   SearchProjectsResponse,
   ListIssueStatusesResponse,
   SendChatMessageResponse,
+  ChatSendMode,
+  PrioritizeQueuedChatTaskResponse,
   Squad,
   NotificationPreferenceResponse,
   NotificationPreferences,
@@ -69,8 +73,12 @@ import {
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_TIMELINE_ENTRIES,
   IssueSchema,
+  IssueStateCardSchema,
   ListIssuesResponseSchema,
   ListIssueStatusesResponseSchema,
+  EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
+  PrioritizeQueuedChatTaskResponseSchema,
+  StateCardDecisionSchema,
   TimelineEntriesSchema,
   WorkspaceSubscriptionSummarySchema,
 } from "@multica/core/api/schemas";
@@ -133,6 +141,26 @@ import {
   UserSchema,
   WorkspaceListSchema,
 } from "./schemas";
+
+/** Shared server-side incremental list protocol (issues, inbox, chats, timeline). */
+export type IncrementalResource = "issues" | "inbox" | "chats" | "timeline";
+export type IncrementalChanges<T = unknown> = {
+  resource: IncrementalResource;
+  upserts: Array<{ id: string; updated_at: string; data: T }>;
+  deleted: string[];
+  next_cursor: string;
+  has_more: boolean;
+};
+
+/** Applies a replayable page to a locally persisted list snapshot. */
+export function mergeIncrementalChanges<T extends { id: string }>(current: T[], page: IncrementalChanges<T>): T[] {
+  const deleted = new Set(page.deleted);
+  const byId = new Map(current.filter((item) => !deleted.has(item.id)).map((item) => [item.id, item]));
+  for (const change of page.upserts) {
+    if (!deleted.has(change.id)) byId.set(change.id, change.data);
+  }
+  return [...byId.values()];
+}
 import type { ZodType } from "zod";
 import { getCurrentSlug } from "./workspace-store";
 import { parseWithFallback } from "@/lib/parse-response";
@@ -507,6 +535,18 @@ class ApiClient {
     return parseWithFallback(raw, InboxListSchema, EMPTY_INBOX_LIST, {
       endpoint: "listInbox",
     });
+  }
+
+  async listIncrementalChanges<T = unknown>(
+    resource: IncrementalResource,
+    opts?: { updatedSince?: string; cursor?: string; issueId?: string; limit?: number; signal?: AbortSignal },
+  ): Promise<IncrementalChanges<T>> {
+    const params = new URLSearchParams({ resource });
+    if (opts?.updatedSince) params.set("updated_since", opts.updatedSince);
+    if (opts?.cursor) params.set("cursor", opts.cursor);
+    if (opts?.issueId) params.set("issue_id", opts.issueId);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    return this.fetch<IncrementalChanges<T>>(`/api/sync/changes?${params.toString()}`, { signal: opts?.signal });
   }
 
   /**
@@ -1160,7 +1200,7 @@ class ApiClient {
   async sendChatMessage(
     sessionId: string,
     content: string,
-    opts?: { attachmentIds?: string[] },
+    opts?: { attachmentIds?: string[]; mode?: ChatSendMode },
   ): Promise<SendChatMessageResponse> {
     // Strict parse — we need task_id + created_at to anchor the optimistic
     // StatusPill. Fallback would silently break the elapsed-time timer.
@@ -1169,10 +1209,16 @@ class ApiClient {
     // server-side `chat.go` back-fills `chat_message_id` on the listed
     // attachments after the message row is inserted (see
     // server/internal/handler/chat.go:410-456).
-    const body: { content: string; attachment_ids?: string[] } = { content };
+    const body: {
+      content: string;
+      attachment_ids?: string[];
+      mode?: ChatSendMode;
+    } = { content };
     if (opts?.attachmentIds && opts.attachmentIds.length > 0) {
       body.attachment_ids = opts.attachmentIds;
     }
+    // What the message does to a reply already running (DENE-1346).
+    if (opts?.mode) body.mode = opts.mode;
     const raw = await this.fetch<unknown>(
       `/api/chat/sessions/${sessionId}/messages`,
       {
@@ -1213,8 +1259,92 @@ class ApiClient {
     );
   }
 
-  async cancelTaskById(taskId: string): Promise<void> {
-    await this.fetch<void>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+  /** Dispose of an issue nobody drives (DENE-1342); same endpoint as web and CLI. */
+  async disposeIssue(
+    issueId: string,
+    body: { action: "rerun" | "reroute" | "split" | "cancel"; reason?: string; into?: string[] },
+  ): Promise<void> {
+    await this.fetch<unknown>(`/api/issues/${issueId}/dispose`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** State card (DENE-1328): the same card `multica issue context` prints. */
+  async getIssueContext(
+    issueId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<IssueStateCard> {
+    return this.fetchValidated<IssueStateCard>(
+      `/api/issues/${issueId}/context`,
+      IssueStateCardSchema,
+      {
+        issue_id: issueId,
+        identifier: "",
+        goal: { title: "" },
+        decisions: [],
+        now: { status: "", closed: false },
+        changes: { anchor: "none", threads: [] },
+        text: "",
+      },
+      { signal: opts?.signal, endpoint: "GET /api/issues/:id/context" },
+    );
+  }
+
+  async createIssueDecision(issueId: string, text: string): Promise<StateCardDecision> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/decisions`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    return StateCardDecisionSchema.parse(raw) as StateCardDecision;
+  }
+
+  async updateIssueDecision(
+    issueId: string,
+    decisionId: string,
+    text: string,
+  ): Promise<StateCardDecision> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/decisions/${decisionId}`,
+      { method: "PATCH", body: JSON.stringify({ text }) },
+    );
+    return StateCardDecisionSchema.parse(raw) as StateCardDecision;
+  }
+
+  async deleteIssueDecision(issueId: string, decisionId: string): Promise<void> {
+    await this.fetch<unknown>(`/api/issues/${issueId}/decisions/${decisionId}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** `queuedRemove` drops a queued chat follow-up only while it is still
+   *  queued, mirroring core's `queuedAction: "remove"`. */
+  async cancelTaskById(
+    taskId: string,
+    opts?: { queuedRemove?: { sessionId: string } },
+  ): Promise<void> {
+    const query = opts?.queuedRemove
+      ? `?expected_status=queued&chat_session_id=${encodeURIComponent(opts.queuedRemove.sessionId)}&queue_action=remove`
+      : "";
+    await this.fetch<void>(`/api/tasks/${taskId}/cancel${query}`, { method: "POST" });
+  }
+
+  /** Moves a queued follow-up to the front; `active_task_id` is the reply
+   *  the caller must stop for it to start ("interrupt and restart"). */
+  async prioritizeQueuedChatTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<PrioritizeQueuedChatTaskResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/queued-tasks/${taskId}/prioritize`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      PrioritizeQueuedChatTaskResponseSchema,
+      EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
+      { endpoint: "POST /api/chat/sessions/:id/queued-tasks/:taskId/prioritize" },
+    );
   }
 
   /** Live execution timeline for a task — used by the chat screen to

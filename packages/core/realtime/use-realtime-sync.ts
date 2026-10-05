@@ -1193,6 +1193,9 @@ export function useRealtimeSync(
         if (payload.progress_changed) {
           qc.invalidateQueries({ queryKey: issueKeys.progress(wsId, issue.id) });
         }
+        // The state card derives from status, the close record, handoff and
+        // decisions, all of which arrive as issue:updated (DENE-1328).
+        qc.invalidateQueries({ queryKey: issueKeys.context(wsId, issue.id) });
       }
     });
 
@@ -1318,6 +1321,7 @@ export function useRealtimeSync(
       // updated_at, so the other comment events below deliberately do not.
       const wsId = getCurrentWsId();
       if (wsId) {
+        qc.invalidateQueries({ queryKey: issueKeys.context(wsId, comment.issue_id) });
         // A reply closes the viewer's open call on the issue (DENE-880).
         qc.invalidateQueries({ queryKey: homeKeys.all(wsId) });
         invalidateUpdatedAtSortedIssueLists(qc, wsId);
@@ -1921,6 +1925,8 @@ export function useRealtimeSync(
         qc.invalidateQueries({ queryKey: chatKeys.session(id, payload.chat_session_id) });
       }
       qc.invalidateQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
+      // A steered message changing hands (DENE-1346) also moves the queue.
+      qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
     });
 
     const unsubChatSessionDeleted = ws.on("chat:session_deleted", (p) => {

@@ -204,11 +204,14 @@ export function ChatMessageList({
       data={messages}
       keyExtractor={(m) => m.id}
       renderItem={({ item }) => (
-        <MessageRow
-          message={item}
-          onQuickAction={onQuickAction}
-          quickActionsDisabled={quickActionsDisabled}
-        />
+        <>
+          <SessionBreak message={item} />
+          <MessageRow
+            message={item}
+            onQuickAction={onQuickAction}
+            quickActionsDisabled={quickActionsDisabled}
+          />
+        </>
       )}
       ItemSeparatorComponent={MessageSeparator}
       ListFooterComponent={
@@ -259,6 +262,37 @@ export function ChatMessageList({
     </ImageSequenceProvider>
   );
 }
+
+/**
+ * A rule above a reply whose run could not carry the CLI session forward —
+ * same rule and copy as web's `ChatSessionBreak` (DENE-1345). The first
+ * reply of a chat is new by definition and gets none.
+ */
+function SessionBreak({ message }: { message: ChatMessage }) {
+  const { t } = useT("chat");
+  if (message.role !== "assistant" || message.session_mode !== "new") return null;
+  const reasonKey = SESSION_BREAK_REASON_KEYS[message.session_break_reason ?? ""];
+  if (!reasonKey) return null;
+  const text = `${t("session_lineage.new")} · ${t(reasonKey)}`;
+  return (
+    <View
+      accessibilityRole="text"
+      accessibilityLabel={text}
+      className="mb-3 flex-row items-center gap-3"
+    >
+      <View className="h-px flex-1 bg-border" />
+      <Text className="shrink text-center text-xs text-muted-foreground">{text}</Text>
+      <View className="h-px flex-1 bg-border" />
+    </View>
+  );
+}
+
+const SESSION_BREAK_REASON_KEYS: Record<string, string> = {
+  agent_changed: "session_lineage.reason_agent_changed",
+  runtime_changed: "session_lineage.reason_runtime_changed",
+  session_lost: "session_lineage.reason_session_lost",
+  fresh_requested: "session_lineage.reason_fresh_requested",
+};
 
 function MessageSeparator() {
   return <View style={{ height: 12 }} />;

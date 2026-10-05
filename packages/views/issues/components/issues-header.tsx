@@ -1539,7 +1539,7 @@ export function IssuesHeader({
               onChange={onSearchChange}
               placeholder={t(($) => $.table.search_placeholder)}
               clearLabel={t(($) => $.table.search_clear)}
-              className="mr-1 w-32 sm:w-48 lg:w-56"
+              className="mr-1 w-full sm:w-48 lg:w-56"
             />
           )}
           {agentRunningFilter && (

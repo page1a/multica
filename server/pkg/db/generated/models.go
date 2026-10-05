@@ -287,6 +287,9 @@ type AgentTaskQueue struct {
 	ContextMessageLimit       int32       `json:"context_message_limit"`
 	ContextTokenBudget        int32       `json:"context_token_budget"`
 	ContinuityBreakReason     pgtype.Text `json:"continuity_break_reason"`
+	SessionMode               pgtype.Text `json:"session_mode"`
+	ResumedFromTaskID         pgtype.UUID `json:"resumed_from_task_id"`
+	SessionBreakReason        pgtype.Text `json:"session_break_reason"`
 }
 
 type AgentToLabel struct {
@@ -715,6 +718,21 @@ type ChatSessionRead struct {
 	LastReadAt    pgtype.Timestamptz `json:"last_read_at"`
 }
 
+type ChatTaskSupplement struct {
+	TaskID         pgtype.UUID        `json:"task_id"`
+	ChatMessageID  pgtype.UUID        `json:"chat_message_id"`
+	FollowupTaskID pgtype.UUID        `json:"followup_task_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID  pgtype.UUID        `json:"chat_session_id"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Status         string             `json:"status"`
+	FailureReason  pgtype.Text        `json:"failure_reason"`
+	AttemptCount   int32              `json:"attempt_count"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+}
+
 type ChatVisibilityNotice struct {
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -997,6 +1015,14 @@ type InboxItem struct {
 	ReadAt        pgtype.Timestamptz `json:"read_at"`
 }
 
+type IncrementalSyncTombstone struct {
+	Resource    string             `json:"resource"`
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	SubjectID   pgtype.UUID        `json:"subject_id"`
+	ChangedAt   pgtype.Timestamptz `json:"changed_at"`
+}
+
 type InstanceTelemetryState struct {
 	Singleton         bool               `json:"singleton"`
 	InstanceID        pgtype.UUID        `json:"instance_id"`
@@ -1063,6 +1089,18 @@ type IssueChildEvent struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
 	ProcessedAt  pgtype.Timestamptz `json:"processed_at"`
+}
+
+type IssueDecision struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	Text        string             `json:"text"`
+	Source      string             `json:"source"`
+	AuthorType  string             `json:"author_type"`
+	AuthorID    pgtype.UUID        `json:"author_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type IssueDeliveryBranch struct {
@@ -1912,6 +1950,7 @@ type TaskSupplementCapability struct {
 	IssueID     pgtype.UUID        `json:"issue_id"`
 	Capability  string             `json:"capability"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	SteerMode   string             `json:"steer_mode"`
 }
 
 type TaskToken struct {

@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/progress"
+	"github.com/multica-ai/multica/server/internal/statecard"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -56,6 +57,9 @@ type CloseIssueRequest struct {
 	// KnowledgeAudit is required. None declares 无够格知识; Changes names the
 	// project-memory locations this close wrote. The two cannot be combined.
 	KnowledgeAudit *closeprotocol.KnowledgeAudit `json:"knowledge_audit,omitempty"`
+	// Decisions are `issue close --decision`: settled points written to the
+	// state card's 已拍板 list in the same transaction (DENE-1328).
+	Decisions []string `json:"decisions,omitempty"`
 }
 
 // CloseIssueResponse reports what actually happened, not what was asked for:
@@ -139,6 +143,11 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	decisions, msg := h.prepareDecisions(ctx, issue, req.Decisions)
+	if msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 
 	// Reply placement mirrors CreateComment: a comment-triggered task on this
 	// issue must stay in its trigger thread. Rather than 409 on an omitted
@@ -174,7 +183,7 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if verdict == "pass" {
-		h.closeIssueByVerdict(w, r, issue, outcome, body, parentID, parentComment, actorType, actorID, req.KnowledgeAudit)
+		h.closeIssueByVerdict(w, r, issue, outcome, body, parentID, parentComment, actorType, actorID, req.KnowledgeAudit, decisions)
 		return
 	}
 
@@ -301,6 +310,9 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 			if err := setIssueMetaStringTx(ctx, qtx, updated, key, value); err != nil {
 				return err
 			}
+		}
+		if err := insertDecisions(ctx, qtx, updated, decisions, statecard.SourceClose, actorType, actorID); err != nil {
+			return err
 		}
 		if outcome != issuestatus.Blocked {
 			// A record left from an earlier blocked close must not survive a
@@ -450,7 +462,7 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 // as a comment and the DENE-850 release chain decides whether the ticket
 // ends as done (merged or nothing to merge) or blocked (merge failed). The
 // close.* record is written from the state the chain actually produced.
-func (h *Handler) closeIssueByVerdict(w http.ResponseWriter, r *http.Request, issue db.Issue, outcome, body string, parentID pgtype.UUID, parentComment *db.Comment, actorType, actorID string, audit *closeprotocol.KnowledgeAudit) {
+func (h *Handler) closeIssueByVerdict(w http.ResponseWriter, r *http.Request, issue db.Issue, outcome, body string, parentID pgtype.UUID, parentComment *db.Comment, actorType, actorID string, audit *closeprotocol.KnowledgeAudit, decisions []string) {
 	ctx := r.Context()
 	if outcome != issuestatus.Done {
 		writeError(w, http.StatusBadRequest, "--verdict pass 的收口结论只能是 --outcome done：验收通过就由平台合并并关票")
@@ -506,6 +518,9 @@ func (h *Handler) closeIssueByVerdict(w http.ResponseWriter, r *http.Request, is
 		return
 	}
 	comment := created.Comment()
+	if err := insertDecisions(ctx, h.Queries, issue, decisions, statecard.SourceClose, actorType, actorID); err != nil {
+		slog.Warn("close verdict: write decisions failed", "issue_id", uuidToString(issue.ID), "error", err)
+	}
 	resp := CloseIssueResponse{PrevStatus: issue.Status}
 	resp.Comment = commentToResponse(comment, nil, nil)
 	resp.Comment.IssueRevision = created.IssueRevision

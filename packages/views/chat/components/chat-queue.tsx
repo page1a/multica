@@ -120,6 +120,10 @@ export function ChatQueue({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {/* Steered into the running reply, waiting for its next step. */}
+                    {task.steering && (
+                      <span className="text-foreground">{t(($) => $.queue.steering)} · </span>
+                    )}
                     {task.content?.trim() || t(($) => $.queue.fallback)}
                   </span>
                   <div className="flex shrink-0 items-center gap-0.5">

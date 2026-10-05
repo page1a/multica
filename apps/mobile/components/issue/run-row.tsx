@@ -12,6 +12,7 @@
  */
 import { Alert, Pressable, View } from "react-native";
 import type { AgentTask } from "@multica/core/types";
+import { isSessionBreak, type RunSessionLineage } from "@multica/core/issues/session-lineage";
 import { Text } from "@/components/ui/text";
 import { ActorAvatar } from "@/components/ui/actor-avatar";
 import { useCancelTask } from "@/data/mutations/issues";
@@ -23,6 +24,7 @@ import { useT } from "@/lib/i18n";
 interface Props {
   task: AgentTask;
   issueId: string;
+  lineage?: RunSessionLineage;
 }
 
 const ACTIVE_STATUSES: readonly AgentTask["status"][] = [
@@ -31,7 +33,7 @@ const ACTIVE_STATUSES: readonly AgentTask["status"][] = [
   "running",
 ];
 
-export function RunRow({ task, issueId }: Props) {
+export function RunRow({ task, issueId, lineage }: Props) {
   const { getName } = useActorLookup();
   const { t } = useT("issues");
   const isActive = ACTIVE_STATUSES.includes(task.status);
@@ -59,11 +61,36 @@ export function RunRow({ task, issueId }: Props) {
             {timestamp ? timeAgo(timestamp) : ""}
           </Text>
         </View>
+        <SessionCaption lineage={lineage} />
       </View>
       {isActive ? <CancelButton taskId={task.id} issueId={issueId} /> : null}
     </View>
   );
 }
+
+/** 「第 2 轮 · 接着第 1 轮的会话」, as on web's runs dialog (DENE-1345). */
+function SessionCaption({ lineage }: { lineage?: RunSessionLineage }) {
+  const { t } = useT("issues");
+  if (!lineage?.mode) return null;
+  const reasonKey = isSessionBreak(lineage) ? SESSION_REASON_KEYS[lineage.breakReason ?? ""] : undefined;
+  const parts = [
+    lineage.round ? t("runs.session.round", { round: lineage.round }) : null,
+    lineage.mode === "resumed"
+      ? lineage.resumedFromRound
+        ? t("runs.session.resumed", { round: lineage.resumedFromRound })
+        : t("runs.session.resumed_earlier")
+      : t("runs.session.new"),
+    reasonKey ? t(reasonKey) : null,
+  ];
+  return <Text className="text-xs text-muted-foreground">{parts.filter(Boolean).join(" · ")}</Text>;
+}
+
+const SESSION_REASON_KEYS: Record<string, string> = {
+  agent_changed: "runs.session.reason_agent_changed",
+  runtime_changed: "runs.session.reason_runtime_changed",
+  session_lost: "runs.session.reason_session_lost",
+  fresh_requested: "runs.session.reason_fresh_requested",
+};
 
 function StatusBadge({ task }: { task: AgentTask }) {
   const { t } = useT("issues");

@@ -3,19 +3,20 @@
 -- are one state transition. A missing row is the fail-closed value for old
 -- daemons, old servers, unsupported providers and application rollback.
 WITH candidate AS MATERIALIZED (
-    SELECT t.id, t.issue_id, r.workspace_id, r.provider
+    SELECT t.id, t.issue_id, t.chat_session_id, r.workspace_id, r.provider
     FROM agent_task_queue t
     JOIN agent_runtime r ON r.id = t.runtime_id
     WHERE t.id = @task_id
       AND t.status IN ('dispatched', 'waiting_local_directory')
     FOR UPDATE OF t
 ), capability AS (
-    INSERT INTO task_supplement_capability (task_id, workspace_id, issue_id, capability)
-    SELECT id, workspace_id, issue_id, 'task-supplement-v1'
+    INSERT INTO task_supplement_capability (task_id, workspace_id, issue_id, capability, steer_mode)
+    SELECT id, workspace_id, issue_id, 'task-supplement-v1', @steer_mode::text
     FROM candidate
     WHERE @enable_task_supplement::boolean
-      AND provider IN ('codex', 'claude', 'grok')
-      AND issue_id IS NOT NULL
+      -- The providers allowed this mode live in Go (service.steerProviders).
+      AND provider = ANY(@supplement_providers::text[])
+      AND (issue_id IS NOT NULL OR chat_session_id IS NOT NULL)
     ON CONFLICT DO NOTHING
     RETURNING task_id
 )
@@ -45,7 +46,6 @@ WITH locked_task AS MATERIALIZED (
       AND r.workspace_id = @workspace_id
       AND t.status = 'running'
       AND cap.capability = 'task-supplement-v1'
-      AND r.provider IN ('codex', 'claude', 'grok')
     FOR UPDATE OF t
 ), touched_issue AS (
     UPDATE issue i SET
@@ -109,7 +109,6 @@ WITH locked_task AS MATERIALIZED (
       AND r.workspace_id = @workspace_id
       AND t.status = 'running'
       AND cap.capability = 'task-supplement-v1'
-      AND r.provider IN ('codex', 'claude')
     FOR UPDATE OF t
 ), inserted AS (
     INSERT INTO task_supplement (
@@ -149,14 +148,14 @@ WHERE s.workspace_id = @workspace_id
 ORDER BY s.created_at, s.task_id;
 
 -- name: ListTaskSupplementMetadata :many
-SELECT cap.task_id, cap.capability,
+SELECT cap.task_id, cap.capability, cap.steer_mode,
        COALESCE(array_agg(s.comment_id ORDER BY s.created_at, s.comment_id)
                 FILTER (WHERE s.comment_id IS NOT NULL), '{}'::uuid[])::uuid[] AS comment_ids
 FROM task_supplement_capability cap
 LEFT JOIN task_supplement s ON s.task_id = cap.task_id
 WHERE cap.workspace_id = @workspace_id
   AND cap.task_id = ANY(@task_ids::uuid[])
-GROUP BY cap.task_id, cap.capability;
+GROUP BY cap.task_id, cap.capability, cap.steer_mode;
 
 -- name: SettleTerminalTaskSupplements :execrows
 -- Application terminal transitions call this in the same transaction as the
@@ -268,3 +267,145 @@ FOR UPDATE;
 -- name: DeleteTaskSupplementByComment :exec
 DELETE FROM task_supplement
 WHERE comment_id = @comment_id AND workspace_id = @workspace_id;
+
+-- name: GetChatSteerTarget :one
+-- The reply a chat message can be steered into right now: the session's
+-- claimed head, with the capability its daemon negotiated (empty when the CLI
+-- cannot take a message mid-reply). No row: nothing is replying yet.
+SELECT t.id, t.status, t.runtime_id, r.provider,
+       COALESCE(cap.capability, '')::text AS capability,
+       COALESCE(cap.steer_mode, '')::text AS steer_mode
+FROM agent_task_queue t
+JOIN agent_runtime r ON r.id = t.runtime_id
+LEFT JOIN task_supplement_capability cap ON cap.task_id = t.id
+WHERE t.chat_session_id = @chat_session_id
+  AND t.status = 'running'
+  AND t.regenerate_quick_actions_for IS NULL
+ORDER BY t.started_at DESC NULLS LAST, t.id DESC
+LIMIT 1;
+
+-- name: CreateChatTaskSupplement :one
+-- Asks the running reply to read a message that was just queued behind it.
+-- Locking the running task serializes against its terminal transition: a
+-- reply that ended first gets no receipt and the queued follow-up runs.
+WITH locked_task AS MATERIALIZED (
+    SELECT t.id, t.runtime_id
+    FROM agent_task_queue t
+    JOIN agent_runtime r ON r.id = t.runtime_id
+    JOIN task_supplement_capability cap ON cap.task_id = t.id
+    WHERE t.id = @task_id
+      AND t.chat_session_id = @chat_session_id
+      AND t.status = 'running'
+      AND cap.capability = 'task-supplement-v1'
+    FOR UPDATE OF t
+), inserted AS (
+    INSERT INTO chat_task_supplement (
+        task_id, chat_message_id, followup_task_id, workspace_id,
+        chat_session_id, author_id, status
+    )
+    SELECT t.id, @chat_message_id, @followup_task_id, @workspace_id,
+           @chat_session_id, sqlc.narg('author_id'), 'pending'
+    FROM locked_task t
+    RETURNING *
+)
+SELECT inserted.*, locked_task.runtime_id
+FROM inserted
+JOIN locked_task ON locked_task.id = inserted.task_id;
+
+-- name: ClaimNextChatTaskSupplement :one
+-- Only a message whose follow-up is still waiting in the queue is delivered:
+-- once that follow-up was removed, edited or started, the receipt is moot.
+WITH next AS MATERIALIZED (
+    SELECT s.chat_message_id, s.task_id
+    FROM chat_task_supplement s
+    JOIN agent_task_queue t ON t.id = s.task_id
+    JOIN agent_task_queue f ON f.id = s.followup_task_id
+    WHERE s.task_id = @task_id
+      AND s.status = 'pending'
+      AND t.status = 'running'
+      AND f.status = 'queued'
+    ORDER BY s.created_at, s.chat_message_id
+    FOR UPDATE OF s SKIP LOCKED
+    LIMIT 1
+), claimed AS (
+    UPDATE chat_task_supplement s
+    SET status = 'delivering',
+        attempt_count = attempt_count + 1,
+        failure_reason = NULL,
+        updated_at = now()
+    FROM next
+    WHERE s.chat_message_id = next.chat_message_id
+      AND s.task_id = next.task_id
+    RETURNING s.*
+)
+SELECT claimed.chat_message_id, claimed.attempt_count, m.content,
+       COALESCE(NULLIF(btrim(u.name), ''), 'a user')::text AS author_name
+FROM claimed
+JOIN chat_message m ON m.id = claimed.chat_message_id
+LEFT JOIN "user" u ON u.id = claimed.author_id;
+
+-- name: AckChatTaskSupplementDelivered :one
+WITH task AS MATERIALIZED (
+    SELECT id FROM agent_task_queue WHERE id = @task_id FOR UPDATE
+)
+UPDATE chat_task_supplement s
+SET status = 'delivered',
+    delivered_at = COALESCE(delivered_at, now()),
+    failure_reason = NULL,
+    updated_at = now()
+FROM task t
+WHERE s.task_id = t.id
+  AND s.chat_message_id = @chat_message_id
+  AND (s.status IN ('delivering', 'delivered')
+       OR (s.status = 'failed' AND s.failure_reason = 'turn_ended' AND s.attempt_count > 0))
+RETURNING s.*;
+
+-- name: AckChatTaskSupplementFailed :one
+UPDATE chat_task_supplement
+SET status = 'failed',
+    failure_reason = @failure_reason,
+    updated_at = now()
+WHERE task_id = @task_id
+  AND chat_message_id = @chat_message_id
+  AND status = 'delivering'
+RETURNING *;
+
+-- name: SettleTerminalChatTaskSupplements :execrows
+UPDATE chat_task_supplement AS supplement
+SET status = 'failed',
+    failure_reason = 'turn_ended',
+    updated_at = now()
+FROM agent_task_queue AS task
+WHERE supplement.task_id = task.id
+  AND task.id = ANY(@task_ids::uuid[])
+  AND task.status IN ('completed', 'failed', 'cancelled')
+  AND supplement.status IN ('pending', 'delivering');
+
+-- name: ListSteeringChatFollowups :many
+-- Queued follow-ups of a session that are waiting to be read by the running
+-- reply, so the queue bar can say so instead of "queued".
+SELECT DISTINCT s.followup_task_id
+FROM chat_task_supplement s
+WHERE s.chat_session_id = @chat_session_id
+  AND s.status IN ('pending', 'delivering');
+
+-- name: RebindSteeredChatInput :execrows
+-- A delivered message belongs to the reply that read it: move it from the
+-- absorbed follow-up's input batch to the running turn's.
+UPDATE chat_message
+SET task_id = @running_input_task_id
+WHERE task_id = @followup_task_id
+  AND role = 'user';
+
+-- name: ListIssueSteerTargets :many
+-- The running turns on an issue and whether each can read a comment
+-- mid-reply, so a steer can be refused up front with the reason.
+SELECT t.id, t.agent_id, r.provider,
+       COALESCE(cap.capability, '')::text AS capability,
+       COALESCE(cap.steer_mode, '')::text AS steer_mode
+FROM agent_task_queue t
+JOIN agent_runtime r ON r.id = t.runtime_id
+LEFT JOIN task_supplement_capability cap ON cap.task_id = t.id
+WHERE t.issue_id = @issue_id
+  AND t.status = 'running'
+ORDER BY t.started_at DESC NULLS LAST, t.id DESC;

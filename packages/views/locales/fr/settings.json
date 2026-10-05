@@ -190,8 +190,8 @@
     },
     "running_agent_reply": {
       "title": "En répondant à un agent en cours d'exécution",
-      "steer": "Ajouter à l'exécution en cours",
-      "after_run": "Démarrer après cette exécution",
+      "steer": "Intervenir",
+      "after_run": "File d'attente",
       "hint": "Définit seulement le choix par défaut. Vous pouvez le modifier pour chaque message avant l'envoi."
     },
     "comments_title": "Commentaires et discussion",

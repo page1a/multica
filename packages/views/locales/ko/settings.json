@@ -189,8 +189,8 @@
     },
     "running_agent_reply": {
       "title": "실행 중인 에이전트에 답장할 때",
-      "steer": "현재 실행에 추가",
-      "after_run": "이번 실행 후 시작",
+      "steer": "끼어들기",
+      "after_run": "대기열",
       "hint": "기본값만 정합니다. 보내기 전에 메시지마다 바꿀 수 있습니다."
     },
     "comments_title": "댓글 및 채팅",

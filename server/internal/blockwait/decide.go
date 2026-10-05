@@ -23,6 +23,12 @@ type BlockerView struct {
 	Ref      string
 	Status   string
 	Accepted bool
+	// Undriven is set when the blocker is open and nobody drives it
+	// (DENE-1342): no run, no recorded wait, no person. UndrivenWhy is the
+	// DriverOf sentence and State what the patrol already tried on it.
+	Undriven    bool
+	UndrivenWhy string
+	State       UndrivenState
 }
 
 // Cleared reports whether the blocker no longer holds the waiter.
@@ -62,6 +68,11 @@ type PatrolInput struct {
 	// `issue close --outcome in_progress`; a leftover failure wake on an
 	// ordinary in_progress row stays invisible.
 	Watched bool
+	// Undriven describes the patrolled issue itself (DENE-1342): a todo
+	// ticket with an executor and nothing moving it.
+	Undriven      bool
+	UndrivenWhy   string
+	UndrivenState UndrivenState
 }
 
 // Decision is what the patrol or the acceptance hook should do, plus the
@@ -88,6 +99,9 @@ type Decision struct {
 	// Kind is the hold kind of a ReleaseHold (DENE-1219): what the closing
 	// agent has to clear. A hold writes nothing; the close is refused with it.
 	Kind string
+	// Target is the blocker a revive or an escalation acts on; empty means
+	// the patrolled issue itself (DENE-1342).
+	Target string
 }
 
 // DecidePatrol picks a single next step for one stalled issue.
@@ -133,6 +147,17 @@ func DecidePatrol(in PatrolInput) Decision {
 				MarkSegment: true,
 			})
 		}
+		// The blocker is still open and nobody drives it: waiting on it is
+		// waiting forever. Rerun it on its own seat, then escalate
+		// (DENE-1342). A blocker somebody drives keeps the hold below.
+		for _, blocker := range in.Blockers {
+			if blocker.Cleared() || !blocker.Undriven {
+				continue
+			}
+			if d := DecideUndriven(blocker.Ref, blocker.Ref, blocker.UndrivenWhy, blocker.State, in.Now); d.Action != ActionHold {
+				return d
+			}
+		}
 		if in.Quiet >= QuietAfter && !in.Record.Structured() && !in.SegmentNudged {
 			return blockedWake(in, Decision{
 				Action:      ActionWake,
@@ -165,6 +190,12 @@ func DecidePatrol(in PatrolInput) Decision {
 			}
 			return d
 		}
+	}
+
+	// A todo ticket with an executor, no run and no wait (DENE-1342): the
+	// patrol is its driver of last resort.
+	if in.Status == "todo" && in.Undriven && in.Quiet >= QuietAfter {
+		return DecideUndriven("这张票", "", in.UndrivenWhy, in.UndrivenState, in.Now)
 	}
 
 	// Deliberate in_progress pause (DENE-1002): `issue close --outcome
@@ -682,7 +713,8 @@ func (d Decision) FollowUp(now time.Time, blockedBy, waitingOn, woken string) (s
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if d.Action == ActionWake || d.Action == ActionRelease || d.Action == ActionSeat {
+	if d.Action == ActionWake || d.Action == ActionRelease || d.Action == ActionSeat ||
+		d.Action == ActionRevive || d.Action == ActionEscalate {
 		set[KeyPatrolAt] = now.UTC().Format(time.RFC3339)
 	}
 	if d.ConsumeWakeAt {

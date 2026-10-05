@@ -29,10 +29,19 @@ func TestSameSeatRetryWorkDirGate(t *testing.T) {
 		t.Fatalf("in-use directory was reused: %q", got)
 	}
 
-	// A different seat does not continue the interrupted session, so it does
-	// not inherit the previous working copy either.
+	// An ordinary next turn of the same conversation keeps the copy too
+	// (DENE-1356): the folder follows the session, not the retry flag.
+	followUp := task
+	followUp.ContinueInterruptedSession = false
+	if got := sameSeatRetryWorkDir(followUp, true, false); got != task.PriorWorkDir {
+		t.Fatalf("ordinary follow-up workdir = %q, want %q", got, task.PriorWorkDir)
+	}
+	// A different seat gets no prior pointers from the server — they are
+	// scoped to (agent, issue) or the chat — so it has nothing to inherit.
 	otherSeat := task
 	otherSeat.ContinueInterruptedSession = false
+	otherSeat.PriorWorkDir = ""
+	otherSeat.PriorSessionID = ""
 	if got := sameSeatRetryWorkDir(otherSeat, true, false); got != "" {
 		t.Fatalf("seat change reused %q", got)
 	}
@@ -107,7 +116,7 @@ func TestSameSeatRetryReusedWorktreeKeepsContinueSession(t *testing.T) {
 		IssueID:                    "issue-1",
 	}
 	taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
-	if !gateResumeToReachableSession(&task, &taskCtx, "claude", second.WorkDir, true, false, logger) {
+	if !gateResumeToReachableSession(&task, &taskCtx, "claude", second.WorkDir, true, false, false, logger) {
 		t.Fatal("reused worktree dropped the interrupted session")
 	}
 	if !shouldContinueInterruptedSession(task) {
@@ -128,7 +137,7 @@ func TestSameSeatRetryReusedWorktreeKeepsContinueSession(t *testing.T) {
 		IssueID:                    "issue-1",
 	}
 	droppedCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
-	if gateResumeToReachableSession(&dropped, &droppedCtx, "claude", fresh, true, false, logger) {
+	if gateResumeToReachableSession(&dropped, &droppedCtx, "claude", fresh, true, false, false, logger) {
 		t.Fatal("a different workdir kept the session")
 	}
 	if shouldContinueInterruptedSession(dropped) {
@@ -136,6 +145,153 @@ func TestSameSeatRetryReusedWorktreeKeepsContinueSession(t *testing.T) {
 	}
 	if strings.Contains(BuildPrompt(dropped, "claude"), "Continue from where you left off") {
 		t.Fatal("mismatched workdir still produced the continue prompt")
+	}
+}
+
+// Three ordinary turns of one conversation (DENE-1356): each turn finalizes
+// its copy, the next rebuilds it at the same path, and the resume gate keeps
+// the session for a cwd-keyed CLI without any cross-directory allowance.
+func TestFollowUpTurnsKeepOneWorktreeDir(t *testing.T) {
+	t.Parallel()
+	repo := retryReuseTestRepo(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	params := func(taskID, resume string) execenv.LocalWorktreeParams {
+		envRoot := filepath.Join(t.TempDir(), "dene-1356-"+taskID[:12])
+		if err := os.MkdirAll(envRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return execenv.LocalWorktreeParams{
+			LocalPath:       repo,
+			EnvRoot:         envRoot,
+			AgentName:       "J",
+			TaskID:          taskID,
+			ConversationKey: "dene-1356",
+			WorkspaceID:     "ws-1",
+			AgentID:         "agent-1",
+			ConversationID:  "issue-1",
+			ResumeWorkDir:   resume,
+		}
+	}
+
+	first, err := execenv.PrepareLocalWorktree(params("aaaaaaaaaaaa-1111-2222-3333-444455556666", ""), logger)
+	if err != nil {
+		t.Fatalf("turn 1 prepare: %v", err)
+	}
+	prior := first.WorkDir
+	if err := os.WriteFile(filepath.Join(prior, "turn1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Finalize(logger); err != nil {
+		t.Fatalf("turn 1 finalize: %v", err)
+	}
+
+	for i, taskID := range []string{"bbbbbbbbbbbb-1111-2222-3333-444455556666", "cccccccccccc-1111-2222-3333-444455556666"} {
+		task := Task{
+			PriorSessionID: "session-1",
+			PriorWorkDir:   prior,
+			IssueID:        "issue-1",
+		}
+		resume := sameSeatRetryWorkDir(task, true, false)
+		if resume != prior {
+			t.Fatalf("turn %d offered %q, want %q", i+2, resume, prior)
+		}
+		wt, err := execenv.PrepareLocalWorktree(params(taskID, resume), logger)
+		if err != nil {
+			t.Fatalf("turn %d prepare: %v", i+2, err)
+		}
+		if !execenv.SameCanonicalPath(wt.WorkDir, prior) {
+			t.Fatalf("turn %d workdir = %q, want %q", i+2, wt.WorkDir, prior)
+		}
+		if !wt.Continued {
+			t.Fatalf("turn %d did not continue the conversation branch", i+2)
+		}
+		taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
+		if !gateResumeToReachableSession(&task, &taskCtx, "kimi", wt.WorkDir, true, false, false, logger) {
+			t.Fatalf("turn %d dropped the session in the same directory", i+2)
+		}
+		if _, err := os.Stat(filepath.Join(wt.WorkDir, "turn1.txt")); err != nil {
+			t.Fatalf("turn %d lost the first turn's work: %v", i+2, err)
+		}
+		if err := os.WriteFile(filepath.Join(wt.WorkDir, taskID[:12]+".txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Finalize(logger); err != nil {
+			t.Fatalf("turn %d finalize: %v", i+2, err)
+		}
+	}
+}
+
+// Two agents on one issue each get only their own pointers from the server,
+// so the second agent's turn never lands in the first agent's copy, even
+// while that copy is busy.
+func TestBusyPriorWorktreeIsNotReused(t *testing.T) {
+	t.Parallel()
+	task := Task{PriorSessionID: "session-1", PriorWorkDir: "/tmp/dene-1356-a"}
+	if got := sameSeatRetryWorkDir(task, true, true); got != "" {
+		t.Fatalf("busy copy was reused: %q", got)
+	}
+}
+
+// Claude and Codex resume a stored session from another directory; every
+// other runtime keeps the same-directory rule (DENE-1356).
+func TestResumeGateAcrossDirectories(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	prior, moved := t.TempDir(), t.TempDir()
+
+	configDir := t.TempDir()
+	projectDir := filepath.Join(configDir, "projects", "-old-cwd")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "stored-session.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withSession := func(id string) Task {
+		return Task{
+			PriorSessionID: id,
+			PriorWorkDir:   prior,
+			Agent:          &AgentData{CustomEnv: map[string]string{"CLAUDE_CONFIG_DIR": configDir}},
+		}
+	}
+
+	stored := withSession("stored-session")
+	if !priorSessionStoredAnywhere("claude", true, stored, moved) {
+		t.Fatal("stored Claude transcript was not found")
+	}
+	if priorSessionStoredAnywhere("claude", false, stored, moved) {
+		t.Fatal("a custom Claude-protocol command was trusted across directories")
+	}
+	if priorSessionStoredAnywhere("claude", true, withSession("missing-session"), moved) {
+		t.Fatal("a missing Claude transcript was reported stored")
+	}
+	if !priorSessionStoredAnywhere("codex", true, stored, moved) {
+		t.Fatal("codex should defer to its rollout gate")
+	}
+	for _, provider := range []string{"kimi", "cursor", "grok", "gemini"} {
+		if priorSessionStoredAnywhere(provider, true, stored, moved) {
+			t.Fatalf("%s was trusted across directories", provider)
+		}
+	}
+
+	task := withSession("stored-session")
+	taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
+	if !gateResumeToReachableSession(&task, &taskCtx, "claude", moved, true,
+		false, priorSessionStoredAnywhere("claude", true, task, moved), logger) {
+		t.Fatal("Claude dropped a stored session after the directory moved")
+	}
+	if task.PriorSessionID != "stored-session" || task.PriorSessionResumeUnavailable {
+		t.Fatalf("gate mutated a kept session: %+v", task)
+	}
+
+	kimi := withSession("stored-session")
+	kimiCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
+	if gateResumeToReachableSession(&kimi, &kimiCtx, "kimi", moved, true,
+		false, priorSessionStoredAnywhere("kimi", true, kimi, moved), logger) {
+		t.Fatal("kimi kept a session in a different directory")
+	}
+	if kimi.PriorSessionID != "" || !kimi.PriorSessionResumeUnavailable {
+		t.Fatalf("dropped session was not disclosed: %+v", kimi)
 	}
 }
 

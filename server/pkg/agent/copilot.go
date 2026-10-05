@@ -169,6 +169,8 @@ func handleCopilotEvent(evt copilotEvent, st *copilotEventState) []Message {
 			// drift to a stale turn. result still wins when it does arrive.
 			if ss.SessionID != "" {
 				st.sessionID = ss.SessionID
+				// Early pin: a restart-tier message needs the id mid-run.
+				msgs = append(msgs, Message{Type: MessageStatus, Status: "running", SessionID: ss.SessionID})
 			}
 		}
 

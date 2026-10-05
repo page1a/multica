@@ -19,6 +19,7 @@ import {
 } from "../../editor/use-coordinated-uploads";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { ChatAddMenu } from "./chat-add-menu";
+import { ChatSendModeButton, effectiveChatSendMode } from "./chat-send-mode";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { useChatStore, DRAFT_NEW_SESSION } from "@multica/core/chat";
 import { replaceProjectId } from "@multica/core/chat/project-context";
@@ -26,7 +27,7 @@ import { attachmentToDraftUpload, type DraftUpload } from "@multica/core/drafts"
 import { createLogger } from "@multica/core/logger";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
-import type { Attachment, Project } from "@multica/core/types";
+import type { Attachment, ChatSendMode, Project } from "@multica/core/types";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ClearablePillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
@@ -62,6 +63,8 @@ interface ChatInputProps {
     attachmentIds: string[] | undefined,
     commitInput: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
     draftAttachments: Attachment[],
+    /** Set only while a reply is running and the server takes follow-ups. */
+    mode?: ChatSendMode,
   ) => void | boolean | Promise<void | boolean>;
   restoreDraftRequest?: {
     id: string;
@@ -101,6 +104,12 @@ interface ChatInputProps {
   isRunning?: boolean;
   /** Enabled only after the server explicitly advertises follow-up queues. */
   allowSubmitWhileRunning?: boolean;
+  /** The running reply can read a message mid-reply, so Enter steers. */
+  steerSupported?: boolean;
+  /** CLI of the running reply, named when steer is unavailable. */
+  steerProvider?: string;
+  /** How a steer reaches the reply; "restart" restarts the CLI. */
+  steerMode?: string;
   disabled?: boolean;
   /** True when the user has no agent available — disables the editor and
    *  surfaces a distinct placeholder. Kept separate from `disabled` so
@@ -166,6 +175,9 @@ export function ChatInput({
   onStop,
   isRunning,
   allowSubmitWhileRunning,
+  steerSupported,
+  steerProvider,
+  steerMode,
   disabled,
   noAgent,
   agentArchived,
@@ -481,6 +493,20 @@ export function ChatInput({
   // stale `true` behind for the next one.
   const editorScrubbedRef = useRef(false);
 
+  // What a message does to the reply in progress (DENE-1346). The choice
+  // lasts for this reply only; Enter uses it, the split button can override
+  // it for one send.
+  const sendModeActive = !!isRunning && !!allowSubmitWhileRunning;
+  const [chosenMode, setChosenMode] = useState<ChatSendMode | null>(null);
+  const sendMode = effectiveChatSendMode(chosenMode, steerSupported);
+  const sendModeRef = useRef(sendMode);
+  useLayoutEffect(() => {
+    sendModeRef.current = sendMode;
+  }, [sendMode]);
+  useEffect(() => {
+    if (!isRunning) setChosenMode(null);
+  }, [isRunning]);
+
   const { submitting, submit } = useComposerSubmit({
     editorRef,
     uploadGate: gate,
@@ -580,6 +606,7 @@ export function ChatInput({
         uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
         commitInput,
         draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
+        sendModeActive ? sendModeRef.current : undefined,
       );
       // Owner rejected the send (or threw, which useComposerSubmit also treats
       // as a rejection): the draft was never committed, so it stays put for
@@ -778,37 +805,62 @@ export function ChatInput({
           </div>
         )}
         <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
-          <SubmitButton
-            onClick={submit}
-            disabled={hasNothingToSend || submitting || !!disabled || !!noAgent}
-            loading={submitting}
-            busy={gate.uploading}
-            // Queue-capable runs reuse this one action slot: an empty composer
-            // offers Stop, while live content swaps it to Queue Send. Older
-            // servers cannot accept follow-ups, so they remain stop-only. An
-            // upload blocks submit, so it also falls back to Stop rather than
-            // removing chat's only cancellation path; the attachment node
-            // remains the visible upload-progress surface in the editor.
-            running={
-              !!isRunning &&
-              (!allowSubmitWhileRunning || hasNothingToSend || gate.uploading)
-            }
-            onStop={onStop}
-            tooltip={gate.uploading
-              ? tEditor(($) => $.upload.in_progress)
-              : isRunning
-                ? t(($) => $.input.queue_send_tooltip)
+          {sendModeActive ? (
+            <>
+              {/* Stop stays its own button while a reply runs, so typing never
+                  hides it (DENE-1346). */}
+              <span className="mr-1 text-caption text-muted-foreground max-sm:hidden">
+                {t(($) => $.input.enter_hint, {
+                  mode: sendMode === "steer"
+                    ? t(($) => $.input.mode_steer)
+                    : sendMode === "queue"
+                      ? t(($) => $.input.mode_queue)
+                      : t(($) => $.input.mode_restart),
+                })}
+              </span>
+              <SubmitButton
+                onClick={submit}
+                running
+                onStop={onStop}
+                stopTooltip={t(($) => $.input.stop_tooltip)}
+                stopAriaLabel={t(($) => $.input.stop_tooltip)}
+              />
+              <ChatSendModeButton
+                mode={sendMode}
+                steerSupported={steerSupported}
+                steerProvider={steerProvider}
+                steerMode={steerMode}
+                canSend={!hasNothingToSend && !submitting && !gate.uploading && !disabled && !noAgent}
+                loading={submitting || gate.uploading}
+                onModeChange={setChosenMode}
+                onSend={(mode) => {
+                  sendModeRef.current = mode;
+                  void submit();
+                }}
+              />
+            </>
+          ) : (
+            <SubmitButton
+              onClick={submit}
+              disabled={hasNothingToSend || submitting || !!disabled || !!noAgent}
+              loading={submitting}
+              busy={gate.uploading}
+              // Servers that cannot accept follow-ups keep this one slot
+              // stop-only while a reply runs.
+              running={!!isRunning}
+              onStop={onStop}
+              tooltip={gate.uploading
+                ? tEditor(($) => $.upload.in_progress)
                 : sendShortcut
                   ? `${t(($) => $.input.send_tooltip)} · ${formatShortcut(sendShortcut)}`
                   : t(($) => $.input.send_tooltip)}
-            ariaLabel={gate.uploading
-              ? tEditor(($) => $.upload.in_progress)
-              : isRunning
-                ? t(($) => $.input.queue_send_tooltip)
-              : t(($) => $.input.send_tooltip)}
-            stopTooltip={t(($) => $.input.stop_tooltip)}
-            stopAriaLabel={t(($) => $.input.stop_tooltip)}
-          />
+              ariaLabel={gate.uploading
+                ? tEditor(($) => $.upload.in_progress)
+                : t(($) => $.input.send_tooltip)}
+              stopTooltip={t(($) => $.input.stop_tooltip)}
+              stopAriaLabel={t(($) => $.input.stop_tooltip)}
+            />
+          )}
         </div>
         {uploadEnabled && isDragOver && <FileDropOverlay />}
       </div>

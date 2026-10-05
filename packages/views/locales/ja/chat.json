@@ -75,7 +75,6 @@
     "placeholder_named": "{{name}} にメッセージ…",
     "placeholder_default": "メッセージを入力…",
     "send_tooltip": "送信",
-    "queue_send_tooltip": "キューに追加",
     "stop_tooltip": "停止",
     "send_failed_toast": "メッセージを送信できませんでした",
     "send_blocked_toast": "メッセージは送信されませんでした — このエージェントを使用する権限がありません",
@@ -91,20 +90,37 @@
     "no_projects": "プロジェクトがまだありません",
     "switch_project": "他のプロジェクトに切り替え…",
     "project_context_unsupported": "プロジェクトの説明は適用されません——このエージェントのデーモンのアップグレードが必要です",
-    "to_goal": "转成目标任务"
+    "to_goal": "转成目标任务",
+    "mode_menu": "送信方法",
+    "mode_steer": "割り込み",
+    "mode_steer_desc": "このステップの後に読みます",
+    "mode_steer_restart_desc": "すぐに読む · 今のステップは中断",
+    "mode_steer_process": "同じプロセス · 同じセッション",
+    "mode_steer_restart_process": "CLI を再起動 · 同じセッション",
+    "mode_queue": "キュー",
+    "mode_queue_desc": "この返信の後に送ります",
+    "mode_queue_process": "新しいプロセス · 同じセッションを再開",
+    "mode_restart": "中断してやり直す",
+    "mode_restart_desc": "この返信を止めて、このメッセージからやり直します",
+    "mode_restart_process": "新しいプロセス · 同じセッションを再開",
+    "mode_steer_unsupported": "{{cli}} はまだ返信の途中でメッセージを読めません",
+    "mode_steer_unsupported_generic": "このエージェントはまだ返信の途中でメッセージを読めません",
+    "enter_hint": "Enter = {{mode}}",
+    "steer_fell_back_toast": "この返信は途中でメッセージを読めないため、キューに入れました"
   },
   "queue": {
     "title_other": "キュー内のメッセージ {{count}} 件",
     "clear": "すべて削除",
-    "steer": "指示",
-    "steer_unavailable": "現在の返信が開始されると指示できます",
+    "steer": "中断してやり直す",
+    "steer_unavailable": "現在の返信が始まった後に使えます",
     "steer_no_permission": "このエージェントを実行する権限がありません",
-    "steer_unavailable_toast": "現在は指示できません。キューを更新しています。",
+    "steer_unavailable_toast": "今はやり直せません。キューを更新しています。",
     "edit": "キュー内のメッセージを編集",
     "remove": "キューから削除",
     "more": "その他のキュー操作",
     "fallback": "キュー内のメッセージ",
-    "action_failed_toast": "キュー内のメッセージを更新できませんでした"
+    "action_failed_toast": "キュー内のメッセージを更新できませんでした",
+    "steering": "割り込み中"
   },
   "message_list": {
     "show_details": "詳細を表示",
@@ -331,7 +347,11 @@
     "copy_conversation": "会話全体を Markdown でコピー",
     "conversation_copied": "会話をコピーしました",
     "copy_role_user": "あなた",
-    "copy_role_assistant": "アシスタント"
+    "copy_role_assistant": "アシスタント",
+    "handoff": "引き継ぐ…",
+    "handoff_hint": "この会話の要約から始まる新しいチャットを開きます",
+    "handoff_done": "{{name}} に引き継ぎました",
+    "handoff_failed": "引き継げませんでした"
   },
   "sharing": {
     "title": "権限を編集",
@@ -376,5 +396,12 @@
     "from_prefix": "",
     "from_suffix": "から作成",
     "from_hidden": "別のチャットから作成"
+  },
+  "session_lineage": {
+    "new": "新しいセッション",
+    "reason_agent_changed": "エージェントが変わりました",
+    "reason_runtime_changed": "前回のセッションは別のマシンにあります",
+    "reason_session_lost": "前のセッションを復元できませんでした",
+    "reason_fresh_requested": "新規セッションを指定"
   }
 }

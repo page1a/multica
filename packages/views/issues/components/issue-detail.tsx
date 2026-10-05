@@ -106,6 +106,7 @@ import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
 import { SubIssueCloseStrip } from "./sub-issue-close-strip";
 import { IssueCloseRecordSection } from "./issue-close-record";
+import { IssueStateCardSection } from "./issue-state-card";
 import { IssueStallActionBanner } from "./issue-stall-action-banner";
 import { SubIssueBlockerBadge, SubIssueBlockerSummary, blockerBadgeState, useSubIssueBlockerData } from "./sub-issue-blocker-summary";
 import { ProjectPicker } from "../../projects/components/project-picker";
@@ -189,6 +190,7 @@ import { PAGE_GUTTER, PageHeader } from "../../layout/page-header";
 import { ShareScopeDialog, ShareScopeTrigger } from "../../common/share-scope-dialog";
 import { WorkThreadPanel } from "../../common/work-thread-panel";
 import { GoalSection } from "./goal-section";
+import { IssueUndrivenRow, UndrivenRowMark } from "./issue-driver";
 import { openGoalCompletion } from "@multica/core/modals";
 
 import { ProgressRing } from "./progress-ring";
@@ -955,6 +957,7 @@ function SubIssueRow({
             {child.identifier}
           </span>
           <IssueAgentActivityIndicator issueId={child.id} />
+          <UndrivenRowMark driver={child.driver} />
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span
               className={cn(
@@ -3072,6 +3075,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       />
       <PluginPanelSection issueId={issue.id} />
 
+      {/* State card (DENE-1328) — settled decisions, the last baton and the
+          threads new since the viewer was here; the same card agents read
+          with `multica issue context`. */}
+      <IssueStateCardSection
+        wsId={wsId}
+        issueId={issue.id}
+        onJumpToThread={(threadId) => {
+          // On narrow screens the sidebar is a sheet over the timeline.
+          if (isCompact) setMobileSidebarOpen(false);
+          jumpToThread(threadId);
+        }}
+      />
+
       {/* Close record (DENE-1002) — which conclusion closed this ticket, the
           status it wrote, who continues and why. Renders nothing until the
           `close.*` record is complete. */}
@@ -3688,6 +3704,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             )
           )}
           <IssueProgressBar issue={issue} className="mt-2" />
+          <IssueUndrivenRow issue={issue} readOnly={isGuest} />
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {!isGuest && !issueGoal && (
               <Button

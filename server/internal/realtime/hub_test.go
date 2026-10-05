@@ -615,3 +615,29 @@ func TestReadPump_AcceptsFrameUnderReadLimit(t *testing.T) {
 		t.Fatalf("got %s, want a pong frame", raw)
 	}
 }
+
+func TestHubReplayPreservesOrderAndRejectsExpiredPosition(t *testing.T) {
+	hub := NewHub()
+	client := &Client{hub: hub, workspaceID: "ws-1", send: make(chan []byte, 8)}
+	hub.mu.Lock()
+	hub.clients[client] = true
+	hub.mu.Unlock()
+	hub.BroadcastToScopeDedup(ScopeWorkspace, "ws-1", []byte(`{"type":"issue:updated","event_id":"e1"}`), "e1")
+	hub.BroadcastToScopeDedup(ScopeWorkspace, "ws-1", []byte(`{"type":"issue:updated","event_id":"e2"}`), "e2")
+	if !client.markSeen("e1") {
+		t.Fatal("first event unexpectedly deduped")
+	}
+	count, ok := hub.replay(client, "e1")
+	if !ok || count != 1 {
+		t.Fatalf("replay = (%d, %v), want (1, true)", count, ok)
+	}
+	var got struct {
+		EventID string `json:"event_id"`
+	}
+	if err := json.Unmarshal(<-client.send, &got); err != nil || got.EventID != "e2" {
+		t.Fatalf("replayed event = %q, want e2 (err=%v)", got.EventID, err)
+	}
+	if _, ok := hub.replay(client, "missing"); ok {
+		t.Fatal("missing position should require fallback")
+	}
+}

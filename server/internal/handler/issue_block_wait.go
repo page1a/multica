@@ -568,6 +568,7 @@ func (h *Handler) SweepBlockWaits(ctx context.Context) (int, error) {
 	}
 	rows, err := h.Queries.ListBlockPatrolCandidates(ctx, db.ListBlockPatrolCandidatesParams{
 		QuietBefore: pgtype.Timestamptz{Time: time.Now().Add(-blockwait.QuietAfter), Valid: true},
+		TodoSince:   pgtype.Timestamptz{Time: time.Now().Add(-undrivenTodoHorizon), Valid: true},
 		RowLimit:    blockPatrolLimit,
 	})
 	if err != nil {
@@ -585,10 +586,23 @@ func (h *Handler) SweepBlockWaits(ctx context.Context) (int, error) {
 	return acted, nil
 }
 
+// undrivenTodoHorizon bounds the undriven-todo patrol (DENE-1342) to tickets
+// that moved in the last week, so a deploy does not rerun every forgotten one.
+const undrivenTodoHorizon = 7 * 24 * time.Hour
+
 func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 	meta := parseIssueMetadata(issue.Metadata)
-	if blockwait.MetaString(meta, blockwait.KeyWatched) != blockwait.WatchedYes {
+	watched := blockwait.MetaString(meta, blockwait.KeyWatched) == blockwait.WatchedYes
+	if !watched && issue.Status != "todo" {
 		return false
+	}
+	var self blockwait.Driver
+	if issue.Status == "todo" {
+		driver, ok := h.issueDriver(ctx, issue)
+		if !ok {
+			return false
+		}
+		self = driver
 	}
 	rec := blockwait.ParseMetadata(meta)
 	blockers := h.blockerViews(ctx, issue, rec)
@@ -616,15 +630,20 @@ func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 		ReviewNudged:   blockwait.MetaString(meta, blockwait.KeyReviewNudged) == "1",
 		ReviewerHuman:  issue.ReviewerType.Valid && issue.ReviewerType.String == "member",
 		ReviewerEmpty:  reviewerSlotEmpty(issue),
-		Watched:        blockwait.MetaString(meta, blockwait.KeyWatched) == blockwait.WatchedYes,
+		Watched:        watched,
+		Undriven:       self.Kind == blockwait.DriverNone,
+		UndrivenWhy:    self.Reason,
+		UndrivenState:  blockwait.ParseUndriven(meta),
 	})
 	switch decision.Action {
-	case blockwait.ActionRelease, blockwait.ActionWake, blockwait.ActionSeat:
+	case blockwait.ActionRelease, blockwait.ActionWake, blockwait.ActionSeat, blockwait.ActionRevive, blockwait.ActionEscalate:
 	default:
 		return false
 	}
 	h.applyPatrolFollowUp(ctx, issue, meta, decision)
 	switch decision.Action {
+	case blockwait.ActionRevive, blockwait.ActionEscalate:
+		h.reviveOrEscalate(ctx, issue, decision)
 	case blockwait.ActionRelease:
 		h.releaseAcceptedIssue(ctx, issue, decision)
 	case blockwait.ActionWake:
@@ -781,6 +800,7 @@ func (h *Handler) blockerViews(ctx context.Context, issue db.Issue, rec blockwai
 			view.Status = other.Status
 			view.Accepted = blockwait.MetaString(parseIssueMetadata(other.Metadata), blockwait.KeyReleased) == blockwait.ReleasedPass &&
 				(other.Status == "done" || other.Status == "in_review")
+			h.undrivenView(ctx, &view, other)
 		}
 		out = append(out, view)
 	}

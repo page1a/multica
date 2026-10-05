@@ -403,12 +403,21 @@ func MarkWoken(existing, completed string) string {
 
 // DownstreamFailureNotice is the informational comment on the upstream issue.
 // It names the child and does not ask anyone to re-dispatch.
-func DownstreamFailureNotice(childIdentifier, childID, reason string) string {
+// parked says whether the platform wrote a failure clock on the child. Only
+// then does it promise a wake; otherwise it says plainly that nothing was
+// scheduled, so the reader knows to check who drives the child (DENE-1339).
+func DownstreamFailureNotice(childIdentifier, childID, reason string, parked bool) string {
 	if strings.TrimSpace(reason) == "" {
 		reason = "运行失败"
 	}
+	if !parked {
+		return fmt.Sprintf(
+			"下游 [%s](mention://issue/%s) %s，平台没有为它排上重试或到点叫醒。它现在由谁推进，请到下游票上确认。",
+			childIdentifier, childID, reason,
+		)
+	}
 	return fmt.Sprintf(
-		"下游 [%s](mention://issue/%s) %s。平台会按自己的重试或到点叫醒处理，这张票不用你去重派。",
+		"下游 [%s](mention://issue/%s) %s。平台已把它转为 blocked 并记下叫醒时间，到点会重新叫醒它的执行人，这张票不用你去重派。",
 		childIdentifier, childID, reason,
 	)
 }

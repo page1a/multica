@@ -772,12 +772,13 @@ function HomePageContent() {
         <Button
           variant="ghost"
           size="sm"
-          className="text-muted-foreground"
+          className="min-h-11 min-w-11 justify-center text-muted-foreground sm:min-h-0 sm:min-w-0"
+          aria-label={copy.t(($) => $.board.activity_link)}
           nativeButton={false}
           render={<AppLink href={`${wsPaths.inbox()}?${LAYER_PARAM}=${ACTIVITY_LAYER_PARAM}`} />}
         >
           <History className="size-4" />
-          {copy.t(($) => $.board.activity_link)}
+          <span className="hidden sm:inline">{copy.t(($) => $.board.activity_link)}</span>
         </Button>
       </PageHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -871,12 +872,13 @@ export function BoardAskAiButton({ prompt, label, projectIds = [] }: { prompt: s
     <Button
       variant="ghost"
       size="sm"
-      className="text-muted-foreground"
+      className="min-h-11 min-w-11 justify-center text-muted-foreground sm:min-h-0 sm:min-w-0"
+      aria-label={label}
       nativeButton={false}
       render={<AppLink href={wsPaths.chatWithPrompt(prompt, ...projectIds)} data-testid="board-ask-ai" />}
     >
       <Sparkles className="size-4" />
-      {label}
+      <span className="hidden sm:inline">{label}</span>
     </Button>
   );
 }

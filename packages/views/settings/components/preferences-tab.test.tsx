@@ -347,13 +347,13 @@ describe("PreferencesTab — Comments & chat", () => {
     render(<PreferencesTab />, { wrapper: I18nWrapper });
 
     const select = screen.getByRole("combobox", { name: "When replying to a running agent" });
-    expect(select).toHaveTextContent("Add to current run");
+    expect(select).toHaveTextContent("Steer");
 
     await user.click(select);
-    await user.click(await screen.findByRole("option", { name: "Start after this run" }));
+    await user.click(await screen.findByRole("option", { name: "Queue" }));
 
     expect(useCommentComposerStore.getState().runningAgentReply).toBe("after_run");
-    expect(select).toHaveTextContent("Start after this run");
+    expect(select).toHaveTextContent("Queue");
     expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 

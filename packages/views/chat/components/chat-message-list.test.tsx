@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { chatKeys } from "@multica/core/chat/queries";
-import type { Attachment, TaskMessagePayload } from "@multica/core/types";
+import type { Attachment, ChatMessage, TaskMessagePayload } from "@multica/core/types";
 import type { ReactElement } from "react";
 import enChat from "../../locales/en/chat.json";
 import zhHansAgents from "../../locales/zh-Hans/agents.json";
@@ -313,6 +313,38 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
 
     expect(await screen.findByText("report.pdf")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+  });
+
+  it("rules off a reply whose run could not carry the session forward", async () => {
+    const reply = (id: string, extra: Partial<ChatMessage>): ChatMessage => ({
+      id,
+      chat_session_id: "session-1",
+      role: "assistant",
+      content: `reply ${id}`,
+      task_id: null,
+      created_at: "2026-10-05T00:00:00Z",
+      ...extra,
+    });
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[
+              reply("a", { session_mode: "new", session_break_reason: "first_run" }),
+              reply("b", { session_mode: "resumed", resumed_from_run: "t-a" }),
+              reply("c", { session_mode: "new", session_break_reason: "agent_changed" }),
+            ]}
+            pendingTask={null}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText("reply c")).toBeInTheDocument();
+    // Only the break gets a rule; the opening reply and a resumed one do not.
+    expect(screen.getAllByRole("separator")).toHaveLength(1);
+    expect(screen.getByRole("separator", { name: "New session · different agent" })).toBeInTheDocument();
   });
 
   it("renders the canonical settled answer while retaining process narration", async () => {

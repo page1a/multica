@@ -1,6 +1,6 @@
 import { cloneElement, forwardRef, useEffect, useRef, useImperativeHandle } from "react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { DraftUpload } from "@multica/core/drafts";
@@ -693,28 +693,76 @@ describe("ChatInput project context", () => {
     expect(onProjectsChange).toHaveBeenCalledWith([]);
   });
 
-  it("swaps Stop for Queue Send when the running composer has content", async () => {
+  it("keeps Stop next to the send button while typing during a reply", async () => {
     const onSend = vi.fn<ChatInputOnSend>(async () => true);
     const onStop = vi.fn();
     renderInput({ isRunning: true, allowSubmitWhileRunning: true, onSend, onStop });
 
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Queue message" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queue" })).toBeDisabled();
 
     fireEvent.change(screen.getByTestId("editor"), {
       target: { value: "follow-up" },
     });
 
-    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
-    const queueButton = screen.getByRole("button", { name: "Queue message" });
-    expect(queueButton).not.toBeDisabled();
-    fireEvent.click(queueButton);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(onSend.mock.calls[0]![4]).toBe("queue");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("steers by default when the running reply can take it", async () => {
+    const onSend = vi.fn<ChatInputOnSend>(async () => true);
+    renderInput({ isRunning: true, allowSubmitWhileRunning: true, steerSupported: true, onSend });
+
+    expect(screen.getByText("Enter = Steer")).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("editor"), {
+      target: { value: "also fix the CLI" },
     });
-    expect(screen.queryByRole("button", { name: "Queue message" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0]![4]).toBe("steer");
+  });
+
+  it("sends with the mode picked from the menu", async () => {
+    const onSend = vi.fn<ChatInputOnSend>(async () => true);
+    renderInput({ isRunning: true, allowSubmitWhileRunning: true, steerSupported: true, onSend });
+
+    fireEvent.change(screen.getByTestId("editor"), {
+      target: { value: "start over" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send mode" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText("Same process · same session")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /Interrupt and restart/ }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0]![4]).toBe("restart");
+  });
+
+  it("says a one-shot CLI restarts to take a steer", async () => {
+    renderInput({ isRunning: true, allowSubmitWhileRunning: true, steerSupported: true, steerProvider: "cursor", steerMode: "restart" });
+
+    expect(screen.getByText("Enter = Steer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send mode" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText("Restarts the CLI · same session")).toBeInTheDocument();
+    expect(within(menu).getByText("Reads it right away; the current step is cut off")).toBeInTheDocument();
+    expect(within(menu).queryByText("Same process · same session")).not.toBeInTheDocument();
+  });
+
+  it("explains why steer is off for a CLI that cannot take it", async () => {
+    renderInput({ isRunning: true, allowSubmitWhileRunning: true, steerProvider: "kimi" });
+
+    expect(screen.getByText("Enter = Queue")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send mode" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText("Kimi can't read messages mid-reply yet")).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitemradio", { name: /^Steer/ })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("keeps Stop available while queued content is uploading", async () => {
@@ -728,7 +776,7 @@ describe("ChatInput project context", () => {
     fireEvent.change(screen.getByTestId("editor"), {
       target: { value: "follow-up with attachment" },
     });
-    expect(screen.getByRole("button", { name: "Queue message" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queue" })).not.toBeDisabled();
 
     await act(async () => {
       dropHandlers.onDrop?.([
@@ -738,7 +786,6 @@ describe("ChatInput project context", () => {
     });
 
     const stopButton = await screen.findByRole("button", { name: "Stop" });
-    expect(screen.queryByRole("button", { name: "Queue message" })).not.toBeInTheDocument();
     fireEvent.click(stopButton);
     expect(onStop).toHaveBeenCalledTimes(1);
 
@@ -753,7 +800,7 @@ describe("ChatInput project context", () => {
       await Promise.resolve();
     });
 
-    expect(await screen.findByRole("button", { name: "Queue message" })).not.toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Queue" })).not.toBeDisabled();
   });
 
   it("shows only Stop while an older server is running", () => {
@@ -1233,6 +1280,7 @@ describe("ChatInput async send", () => {
       undefined,
       expect.any(Function),
       [],
+      undefined,
     );
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
     await waitFor(() => expect(sendButton!).toBeDisabled());
@@ -1271,7 +1319,7 @@ describe("ChatInput async send", () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), [], undefined);
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
   });
 
@@ -1318,6 +1366,7 @@ describe("ChatInput async send", () => {
       ["att-persisted"],
       expect.any(Function),
       [attachment],
+      undefined,
     );
   });
 });

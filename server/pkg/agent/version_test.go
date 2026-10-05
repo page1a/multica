@@ -13,6 +13,9 @@ func TestTaskSupplementVersionGate(t *testing.T) {
 		{"codex", "codex-cli 0.100.0", true}, {"codex", "0.99.0", false},
 		{"claude", "2.1.110 (Claude Code)", true}, {"claude", "2.1.109", false},
 		{"grok", "1.0.14", true}, {"grok", "1.0.13", false}, {"grok", "0.2.120", false},
+		{"opencode", "1.18.34", true}, {"opencode", "1.17.9", false}, {"opencode", "opencode v2.0.10", false},
+		{"pi", "0.73.1", true}, {"pi", "0.72.0", false},
+		{"qwen", "0.24.4", false}, {"codebuddy", "2.161.2", false}, {"dsh", "0.1.5-rc.1", false},
 		{"codex", "", false}, {"claude", "dev", false}, {"kimi", "9.0.0", false},
 	} {
 		if got := SupportsTaskSupplement(tc.provider, tc.version); got != tc.want {

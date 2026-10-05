@@ -16,6 +16,7 @@ import { ScrollView, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentTask } from "@multica/core/types";
+import { runSessionLineage } from "@multica/core/issues/session-lineage";
 import { Text } from "@/components/ui/text";
 import { RunRow } from "@/components/issue/run-row";
 import {
@@ -68,6 +69,8 @@ export default function IssueRunsRoute() {
     });
   }, [allTasks]);
 
+  const lineage = useMemo(() => runSessionLineage(allTasks), [allTasks]);
+
   return (
     <View className="flex-1">
       <View className="px-4 pt-4 pb-3">
@@ -80,14 +83,14 @@ export default function IssueRunsRoute() {
           {active.length > 0 ? (
             <Section title={t("runs.active")}>
               {active.map((task) => (
-                <RunRow key={task.id} task={task} issueId={id} />
+                <RunRow key={task.id} task={task} issueId={id} lineage={lineage.get(task.id)} />
               ))}
             </Section>
           ) : null}
           {past.length > 0 ? (
             <Section title={t("runs.past")}>
               {past.map((task) => (
-                <RunRow key={task.id} task={task} issueId={id} />
+                <RunRow key={task.id} task={task} issueId={id} lineage={lineage.get(task.id)} />
               ))}
             </Section>
           ) : null}

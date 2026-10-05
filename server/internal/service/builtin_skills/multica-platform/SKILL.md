@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Multica platform actions: asks, open a chat, goals, inbox, project board, issues, sub-issues, wakeups, charts, routing, close protocol, stalls, mentions, agents, specialisation, squads, autopilot, projects, runtimes, progress, skill import, transfer, linked workspace, GitHub App. Not product code."
+description: "asks, open a chat, goals, inbox, project board, issues, sub-issues, wakeups, charts, routing, close protocol, stalls, driver, halt, mentions, agents, specialisation, squads, autopilot, projects, runtimes, progress, state card, skill import, transfer, linked workspace, GitHub App. Not product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -12,8 +12,7 @@ comment, what status to write. This skill owns the platform contracts behind
 it — what a command actually does, what the server validates, and which writes
 have consequences you cannot take back.
 
-Read the invariants below, then open the reference(s) your task actually needs
-— usually one, sometimes a few. Do not read them all.
+Read the invariants below, then open the reference(s) your task actually needs — usually one, sometimes a few. Do not read them all.
 
 ## Routing
 
@@ -21,11 +20,14 @@ Read the invariants below, then open the reference(s) your task actually needs
 |---|---|
 | `references/issues.md` | Issues: PR linking vs close intent, reading a linked PR's state, custom properties, status side effects, who else is running |
 | `references/charts.md` | Charts and files in a comment: inline html/mermaid versus an attached file |
+| `references/drivers.md` | Who drives an open issue (`driver` in `issue get` / `issue children`), the patrol's rerun-then-escalate, and `multica issue dispose` for one nobody drives |
+| `references/run-control.md` | Stopping every run on one issue (halt / resume), the chain budget, the run time limit, and steer / queue / restart for a message to a running reply |
 | `references/wakeups.md` | Issue wakeups: events, conditions (`--until-*`), timers, check-ins, runaway protection |
 | `references/stall-actions.md` | Automatic stall actions: 24-hour keep announcements, parent auto-close, 7-day undo, and CLI/API commands |
 | `references/goals.md` | Task goals: draft a completion line, confirm the human lock, track budget, and finish a goal |
 | `references/sub-issues.md` | Sub-issues: todo vs backlog at create time, stages as barrier groups, promoting parked children |
 | `references/routing.md` | Automatic routing: which slots it fills at which status, the 验收席 field, who may pick an executor (`--per-quote`, `issue escalate`), what an `issue route` result means, why dispatch stopped |
+| `references/state-card.md` | Picking up an issue: `multica issue context` (goal, decisions, where it stands, last baton, what changed since you), and writing decisions with `--decision` |
 | `references/close-protocol.md` | Closing an issue: the eight `close.*` keys, conclusion / status / next owner / wake decision tables, blocked-close fields, dispatcher stage promotion |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |
@@ -106,6 +108,14 @@ opt in to a workspace-wide directory. Visibility follows the person who
 started the task, so another member's private chats stay hidden. Listing and
 reading chats never changes unread state. Use `multica chat history` for a
 bounded transcript after choosing a session.
+
+To message a chat while its agent may still be replying, use
+`multica chat send --session <id> --content-file <path> --mode steer|queue|restart`.
+The same `--mode` works on `multica issue comment add`, which also takes
+`handoff` / `parallel` when you @ an agent other than the one running; a chat
+moves to another agent with `multica chat handoff --to <agent>`. What each mode costs,
+and what happens when the running CLI cannot steer, is in
+`references/run-control.md`.
 
 To promote the current conversation into a goal task, use
 `multica chat to-goal --session <id-or-url>`. The server creates the issue with

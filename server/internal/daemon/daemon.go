@@ -259,6 +259,9 @@ type terminalTaskReport struct {
 	// sessionRestartReason explains a new CLI session opened because the
 	// prior one could not be resumed. Empty on the common path.
 	sessionRestartReason string
+	// sessionResumeDropped: the claim handed this run a session to resume and
+	// the daemon ran a fresh one instead (DENE-1345).
+	sessionResumeDropped bool
 }
 
 type terminalReportSendFunc func(context.Context, terminalTaskReport, []time.Duration) error
@@ -6818,6 +6821,7 @@ func (d *Daemon) reportTaskResultForTask(ctx context.Context, task Task, result 
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
 			sessionRestartReason:  result.SessionRestartReason,
+			sessionResumeDropped:  result.SessionResumeDropped,
 		})
 		if err == nil {
 			if err := d.reportLocalPullRequests(ctx, task, result); err != nil {
@@ -6868,6 +6872,7 @@ func (d *Daemon) reportTaskResultForTask(ctx context.Context, task Task, result 
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
 			sessionRestartReason:  result.SessionRestartReason,
+			sessionResumeDropped:  result.SessionResumeDropped,
 		}); err != nil {
 			taskLog.Error("report failed task failed", "error", err)
 		}
@@ -6967,9 +6972,9 @@ func (d *Daemon) sendTerminalTaskReport(ctx context.Context, report terminalTask
 	}
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.sessionRestartReason, schedule)
+		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.sessionRestartReason, report.sessionResumeDropped, schedule)
 	case terminalTaskReportFail:
-		return d.client.failTaskWithRetrySchedule(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.sessionRestartReason, schedule)
+		return d.client.failTaskWithRetrySchedule(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.sessionRestartReason, report.sessionResumeDropped, schedule)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}
@@ -7364,7 +7369,11 @@ func sameExistingDir(a, b string) bool {
 	return os.SameFile(ai, bi)
 }
 
-func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv, provider, envWorkDir string, sessionHomeReachable, refusesMissingSessionCwd bool, taskLog *slog.Logger) bool {
+// gateResumeToReachableSession applies the rules described above. The
+// sessionStoredAnywhere argument is the exception for CLIs that resume a
+// stored session from any cwd (priorSessionStoredAnywhere): when it is true
+// the directory is not compared, only the session home.
+func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv, provider, envWorkDir string, sessionHomeReachable, refusesMissingSessionCwd, sessionStoredAnywhere bool, taskLog *slog.Logger) bool {
 	var reachable bool
 	if providerUsesPiSessionFile(provider) {
 		reachable = piSessionResumable(task.PriorSessionID, refusesMissingSessionCwd)
@@ -7374,7 +7383,8 @@ func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv
 		// the PriorWorkDir the server sent — a symlinked workspaces root is enough
 		// to make them differ. A string compare would then silently drop the prior
 		// session on every follow-up task in that installation.
-		reachable = task.PriorWorkDir != "" && sameExistingDir(envWorkDir, task.PriorWorkDir) && sessionHomeReachable
+		sameDir := task.PriorWorkDir != "" && sameExistingDir(envWorkDir, task.PriorWorkDir)
+		reachable = (sameDir || sessionStoredAnywhere) && sessionHomeReachable
 	}
 	if !reachable && task.PriorSessionID != "" {
 		taskLog.Info("dropping prior session: session store not reachable from this run",
@@ -7394,6 +7404,39 @@ func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv
 		task.PriorSessionResumeUnavailable = true
 	}
 	return reachable
+}
+
+// priorSessionStoredAnywhere reports whether the prior session can be resumed
+// even though this run is in a different directory (DENE-1356). Only CLIs
+// verified to resume across cwds qualify — botiverse/oar
+// docs/runtimes/resume-cwd.md, rechecked on this machine for Claude 2.1.289:
+//
+//   - claude: when the transcript is still in its config directory. A resume
+//     it refuses anyway is caught by Result.ResumeRejected and retried fresh.
+//   - codex: always here; gateCodexResumeToRolloutPresence runs next and drops
+//     the session when its rollout is not in this task's CODEX_HOME.
+//
+// Every other runtime keeps the same-directory rule. Cursor, Pi and Grok refuse
+// a moved cwd, and Kimi silently runs in the old directory, which is worse than
+// starting over. A custom command speaking one of these protocols is not the
+// CLI that was verified, so it keeps the rule too.
+func priorSessionStoredAnywhere(provider string, builtinRuntime bool, task Task, cwd string) bool {
+	if !builtinRuntime || task.PriorSessionID == "" {
+		return false
+	}
+	switch provider {
+	case "codex":
+		return true
+	case "claude":
+		env := os.Environ()
+		if task.Agent != nil {
+			for k, v := range task.Agent.CustomEnv {
+				env = append(env, k+"="+v)
+			}
+		}
+		return agent.ClaudeSessionStored(env, cwd, task.PriorSessionID)
+	}
+	return false
 }
 
 func providerUsesPiSessionFile(provider string) bool {
@@ -8454,21 +8497,34 @@ func qualifyTaskModel(
 	return qualified
 }
 
-// sameSeatRetryWorkDir is the previous cwd a same-seat retry may rebuild, or
-// "" when this run must start a fresh working copy.
+// sameSeatRetryWorkDir is the previous cwd this turn may rebuild, or "" when
+// this run must start a fresh working copy.
 //
-// A different seat (the capacity handoff that moves the issue to another
-// agent) is a new conversation and passes previousDirReusable false from the
-// caller, because shouldContinueInterruptedSession is already false there.
-// previousDirReusable is the path check: the directory is a missing child of
-// this repository's worktree root. previousDirInUse is the live-task check.
-// Either one failing leaves the retry on a new directory, and the resume gate
-// then drops the session instead of sending the CLI somewhere it cannot find.
+// The working copy follows the conversation, not the run (DENE-1356). Every
+// follow-up that carries a resumable session — an interrupted retry or the
+// next ordinary turn of the same chat or the same agent on the same issue —
+// rebuilds its worktree at the previous turn's path, so a CLI that files its
+// conversation under the cwd finds it again. Before this only a retry did, and
+// each ordinary turn landed in a new directory and lost the session.
+//
+// The server scopes PriorWorkDir and PriorSessionID to this agent on this
+// issue, or to this chat, and only sends a session produced on this runtime,
+// so another seat never inherits this one's copy. previousDirReusable is the
+// path check: the directory belongs to this repository's worktree root and is
+// either absent or a copy this machine left behind. previousDirInUse is the
+// live-task check. Either one failing leaves the turn on a new directory, and
+// the resume gate then decides whether the session survives the move.
 func sameSeatRetryWorkDir(task Task, previousDirReusable, previousDirInUse bool) string {
-	if !shouldContinueInterruptedSession(task) || !previousDirReusable || previousDirInUse {
+	if !conversationKeepsWorkDir(task) || !previousDirReusable || previousDirInUse {
 		return ""
 	}
 	return task.PriorWorkDir
+}
+
+// conversationKeepsWorkDir reports whether this turn continues a session that
+// is bound to the previous turn's working copy.
+func conversationKeepsWorkDir(task Task) bool {
+	return task.PriorWorkDir != "" && task.PriorSessionID != "" && !task.PriorSessionResumeUnavailable
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
@@ -8481,6 +8537,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err := validateTaskIdentity(task); err != nil {
 		return TaskResult{}, err
 	}
+	// The session the server told this run to resume. Every gate below that
+	// cannot honour it clears task.PriorSessionID; comparing the two at the
+	// end tells the server the run fell back to a fresh session (DENE-1345).
+	claimedPriorSessionID := task.PriorSessionID
 
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
@@ -8948,6 +9008,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	envReused := false
+	// worktreeMoveReason says why a worktree follow-up could not go back to
+	// the previous turn's working copy. It becomes the run's session-restart
+	// note only if the move also cost the session (DENE-1356).
+	worktreeMoveReason := ""
+	pinnedWorkDir := ""
 	// The session folder is the continuity. Reusing PriorWorkDir here would
 	// treat its parent — the directory that holds every session — as an env
 	// root, or fall through and mint a per-task directory beside it.
@@ -9062,28 +9127,34 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// back to a fresh copy without deleting anything.
 			resumeWorkDir := ""
 			reclaimPriorCopy := false
-			if shouldContinueInterruptedSession(task) && task.PriorWorkDir != "" {
+			if conversationKeepsWorkDir(task) {
 				reusable, inUse := false, false
 				gitRoot, gitErr := execenv.ResolveGitRoot(localAssignment.AbsPath)
 				if gitErr != nil {
-					taskLog.Info("same-seat retry: repository not resolved; starting a fresh worktree", "error", gitErr)
+					taskLog.Info("worktree follow-up: repository not resolved; starting a fresh worktree", "error", gitErr)
+					worktreeMoveReason = "这一轮没找到仓库根目录，只能新建工作目录。"
 				} else if wtRoot, rootErr := execenv.ResolveWorktreeRoot(gitRoot, strings.TrimSpace(localAssignment.Ref.WorktreeRoot)); rootErr != nil {
-					taskLog.Info("same-seat retry: worktree root refused; starting a fresh worktree", "error", rootErr)
+					taskLog.Info("worktree follow-up: worktree root refused; starting a fresh worktree", "error", rootErr)
+					worktreeMoveReason = "这一轮的工作目录位置不可用，只能新建工作目录。"
 				} else {
 					dir, ok := execenv.ReusableWorktreeDir(wtRoot, gitRoot, localAssignment.AbsPath, task.PriorWorkDir)
 					if !ok {
-						// Still on disk: the interrupted run never finalized,
-						// and its copy holds the conversation's branch.
+						// Still on disk: the previous run never finalized
+						// (killed by a restart) or kept its copy because it
+						// could not commit. Its copy holds the conversation's
+						// branch; Prepare saves what it left uncommitted.
 						dir, ok = execenv.ReclaimableWorktreeDir(wtRoot, gitRoot, localAssignment.AbsPath, task.PriorWorkDir)
 						reclaimPriorCopy = ok
 					}
 					switch {
 					case !ok:
-						taskLog.Info("same-seat retry: previous worktree unavailable; starting a fresh worktree",
+						taskLog.Info("worktree follow-up: previous worktree unavailable; starting a fresh worktree",
 							"prior_work_dir", task.PriorWorkDir)
+						worktreeMoveReason = "上一轮的工作目录已不在（或不属于这个仓库），这一轮新建了工作目录。"
 					case d.worktreeCleanup.IsActive(dir):
 						inUse = true
-						taskLog.Info("same-seat retry: previous worktree still in use; starting a fresh worktree", "path", dir)
+						taskLog.Info("worktree follow-up: previous worktree still in use; starting a fresh worktree", "path", dir)
+						worktreeMoveReason = "上一轮的工作目录正被别的运行占着，这一轮新建了工作目录。"
 					default:
 						reusable = true
 					}
@@ -9091,6 +9162,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				resumeWorkDir = sameSeatRetryWorkDir(task, reusable, inUse)
 				reclaimPriorCopy = reclaimPriorCopy && resumeWorkDir != ""
 			}
+			pinnedWorkDir = resumeWorkDir
 			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{
 				LocalPath:     localAssignment.AbsPath,
 				CheckoutPaths: task.CheckoutPaths,
@@ -9368,8 +9440,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// "start task failed: <…>" string and the same failure_reason
 	// taxonomy as before — see MUL-2946 for the classifier contract.
 	var taskCapabilities []string
-	if agent.SupportsTaskSupplement(provider, resolvedVersion) && task.IssueID != "" {
+	if agent.SupportsTaskSupplement(provider, resolvedVersion) && (task.IssueID != "" || task.ChatSessionID != "") {
 		taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilityTaskSupplementV1)
+		if agent.SteersByRestart(provider) {
+			taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilitySteerRestartV1)
+		}
 	}
 	taskSupplementNegotiated, err := d.client.StartTask(prepareCtx, task, taskCapabilities...)
 	if err != nil {
@@ -9404,6 +9479,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		&task, &taskCtx, provider, env.WorkDir,
 		sessionHomeReachable(provider, env, envReused),
 		providerRefusesMissingSessionCwd(provider, !usesCustomProfileCommand),
+		priorSessionStoredAnywhere(provider, !usesCustomProfileCommand, task, env.WorkDir),
 		taskLog,
 	)
 	// A reused workdir is necessary but not sufficient for a Codex resume: the
@@ -9411,6 +9487,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// sessions (MUL-4424 isolates them). Drop the resume before the brief is
 	// generated below if it isn't, so we never tell the agent it is continuing a
 	// conversation Codex will silently restart from scratch.
+	if !resumeReachable && task.SessionRestartReason == "" && localAssignment.UsesWorktree() {
+		switch {
+		case worktreeMoveReason != "":
+			task.SessionRestartReason = worktreeMoveReason
+		case pinnedWorkDir != "" && !sameExistingDir(env.WorkDir, pinnedWorkDir):
+			task.SessionRestartReason = "上一轮的工作目录在这一轮开始前被占用，只能新建工作目录。"
+		}
+	}
 	if resumeReachable {
 		gateCodexResumeToRolloutPresence(&task, &taskCtx, provider, env.CodexHome, taskLog)
 	}
@@ -9660,6 +9744,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
 	}
+	// One-shot CLIs take a mid-run message by restarting on the same session.
+	backend = agent.WithRestartSteer(provider, backend)
 
 	// Two-tier model resolution: an explicit agent.model wins,
 	// then the daemon-wide MULTICA_<PROVIDER>_MODEL env var. If
@@ -9899,6 +9985,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// through the chat_session pointer (GH #6066).
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
+	defer func() { taskResult.SessionResumeDropped = claimedPriorSessionID != "" && task.PriorSessionID == "" }()
 	defer func() {
 		reason := result.SessionRestartReason
 		if reason == "" {

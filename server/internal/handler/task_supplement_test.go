@@ -217,7 +217,7 @@ func TestTaskSupplementCapabilityDoesNotBreakNonIssueStarts(t *testing.T) {
 			runtimeID := dbfx.Runtime(t, "supplement-no-issue", testutil.Cols{"provider": provider})
 			agentID := dbfx.Agent(t, "Supplement no issue", runtimeID)
 			taskID := dbfx.Task(t, agentID, testutil.Cols{"runtime_id": runtimeID, "issue_id": nil, "status": "dispatched"})
-			started, err := testHandler.TaskService.StartTask(t.Context(), parseUUID(taskID), true)
+			started, err := testHandler.TaskService.StartTask(t.Context(), parseUUID(taskID), protocol.DaemonCapabilityTaskSupplementV1)
 			if err != nil || started.Status != "running" {
 				t.Fatalf("non-issue start = %#v: %v", started, err)
 			}

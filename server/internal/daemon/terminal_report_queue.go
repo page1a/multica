@@ -57,6 +57,7 @@ type persistedTerminalTaskReport struct {
 	SessionRolloutMissing bool      `json:"session_rollout_missing,omitempty"`
 	RetiredSessionID      string    `json:"retired_session_id,omitempty"`
 	SessionRestartReason  string    `json:"session_restart_reason,omitempty"`
+	SessionResumeDropped  bool      `json:"session_resume_dropped,omitempty"`
 
 	PermanentRejectionCount   int        `json:"permanent_rejection_count,omitempty"`
 	FirstPermanentRejectionAt *time.Time `json:"first_permanent_rejection_at,omitempty"`
@@ -148,6 +149,7 @@ func persistedTerminalReport(report terminalTaskReport, createdAt time.Time) (pe
 		SessionRolloutMissing: report.sessionRolloutMissing,
 		RetiredSessionID:      report.retiredSessionID,
 		SessionRestartReason:  report.sessionRestartReason,
+		SessionResumeDropped:  report.sessionResumeDropped,
 	}, nil
 }
 
@@ -180,6 +182,7 @@ func (record persistedTerminalTaskReport) terminalReport() (terminalTaskReport, 
 		sessionRolloutMissing: record.SessionRolloutMissing,
 		retiredSessionID:      record.RetiredSessionID,
 		sessionRestartReason:  record.SessionRestartReason,
+		sessionResumeDropped:  record.SessionResumeDropped,
 	}, nil
 }
 

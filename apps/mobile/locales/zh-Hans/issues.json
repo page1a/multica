@@ -122,6 +122,19 @@
     "all": "该工作区还没有任务。",
     "members": "没有分配给成员的任务。"
   },
+  "driver": {
+    "none": "没人在推进",
+    "revived": "已重跑 {{count}} 次",
+    "escalated": "已上报父票负责人",
+    "actions": "处置",
+    "rerun": "原席位再跑",
+    "reroute": "交给路由重新选执行人",
+    "split": "拆成子票",
+    "cancel": "取消任务",
+    "split_prompt": "子票标题",
+    "cancel_prompt": "取消原因",
+    "failed": "处置失败"
+  },
   "menu": {
     "pin": "固定",
     "unpin": "取消固定",
@@ -246,6 +259,16 @@
       "completed": "运行成功",
       "failed": "运行失败",
       "cancelled": "已取消"
+    },
+    "session": {
+      "round": "第 {{round}} 轮",
+      "new": "新会话",
+      "resumed": "接着第 {{round}} 轮的会话",
+      "resumed_earlier": "接着之前的会话",
+      "reason_agent_changed": "换了智能体",
+      "reason_runtime_changed": "上次的会话在另一台机器上",
+      "reason_session_lost": "会话没能恢复",
+      "reason_fresh_requested": "按要求新开"
     }
   },
   "header_filter": "筛选",
@@ -266,5 +289,24 @@
   "picker.create_label": "创建 \"{{name}}\"",
   "comments.composer_pill": "添加评论，输入 @ 提及...",
   "resources.branch_hint": "运行会从这个分支开始，并针对它创建 Pull Request。留空则使用仓库默认分支。",
-  "resources.commit": "这是提交 ID，不是分支。运行会回传到起始分支。如需一次性修订，请给 multica repo checkout 传入 --ref。"
+  "resources.commit": "这是提交 ID，不是分支。运行会回传到起始分支。如需一次性修订，请给 multica repo checkout 传入 --ref。",
+  "state_card": {
+    "section_title": "状态卡",
+    "decisions": "已拍板",
+    "decisions_empty": "还没有拍板",
+    "decision_add": "添加拍板",
+    "decision_placeholder": "一行，写定下来的事",
+    "decision_edit": "编辑",
+    "decision_delete": "删除",
+    "decision_failed": "没存上：{{reason}}",
+    "baton": "上一棒交代",
+    "baton_close": "收口",
+    "baton_handoff": "交棒给 {{to}}",
+    "baton_none": "还没有收口或交棒",
+    "changes": "你上次之后的变化",
+    "changes_first": "你上次之后的变化（首次查看）",
+    "changes_none": "没有新讨论",
+    "changes_count": "{{count}} 条新",
+    "changes_more": "还有 {{count}} 个讨论"
+  }
 }

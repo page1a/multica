@@ -20,7 +20,22 @@
     "file_too_large_title": "File too large",
     "file_too_large_message": "Files must be smaller than 100 MB.",
     "working": "Agent is working…",
-    "message": "Message…"
+    "message": "Message…",
+    "mode_menu": "Send mode",
+    "mode_steer": "Steer",
+    "mode_steer_desc": "Read after this step",
+    "mode_steer_process": "Same process · same session",
+    "mode_steer_restart_desc": "Reads it right away; the current step is cut off",
+    "mode_steer_restart_process": "Restarts the CLI · same session",
+    "mode_queue": "Queue",
+    "mode_queue_desc": "Sent after this reply",
+    "mode_queue_process": "New process · resumes the same session",
+    "mode_restart": "Interrupt and restart",
+    "mode_restart_desc": "Stop this reply and start over from this message",
+    "mode_restart_process": "New process · resumes the same session",
+    "mode_steer_unsupported": "{{cli}} can't read messages mid-reply yet",
+    "mode_steer_unsupported_generic": "This agent can't read messages mid-reply yet",
+    "steer_fell_back_toast": "This reply can't take a message mid-reply, so it was queued"
   },
   "empty": {
     "greeting": "Hi, I'm {{name}}",
@@ -153,5 +168,20 @@
     "tool_result_unnamed": "result: ",
     "truncated": "…(truncated)",
     "error": "Error"
+  },
+  "session_lineage.new": "New session",
+  "session_lineage.reason_agent_changed": "agent changed",
+  "session_lineage.reason_runtime_changed": "last session is on another machine",
+  "session_lineage.reason_session_lost": "session couldn't be restored",
+  "session_lineage.reason_fresh_requested": "started fresh on request",
+  "queue": {
+    "steer": "Interrupt and restart",
+    "steer_unavailable": "Available after the current reply starts",
+    "steer_no_permission": "You no longer have permission to run this agent",
+    "steer_unavailable_toast": "Can't restart right now. Refreshing the queue.",
+    "remove": "Remove queued message",
+    "fallback": "Queued message",
+    "action_failed_toast": "Couldn't update the queued message",
+    "steering": "Steering"
   }
 }

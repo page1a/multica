@@ -8,6 +8,7 @@
  *
  * Events handled:
  *   - chat:message              → invalidate messages + pendingTask
+ *   - chat:session_invalidated  → invalidate messages + pendingTask
  *   - chat:done                 → patch messages inline + refresh pendingTask
  *   - chat:quick_actions        → patch the async quick-actions supplement
  *                                  onto the assistant message
@@ -62,6 +63,12 @@ export function useChatSessionRealtime(
           if (!isMine(payload)) return;
           qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
           qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+        }),
+        // A steered message changing hands (DENE-1346) moves both the
+        // transcript and the queue.
+        ws.on("chat:session_invalidated", (payload) => {
+          if (!isMine(payload)) return;
+          invalidateMine();
         }),
         ws.on("chat:done", (payload) => {
           if (!isMine(payload)) return;

@@ -66,6 +66,37 @@ export interface IssueReaction {
 export type IssueMetadataValue = string | number | boolean;
 export type IssueMetadata = Record<string, IssueMetadataValue>;
 
+/**
+ * Who or what moves an open issue forward right now (ADR-0006, DENE-1342).
+ * `none` is the state the patrol and `issue dispose` exist to remove.
+ */
+export type IssueDriverKind = "run" | "wait" | "person" | "none";
+
+export interface IssueDriver {
+  kind: IssueDriverKind | (string & {});
+  reason: string;
+  /** Only on `none`: how many times the patrol already reran it. */
+  revives?: number;
+  /** Only on `none`: the patrol already escalated it to the parent's owner. */
+  escalated?: boolean;
+}
+
+export type IssueDisposeAction = "rerun" | "reroute" | "split" | "cancel";
+
+export interface IssueDisposeRequest {
+  action: IssueDisposeAction;
+  reason?: string;
+  into?: string[];
+}
+
+export interface IssueDisposeResponse {
+  action: IssueDisposeAction;
+  status: string;
+  driver?: IssueDriver;
+  created?: string[];
+  note?: string;
+}
+
 export interface IssueAgentGuardResponse {
   issue_id: string;
   halted: boolean;
@@ -272,6 +303,8 @@ export interface Issue {
   source_context?: IssueSourceContext;
   /** Detail only: the in-place retry waiting out a full model (DENE-1093). */
   capacity_retry?: CapacityRetry;
+  /** Detail and children responses only; absent on closed or backlog issues. */
+  driver?: IssueDriver;
   /**
    * Where this issue came from, for platform-internal flows: an autopilot run,
    * a quick-create task, or a requirement alignment (`issue_draft`, with

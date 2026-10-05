@@ -119,6 +119,9 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
+	// The daemon names the session up front; pin it now so a restart-tier
+	// message can resume it mid-run.
+	trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 
 	// Close stdout when the context is cancelled so the scanner unblocks.
 	go func() {

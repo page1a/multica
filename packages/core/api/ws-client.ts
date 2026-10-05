@@ -43,6 +43,8 @@ export class WSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private hasConnectedBefore = false;
+  private lastEventID: string | null = null;
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
   // One-shot per connection. A non-conforming frame can repeat hundreds of
   // times per session, so we log the first drop and suppress the rest. Reset
   // on each connect() so a fresh connection logs once again.
@@ -140,10 +142,20 @@ export class WSClient {
         }
         return;
       }
-      if ((msg as any).type === "auth_ack") {
-        this.onAuthenticated();
+      if ((msg as any).type === "auth_ack") { this.onAuthenticated(); return; }
+      if ((msg as any).type === "resume_ack") { this.clearResumeTimer(); return; }
+      if ((msg as any).type === "resume_failed") {
+        this.clearResumeTimer();
+        for (const cb of this.onReconnectCallbacks) {
+          try {
+            cb();
+          } catch {
+            // Ignore reconnect callback errors.
+          }
+        }
         return;
       }
+      if (msg.event_id) this.lastEventID = msg.event_id;
       this.logger.debug("received", msg.type);
       const eventHandlers = this.handlers.get(msg.type);
       if (eventHandlers) {
@@ -195,18 +207,35 @@ export class WSClient {
     const recoveredConnection = this.hasConnectedBefore || this.reconnectAttempt > 0;
     this.reconnectAttempt = 0;
     if (recoveredConnection) {
-      for (const cb of this.onReconnectCallbacks) {
-        try {
-          cb();
-        } catch {
-          // ignore reconnect callback errors
+      if (this.lastEventID) {
+        this.send({ type: "resume", payload: { event_id: this.lastEventID } } as unknown as WSMessage);
+        this.resumeTimer = setTimeout(() => {
+          this.resumeTimer = null;
+          for (const cb of this.onReconnectCallbacks) {
+            try {
+              cb();
+            } catch {
+              // Ignore reconnect callback errors.
+            }
+          }
+        }, 3000);
+      } else {
+        for (const cb of this.onReconnectCallbacks) {
+          try {
+            cb();
+          } catch {
+            // Ignore reconnect callback errors.
+          }
         }
       }
     }
     this.hasConnectedBefore = true;
   }
 
+  private clearResumeTimer() { if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; } }
+
   disconnect() {
+    this.clearResumeTimer();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -219,6 +248,7 @@ export class WSClient {
       this.ws = null;
     }
     this.hasConnectedBefore = false;
+    this.lastEventID = null;
     this.reconnectAttempt = 0;
     this.handlers.clear();
     this.anyHandlers.clear();

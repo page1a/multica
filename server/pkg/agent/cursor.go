@@ -159,8 +159,14 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			eventCount++
 			lastEventType = observedCursorEventType(evt.Type)
 
-			if sid := evt.readSessionID(); sid != "" {
+			// Pin the session as soon as it is known: a restart-tier message
+			// needs the id mid-run (DENE-1349). init carries it on the
+			// running status it already sends.
+			if sid := evt.readSessionID(); sid != "" && sid != sessionID {
 				sessionID = sid
+				if evt.Type != "system" || evt.Subtype != "init" {
+					trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sid})
+				}
 			}
 
 			switch evt.Type {
@@ -169,7 +175,7 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					background.Reap()
 				}
 				if evt.Subtype == "init" {
-					trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+					trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 				}
 				if evt.Subtype == "error" {
 					errMsg := cursorErrorText(&evt)

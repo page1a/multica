@@ -84,6 +84,9 @@ type CommentResponse struct {
 	// reports that here instead of silently dropping the trigger, so the client
 	// can show "comment posted, but N targets were not triggered".
 	TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes,omitempty"`
+	// HandoffStoppedTaskIDs are the runs a handoff comment stopped (DENE-1350):
+	// the agents it did not wake, so the woken agent takes over alone.
+	HandoffStoppedTaskIDs []string `json:"handoff_stopped_task_ids,omitempty"`
 	// Supplements lists every running turn this comment steered, one receipt
 	// per run. The single supplement_* fields mirror the first receipt for
 	// clients that predate multi-run steering.
@@ -1512,6 +1515,14 @@ type CreateCommentRequest struct {
 	// has ended, or cannot take additional input, is never swapped for another
 	// one: its agent keeps the normal trigger.
 	SteerTaskIDs []string `json:"steer_task_ids"`
+	// Mode is the one-word form of the same choice (DENE-1346): steer adds the
+	// comment to the running turns of every agent it wakes, queue (default)
+	// waits for them, restart stops them first. Steer is refused with the
+	// reason and the usable modes when no woken turn can read it.
+	// handoff and parallel (DENE-1350) are for an @agent who is not running:
+	// handoff stops every other agent's run here, writes the handoff card and
+	// starts the woken agent in a new session; parallel leaves them running.
+	Mode string `json:"mode,omitempty"`
 }
 
 type CommentTriggerPreviewRequest struct {
@@ -1813,6 +1824,35 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// Determine author identity: agent (via X-Agent-ID header) or member.
 	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 
+	handoffMode := req.Mode == commentModeHandoff
+	sendMode := req.Mode
+	if handoffMode || req.Mode == commentModeParallel {
+		sendMode = sendModeQueue
+	}
+	mode, ok := normalizeSendMode(sendMode)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "mode must be steer, queue, restart, handoff or parallel")
+		return
+	}
+	var modeTriggers []commentAgentTrigger
+	if req.Mode != "" && !isNoteComment(req.Content) {
+		modeTriggers, _ = h.computeCommentAgentTriggers(r.Context(), issue, req.Content, parentComment, authorType, authorID, commentTriggerComputeOptions{
+			OriginatorUserID: h.invokeOriginatorFromRequest(r, authorType, authorID),
+		})
+		modeTriggers = filterSuppressedCommentAgentTriggers(modeTriggers, suppressAgentIDs)
+	}
+	if handoffMode && len(modeTriggers) == 0 {
+		writeError(w, http.StatusBadRequest, "handoff needs an @agent to take over; mention the agent in the comment")
+		return
+	}
+	if mode == sendModeSteer {
+		ids, ok := h.commentSteerTaskIDs(w, r.Context(), issue, modeTriggers, authorType, len(attachmentIDs) > 0)
+		if !ok {
+			return
+		}
+		steerTaskIDs = ids
+	}
+
 	// sourceTaskID captures the agent's currently-executing task when it posts
 	// via the CLI (X-Task-ID header). Stamping it on the comment row keeps the
 	// originator inheritance chain (resolveOriginatorFromTriggerComment →
@@ -2026,10 +2066,19 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	originatorUserID := h.invokeOriginatorFromRequest(r, authorType, authorID)
+	if mode == sendModeRestart {
+		h.stopCommentRecipients(r.Context(), issue, modeTriggers, authorType, authorID)
+	}
+	triggerCtx := r.Context()
+	if handoffMode {
+		resp.HandoffStoppedTaskIDs = h.stopForCommentHandoff(r, issue, modeTriggers, authorType, authorID)
+		h.recordCommentHandoff(r, issue, comment.Content, modeTriggers)
+		triggerCtx = withFreshCommentSession(triggerCtx)
+	}
 	// The comment is already saved; a blocked mention must not fail the whole
 	// request. Surface the per-target outcomes so the client can show partial
 	// success instead of a silent no-op (MUL-4525 §2).
-	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, originatorUserID, suppressAgentIDs, steerTaskIDs)
+	resp.TriggerOutcomes = h.triggerTasksForComment(triggerCtx, issue, comment, parentComment, authorType, authorID, originatorUserID, suppressAgentIDs, steerTaskIDs)
 	if len(steerTaskIDs) > 0 {
 		applyCommentSupplements(&resp, h.listCommentSupplements(r.Context(), issue.WorkspaceID, []pgtype.UUID{comment.ID})[uuidToString(comment.ID)])
 	}
@@ -2087,7 +2136,7 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 		OriginatorUserID:        originatorUserID,
 	})
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
-	if len(forceFreshSession) > 0 && forceFreshSession[0] {
+	if (len(forceFreshSession) > 0 && forceFreshSession[0]) || freshCommentSession(ctx) {
 		markCommentTriggersFresh(triggers)
 	}
 	h.noteBlockedRuntimeTargets(ctx, issue, targets)

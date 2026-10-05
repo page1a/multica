@@ -49,6 +49,7 @@ func (h *Handler) hydrateTaskSupplementMetadata(ctx context.Context, r *http.Req
 		}
 		resp[i].SupplementCapability = row.Capability
 		resp[i].SupplementCommentIDs = uuidsToStrings(row.CommentIds)
+		resp[i].SupplementSteerMode = row.SteerMode
 		if task.Status != "running" || row.Capability != protocol.DaemonCapabilityTaskSupplementV1 || userID == "" {
 			continue
 		}
@@ -387,7 +388,7 @@ func (h *Handler) ClaimTaskSupplement(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := h.Queries.ClaimNextTaskSupplement(r.Context(), parseUUID(taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{})
+		h.claimChatTaskSupplement(w, r, parseUUID(taskID))
 		return
 	}
 	if err != nil {
@@ -427,7 +428,7 @@ func (h *Handler) AckTaskSupplement(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, "additional message is no longer deliverable")
+		h.ackChatTaskSupplement(w, r, parseUUID(taskID), commentID, req)
 		return
 	}
 	if err != nil {
@@ -467,4 +468,68 @@ func (h *Handler) publishCommentSupplementUpdate(ctx context.Context, workspaceI
 	resp := commentToResponse(comment, nil, nil)
 	applyCommentSupplements(&resp, h.listCommentSupplements(ctx, workspaceID, []pgtype.UUID{commentID})[uuidToString(commentID)])
 	h.publish(protocol.EventCommentUpdated, uuidToString(workspaceID), "system", "", map[string]any{"comment": resp})
+}
+
+// claimChatTaskSupplement hands the daemon the next chat message steered into
+// this reply. The daemon protocol is shared with comments, so the chat message
+// id travels in comment_id.
+func (h *Handler) claimChatTaskSupplement(w http.ResponseWriter, r *http.Request, taskID pgtype.UUID) {
+	row, err := h.Queries.ClaimNextChatTaskSupplement(r.Context(), taskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to claim additional message")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"comment_id": uuidToString(row.ChatMessageID), "author_name": row.AuthorName, "content": row.Content,
+	})
+}
+
+// ackChatTaskSupplement records the daemon's answer for a steered chat
+// message. Delivered: the reply has read it, so its queued follow-up is
+// retired and the message joins the running turn. Failed: the follow-up stays
+// queued and answers the message after the reply.
+func (h *Handler) ackChatTaskSupplement(w http.ResponseWriter, r *http.Request, taskID, messageID pgtype.UUID, req ackTaskSupplementRequest) {
+	ctx := r.Context()
+	var row db.ChatTaskSupplement
+	var err error
+	if req.Delivered {
+		row, err = h.Queries.AckChatTaskSupplementDelivered(ctx, db.AckChatTaskSupplementDeliveredParams{
+			TaskID: taskID, ChatMessageID: messageID,
+		})
+	} else {
+		row, err = h.Queries.AckChatTaskSupplementFailed(ctx, db.AckChatTaskSupplementFailedParams{
+			TaskID: taskID, ChatMessageID: messageID,
+			FailureReason: pgtype.Text{String: stableTaskSupplementFailureReason(req.Error), Valid: true},
+		})
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "additional message is no longer deliverable")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to acknowledge additional message")
+		return
+	}
+	if row.Status == "delivered" {
+		if err := h.TaskService.AbsorbSteeredChatFollowup(ctx, row.ChatSessionID, row.FollowupTaskID, row.TaskID); err != nil {
+			slog.Warn("absorb steered chat follow-up failed",
+				"task_id", uuidToString(row.TaskID), "followup_task_id", uuidToString(row.FollowupTaskID), "error", err)
+		}
+	}
+	h.publishChatSteerUpdate(row)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"chat_message_id": uuidToString(row.ChatMessageID), "task_id": uuidToString(row.TaskID), "status": row.Status,
+	})
+}
+
+// publishChatSteerUpdate tells the session's viewers that a steered message
+// changed hands, so the transcript and queue refetch.
+func (h *Handler) publishChatSteerUpdate(row db.ChatTaskSupplement) {
+	h.publishChat(protocol.EventChatSessionInvalidated, uuidToString(row.WorkspaceID), "system", "", uuidToString(row.ChatSessionID), protocol.ChatSessionInvalidatedPayload{
+		ChatSessionID: uuidToString(row.ChatSessionID),
+	})
 }

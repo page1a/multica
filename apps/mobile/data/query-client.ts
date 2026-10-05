@@ -58,11 +58,16 @@ import { createPersistedQueryCache, clearPersistedQueryCache } from "@multica/co
 import { useAuthStore } from "@/data/auth-store";
 import type { StorageAdapter } from "@multica/core/types";
 
+// React Native defines `window` but not `localStorage`, so the guard checks
+// the storage itself; native skips persistence instead of crashing on login.
+const webStorage = (): Storage | null =>
+  typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+
 const mobileWebStorage: StorageAdapter = {
-  getItem: (key) => (typeof window === "undefined" ? null : window.localStorage.getItem(key)),
-  setItem: (key, value) => { if (typeof window !== "undefined") window.localStorage.setItem(key, value); },
-  removeItem: (key) => { if (typeof window !== "undefined") window.localStorage.removeItem(key); },
-  keys: () => (typeof window === "undefined" ? [] : Object.keys(window.localStorage)),
+  getItem: (key) => webStorage()?.getItem(key) ?? null,
+  setItem: (key, value) => { webStorage()?.setItem(key, value); },
+  removeItem: (key) => { webStorage()?.removeItem(key); },
+  keys: () => { const storage = webStorage(); return storage ? Object.keys(storage) : []; },
 };
 
 /** Persists safe page queries for the mobile web build; native has no sync StorageAdapter. */
@@ -79,7 +84,7 @@ export function MobileQueryPersistence() {
       if (!userId) clearPersistedQueryCache(mobileWebStorage, previousUser.current);
     }
     previousUser.current = userId;
-    if (userId && typeof window !== "undefined") {
+    if (userId && webStorage()) {
       stop.current = createPersistedQueryCache(queryClient, mobileWebStorage, userId);
     }
     return () => {

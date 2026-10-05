@@ -1,0 +1,69 @@
+// Throwaway probe for DENE-1349: drive the real cursor-agent through the same
+// wrapper the daemon uses, steer it mid-run, and record what happened.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
+)
+
+func main() {
+	work, _ := filepath.Abs(os.Args[1])
+	logf, _ := os.Create(os.Args[2])
+	defer logf.Close()
+	rec := func(kind string, v any) {
+		b, _ := json.Marshal(map[string]any{"t": time.Now().Format(time.RFC3339Nano), "kind": kind, "v": v})
+		fmt.Fprintln(logf, string(b))
+		fmt.Println(string(b))
+	}
+	inner, err := agent.ResolveBackend("cursor", agent.Config{Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), BuiltinRuntime: true})
+	if err != nil {
+		panic(err)
+	}
+	backend := agent.WithRestartSteer("cursor", inner)
+	prompt := "In the current directory, do these steps strictly one at a time using the shell tool: " +
+		"for N in 1..5, run `sleep 10 && echo step N > stepN.txt` as its own separate shell command, and after each one say 'finished step N'. " +
+		"When all five are done, reply with exactly: ALL DONE."
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	sess, err := backend.Execute(ctx, prompt, agent.ExecOptions{Cwd: work, EnableTaskSupplement: true, Timeout: 14 * time.Minute})
+	if err != nil {
+		panic(err)
+	}
+	rec("start", prompt)
+	steered := false
+	sessionAtSteer := ""
+	lastSession := ""
+	go func() {
+		for !steered {
+			time.Sleep(500 * time.Millisecond)
+			if _, err := os.Stat(filepath.Join(work, "step1.txt")); err == nil && sess.SupplementReady() {
+				steered = true
+				sessionAtSteer = lastSession
+				msg := "补充：在做完原来的步骤之后，再建一个文件 extra.txt，内容是 STEERED。然后继续原任务，最后回复 ALL DONE。"
+				rec("steer", map[string]any{"session_before": sessionAtSteer, "text": msg})
+				err := sess.Supplement(ctx, msg)
+				rec("steer_ack", fmt.Sprint(err))
+			}
+		}
+	}()
+	for m := range sess.Messages {
+		if m.SessionID != "" {
+			lastSession = m.SessionID
+		}
+		switch m.Type {
+		case agent.MessageText, agent.MessageStatus, agent.MessageToolUse, agent.MessageError:
+			rec(string(m.Type), map[string]any{"session": m.SessionID, "status": m.Status, "tool": m.Tool, "content": m.Content, "input": m.Input})
+		}
+	}
+	res := <-sess.Result
+	rec("result", map[string]any{"status": res.Status, "session": res.SessionID, "turns": res.NumTurns, "error": res.Error, "output": res.Output, "duration_ms": res.DurationMs})
+	rec("verdict", map[string]any{"session_before_steer": sessionAtSteer, "session_after": res.SessionID, "same_session": sessionAtSteer != "" && sessionAtSteer == res.SessionID})
+}

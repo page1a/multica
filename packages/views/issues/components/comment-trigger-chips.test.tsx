@@ -74,25 +74,38 @@ describe("CommentTriggerChips", () => {
     renderWithI18n(<CommentTriggerChips recipients={[entry(walt, idle)]} onActionChange={onActionChange} />);
     fireEvent.click(screen.getByRole("button", { name: "Walt trigger: Will start when sent" }));
     const menu = await screen.findByRole("menu");
-    expect(within(menu).queryByText("Add to current run")).not.toBeInTheDocument();
+    expect(within(menu).queryByText("Steer")).not.toBeInTheDocument();
     expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent)).toEqual([
       expect.stringContaining("Will start when sent"),
-      expect.stringContaining("Won't start this time"),
+      expect.stringContaining("Don't wake"),
     ]);
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /Won't start this time/ }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /Don't wake/ }));
     expect(onActionChange).toHaveBeenCalledWith("agent-1", "skip");
   });
 
   it("defaults a running recipient to its turn and explains each choice", async () => {
     const onActionChange = vi.fn();
     renderWithI18n(<CommentTriggerChips recipients={[entry(walt, running)]} onActionChange={onActionChange} />);
-    fireEvent.click(screen.getByRole("button", { name: "Walt trigger: Add to current run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Walt trigger: Steer" }));
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByText("Running")).toBeInTheDocument();
-    expect(within(menu).getByText("Walt reads it after the current step and keeps working on the original task. Text only.")).toBeInTheDocument();
-    expect(within(menu).getByText("Stops the current run now and starts over from this message.")).toBeInTheDocument();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /Start after this run/ }));
+    expect(within(menu).getByText("Read after this step; the original work continues")).toBeInTheDocument();
+    expect(within(menu).getByText("Stops now and starts over from this message")).toBeInTheDocument();
+    expect(within(menu).getByText("Same process · same session")).toBeInTheDocument();
+    expect(within(menu).getByText("New process · resumes the same session · the half-done step is dropped")).toBeInTheDocument();
+    expect(within(menu).getByText("Comment only")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /^Queue/ }));
     expect(onActionChange).toHaveBeenCalledWith("agent-1", "after_run");
+  });
+
+  it("says a one-shot CLI restarts on the same session to take a message", async () => {
+    const restartTurn = { ...turn("running"), supplement_steer_mode: "restart" } as AgentTask;
+    const state: AgentRunState = { kind: "running", task: restartTurn, steerable: true };
+    renderWithI18n(<CommentTriggerChips recipients={[entry(walt, state)]} onActionChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Walt trigger: Steer" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText("Restarts the CLI · same session")).toBeInTheDocument();
+    expect(within(menu).queryByText("Same process · same session")).not.toBeInTheDocument();
   });
 
   it("folds a message into a queued run instead of starting another", () => {
@@ -103,7 +116,7 @@ describe("CommentTriggerChips", () => {
 
   it("dims a skipped recipient", () => {
     renderWithI18n(<CommentTriggerChips recipients={[entry(walt, idle, "skip")]} onActionChange={vi.fn()} />);
-    expect(screen.getByText("Won't start this time")).toBeInTheDocument();
+    expect(screen.getByText("Don't wake")).toBeInTheDocument();
   });
 
   it("stacks several recipients, counting only those that will receive the message", () => {
@@ -123,7 +136,7 @@ describe("CommentTriggerChips", () => {
     expect(await screen.findByText(/· Running/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Bob trigger: Will start when sent" }));
     const menu = await screen.findByRole("menu");
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /Won't start this time/ }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /Don't wake/ }));
     expect(onActionChange).toHaveBeenCalledWith("agent-2", "skip");
   });
 

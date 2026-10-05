@@ -558,7 +558,11 @@ const MessageBubble = memo(function MessageBubble({
   // and both render <AssistantMessage> — same component type, same position —
   // so React reconciles rather than remounts at task completion.
   if (item.kind === "live") {
+    // Same fragment shape as the persisted branch below, so the answer node
+    // keeps its place in the tree across the live → settled handoff.
     return (
+      <>
+      <ChatSessionBreak />
       <AssistantMessage
         taskId={item.taskId}
         isPending={isPending}
@@ -566,6 +570,7 @@ const MessageBubble = memo(function MessageBubble({
         onQuickAction={onQuickAction}
         quickActionsDisabled={quickActionsDisabled}
       />
+      </>
     );
   }
 
@@ -609,6 +614,8 @@ const MessageBubble = memo(function MessageBubble({
   }
 
   return (
+    <>
+    <ChatSessionBreak message={message} />
     <AssistantMessage
       taskId={message.task_id ?? null}
       message={message}
@@ -621,8 +628,36 @@ const MessageBubble = memo(function MessageBubble({
       quickActionsPending={quickActionsPendingMessageId === message.id}
       showStarterCards={message.id === starterCardsMessageId}
     />
+    </>
   );
 });
+
+/**
+ * A rule above a reply whose run could not carry the conversation's CLI
+ * session forward (DENE-1345). The first reply of a chat is new by
+ * definition, so it gets no rule.
+ */
+function ChatSessionBreak({ message }: { message?: ChatMessage }) {
+  const { t } = useT("chat");
+  if (message?.session_mode !== "new") return null;
+  let reason: string;
+  switch (message.session_break_reason) {
+    case "agent_changed": reason = t(($) => $.session_lineage.reason_agent_changed); break;
+    case "runtime_changed": reason = t(($) => $.session_lineage.reason_runtime_changed); break;
+    case "session_lost": reason = t(($) => $.session_lineage.reason_session_lost); break;
+    case "fresh_requested": reason = t(($) => $.session_lineage.reason_fresh_requested); break;
+    default: return null;
+  }
+  const text = `${t(($) => $.session_lineage.new)} · ${reason}`;
+  return (
+    <div role="separator" aria-label={text} data-chat-session-break
+      className="flex items-center gap-3 pb-3 text-caption text-muted-foreground">
+      <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
+      <span className="min-w-0 text-center">{text}</span>
+      <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
+    </div>
+  );
+}
 
 /**
  * Assistant turn body — renders BOTH the in-flight (live) and the persisted

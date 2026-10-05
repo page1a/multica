@@ -11,6 +11,85 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const ackChatTaskSupplementDelivered = `-- name: AckChatTaskSupplementDelivered :one
+WITH task AS MATERIALIZED (
+    SELECT id FROM agent_task_queue WHERE id = $2 FOR UPDATE
+)
+UPDATE chat_task_supplement s
+SET status = 'delivered',
+    delivered_at = COALESCE(delivered_at, now()),
+    failure_reason = NULL,
+    updated_at = now()
+FROM task t
+WHERE s.task_id = t.id
+  AND s.chat_message_id = $1
+  AND (s.status IN ('delivering', 'delivered')
+       OR (s.status = 'failed' AND s.failure_reason = 'turn_ended' AND s.attempt_count > 0))
+RETURNING s.task_id, s.chat_message_id, s.followup_task_id, s.workspace_id, s.chat_session_id, s.author_id, s.status, s.failure_reason, s.attempt_count, s.created_at, s.updated_at, s.delivered_at
+`
+
+type AckChatTaskSupplementDeliveredParams struct {
+	ChatMessageID pgtype.UUID `json:"chat_message_id"`
+	TaskID        pgtype.UUID `json:"task_id"`
+}
+
+func (q *Queries) AckChatTaskSupplementDelivered(ctx context.Context, arg AckChatTaskSupplementDeliveredParams) (ChatTaskSupplement, error) {
+	row := q.db.QueryRow(ctx, ackChatTaskSupplementDelivered, arg.ChatMessageID, arg.TaskID)
+	var i ChatTaskSupplement
+	err := row.Scan(
+		&i.TaskID,
+		&i.ChatMessageID,
+		&i.FollowupTaskID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.AuthorID,
+		&i.Status,
+		&i.FailureReason,
+		&i.AttemptCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveredAt,
+	)
+	return i, err
+}
+
+const ackChatTaskSupplementFailed = `-- name: AckChatTaskSupplementFailed :one
+UPDATE chat_task_supplement
+SET status = 'failed',
+    failure_reason = $1,
+    updated_at = now()
+WHERE task_id = $2
+  AND chat_message_id = $3
+  AND status = 'delivering'
+RETURNING task_id, chat_message_id, followup_task_id, workspace_id, chat_session_id, author_id, status, failure_reason, attempt_count, created_at, updated_at, delivered_at
+`
+
+type AckChatTaskSupplementFailedParams struct {
+	FailureReason pgtype.Text `json:"failure_reason"`
+	TaskID        pgtype.UUID `json:"task_id"`
+	ChatMessageID pgtype.UUID `json:"chat_message_id"`
+}
+
+func (q *Queries) AckChatTaskSupplementFailed(ctx context.Context, arg AckChatTaskSupplementFailedParams) (ChatTaskSupplement, error) {
+	row := q.db.QueryRow(ctx, ackChatTaskSupplementFailed, arg.FailureReason, arg.TaskID, arg.ChatMessageID)
+	var i ChatTaskSupplement
+	err := row.Scan(
+		&i.TaskID,
+		&i.ChatMessageID,
+		&i.FollowupTaskID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.AuthorID,
+		&i.Status,
+		&i.FailureReason,
+		&i.AttemptCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveredAt,
+	)
+	return i, err
+}
+
 const ackTaskSupplementDelivered = `-- name: AckTaskSupplementDelivered :one
 WITH task AS MATERIALIZED (
     SELECT id FROM agent_task_queue WHERE id = $2 FOR UPDATE
@@ -104,7 +183,6 @@ WITH locked_task AS MATERIALIZED (
       AND r.workspace_id = $4
       AND t.status = 'running'
       AND cap.capability = 'task-supplement-v1'
-      AND r.provider IN ('codex', 'claude')
     FOR UPDATE OF t
 ), inserted AS (
     INSERT INTO task_supplement (
@@ -181,6 +259,58 @@ func (q *Queries) BindCommentTaskSupplement(ctx context.Context, arg BindComment
 	return i, err
 }
 
+const claimNextChatTaskSupplement = `-- name: ClaimNextChatTaskSupplement :one
+WITH next AS MATERIALIZED (
+    SELECT s.chat_message_id, s.task_id
+    FROM chat_task_supplement s
+    JOIN agent_task_queue t ON t.id = s.task_id
+    JOIN agent_task_queue f ON f.id = s.followup_task_id
+    WHERE s.task_id = $1
+      AND s.status = 'pending'
+      AND t.status = 'running'
+      AND f.status = 'queued'
+    ORDER BY s.created_at, s.chat_message_id
+    FOR UPDATE OF s SKIP LOCKED
+    LIMIT 1
+), claimed AS (
+    UPDATE chat_task_supplement s
+    SET status = 'delivering',
+        attempt_count = attempt_count + 1,
+        failure_reason = NULL,
+        updated_at = now()
+    FROM next
+    WHERE s.chat_message_id = next.chat_message_id
+      AND s.task_id = next.task_id
+    RETURNING s.task_id, s.chat_message_id, s.followup_task_id, s.workspace_id, s.chat_session_id, s.author_id, s.status, s.failure_reason, s.attempt_count, s.created_at, s.updated_at, s.delivered_at
+)
+SELECT claimed.chat_message_id, claimed.attempt_count, m.content,
+       COALESCE(NULLIF(btrim(u.name), ''), 'a user')::text AS author_name
+FROM claimed
+JOIN chat_message m ON m.id = claimed.chat_message_id
+LEFT JOIN "user" u ON u.id = claimed.author_id
+`
+
+type ClaimNextChatTaskSupplementRow struct {
+	ChatMessageID pgtype.UUID `json:"chat_message_id"`
+	AttemptCount  int32       `json:"attempt_count"`
+	Content       string      `json:"content"`
+	AuthorName    string      `json:"author_name"`
+}
+
+// Only a message whose follow-up is still waiting in the queue is delivered:
+// once that follow-up was removed, edited or started, the receipt is moot.
+func (q *Queries) ClaimNextChatTaskSupplement(ctx context.Context, taskID pgtype.UUID) (ClaimNextChatTaskSupplementRow, error) {
+	row := q.db.QueryRow(ctx, claimNextChatTaskSupplement, taskID)
+	var i ClaimNextChatTaskSupplementRow
+	err := row.Scan(
+		&i.ChatMessageID,
+		&i.AttemptCount,
+		&i.Content,
+		&i.AuthorName,
+	)
+	return i, err
+}
+
 const claimNextTaskSupplement = `-- name: ClaimNextTaskSupplement :one
 WITH next AS MATERIALIZED (
     SELECT s.comment_id, s.task_id
@@ -250,6 +380,88 @@ func (q *Queries) CommentHasTaskSupplement(ctx context.Context, arg CommentHasTa
 	return bound, err
 }
 
+const createChatTaskSupplement = `-- name: CreateChatTaskSupplement :one
+WITH locked_task AS MATERIALIZED (
+    SELECT t.id, t.runtime_id
+    FROM agent_task_queue t
+    JOIN agent_runtime r ON r.id = t.runtime_id
+    JOIN task_supplement_capability cap ON cap.task_id = t.id
+    WHERE t.id = $1
+      AND t.chat_session_id = $2
+      AND t.status = 'running'
+      AND cap.capability = 'task-supplement-v1'
+    FOR UPDATE OF t
+), inserted AS (
+    INSERT INTO chat_task_supplement (
+        task_id, chat_message_id, followup_task_id, workspace_id,
+        chat_session_id, author_id, status
+    )
+    SELECT t.id, $3, $4, $5,
+           $2, $6, 'pending'
+    FROM locked_task t
+    RETURNING task_id, chat_message_id, followup_task_id, workspace_id, chat_session_id, author_id, status, failure_reason, attempt_count, created_at, updated_at, delivered_at
+)
+SELECT inserted.task_id, inserted.chat_message_id, inserted.followup_task_id, inserted.workspace_id, inserted.chat_session_id, inserted.author_id, inserted.status, inserted.failure_reason, inserted.attempt_count, inserted.created_at, inserted.updated_at, inserted.delivered_at, locked_task.runtime_id
+FROM inserted
+JOIN locked_task ON locked_task.id = inserted.task_id
+`
+
+type CreateChatTaskSupplementParams struct {
+	TaskID         pgtype.UUID `json:"task_id"`
+	ChatSessionID  pgtype.UUID `json:"chat_session_id"`
+	ChatMessageID  pgtype.UUID `json:"chat_message_id"`
+	FollowupTaskID pgtype.UUID `json:"followup_task_id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AuthorID       pgtype.UUID `json:"author_id"`
+}
+
+type CreateChatTaskSupplementRow struct {
+	TaskID         pgtype.UUID        `json:"task_id"`
+	ChatMessageID  pgtype.UUID        `json:"chat_message_id"`
+	FollowupTaskID pgtype.UUID        `json:"followup_task_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID  pgtype.UUID        `json:"chat_session_id"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Status         string             `json:"status"`
+	FailureReason  pgtype.Text        `json:"failure_reason"`
+	AttemptCount   int32              `json:"attempt_count"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+	RuntimeID      pgtype.UUID        `json:"runtime_id"`
+}
+
+// Asks the running reply to read a message that was just queued behind it.
+// Locking the running task serializes against its terminal transition: a
+// reply that ended first gets no receipt and the queued follow-up runs.
+func (q *Queries) CreateChatTaskSupplement(ctx context.Context, arg CreateChatTaskSupplementParams) (CreateChatTaskSupplementRow, error) {
+	row := q.db.QueryRow(ctx, createChatTaskSupplement,
+		arg.TaskID,
+		arg.ChatSessionID,
+		arg.ChatMessageID,
+		arg.FollowupTaskID,
+		arg.WorkspaceID,
+		arg.AuthorID,
+	)
+	var i CreateChatTaskSupplementRow
+	err := row.Scan(
+		&i.TaskID,
+		&i.ChatMessageID,
+		&i.FollowupTaskID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.AuthorID,
+		&i.Status,
+		&i.FailureReason,
+		&i.AttemptCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveredAt,
+		&i.RuntimeID,
+	)
+	return i, err
+}
+
 const createTaskSupplement = `-- name: CreateTaskSupplement :one
 WITH locked_task AS MATERIALIZED (
     SELECT t.id, t.issue_id, t.agent_id, t.trigger_comment_id
@@ -261,7 +473,6 @@ WITH locked_task AS MATERIALIZED (
       AND r.workspace_id = $3
       AND t.status = 'running'
       AND cap.capability = 'task-supplement-v1'
-      AND r.provider IN ('codex', 'claude', 'grok')
     FOR UPDATE OF t
 ), touched_issue AS (
     UPDATE issue i SET
@@ -398,6 +609,46 @@ func (q *Queries) DeleteTaskSupplementByComment(ctx context.Context, arg DeleteT
 	return err
 }
 
+const getChatSteerTarget = `-- name: GetChatSteerTarget :one
+SELECT t.id, t.status, t.runtime_id, r.provider,
+       COALESCE(cap.capability, '')::text AS capability,
+       COALESCE(cap.steer_mode, '')::text AS steer_mode
+FROM agent_task_queue t
+JOIN agent_runtime r ON r.id = t.runtime_id
+LEFT JOIN task_supplement_capability cap ON cap.task_id = t.id
+WHERE t.chat_session_id = $1
+  AND t.status = 'running'
+  AND t.regenerate_quick_actions_for IS NULL
+ORDER BY t.started_at DESC NULLS LAST, t.id DESC
+LIMIT 1
+`
+
+type GetChatSteerTargetRow struct {
+	ID         pgtype.UUID `json:"id"`
+	Status     string      `json:"status"`
+	RuntimeID  pgtype.UUID `json:"runtime_id"`
+	Provider   string      `json:"provider"`
+	Capability string      `json:"capability"`
+	SteerMode  string      `json:"steer_mode"`
+}
+
+// The reply a chat message can be steered into right now: the session's
+// claimed head, with the capability its daemon negotiated (empty when the CLI
+// cannot take a message mid-reply). No row: nothing is replying yet.
+func (q *Queries) GetChatSteerTarget(ctx context.Context, chatSessionID pgtype.UUID) (GetChatSteerTargetRow, error) {
+	row := q.db.QueryRow(ctx, getChatSteerTarget, chatSessionID)
+	var i GetChatSteerTargetRow
+	err := row.Scan(
+		&i.ID,
+		&i.Status,
+		&i.RuntimeID,
+		&i.Provider,
+		&i.Capability,
+		&i.SteerMode,
+	)
+	return i, err
+}
+
 const getTaskSupplementByRequest = `-- name: GetTaskSupplementByRequest :one
 SELECT s.task_id, s.workspace_id, s.issue_id, s.comment_id, s.author_id, s.client_request_id, s.status, s.failure_reason, s.attempt_count, s.created_at, s.updated_at, s.delivered_at
 FROM task_supplement s
@@ -440,7 +691,7 @@ func (q *Queries) GetTaskSupplementByRequest(ctx context.Context, arg GetTaskSup
 }
 
 const getTaskSupplementCapability = `-- name: GetTaskSupplementCapability :one
-SELECT task_id, workspace_id, issue_id, capability, created_at FROM task_supplement_capability WHERE task_id = $1
+SELECT task_id, workspace_id, issue_id, capability, created_at, steer_mode FROM task_supplement_capability WHERE task_id = $1
 `
 
 func (q *Queries) GetTaskSupplementCapability(ctx context.Context, taskID pgtype.UUID) (TaskSupplementCapability, error) {
@@ -452,6 +703,7 @@ func (q *Queries) GetTaskSupplementCapability(ctx context.Context, taskID pgtype
 		&i.IssueID,
 		&i.Capability,
 		&i.CreatedAt,
+		&i.SteerMode,
 	)
 	return i, err
 }
@@ -487,15 +739,92 @@ func (q *Queries) GetTaskSupplementForRun(ctx context.Context, arg GetTaskSupple
 	return i, err
 }
 
+const listIssueSteerTargets = `-- name: ListIssueSteerTargets :many
+SELECT t.id, t.agent_id, r.provider,
+       COALESCE(cap.capability, '')::text AS capability,
+       COALESCE(cap.steer_mode, '')::text AS steer_mode
+FROM agent_task_queue t
+JOIN agent_runtime r ON r.id = t.runtime_id
+LEFT JOIN task_supplement_capability cap ON cap.task_id = t.id
+WHERE t.issue_id = $1
+  AND t.status = 'running'
+ORDER BY t.started_at DESC NULLS LAST, t.id DESC
+`
+
+type ListIssueSteerTargetsRow struct {
+	ID         pgtype.UUID `json:"id"`
+	AgentID    pgtype.UUID `json:"agent_id"`
+	Provider   string      `json:"provider"`
+	Capability string      `json:"capability"`
+	SteerMode  string      `json:"steer_mode"`
+}
+
+// The running turns on an issue and whether each can read a comment
+// mid-reply, so a steer can be refused up front with the reason.
+func (q *Queries) ListIssueSteerTargets(ctx context.Context, issueID pgtype.UUID) ([]ListIssueSteerTargetsRow, error) {
+	rows, err := q.db.Query(ctx, listIssueSteerTargets, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueSteerTargetsRow{}
+	for rows.Next() {
+		var i ListIssueSteerTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.Provider,
+			&i.Capability,
+			&i.SteerMode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSteeringChatFollowups = `-- name: ListSteeringChatFollowups :many
+SELECT DISTINCT s.followup_task_id
+FROM chat_task_supplement s
+WHERE s.chat_session_id = $1
+  AND s.status IN ('pending', 'delivering')
+`
+
+// Queued follow-ups of a session that are waiting to be read by the running
+// reply, so the queue bar can say so instead of "queued".
+func (q *Queries) ListSteeringChatFollowups(ctx context.Context, chatSessionID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listSteeringChatFollowups, chatSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var followup_task_id pgtype.UUID
+		if err := rows.Scan(&followup_task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, followup_task_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskSupplementMetadata = `-- name: ListTaskSupplementMetadata :many
-SELECT cap.task_id, cap.capability,
+SELECT cap.task_id, cap.capability, cap.steer_mode,
        COALESCE(array_agg(s.comment_id ORDER BY s.created_at, s.comment_id)
                 FILTER (WHERE s.comment_id IS NOT NULL), '{}'::uuid[])::uuid[] AS comment_ids
 FROM task_supplement_capability cap
 LEFT JOIN task_supplement s ON s.task_id = cap.task_id
 WHERE cap.workspace_id = $1
   AND cap.task_id = ANY($2::uuid[])
-GROUP BY cap.task_id, cap.capability
+GROUP BY cap.task_id, cap.capability, cap.steer_mode
 `
 
 type ListTaskSupplementMetadataParams struct {
@@ -506,6 +835,7 @@ type ListTaskSupplementMetadataParams struct {
 type ListTaskSupplementMetadataRow struct {
 	TaskID     pgtype.UUID   `json:"task_id"`
 	Capability string        `json:"capability"`
+	SteerMode  string        `json:"steer_mode"`
 	CommentIds []pgtype.UUID `json:"comment_ids"`
 }
 
@@ -518,7 +848,12 @@ func (q *Queries) ListTaskSupplementMetadata(ctx context.Context, arg ListTaskSu
 	items := []ListTaskSupplementMetadataRow{}
 	for rows.Next() {
 		var i ListTaskSupplementMetadataRow
-		if err := rows.Scan(&i.TaskID, &i.Capability, &i.CommentIds); err != nil {
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.Capability,
+			&i.SteerMode,
+			&i.CommentIds,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -639,6 +974,28 @@ func (q *Queries) LockTaskSupplementsByComment(ctx context.Context, arg LockTask
 	return items, nil
 }
 
+const rebindSteeredChatInput = `-- name: RebindSteeredChatInput :execrows
+UPDATE chat_message
+SET task_id = $1
+WHERE task_id = $2
+  AND role = 'user'
+`
+
+type RebindSteeredChatInputParams struct {
+	RunningInputTaskID pgtype.UUID `json:"running_input_task_id"`
+	FollowupTaskID     pgtype.UUID `json:"followup_task_id"`
+}
+
+// A delivered message belongs to the reply that read it: move it from the
+// absorbed follow-up's input batch to the running turn's.
+func (q *Queries) RebindSteeredChatInput(ctx context.Context, arg RebindSteeredChatInputParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rebindSteeredChatInput, arg.RunningInputTaskID, arg.FollowupTaskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryTaskSupplement = `-- name: RetryTaskSupplement :one
 WITH comment AS MATERIALIZED (
     SELECT id FROM comment
@@ -701,6 +1058,26 @@ func (q *Queries) RetryTaskSupplement(ctx context.Context, arg RetryTaskSuppleme
 	return i, err
 }
 
+const settleTerminalChatTaskSupplements = `-- name: SettleTerminalChatTaskSupplements :execrows
+UPDATE chat_task_supplement AS supplement
+SET status = 'failed',
+    failure_reason = 'turn_ended',
+    updated_at = now()
+FROM agent_task_queue AS task
+WHERE supplement.task_id = task.id
+  AND task.id = ANY($1::uuid[])
+  AND task.status IN ('completed', 'failed', 'cancelled')
+  AND supplement.status IN ('pending', 'delivering')
+`
+
+func (q *Queries) SettleTerminalChatTaskSupplements(ctx context.Context, taskIds []pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, settleTerminalChatTaskSupplements, taskIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const settleTerminalTaskSupplements = `-- name: SettleTerminalTaskSupplements :execrows
 UPDATE task_supplement AS supplement
 SET status = 'failed',
@@ -727,19 +1104,20 @@ func (q *Queries) SettleTerminalTaskSupplements(ctx context.Context, taskIds []p
 
 const startAgentTaskWithSupplement = `-- name: StartAgentTaskWithSupplement :one
 WITH candidate AS MATERIALIZED (
-    SELECT t.id, t.issue_id, r.workspace_id, r.provider
+    SELECT t.id, t.issue_id, t.chat_session_id, r.workspace_id, r.provider
     FROM agent_task_queue t
     JOIN agent_runtime r ON r.id = t.runtime_id
     WHERE t.id = $1
       AND t.status IN ('dispatched', 'waiting_local_directory')
     FOR UPDATE OF t
 ), capability AS (
-    INSERT INTO task_supplement_capability (task_id, workspace_id, issue_id, capability)
-    SELECT id, workspace_id, issue_id, 'task-supplement-v1'
+    INSERT INTO task_supplement_capability (task_id, workspace_id, issue_id, capability, steer_mode)
+    SELECT id, workspace_id, issue_id, 'task-supplement-v1', $2::text
     FROM candidate
-    WHERE $2::boolean
-      AND provider IN ('codex', 'claude', 'grok')
-      AND issue_id IS NOT NULL
+    WHERE $3::boolean
+      -- The providers allowed this mode live in Go (service.steerProviders).
+      AND provider = ANY($4::text[])
+      AND (issue_id IS NOT NULL OR chat_session_id IS NOT NULL)
     ON CONFLICT DO NOTHING
     RETURNING task_id
 )
@@ -753,19 +1131,26 @@ WHERE t.id = candidate.id
   -- Reference the data-modifying CTE explicitly: capability persistence and
   -- the returned running row are one indivisible statement.
   AND (SELECT count(*) FROM capability) >= 0
-RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot, t.code_decision, t.failure_input_version, t.failure_fingerprint, t.work_thread_id, t.context_generation, t.context_message_limit, t.context_token_budget, t.continuity_break_reason
+RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot, t.code_decision, t.failure_input_version, t.failure_fingerprint, t.work_thread_id, t.context_generation, t.context_message_limit, t.context_token_budget, t.continuity_break_reason, t.session_mode, t.resumed_from_task_id, t.session_break_reason
 `
 
 type StartAgentTaskWithSupplementParams struct {
 	TaskID               pgtype.UUID `json:"task_id"`
+	SteerMode            string      `json:"steer_mode"`
 	EnableTaskSupplement bool        `json:"enable_task_supplement"`
+	SupplementProviders  []string    `json:"supplement_providers"`
 }
 
 // Starting the task and recording the exact daemon/server capability handshake
 // are one state transition. A missing row is the fail-closed value for old
 // daemons, old servers, unsupported providers and application rollback.
 func (q *Queries) StartAgentTaskWithSupplement(ctx context.Context, arg StartAgentTaskWithSupplementParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, startAgentTaskWithSupplement, arg.TaskID, arg.EnableTaskSupplement)
+	row := q.db.QueryRow(ctx, startAgentTaskWithSupplement,
+		arg.TaskID,
+		arg.SteerMode,
+		arg.EnableTaskSupplement,
+		arg.SupplementProviders,
+	)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -835,6 +1220,9 @@ func (q *Queries) StartAgentTaskWithSupplement(ctx context.Context, arg StartAge
 		&i.ContextMessageLimit,
 		&i.ContextTokenBudget,
 		&i.ContinuityBreakReason,
+		&i.SessionMode,
+		&i.ResumedFromTaskID,
+		&i.SessionBreakReason,
 	)
 	return i, err
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/sparsecheckout"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // Local worktree mode gives every task on a local_directory resource its own
@@ -1938,7 +1939,11 @@ func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID 
 	if scope.Active() {
 		args = append([]string{"worktree", "add", "--no-checkout"}, args[2:]...)
 	}
-	out, err := runGit(gitRoot, args...)
+	newBranch := ""
+	if !plan.continues && !plan.reset {
+		newBranch = plan.name
+	}
+	out, err := addWorktreeRetrying(gitRoot, worktreePath, newBranch, args)
 	if err != nil {
 		if !branchUnavailable(out) {
 			return "", false, fmt.Errorf("execenv: git worktree add: %s: %w", strings.TrimSpace(out), err)
@@ -1948,7 +1953,7 @@ func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID 
 		if scope.Active() {
 			args = []string{"worktree", "add", "--no-checkout", "-b", alt, worktreePath, plan.base}
 		}
-		if out, err = runGit(gitRoot, args...); err != nil {
+		if out, err = addWorktreeRetrying(gitRoot, worktreePath, alt, args); err != nil {
 			return "", false, fmt.Errorf("execenv: git worktree add: %s: %w", strings.TrimSpace(out), err)
 		}
 		plan.name = alt
@@ -1961,6 +1966,31 @@ func addLocalWorktree(gitRoot, worktreePath string, plan taskBranchPlan, taskID 
 		}
 	}
 	return plan.name, created, nil
+}
+
+// addWorktreeRetrying runs one `git worktree add`, and when git fails on a
+// passing fault (taskfailure.TransientCheckout) it clears what the attempt left —
+// the half-written directory, its registration, and the branch when this add
+// was creating it — and tries again after worktreeAddRetryDelays. The caller
+// holds the repository lock, so the only writers it can race are outside this
+// daemon's own prepares. A deterministic failure returns on the first try.
+func addWorktreeRetrying(gitRoot, worktreePath, newBranch string, args []string) (string, error) {
+	out, err := runGit(gitRoot, args...)
+	for _, delay := range worktreeAddRetryDelays {
+		if err == nil || !taskfailure.TransientCheckout(out) {
+			break
+		}
+		_ = removeLocalWorktreeDir(gitRoot, worktreePath, nil)
+		if newBranch != "" {
+			// Only a branch this add was creating: `-b` refuses a name that
+			// already exists before writing anything, so whatever is there now
+			// came from the failed attempt.
+			_, _ = runGit(gitRoot, "branch", "-D", newBranch)
+		}
+		sleepBeforeWorktreeRetry(delay)
+		out, err = runGit(gitRoot, args...)
+	}
+	return out, err
 }
 
 // materializeLocalSparse checks out only the declared cone into a worktree

@@ -2510,3 +2510,18 @@ func TestPromptCarriesJoinedWakeups(t *testing.T) {
 		t.Errorf("prompt without joined wakeups mentions them:\n%s", out)
 	}
 }
+
+// DENE-1350: the first run after a handoff opens with the state card; a
+// resumed interrupted session does not get it again.
+func TestBuildPromptHandoffCard(t *testing.T) {
+	task := Task{IssueID: "issue-1", IssueTitle: "Fix", IssueContextGeneratedAt: "now", IssueHandoffCard: "上一棒交代：接着修缓存"}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{"## Handoff", "This issue was just handed to you", "上一棒交代：接着修缓存"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prompt missing %q: %s", want, out)
+		}
+	}
+	if strings.Contains(BuildPrompt(Task{IssueID: "issue-1", IssueTitle: "Fix", IssueContextGeneratedAt: "now"}, "claude"), "## Handoff") {
+		t.Fatal("a run without a handoff card must not render the block")
+	}
+}

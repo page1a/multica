@@ -206,6 +206,10 @@ func TestDevecoProcessEventsHappyPath(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 messages, got %d: %+v", len(msgs), msgs)
 	}
+	// The session is pinned on the first status, not only in the result.
+	if msgs[0].SessionID != "ses_happy" {
+		t.Fatalf("first status session = %q, want ses_happy", msgs[0].SessionID)
+	}
 }
 
 func TestDevecoProcessEventsToolErrorEmitsResult(t *testing.T) {

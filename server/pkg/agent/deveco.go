@@ -327,8 +327,14 @@ func (b *devecoBackend) processEvents(r io.Reader, ch chan<- Message) devecoEven
 			continue
 		}
 
-		if event.SessionID != "" {
+		// Pin the session as soon as it is known: a restart-tier message
+		// needs the id mid-run (DENE-1349). step_start carries it on the
+		// running status it already sends.
+		if event.SessionID != "" && event.SessionID != sessionID {
 			sessionID = event.SessionID
+			if event.Type != "step_start" {
+				trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
+			}
 		}
 
 		switch event.Type {
@@ -339,7 +345,7 @@ func (b *devecoBackend) processEvents(r io.Reader, ch chan<- Message) devecoEven
 		case "error":
 			b.handleErrorEvent(event, ch, &finalStatus, &finalError)
 		case "step_start":
-			trySend(ch, Message{Type: MessageStatus, Status: "running"})
+			trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 		case "step_finish":
 			// Accumulate token usage from step_finish events.
 			if t := event.Part.Tokens; t != nil {

@@ -29,6 +29,9 @@ export const issueKeys = {
     [...issueKeys.all(wsId), "detail", id] as const,
   timeline: (wsId: string | null, id: string) =>
     [...issueKeys.all(wsId), "timeline", id] as const,
+  // State card (DENE-1328): decisions, last baton, threads new since the viewer.
+  context: (wsId: string | null, id: string) =>
+    [...issueKeys.all(wsId), "context", id] as const,
   // Currently-running tasks for an issue (queued/dispatched/running). Drives
   // the "Working" state of the AgentActivityRow inside IssueHeaderCard.
   activeTasks: (wsId: string | null, id: string) =>

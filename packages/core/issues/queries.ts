@@ -136,6 +136,9 @@ export const issueKeys = {
    *  recovery covers it. */
   progress: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "progress", id] as const,
+  /** State card (DENE-1328). Under `all(wsId)`, so reconnect recovery covers it. */
+  context: (wsId: string, id: string) =>
+    [...issueKeys.all(wsId), "context", id] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
   identifier: (wsId: string, identifier: string) =>
     [...issueKeys.all(wsId), "identifier", identifier] as const,
@@ -668,6 +671,16 @@ export function issueProgressHistoryOptions(wsId: string, issueId: string) {
   return queryOptions({
     queryKey: issueKeys.progress(wsId, issueId),
     queryFn: () => api.listIssueProgress(issueId),
+  });
+}
+
+/** The issue state card for the viewer (DENE-1328). Any issue:updated or new
+ *  comment on the issue invalidates it. */
+export function issueContextOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.context(wsId, issueId),
+    queryFn: () => api.getIssueContext(issueId),
+    enabled: !!wsId && !!issueId,
   });
 }
 

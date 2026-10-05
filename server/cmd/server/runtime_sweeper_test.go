@@ -809,13 +809,9 @@ func TestRuntimeReconnectRetryHasBoundedTerminalPath(t *testing.T) {
 	taskSvc := service.NewTaskService(queries, testPool, nil, events.New())
 	taskSvc.HandleFailedTasks(ctx, failed)
 
-	var issueStatus string
-	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus); err != nil {
-		t.Fatalf("read issue status: %v", err)
-	}
-	if issueStatus != "todo" {
-		t.Fatalf("issue status = %q, want todo after terminal reconnect timeout", issueStatus)
-	}
+	// DENE-1342: an agent-owned issue is parked with a failure clock, not
+	// dropped back to todo with nothing driving it.
+	assertParkedAfterFailure(t, issueID)
 
 	var undrained, retryChildren int
 	if err := testPool.QueryRow(ctx, `
@@ -830,13 +826,14 @@ func TestRuntimeReconnectRetryHasBoundedTerminalPath(t *testing.T) {
 	}
 }
 
-// TestSweepResetsInProgressIssueToTodo verifies the core fix: when the sweeper
-// force-fails a stale task whose issue is still in_progress (because the daemon
-// crashed mid-run), the issue is reset back to todo so the daemon can re-queue it.
+// TestSweepParksInProgressIssueAfterFailure verifies the core fix: when the
+// sweeper force-fails a stale task whose issue is still in_progress (because
+// the daemon crashed mid-run), the issue leaves in_progress with a driver.
 //
 // Without this fix the issue stays in_progress permanently — the agent never runs
-// to update the status because it was never dispatched.
-func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
+// to update the status because it was never dispatched. Resetting to todo
+// (the earlier fix) left it with nothing that would start it (DENE-1342).
+func TestSweepParksInProgressIssueAfterFailure(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
 	}
@@ -872,11 +869,12 @@ func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
-	// Create a stale running task for the issue (3 hours old — beyond any timeout).
+	// Create a stale running task for the issue (3 hours old — beyond any
+	// timeout) on its last attempt, so no retry stands in as the driver.
 	var taskID string
 	err = testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, 'running', 0, now() - interval '3 hours', now() - interval '3 hours')
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at, attempt, max_attempts)
+		VALUES ($1, $2, $3, 'running', 0, now() - interval '3 hours', now() - interval '3 hours', 1, 1)
 		RETURNING id
 	`, agentID, runtimeID, issueID).Scan(&taskID)
 	if err != nil {
@@ -912,16 +910,28 @@ func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
 		t.Fatalf("expected task %s to be in failed tasks, got %v", taskID, failedTasks)
 	}
 
-	// This is what we're testing: issue must be reset from in_progress → todo.
-	broadcastFailedTasks(ctx, queries, nil, bus, failedTasks)
+	// This is what we're testing: the issue must leave in_progress with a
+	// driver. Agent-owned, so it is parked blocked with a failure clock the
+	// patrol acts on (DENE-1342), not reset to todo with nothing driving it.
+	// The production path: the sweeper always hands failures to a TaskService.
+	broadcastFailedTasks(ctx, queries, service.NewTaskService(queries, testPool, nil, bus), bus, failedTasks)
 
-	var issueStatus string
-	err = testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus)
-	if err != nil {
-		t.Fatalf("failed to query issue status: %v", err)
+	assertParkedAfterFailure(t, issueID)
+}
+
+// assertParkedAfterFailure checks the driver a failed run leaves on an
+// agent-owned issue: blocked, watched, and a clock the patrol will act on.
+func assertParkedAfterFailure(t *testing.T, issueID string) {
+	t.Helper()
+	var status, watched, wakeAt string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT status, COALESCE(metadata->>'block.watched', ''), COALESCE(metadata->>'block.wake_at', '')
+		FROM issue WHERE id = $1
+	`, issueID).Scan(&status, &watched, &wakeAt); err != nil {
+		t.Fatalf("read issue: %v", err)
 	}
-	if issueStatus != "todo" {
-		t.Fatalf("expected issue status 'todo' after sweep, got '%s' — issue is stuck", issueStatus)
+	if status != "blocked" || watched != "1" || wakeAt == "" {
+		t.Fatalf("issue = status %q watched %q wake_at %q, want blocked with a failure clock", status, watched, wakeAt)
 	}
 }
 

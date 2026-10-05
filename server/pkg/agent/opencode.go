@@ -53,6 +53,9 @@ type opencodeBackend struct {
 	// the cancellation handler can interrupt the session server-side. It is nil
 	// on the Backend New returns and on any backend built directly by a test.
 	session *opencodeSessionTracker
+	// supplement is the run's task-supplement inbox, nil when disabled. The
+	// first session event confirms the turn it may target.
+	supplement *supplementInbox
 }
 
 // opencodeSeparatesReasoning recognizes the released OpenCode 1.x wire contract.
@@ -218,6 +221,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	// credentials in the agent's own working tree, where the agent can commit
 	// them. Such runs are refused rather than started without their servers —
 	// see ErrOpenCodeV2MCPUnsupported.
+	var supplement *supplementInbox
 	if usesV2 {
 		if err := opencodeCheckMCPSupport(opts.McpConfig); err != nil {
 			cancel()
@@ -229,14 +233,34 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 			cancel()
 			return nil, err
 		}
+		configContent := mcpContent
 		if mcpContent != "" {
 			if _, dup := b.cfg.Env["OPENCODE_CONFIG_CONTENT"]; dup {
 				b.cfg.Logger.Warn("agent.custom_env sets OPENCODE_CONFIG_CONTENT but agent.mcp_config takes precedence and overrides it")
 			}
-			env = append(env, "OPENCODE_CONFIG_CONTENT="+mcpContent)
+		}
+		// Task supplements ride a daemon-owned plugin in the same config slice.
+		// It keeps a user-provided OPENCODE_CONFIG_CONTENT when no MCP replaces
+		// it; a run whose plugin cannot be installed simply runs without
+		// supplements, and the server keeps queueing them for the next turn.
+		if opts.EnableTaskSupplement {
+			base := configContent
+			if base == "" {
+				base = b.cfg.Env["OPENCODE_CONFIG_CONTENT"]
+			}
+			if inbox, merged, err := newOpenCodeSupplementInbox(base); err != nil {
+				b.cfg.Logger.Warn("opencode: task supplements disabled for this run", "error", err)
+			} else {
+				supplement, configContent = inbox, merged
+				env = append(env, supplementInboxDirEnv+"="+inbox.dir)
+			}
+		}
+		if configContent != "" {
+			env = append(env, "OPENCODE_CONFIG_CONTENT="+configContent)
 		}
 	}
 	cmd.Env = env
+	run.supplement = supplement
 
 	// Capture how this run reaches its OpenCode service, so a later interrupt
 	// talks to the same one. `--server` can arrive through agent.custom_args, and
@@ -254,11 +278,13 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("opencode stdout pipe: %w", err)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("opencode stdin pipe: %w", err)
 	}
@@ -268,6 +294,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 
 	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		closeStdin()
+		supplement.close()
 		cancel()
 		return nil, fmt.Errorf("start opencode: %w", err)
 	}
@@ -346,6 +373,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		exitErr := cmd.Wait()
 		close(procDone)
 		releaseProcessGroup(cmd)
+		supplement.close()
 		duration := time.Since(startTime)
 
 		// Wait closes the process pipes, so a prompt write still blocked when
@@ -411,7 +439,25 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		}
 	}()
 
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	return supplement.bindSupplement(&Session{Messages: msgCh, Result: resCh}), nil
+}
+
+// newOpenCodeSupplementInbox writes the plugin into a fresh inbox and returns
+// the config content that loads it.
+func newOpenCodeSupplementInbox(configContent string) (*supplementInbox, string, error) {
+	inbox, err := newSupplementInbox("opencode")
+	if err != nil {
+		return nil, "", err
+	}
+	pluginPath, err := inbox.writeExtension("multica-supplement.js", opencodeSupplementPlugin)
+	if err == nil {
+		configContent, err = opencodeConfigWithPlugin(configContent, pluginPath)
+	}
+	if err != nil {
+		inbox.close()
+		return nil, "", err
+	}
+	return inbox, configContent, nil
 }
 
 // ── Event handlers ──
@@ -496,6 +542,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 		}
 
 		if event.SessionID != "" {
+			b.supplement.start()
 			sessionID = event.SessionID
 			// Publish it for the cancellation handler, which needs a session id
 			// to interrupt a 2.x run server-side. No-op when b has no tracker.

@@ -19,6 +19,7 @@ import { agentListOptions, memberListOptions } from "@multica/core/workspace/que
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "../../issues/components/pickers/assignee-picker";
 import { api, dispatchReasonCode } from "@multica/core/api";
+import { sendChatMessageInMode } from "./send-chat-message";
 import {
   isAgentRuntimeBound,
   useAgentPresenceDetail,
@@ -102,7 +103,7 @@ import {
   useCurrentRouteProjectId,
 } from "./use-chat-project-follow";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatSendMode, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useLocale, useT } from "../../i18n";
 import { openGoalCompletion } from "@multica/core/modals";
 
@@ -487,6 +488,7 @@ export function ChatWindow() {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      mode?: ChatSendMode,
     ): Promise<boolean> => {
       if (isChatViewOnly) return false;
       if (!activeAgent && !sharedSpeaker) {
@@ -566,7 +568,16 @@ export function ChatWindow() {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        // A mode only matters to a reply already running; a fresh session or
+        // an idle one just starts.
+        const sent = await sendChatMessageInMode(
+          sessionId,
+          finalContent,
+          attachmentIds,
+          pendingTaskId ? mode : undefined,
+        );
+        result = sent.result;
+        if (sent.steerFellBack) toast.info(t(($) => $.input.steer_fell_back_toast));
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         const reason = dispatchReasonCode(err);
@@ -1104,6 +1115,9 @@ export function ChatWindow() {
         } : undefined}
         isRunning={!!pendingTaskId}
         allowSubmitWhileRunning={pendingTask?.supports_queue === true}
+        steerSupported={pendingTask?.steer_supported === true}
+        steerProvider={pendingTask?.steer_provider}
+        steerMode={pendingTask?.steer_mode}
         disabled={
           isSessionArchived ||
           isAgentArchived ||

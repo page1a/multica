@@ -1,6 +1,14 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+)
 
 func TestParseChatSessionRef(t *testing.T) {
 	const id = "019ec09d-6222-722b-bdfa-427b105d80be"
@@ -41,5 +49,39 @@ func TestParseChatSessionLinkRefKeepsWorkspaceSlug(t *testing.T) {
 	}
 	if ref.ID != id || ref.Slug != "acme" {
 		t.Fatalf("ref = %+v, want id %s and slug acme", ref, id)
+	}
+}
+
+func TestRunChatHandoffPostsTarget(t *testing.T) {
+	const id = "019ec09d-6222-722b-bdfa-427b105d80be"
+	var gotPath, gotTo string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotTo = body["to"]
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{"id": "new-1", "title": "t"}})
+	}))
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_CHAT_SESSION_ID", id)
+
+	cmd := &cobra.Command{Use: "handoff"}
+	cmd.Flags().String("session", "", "")
+	cmd.Flags().String("to", "", "")
+	cmd.Flags().String("output", "json", "")
+	if err := runChatHandoff(cmd, nil); err == nil || !strings.Contains(err.Error(), "--to is required") {
+		t.Fatalf("missing --to: err = %v", err)
+	}
+	_ = cmd.Flags().Set("to", "孙悟饭")
+	if err := runChatHandoff(cmd, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if gotPath != "/api/chat/sessions/"+id+"/handoff" || gotTo != "孙悟饭" {
+		t.Fatalf("request = %s to=%q", gotPath, gotTo)
 	}
 }

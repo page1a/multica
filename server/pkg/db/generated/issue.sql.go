@@ -212,6 +212,80 @@ func (q *Queries) ClearIssueDuplicatesOf(ctx context.Context, arg ClearIssueDupl
 	return items, nil
 }
 
+const clearIssueExecutorIfCurrent = `-- name: ClearIssueExecutorIfCurrent :one
+UPDATE issue
+SET assignee_type = NULL,
+    assignee_id = NULL,
+    assignee_source = NULL,
+    assignee_source_user_id = NULL,
+    assignee_quote = NULL,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = $1::uuid
+  AND workspace_id = $2::uuid
+  AND assignee_id = $3::uuid
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at, duplicate_of_issue_id
+`
+
+type ClearIssueExecutorIfCurrentParams struct {
+	ID                pgtype.UUID `json:"id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	CurrentAssigneeID pgtype.UUID `json:"current_assignee_id"`
+}
+
+// DENE-1342 reroute: an undriven ticket's executor slot is emptied so routing
+// judges it from zero. Guarded on the seat the caller saw.
+func (q *Queries) ClearIssueExecutorIfCurrent(ctx context.Context, arg ClearIssueExecutorIfCurrentParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, clearIssueExecutorIfCurrent, arg.ID, arg.WorkspaceID, arg.CurrentAssigneeID)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+		&i.TriageState,
+		&i.ReviewerType,
+		&i.ReviewerID,
+		&i.Visibility,
+		&i.AssigneeSource,
+		&i.AssigneeSourceUserID,
+		&i.AssigneeQuote,
+		&i.ProgressText,
+		&i.ProgressSource,
+		&i.ProgressTone,
+		&i.ProgressAuthorType,
+		&i.ProgressAuthorID,
+		&i.ProgressUpdatedAt,
+		&i.DuplicateOfIssueID,
+	)
+	return i, err
+}
+
 const countCreatedIssueAssignees = `-- name: CountCreatedIssueAssignees :many
 SELECT
   assignee_type,
@@ -1485,13 +1559,14 @@ func (q *Queries) IssueHasDuplicates(ctx context.Context, arg IssueHasDuplicates
 
 const listBlockPatrolCandidates = `-- name: ListBlockPatrolCandidates :many
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at, duplicate_of_issue_id FROM issue
-WHERE status IN ('blocked', 'in_review', 'in_progress')
-  AND COALESCE(metadata->>'block.watched', '') = '1'
-  AND NOT EXISTS (
+WHERE NOT EXISTS (
     SELECT 1 FROM agent_task_queue t
     WHERE t.issue_id = issue.id
       AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
   )
+  AND ((
+  status IN ('blocked', 'in_review', 'in_progress')
+  AND COALESCE(metadata->>'block.watched', '') = '1'
   AND (
     (
       COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
@@ -1505,6 +1580,21 @@ WHERE status IN ('blocked', 'in_review', 'in_progress')
       COALESCE(last_activity_at, updated_at) < $1::timestamptz
     )
   )
+  ) OR (
+    status = 'todo'
+    AND assignee_type IN ('agent', 'squad')
+    AND assignee_id IS NOT NULL
+    AND COALESCE(last_activity_at, updated_at) < $1::timestamptz
+    AND COALESCE(last_activity_at, updated_at) > $2::timestamptz
+    AND NOT EXISTS (
+      SELECT 1 FROM issue_wakeup w
+      WHERE w.issue_id = issue.id AND w.enabled AND w.system_rule IS NULL
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM issue c
+      WHERE c.parent_issue_id = issue.id AND c.status NOT IN ('done', 'cancelled')
+    )
+  ))
 ORDER BY
   CASE
     WHEN COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
@@ -1514,11 +1604,12 @@ ORDER BY
     ELSE 2
   END,
   COALESCE(last_activity_at, updated_at)
-LIMIT $2::int
+LIMIT $3::int
 `
 
 type ListBlockPatrolCandidatesParams struct {
 	QuietBefore pgtype.Timestamptz `json:"quiet_before"`
+	TodoSince   pgtype.Timestamptz `json:"todo_since"`
 	RowLimit    int32              `json:"row_limit"`
 }
 
@@ -1529,8 +1620,12 @@ type ListBlockPatrolCandidatesParams struct {
 // when that clock comes due. Ordinary in_progress rows are never stamped.
 // Clocks are compared as UTC text. The writer uses RFC3339 with a Z suffix.
 // Casting to timestamptz would abort every workspace's sweep on one bad value.
+//
+// DENE-1342 adds the undriven todo: an executor is seated, nothing runs, no
+// wakeup is set and no child is open. Only rows that went quiet after
+// todo_since, so a deploy does not rerun every forgotten ticket at once.
 func (q *Queries) ListBlockPatrolCandidates(ctx context.Context, arg ListBlockPatrolCandidatesParams) ([]Issue, error) {
-	rows, err := q.db.Query(ctx, listBlockPatrolCandidates, arg.QuietBefore, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listBlockPatrolCandidates, arg.QuietBefore, arg.TodoSince, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -1818,6 +1913,73 @@ func (q *Queries) ListDaemonBlockWaits(ctx context.Context, workspaceID pgtype.U
 			&i.ProgressAuthorID,
 			&i.ProgressUpdatedAt,
 			&i.DuplicateOfIssueID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueDriverFacts = `-- name: ListIssueDriverFacts :many
+SELECT
+  i.id AS issue_id,
+  EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = i.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )::bool AS active_run,
+  EXISTS (
+    SELECT 1 FROM issue_wakeup w
+    WHERE w.issue_id = i.id AND w.enabled AND w.system_rule IS NULL
+  )::bool AS wakeup,
+  EXISTS (
+    SELECT 1 FROM issue c
+    WHERE c.parent_issue_id = i.id
+      AND c.status NOT IN ('done', 'cancelled')
+      AND NOT EXISTS (
+        SELECT 1 FROM issue_status s
+        WHERE s.workspace_id = c.workspace_id AND s.key = c.status AND s.category IN ('done', 'closed')
+      )
+  )::bool AS open_children
+FROM issue i
+WHERE i.workspace_id = $1::uuid
+  AND i.id = ANY($2::uuid[])
+`
+
+type ListIssueDriverFactsParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	IssueIds    []pgtype.UUID `json:"issue_ids"`
+}
+
+type ListIssueDriverFactsRow struct {
+	IssueID      pgtype.UUID `json:"issue_id"`
+	ActiveRun    bool        `json:"active_run"`
+	Wakeup       bool        `json:"wakeup"`
+	OpenChildren bool        `json:"open_children"`
+}
+
+// DENE-1342: the facts outside the issue row that decide its driver (ADR-0006).
+// A wakeup somebody created counts; a platform rule (system_rule) does not,
+// because every parent carries one. An open child counts, read against the
+// workspace catalog so a custom closed status is closed.
+func (q *Queries) ListIssueDriverFacts(ctx context.Context, arg ListIssueDriverFactsParams) ([]ListIssueDriverFactsRow, error) {
+	rows, err := q.db.Query(ctx, listIssueDriverFacts, arg.WorkspaceID, arg.IssueIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueDriverFactsRow{}
+	for rows.Next() {
+		var i ListIssueDriverFactsRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.ActiveRun,
+			&i.Wakeup,
+			&i.OpenChildren,
 		); err != nil {
 			return nil, err
 		}

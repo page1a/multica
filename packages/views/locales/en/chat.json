@@ -77,7 +77,6 @@
     "placeholder_named": "Message {{name}}…",
     "placeholder_default": "Start a message…",
     "send_tooltip": "Send",
-    "queue_send_tooltip": "Queue message",
     "stop_tooltip": "Stop",
     "send_failed_toast": "Failed to send message",
     "send_blocked_toast": "Message not sent — you no longer have permission to use this agent",
@@ -93,21 +92,38 @@
     "no_projects": "No projects yet",
     "switch_project": "Switch to another project…",
     "project_context_unsupported": "Project description won't apply — this agent's daemon needs an upgrade",
-    "to_goal": "Turn into a goal task"
+    "to_goal": "Turn into a goal task",
+    "mode_menu": "Send mode",
+    "mode_steer": "Steer",
+    "mode_steer_desc": "Read after this step",
+    "mode_steer_restart_desc": "Reads it right away; the current step is cut off",
+    "mode_steer_process": "Same process · same session",
+    "mode_steer_restart_process": "Restarts the CLI · same session",
+    "mode_queue": "Queue",
+    "mode_queue_desc": "Sent after this reply",
+    "mode_queue_process": "New process · resumes the same session",
+    "mode_restart": "Interrupt and restart",
+    "mode_restart_desc": "Stop this reply and start over from this message",
+    "mode_restart_process": "New process · resumes the same session",
+    "mode_steer_unsupported": "{{cli}} can't read messages mid-reply yet",
+    "mode_steer_unsupported_generic": "This agent can't read messages mid-reply yet",
+    "enter_hint": "Enter = {{mode}}",
+    "steer_fell_back_toast": "This reply can't take a message mid-reply, so it was queued"
   },
   "queue": {
     "title_one": "{{count}} queued message",
     "title_other": "{{count}} queued messages",
     "clear": "Clear all",
-    "steer": "Steer",
-    "steer_unavailable": "Steer is available after the current reply starts",
+    "steer": "Interrupt and restart",
+    "steer_unavailable": "Available after the current reply starts",
     "steer_no_permission": "You no longer have permission to run this agent",
-    "steer_unavailable_toast": "Steer is unavailable. Refreshing the queue.",
+    "steer_unavailable_toast": "Can't restart right now. Refreshing the queue.",
     "edit": "Edit queued message",
     "remove": "Remove queued message",
     "more": "More queue actions",
     "fallback": "Queued message",
-    "action_failed_toast": "Couldn't update the queued message"
+    "action_failed_toast": "Couldn't update the queued message",
+    "steering": "Steering"
   },
   "message_list": {
     "show_details": "Show details",
@@ -336,7 +352,11 @@
     "copy_conversation": "Copy conversation as Markdown",
     "conversation_copied": "Conversation copied",
     "copy_role_user": "You",
-    "copy_role_assistant": "Assistant"
+    "copy_role_assistant": "Assistant",
+    "handoff": "Hand to…",
+    "handoff_hint": "Opens a new chat that starts with this one's summary",
+    "handoff_done": "Handed to {{name}}",
+    "handoff_failed": "Couldn't hand the chat over"
   },
   "sharing": {
     "title": "Edit access",
@@ -381,5 +401,12 @@
     "from_prefix": "Opened from",
     "from_suffix": "",
     "from_hidden": "Opened from another chat"
+  },
+  "session_lineage": {
+    "new": "New session",
+    "reason_agent_changed": "different agent",
+    "reason_runtime_changed": "last session is on another machine",
+    "reason_session_lost": "previous session could not be restored",
+    "reason_fresh_requested": "fresh session requested"
   }
 }

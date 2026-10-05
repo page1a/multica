@@ -1087,6 +1087,20 @@ func lastClaudeEnvValue(env []string, key string) (string, bool) {
 	return "", false
 }
 
+// ClaudeSessionStored reports whether Claude Code holds the transcript for
+// sessionID under the config directory env selects, in any project folder.
+// Claude resumes a stored session from a different cwd (verified on 2.1.289),
+// so the daemon uses this instead of requiring the previous working directory
+// when a turn could not go back to it (DENE-1356).
+func ClaudeSessionStored(env []string, cwd, sessionID string) bool {
+	configDir, err := claudeConfigDir(env, cwd)
+	if err != nil {
+		return false
+	}
+	_, err = findClaudeSessionFile(configDir, sessionID)
+	return err == nil
+}
+
 func findClaudeSessionFile(configDir, sessionID string) (string, error) {
 	if sessionID == "" || sessionID == "." || sessionID == ".." || strings.ContainsAny(sessionID, "/\\:\x00") {
 		return "", fmt.Errorf("invalid Claude session id %q", sessionID)

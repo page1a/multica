@@ -2298,12 +2298,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/stall/undo", h.UndoStallAction)
 					r.Post("/progress", h.WriteIssueProgress)
 					r.Get("/progress", h.ListIssueProgress)
+					// State card (DENE-1328): goal, decisions, close record,
+					// last baton and the caller's own change list —
+					// `multica issue context`. Decisions are the only rows.
+					r.Get("/context", h.GetIssueContext)
+					r.Post("/decisions", h.CreateIssueDecision)
+					r.Patch("/decisions/{decisionId}", h.UpdateIssueDecision)
+					r.Delete("/decisions/{decisionId}", h.DeleteIssueDecision)
 					// PR state from the caller's gh, refreshed by `issue
 					// close` so the done gate sees merges without a GitHub App.
 					r.Post("/pull-requests/report", h.ReportIssuePullRequests)
 					// One-shot handoff (DENE-863): server routes, dedupes and
 					// reports what actually landed — `multica issue handoff`.
 					r.Post("/handoff", h.HandoffIssue)
+					// What to do with a child nobody drives (DENE-1342): rerun,
+					// reroute, split or cancel — `multica issue dispose`.
+					r.Post("/dispose", h.DisposeIssue)
 					// One "叫人" entry (DENE-880): inbox, subscription, a
 					// visible @ and an open call the reply answers —
 					// `multica issue summon`.
@@ -2758,6 +2768,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Independent workspace-level list backing the issues-header
 			// "agents working" chip and its assignee-id Table filter.
 			r.Get("/api/working-agents", h.ListWorkspaceWorkingAgents)
+			// Shared incremental-sync contract for high-frequency list clients.
+			r.Get("/api/sync/changes", h.ListIncrementalChanges)
 
 			// Workspace-wide daily agent activity (last 30d, anchored on
 			// completed_at). Backs the Agents-list sparkline (trailing 7d
@@ -2804,6 +2816,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// workspace and the session's owner (an agent task acts as
 					// that person). Not a public share.
 					r.Get("/handoff", h.GetChatSessionHandoff)
+					// Hand this chat to another agent: a new chat that opens
+					// with this one's summary (DENE-1350).
+					r.Post("/handoff", h.HandoffChatSession)
 					r.Get("/pending-task", h.GetPendingChatTask)
 					r.Delete("/queued-tasks", h.ClearQueuedChatTasks)
 					r.Post("/queued-tasks/{taskId}/prioritize", h.PrioritizeQueuedChatTask)

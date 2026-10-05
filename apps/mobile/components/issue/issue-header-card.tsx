@@ -16,6 +16,7 @@ import type { Issue } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { AttributeRow } from "./attribute-row";
 import { AgentActivityRow } from "./agent-activity-row";
+import { UndrivenRow } from "./undriven-row";
 
 export function IssueHeaderCard({ issue }: { issue: Issue }) {
   return (
@@ -29,6 +30,7 @@ export function IssueHeaderCard({ issue }: { issue: Issue }) {
        *  which is higher-IA than the static property chips below.
        *  Conditionally renders null when there are no tasks at all. */}
       <AgentActivityRow issueId={issue.id} />
+      <UndrivenRow issue={issue} />
       <AttributeRow issue={issue} />
     </View>
   );

@@ -1,7 +1,5 @@
 # Issues
-
 Product contracts the runtime brief does not fully encode.
-
 - [PR linking](#pr-linking)
 - [Reading a linked PR's real state](#reading-a-linked-prs-real-state)
 - [Custom properties: typed workflow state](#custom-properties-typed-workflow-state)
@@ -10,13 +8,11 @@ Product contracts the runtime brief does not fully encode.
 - [Sub-issues: todo starts work now, backlog parks it](#sub-issues-todo-starts-work-now-backlog-parks-it)
 - [Charts and files in a comment](#charts-and-files-in-a-comment)
 - [Incorrect to correct](#incorrect-to-correct)
-
 Closing is its own contract; read `references/close-protocol.md` for its `close.*` keys, decision tables, and dispatcher promotion rules.
-
+Who drives an open issue, and the `issue dispose` command for one nobody drives, are in `references/drivers.md`; stopping every run on an issue and the run limits are in `references/run-control.md`.
 Create a goal task with `multica issue create --title "..." --goal`. This
 creates a draft completion line with starter checks; a human must edit and
 confirm it through the shared goal panel before execution begins.
-
 `multica issue wait <id> --output json` is the read-only status view for a
 blocked issue's wait. It reports the wait condition, optional `wait_probe`,
 deadline, last probe status (`ready`, `pending`, or `failed`), check timestamp,
@@ -24,22 +20,17 @@ and bounded output. A probe uses exit code `0` for ready, `10` (or GitHub CLI's
 `gh pr checks` code `8`) for pending, and
 any other code for failed. Do not add a follow-up stage-advance command after a
 close; the server advances stages as part of its close protocol.
-
 To move several issues to one lifecycle status at once, use the same batch
 endpoint as the web and desktop inbox actions:
-
 ```bash
 multica issue status-batch done DENE-12 DENE-13 --output json
 multica issue status-batch todo DENE-12 --no-start
 ```
-
 The first argument is the status key and the remaining arguments are issue keys
 or UUIDs. `--no-start` adds the same `suppress_run` control as single-issue
 status changes. `--output json` returns the resolved issue IDs and server batch
 result. `batch-status` is accepted as an alias.
-
 ## Sub-issues: todo starts work now, backlog parks it
-
 The steps are in `references/sub-issues.md`. `--status backlog` parks a child instead of starting it. `` `--stage <N>` `` groups children into a stage, and the parent is woken when a whole stage finishes. Promote one parked child with `multica issue status <child-id> todo`.
 
 ## Editing comments without overwriting concurrent work
@@ -344,9 +335,9 @@ archived statuses remain readable via an explicit status filter.
   when it is really separate work. Marking logs `duplicate_marked` on the
   duplicate and `duplicate_added` on the original; removing the mark logs
   `duplicate_unmarked` / `duplicate_removed` (`multica issue timeline --action`).
-- **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
-  `todo` when no active task / retry remains — that is the main server-owned
-  status write on the agent-run path.
+- **Failed issue-triggered tasks** with no retry queued leave an agent-owned issue `blocked` with
+  a failure wake clock the patrol acts on (a sweeper-reaped run may still roll it back to `todo`);
+  the parent gets a note that only promises a wake when one was recorded (DENE-1339).
 - **Completed issue-triggered tasks** are the mirror case, and they write no
   status at all: a run that reaches `/complete` cleanly while the issue is
   still `in_progress` with nothing queued behind it leaves a system comment
@@ -389,6 +380,14 @@ child of that parent — and labels each row with the issue it belongs to, which
 is how you find another agent already working on a sibling sub-issue before you
 open a second PR against the same code.
 
+Each run row also says whether its CLI session continued an earlier run
+(DENE-1345): `session_mode` is `new` or `resumed`, `resumed_from_run` names the
+run whose session it resumed, and `session_break_reason` says why a new session
+started — `first_run`, `agent_changed`, `runtime_changed`, `session_lost`
+(nothing resumable, or the daemon could not restore it) or `fresh_requested`.
+`multica chat history --output json` carries the same three fields on chat
+messages. Rows older than this field omit all three.
+
 `waiting_local_directory` is the `in_place` path-mutex wait. Tasks on a
 `shared` or `worktree` `local_directory` do not take that mutex, so they do
 not enter this status for the directory lock. If several tasks on an umbrella
@@ -401,6 +400,16 @@ The family read returns a compact row — task, issue, agent, status, started �
 not the full execution-log record. If you need a run's detail, follow the task
 id with `multica issue run-messages`.
 
+Rows come back running-first, newest-first within a status, and the family read
+is capped at 20. When the cap truncates the answer the CLI prints a warning on
+stderr — read it. Without that warning a short list means "nobody else is
+there"; with it, the list proves nothing about the runs it did not return.
+
+Both are advisory reads. Nothing here reserves an issue or serialises anything:
+a run you see may finish a second later, and one you don't see may start a
+second later. Coordinate through the issue's comments — the reads tell you whom
+to coordinate with.
+
 ## Who can see an issue
 
 `multica issue access <id> --output json` answers what the share button in the
@@ -411,40 +420,6 @@ admin or the owner to change it rather than retrying. A link to a private
 issue opens as "not found" for everyone else, so check this before pasting an
 issue link for someone who may not be in its audience. `multica project access`
 is the same read for a project.
-
-## Stop every run on one issue
-
-Use the issue-level guard when an agent chain must stop immediately:
-
-```bash
-multica issue halt <issue-id>    # cancel queued/dispatched/running runs and block agent triggers
-multica issue resume <issue-id>  # clear the halt guard; a human comment is still needed to reset a chain budget
-```
-
-The guard is issue-scoped. A human comment clears it and resets the
-delegation-chain budget; `resume` only clears an explicit halt and does not
-reset an already-exceeded budget. Direct human-triggered runs are never
-consumed by that budget. The default chain limit is thirty runs; a workspace
-admin changes it under Settings → General → Agent run limits (stored as
-`agent_chain_budget` in the workspace `settings` JSON, `0` = unlimited). Hitting
-the limit posts a system comment in the triggering thread instead of stopping
-silently.
-
-The same settings section holds a run time limit
-(`agent_task_timeout_minutes`, `0`/absent = none). A run that outlives it fails with reason `task_time_limit`:
-a round boundary, not a wrong result. The platform continues the same CLI session and working directory
-until the attempt budget is spent, and the continuation is told to close out finished work and split what remains.
-When the budget is spent the issue becomes `blocked` with a comment instead of sitting in `todo`; a sub-issue also leaves a short note on its parent.
-
-Rows come back running-first, newest-first within a status, and the family read
-is capped at 20. When the cap truncates the answer the CLI prints a warning on
-stderr — read it. Without that warning a short list means "nobody else is
-there"; with it, the list proves nothing about the runs it did not return.
-
-Both are advisory reads. Nothing here reserves an issue or serialises anything:
-a run you see may finish a second later, and one you don't see may start a
-second later. Coordinate through the issue's comments — the reads tell you whom
-to coordinate with.
 
 ## Charts and files in a comment
 
@@ -468,6 +443,8 @@ For GitLab, `glab ci status` can be used directly when it returns non-zero while
 ### Report progress
 
 `multica issue progress <issue-id> "<progress>" [--tone working|waiting|stuck|done] --output json` sets the line under the issue's title; `--history` reads earlier lines. Who wins between your line, a close summary and the stall patrol: `references/progress.md`.
+
+`multica issue context <issue-id>` prints the issue's state card — goal, settled decisions, where it stands, the last baton, and threads new since you were last here: `references/state-card.md`.
 
 `multica issue title <issue-id> --suggest "<title>" --output json` stores a pending title suggestion for a human-created issue. It does not rename the issue; the issue page's adopt action is the only writer that applies it.
 

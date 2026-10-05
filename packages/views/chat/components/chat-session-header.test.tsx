@@ -7,6 +7,7 @@ import enChat from "../../locales/en/chat.json";
 import enCommon from "../../locales/en/common.json";
 
 const updateMutate = vi.hoisted(() => vi.fn());
+const handoffMutate = vi.hoisted(() => vi.fn());
 const copyTextMock = vi.hoisted(() => vi.fn(async () => true));
 const accessRef = vi.hoisted(() => ({
   current: { mode: "project", visibility: "project", can_edit: true, has_project: true, shares: [] } as {
@@ -39,6 +40,7 @@ vi.mock("@multica/core/chat/mutations", () => ({
   useUpdateChatSession: () => ({ mutate: updateMutate }),
   useDeleteChatSession: () => ({ mutate: vi.fn() }),
   useSetChatSessionArchived: () => ({ mutate: vi.fn() }),
+  useHandoffChatSession: () => ({ mutate: handoffMutate, isPending: false }),
 }));
 
 vi.mock("@multica/core/chat", () => ({
@@ -277,5 +279,37 @@ describe("ChatSessionHeader sharing entry (DENE-1214)", () => {
     fireEvent.click(screen.getByTestId("chat-copy-link"));
     await waitFor(() => expect(copyTextMock).toHaveBeenCalledWith("https://example.test/acme/chat/session-1"));
     expect(screen.queryByTestId("private-link-prompt")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatSessionHeader handoff (DENE-1350)", () => {
+  const agents = [
+    { id: "agent-1", name: "Current" },
+    { id: "agent-2", name: "Gohan" },
+  ] as unknown as import("@multica/core/types").Agent[];
+
+  function renderHeader(over: Partial<ChatSession> = {}) {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <ChatSessionHeader session={{ ...session, ...over }} agent={null} handoffAgents={agents} />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => handoffMutate.mockReset());
+
+  it("hands the chat to another agent, never the current one", () => {
+    renderHeader();
+    fireEvent.click(screen.getByTestId("chat-handoff-trigger"));
+    expect(screen.queryByRole("menuitem", { name: "Current" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Gohan" }));
+    expect(handoffMutate).toHaveBeenCalledWith({ sessionId: "session-1", to: "agent-2" }, expect.anything());
+  });
+
+  it("offers no handoff to someone who does not own the chat", () => {
+    renderHeader({ creator_id: "someone-else" });
+    expect(screen.queryByTestId("chat-handoff-trigger")).not.toBeInTheDocument();
   });
 });

@@ -94,3 +94,14 @@ export const issueAttachmentsOptions = (wsId: string | null, id: string) =>
     queryFn: ({ signal }) => api.listAttachments(id, { signal }),
     enabled: !!wsId && !!id,
   });
+
+/**
+ * State card (DENE-1328) — the server-derived card `multica issue context`
+ * prints. Invalidated by issue/comment WS events in `useIssueRealtime`.
+ */
+export const issueContextOptions = (wsId: string | null, id: string) =>
+  queryOptions({
+    queryKey: issueKeys.context(wsId, id),
+    queryFn: ({ signal }) => api.getIssueContext(id, { signal }),
+    enabled: !!wsId && !!id,
+  });

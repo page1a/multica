@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hans">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1349 一次性 CLI 重启续接插话</title>
+<style>
+  :root { --fg: #1f1f1f; --muted: #737373; --border: #e5e5e5; --accent: #f4f4f5; --primary: #18181b; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.5 system-ui, -apple-system, sans-serif; margin: 24px; color: var(--fg); background: #fafafa; }
+  h2 { font-size: 15px; margin: 28px 0 10px; font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  figcaption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  figure { margin: 0; max-width: 100%; min-width: 0; }
+  .menu { width: 288px; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 4px 16px rgb(0 0 0 / .08); }
+  .menu.wide { width: 320px; }
+  .head { display: flex; gap: 8px; align-items: center; padding: 4px 6px 6px; font-size: 12px; color: var(--muted); }
+  .head b { color: var(--fg); font-weight: 500; }
+  .dot { width: 20px; height: 20px; border-radius: 50%; background: #d4d4d8; }
+  .item { display: flex; gap: 8px; padding: 6px 8px; border-radius: 6px; }
+  .item.on { background: var(--accent); }
+  .radio { width: 14px; flex: none; padding-top: 2px; font-size: 10px; }
+  .t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .c { font-size: 12px; color: var(--muted); }
+  .sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .phone { width: 390px; height: 720px; border: 1px solid var(--border); border-radius: 20px; background: #fff; position: relative; overflow: hidden; }
+  .phone .msgs { padding: 16px; color: var(--muted); font-size: 13px; }
+  .scrim { position: absolute; inset: 0; background: rgb(0 0 0 / .35); }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 12px 12px 0 0; padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+  .sheet .item { min-height: 44px; align-items: center; padding: 8px 12px; font-size: 14px; }
+  .composer { display: flex; justify-content: flex-end; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; margin: 0 12px; background: #fff; }
+  .btn { background: var(--primary); color: #fff; font-size: 13px; height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 999px 0 0 999px; }
+  .btn + .btn { border-radius: 0 999px 999px 0; padding: 0 6px; border-left: 1px solid rgb(255 255 255 / .2); }
+  .stop { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); }
+  .phone, .menu, .menu.wide { max-width: 100%; }
+  @media (max-width: 480px) { body { margin: 12px; } .row { gap: 16px; } }
+  .bottom { position: absolute; left: 0; right: 0; bottom: 12px; }
+</style>
+
+<h2>聊天 · 发送方式（Cursor 回复中）</h2>
+<div class="row">
+  <figure>
+    <div class="menu">
+      <div class="item on"><span class="radio">●</span><span class="t"><span>插话</span><span class="c">马上读到，当前这步会中断</span><span class="c">会重启 CLI · 同一段会话</span></span></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>排队</span><span class="c">这条回复完再发</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>打断重来</span><span class="c">停掉这条回复，按这句重来</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+    </div>
+    <figcaption>Cursor / Copilot / CodeArts / DevEco / Antigravity / OpenClaw</figcaption>
+  </figure>
+  <figure>
+    <div class="menu">
+      <div class="item on"><span class="radio">●</span><span class="t"><span>插话</span><span class="c">这一步做完就读到</span><span class="c">同一个进程 · 同一段会话</span></span></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>排队</span><span class="c">这条回复完再发</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>打断重来</span><span class="c">停掉这条回复，按这句重来</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+    </div>
+    <figcaption>对照：Claude / Codex / Grok（不变）</figcaption>
+  </figure>
+</div>
+
+<h2>任务页 · 评论叫醒方式（Cursor 运行中）</h2>
+<div class="row">
+  <figure>
+    <div class="menu wide">
+      <div class="head"><span class="dot"></span><b>孙悟空</b><span>正在运行</span></div>
+      <div class="item on"><span class="radio">●</span><span class="t"><span>插话</span><span class="c">马上读到，接着干原来的活，当前这步会中断</span><span class="c">会重启 CLI · 同一段会话</span></span></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>排队</span><span class="c">这轮做完再处理</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>打断重来</span><span class="c">立刻停，按这句重新开始</span><span class="c">新进程 · 接着同一段会话 · 做了一半的那步作废</span></span></div>
+      <div class="sep"></div>
+      <div class="item"><span class="radio"></span><span class="t"><span>不叫醒</span><span class="c">只留评论</span></span></div>
+    </div>
+  </figure>
+</div>
+
+<h2>手机版（390）</h2>
+<div class="row">
+  <figure>
+    <div class="phone">
+      <div class="msgs">Cursor 正在回复…</div>
+      <div class="bottom"><div class="composer"><span class="stop"></span><span class="btn">插话</span><span class="btn">▾</span></div></div>
+    </div>
+    <figcaption>停止与插话并排</figcaption>
+  </figure>
+  <figure>
+    <div class="phone">
+      <div class="msgs">Cursor 正在回复…</div>
+      <div class="scrim"></div>
+      <div class="sheet">
+        <div class="item on"><span class="t"><span>插话</span><span class="c">马上读到，当前这步会中断</span><span class="c">会重启 CLI · 同一段会话</span></span></div>
+        <div class="item"><span class="t"><span>排队</span><span class="c">这条回复完再发</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+        <div class="item"><span class="t"><span>打断重来</span><span class="c">停掉这条回复，按这句重来</span><span class="c">新进程 · 接着同一段会话</span></span></div>
+      </div>
+    </div>
+    <figcaption>底部弹层，每行 ≥44px，点外面关闭</figcaption>
+  </figure>
+</div>
+</html>

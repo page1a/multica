@@ -222,6 +222,7 @@ type Task struct {
 	IssueSubIssues            []SubIssueRef         `json:"issue_sub_issues,omitempty"` // the task issue's sub-issues; non-empty means this run holds a coordinator (DENE-812)
 	IssueContextGeneratedAt   string                `json:"issue_context_generated_at,omitempty"`
 	IssueContextTruncated     bool                  `json:"issue_context_truncated,omitempty"`
+	IssueHandoffCard          string                `json:"issue_handoff_card,omitempty"` // state card for the first run after the issue was handed to this agent (DENE-1350)
 	ChatSessionID             string                `json:"chat_session_id,omitempty"`              // non-empty for chat tasks
 	ChatChannelType           string                `json:"chat_channel_type,omitempty"`            // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Drives the channel-awareness block in the prompt
 	ChatChannelDeliversFiles  bool                  `json:"chat_channel_delivers_files,omitempty"`  // server capability: this deployment carries a file the agent produces the last hop into this conversation. Absent on a server predating it, which reads as false — the run is told to describe its file in words, and the worst case is a delivery that could have happened did not. Must never be re-derived from chat_channel_type: whether the hop exists depends on the SERVER's storage and adapter wiring, which no daemon can see (MUL-4899)
@@ -442,7 +443,11 @@ type TaskResult struct {
 	// precisely when the abandoned id would otherwise stay selectable.
 	// SessionRestartReason explains a new CLI session opened because the
 	// prior one could not be resumed. Forwarded so the issue can say so.
-	SessionRestartReason string           `json:"-"`
+	SessionRestartReason string `json:"-"`
+	// SessionResumeDropped: the claim pointed at a session to resume and this
+	// run started a fresh one instead (DENE-1345). Forwarded so the run record
+	// says 新会话 · 会话没能恢复 rather than claiming it continued.
+	SessionResumeDropped bool             `json:"-"`
 	RetiredSessionID     string           `json:"-"`
 	Usage                []TaskUsageEntry `json:"usage,omitempty"` // per-model token usage
 	NumTurns             int              `json:"-"`

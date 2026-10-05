@@ -150,14 +150,19 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 -- when that clock comes due. Ordinary in_progress rows are never stamped.
 -- Clocks are compared as UTC text. The writer uses RFC3339 with a Z suffix.
 -- Casting to timestamptz would abort every workspace's sweep on one bad value.
+--
+-- DENE-1342 adds the undriven todo: an executor is seated, nothing runs, no
+-- wakeup is set and no child is open. Only rows that went quiet after
+-- todo_since, so a deploy does not rerun every forgotten ticket at once.
 SELECT * FROM issue
-WHERE status IN ('blocked', 'in_review', 'in_progress')
-  AND COALESCE(metadata->>'block.watched', '') = '1'
-  AND NOT EXISTS (
+WHERE NOT EXISTS (
     SELECT 1 FROM agent_task_queue t
     WHERE t.issue_id = issue.id
       AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
   )
+  AND ((
+  status IN ('blocked', 'in_review', 'in_progress')
+  AND COALESCE(metadata->>'block.watched', '') = '1'
   AND (
     (
       COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
@@ -171,6 +176,21 @@ WHERE status IN ('blocked', 'in_review', 'in_progress')
       COALESCE(last_activity_at, updated_at) < sqlc.arg('quiet_before')::timestamptz
     )
   )
+  ) OR (
+    status = 'todo'
+    AND assignee_type IN ('agent', 'squad')
+    AND assignee_id IS NOT NULL
+    AND COALESCE(last_activity_at, updated_at) < sqlc.arg('quiet_before')::timestamptz
+    AND COALESCE(last_activity_at, updated_at) > sqlc.arg('todo_since')::timestamptz
+    AND NOT EXISTS (
+      SELECT 1 FROM issue_wakeup w
+      WHERE w.issue_id = issue.id AND w.enabled AND w.system_rule IS NULL
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM issue c
+      WHERE c.parent_issue_id = issue.id AND c.status NOT IN ('done', 'cancelled')
+    )
+  ))
 ORDER BY
   CASE
     WHEN COALESCE(metadata->>'block.wake_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
@@ -181,6 +201,52 @@ ORDER BY
   END,
   COALESCE(last_activity_at, updated_at)
 LIMIT sqlc.arg('row_limit')::int;
+
+-- name: ListIssueDriverFacts :many
+-- DENE-1342: the facts outside the issue row that decide its driver (ADR-0006).
+-- A wakeup somebody created counts; a platform rule (system_rule) does not,
+-- because every parent carries one. An open child counts, read against the
+-- workspace catalog so a custom closed status is closed.
+SELECT
+  i.id AS issue_id,
+  EXISTS (
+    SELECT 1 FROM agent_task_queue t
+    WHERE t.issue_id = i.id
+      AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )::bool AS active_run,
+  EXISTS (
+    SELECT 1 FROM issue_wakeup w
+    WHERE w.issue_id = i.id AND w.enabled AND w.system_rule IS NULL
+  )::bool AS wakeup,
+  EXISTS (
+    SELECT 1 FROM issue c
+    WHERE c.parent_issue_id = i.id
+      AND c.status NOT IN ('done', 'cancelled')
+      AND NOT EXISTS (
+        SELECT 1 FROM issue_status s
+        WHERE s.workspace_id = c.workspace_id AND s.key = c.status AND s.category IN ('done', 'closed')
+      )
+  )::bool AS open_children
+FROM issue i
+WHERE i.workspace_id = sqlc.arg('workspace_id')::uuid
+  AND i.id = ANY(sqlc.arg('issue_ids')::uuid[]);
+
+-- name: ClearIssueExecutorIfCurrent :one
+-- DENE-1342 reroute: an undriven ticket's executor slot is emptied so routing
+-- judges it from zero. Guarded on the seat the caller saw.
+UPDATE issue
+SET assignee_type = NULL,
+    assignee_id = NULL,
+    assignee_source = NULL,
+    assignee_source_user_id = NULL,
+    assignee_quote = NULL,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')::uuid
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND assignee_id = sqlc.arg('current_assignee_id')::uuid
+RETURNING *;
 
 -- name: ListDaemonBlockWaits :many
 -- A daemon only needs blocked issues carrying an executable probe. Do not

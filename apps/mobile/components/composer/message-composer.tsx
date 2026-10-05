@@ -32,7 +32,8 @@
  *   - Reply target lifecycle — comment passes in `replyTarget` +
  *     `onClearReplyTarget` from its store; chat doesn't.
  *   - Stop visual / animation — chat passes a `renderStop()` slot when
- *     `isSending` is true.
+ *     `isSending` is true, or `renderRunning()` when it can also send while
+ *     the reply runs (DENE-1362).
  *
  * Cleanup: mention draft store cleared on unmount so navigating away
  * from comment-A's draft doesn't leak `@张三` into comment-B's composer.
@@ -53,6 +54,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { api, MAX_FILE_SIZE } from "@/data/api";
+import type { ChatSendMode } from "@multica/core/types";
 import { useMentionDraftStore } from "@/data/stores/mention-draft-store";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { stripMarkdown } from "@/lib/strip-markdown";
@@ -81,6 +83,8 @@ interface Props {
     content: string;
     attachmentIds: string[];
     mentions: MentionChip[];
+    /** Set only when sent through `renderRunning` while a reply runs. */
+    mode?: ChatSendMode;
   }) => Promise<void>;
 
   /** Push target for the `@` button. The picker route reads /
@@ -117,6 +121,13 @@ interface Props {
    *  this to show a Stop affordance while the agent is running. */
   isSending?: boolean;
   renderStop?: () => ReactNode;
+  /** Takes precedence over `renderStop`: the trailing slot while
+   *  `isSending`, given what it needs to send in a chosen mode. */
+  renderRunning?: (send: {
+    canSend: boolean;
+    submitting: boolean;
+    submit: (mode: ChatSendMode) => void;
+  }) => ReactNode;
 
   /** Hard-disable. Used when chat has no usable agent. The pill shows
    *  `disabledReason` instead of `pillLabel`, and the pill is
@@ -170,6 +181,7 @@ export function MessageComposer({
   expandTrigger,
   isSending = false,
   renderStop,
+  renderRunning,
   disabled = false,
   disabledReason,
   manageKeyboard = true,
@@ -229,12 +241,13 @@ export function MessageComposer({
   }
 
   const hasInFlightUpload = attachments.some((a) => a.status === "uploading");
-  const canSend =
+  // Ready to send ignoring a running reply; `renderRunning` sends anyway.
+  const canSendWhileRunning =
     !disabled &&
-    !isSending &&
     !submitting &&
     !hasInFlightUpload &&
     (text.trim().length > 0 || mentions.length > 0);
+  const canSend = canSendWhileRunning && !isSending;
 
   const expand = useCallback(() => {
     if (disabled) return;
@@ -247,8 +260,8 @@ export function MessageComposer({
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [disabled, onClearReplyTarget]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!canSend) return;
+  const handleSubmit = useCallback(async (mode?: ChatSendMode) => {
+    if (!(mode ? canSendWhileRunning : canSend)) return;
     const textSnap = text;
     const mentionsSnap = mentions;
     const attachmentsSnap = attachments;
@@ -279,6 +292,7 @@ export function MessageComposer({
         content,
         attachmentIds: activeIds,
         mentions: mentionsSnap,
+        mode,
       });
       // Success → fully exit composing mode. Explicit triple-step
       // because a missing blur leaves the keyboard up; missing
@@ -298,6 +312,7 @@ export function MessageComposer({
     }
   }, [
     canSend,
+    canSendWhileRunning,
     text,
     mentions,
     attachments,
@@ -585,7 +600,13 @@ export function MessageComposer({
             className="h-8 w-8"
           />
           <View className="flex-1" />
-          {isSending && renderStop ? (
+          {isSending && renderRunning ? (
+            renderRunning({
+              canSend: canSendWhileRunning,
+              submitting,
+              submit: (mode) => void handleSubmit(mode),
+            })
+          ) : isSending && renderStop ? (
             renderStop()
           ) : (
             <IconButton
@@ -593,7 +614,7 @@ export function MessageComposer({
               iconSize={18}
               color={theme.primaryForeground}
               variant="default"
-              onPress={handleSubmit}
+              onPress={() => void handleSubmit()}
               disabled={!canSend}
               hitSlop={12}
               className="h-8 w-8 rounded-full"

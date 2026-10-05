@@ -500,13 +500,17 @@ export function ShareScopeTrigger({
       size="sm"
       onClick={disabled ? undefined : onClick}
       aria-disabled={disabled || undefined}
+      aria-label={t(($) => $.share_scope[SCOPE_META[value].labelKey])}
       data-testid="share-scope-trigger"
-      className={cn("gap-1.5", disabled && "cursor-not-allowed opacity-60 hover:bg-transparent")}
+      className={cn(
+        "min-h-11 min-w-11 gap-1.5 sm:min-h-0 sm:min-w-0",
+        disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
+      )}
     >
       {value === "private" ? <LockKeyhole className="size-3.5" /> : value === "project" ? <Users className="size-3.5" /> : <Globe2 className="size-3.5" />}
-      {t(($) => $.share_scope[SCOPE_META[value].labelKey])}
+      <span className="hidden sm:inline">{t(($) => $.share_scope[SCOPE_META[value].labelKey])}</span>
       {reach !== undefined && (
-        <span className="text-caption text-muted-foreground">
+        <span className="hidden text-caption text-muted-foreground sm:inline">
           · {t(($) => $.share_scope.audience_count, { count: reach })}
         </span>
       )}

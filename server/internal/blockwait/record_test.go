@@ -356,11 +356,23 @@ func TestFailedChildIsDueInsideTheQuietWindow(t *testing.T) {
 }
 
 func TestDownstreamNoticeDoesNotAskForRedispatch(t *testing.T) {
-	got := DownstreamFailureNotice("DENE-806", "abc", "被平台中断")
+	got := DownstreamFailureNotice("DENE-806", "abc", "被平台中断", true)
 	if strings.Contains(got, "mention://agent/") {
 		t.Fatalf("notice must not wake an agent: %s", got)
 	}
 	if !strings.Contains(got, "不用你去重派") || !strings.Contains(got, "DENE-806") {
+		t.Fatalf("notice = %s", got)
+	}
+}
+
+// DENE-1339: the notice used to promise a retry or a wake whether or not one
+// existed. Without a clock on the child it must not promise either.
+func TestDownstreamNoticeOnlyPromisesAWakeThatExists(t *testing.T) {
+	got := DownstreamFailureNotice("DENE-1312", "abc", "运行失败", false)
+	if strings.Contains(got, "不用你去重派") || strings.Contains(got, "到点会") {
+		t.Fatalf("unparked notice promises a wake: %s", got)
+	}
+	if !strings.Contains(got, "没有为它排上") || strings.Contains(got, "mention://agent/") {
 		t.Fatalf("notice = %s", got)
 	}
 }

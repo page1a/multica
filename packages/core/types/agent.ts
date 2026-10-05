@@ -393,6 +393,14 @@ export interface CapacityRetry {
   next_at: string;
 }
 
+export type SessionMode = "new" | "resumed";
+export type SessionBreakReason =
+  | "first_run"
+  | "agent_changed"
+  | "runtime_changed"
+  | "session_lost"
+  | "fresh_requested";
+
 export interface AgentTask {
   wakeup_id?: string;
   id: string;
@@ -400,6 +408,12 @@ export interface AgentTask {
   runtime_id: string;
   /** Durable continuity boundary shared by turns for the same work item. */
   work_thread_id?: string;
+  /** "new" or "resumed": whether this run's CLI session continued an earlier run's (DENE-1345). */
+  session_mode?: SessionMode;
+  /** The run whose session this one resumed. */
+  resumed_from_run?: string;
+  /** Why a new session started: first_run, agent_changed, runtime_changed, session_lost, fresh_requested. */
+  session_break_reason?: SessionBreakReason | (string & {});
   /** Increments when the provider context must be rebuilt after compression/overflow. */
   context_generation?: number;
   /** Server-enforced upper bound for issue/comment context included in a claim. */
@@ -482,6 +496,8 @@ export interface AgentTask {
   supplement_comment_ids?: string[];
   /** Server-side invocation verdict for the current member and this agent. */
   can_supplement?: boolean;
+  /** How a message reaches this run (DENE-1349): "same" in the running CLI, "restart" stops it and resumes the session. */
+  supplement_steer_mode?: string;
   /**
    * Canonical short description of what triggered this task — snapshot
    * taken at creation time. For comment-triggered tasks it's the

@@ -44,14 +44,16 @@ import type {
   Agent,
   ChatMessage,
   ChatPendingTask,
+  ChatSendMode,
 } from "@multica/core/types";
 import {
   enqueuePendingChatTask,
   hideQueuedChatMessages,
+  prioritizePendingChatTask,
   removePendingChatTask,
 } from "@multica/core/chat/pending";
+import { api, ApiError } from "@/data/api";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
-import { api } from "@/data/api";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { agentListOptions } from "@/data/queries/agents";
@@ -89,6 +91,8 @@ import { ChatTitleButton } from "@/components/chat/chat-title-button";
 import { ChatSessionActions } from "@/components/chat/chat-session-actions";
 import { ChatMessageList } from "@/components/chat/chat-message-list";
 import { ChatComposer } from "@/components/chat/chat-composer";
+import { ChatQueue } from "@/components/chat/chat-queue";
+import { sendChatMessageInMode } from "@/lib/chat-send-mode";
 import { AgentPickerSheet } from "@/components/chat/agent-picker-sheet";
 import { NoAgentBanner } from "@/components/chat/no-agent-banner";
 import { OfflineBanner } from "@/components/chat/offline-banner";
@@ -297,7 +301,7 @@ export default function ChatTab() {
     async (
       content: string,
       attachmentIds: string[] = [],
-      options: { clearDraft?: boolean } = {},
+      options: { clearDraft?: boolean; mode?: ChatSendMode } = {},
     ) => {
       if (!currentAgent) return;
       // Invoke permission was revoked while this session was open — the server
@@ -365,9 +369,21 @@ export default function ChatTab() {
       }
 
       try {
-        const result = await api.sendChatMessage(sessionId, content, {
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-        });
+        // A mode only matters to a reply already running (DENE-1362); a
+        // fresh or idle session just starts.
+        const mode = isNewSession ? undefined : options.mode;
+        const sent = await sendChatMessageInMode(
+          (m) =>
+            api.sendChatMessage(sessionId, content, {
+              attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+              mode: m,
+            }),
+          mode,
+        );
+        const result = sent.result;
+        if (sent.steerFellBack) {
+          Alert.alert(t("composer.steer_fell_back_toast"));
+        }
         // Replace the local bubble before reconciling pending state. When the
         // server says this is a follow-up, its real message id lets the shared
         // queue filter hide it immediately instead of waiting for the refetch.
@@ -394,6 +410,9 @@ export default function ChatTab() {
           queued: result.queued,
         });
         qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+        // Steer marks the queue row「插话中」and restart stops the reply; both
+        // only show up in the authoritative pending state.
+        if (mode) invalidatePendingTask(qc, sessionId);
         if (options.clearDraft !== false) {
           clearDraft(sessionId);
         }
@@ -441,6 +460,62 @@ export default function ChatTab() {
       })
       .finally(() => invalidatePendingTask(qc, sessionId));
   }, [pendingTask?.task_id, pendingTask?.status, activeSessionId, qc]);
+
+  // ── Queue actions (DENE-1362, mirrors Web's use-chat-task-actions) ──────
+  const handleSendQueuedNow = useCallback(
+    async (taskId: string) => {
+      if (!activeSessionId) return;
+      const sessionId = activeSessionId;
+      const pendingKey = chatKeys.pendingTask(sessionId);
+      await qc.cancelQueries({ queryKey: pendingKey });
+      const snapshot = qc.getQueryData<ChatPendingTask>(pendingKey);
+      qc.setQueryData<ChatPendingTask>(pendingKey, (old) =>
+        prioritizePendingChatTask(old, taskId),
+      );
+      let prioritized = false;
+      try {
+        const result = await api.prioritizeQueuedChatTask(sessionId, taskId);
+        if (result.task_id !== taskId) throw new Error("invalid prioritize response");
+        prioritized = true;
+        // The queued message is now first; stopping the reply lets it start.
+        if (result.active_task_id) await api.cancelTaskById(result.active_task_id);
+      } catch (err) {
+        if (!prioritized) qc.setQueryData(pendingKey, snapshot);
+        Alert.alert(
+          err instanceof ApiError && err.status === 409
+            ? t("queue.steer_unavailable_toast")
+            : t("queue.action_failed_toast"),
+        );
+      } finally {
+        invalidatePendingTask(qc, sessionId);
+        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+      }
+    },
+    [activeSessionId, qc, t],
+  );
+
+  const handleRemoveQueued = useCallback(
+    async (taskId: string) => {
+      if (!activeSessionId) return;
+      const sessionId = activeSessionId;
+      const pendingKey = chatKeys.pendingTask(sessionId);
+      await qc.cancelQueries({ queryKey: pendingKey });
+      const snapshot = qc.getQueryData<ChatPendingTask>(pendingKey);
+      qc.setQueryData<ChatPendingTask>(pendingKey, (old) =>
+        removePendingChatTask(old, taskId),
+      );
+      try {
+        await api.cancelTaskById(taskId, { queuedRemove: { sessionId } });
+      } catch {
+        qc.setQueryData(pendingKey, snapshot);
+        Alert.alert(t("queue.action_failed_toast"));
+      } finally {
+        invalidatePendingTask(qc, sessionId);
+        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+      }
+    },
+    [activeSessionId, qc, t],
+  );
 
   // ── Header / sheet actions ─────────────────────────────────────────────
   const handleNewChat = useCallback(() => {
@@ -557,13 +632,26 @@ export default function ChatTab() {
         ) : currentAgent ? (
           <RuntimeRequiredBanner agentName={currentAgent.name} />
         ) : null}
+        <ChatQueue
+          tasks={pendingTask?.queued_tasks ?? []}
+          headStatus={pendingTask?.status}
+          sendNowDisabled={accessRevoked}
+          onSendNow={handleSendQueuedNow}
+          onRemove={handleRemoveQueued}
+        />
         <ChatComposer
           value={draft}
           onChangeText={(next) => setDraft(draftKey, next)}
-          onSend={handleSend}
+          onSend={(content, attachmentIds, mode) =>
+            handleSend(content, attachmentIds, { mode })
+          }
           onStop={handleStop}
           sending={sending}
           allowStop={pendingTask?.status !== "queued"}
+          allowSendWhileRunning={pendingTask?.supports_queue === true}
+          steerSupported={pendingTask?.steer_supported === true}
+          steerProvider={pendingTask?.steer_provider}
+          steerMode={pendingTask?.steer_mode}
           disabled={disabled}
           disabledReason={disabledReason}
         />

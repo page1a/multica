@@ -20,7 +20,22 @@
     "file_too_large_title": "文件过大",
     "file_too_large_message": "文件必须小于 100 MB。",
     "working": "智能体正在处理...",
-    "message": "消息..."
+    "message": "消息...",
+    "mode_menu": "发送方式",
+    "mode_steer": "插话",
+    "mode_steer_desc": "这一步做完就读到",
+    "mode_steer_process": "同一个进程 · 同一段会话",
+    "mode_steer_restart_desc": "马上读到，当前这步会中断",
+    "mode_steer_restart_process": "会重启 CLI · 同一段会话",
+    "mode_queue": "排队",
+    "mode_queue_desc": "这条回复完再发",
+    "mode_queue_process": "新进程 · 接着同一段会话",
+    "mode_restart": "打断重来",
+    "mode_restart_desc": "停掉这条回复，按这句重来",
+    "mode_restart_process": "新进程 · 接着同一段会话",
+    "mode_steer_unsupported": "{{cli}} 还不能在回复中途读消息",
+    "mode_steer_unsupported_generic": "这个智能体还不能在回复中途读消息",
+    "steer_fell_back_toast": "这条回复读不了插话，已改为排队"
   },
   "empty": {
     "greeting": "你好，我是 {{name}}",
@@ -165,5 +180,20 @@
   "elapsed.failed": "运行 {{time}} 后失败",
   "alerts.no_permission_message": "你已无权运行该智能体，消息未发送。请联系该智能体的所有者申请权限。",
   "failure.runtime_access_denied": "消息未发送：{{detail}}",
-  "banners.no_agent_action": "在 \"更多 → 智能体\" 中添加或启用智能体即可开始聊天。"
+  "banners.no_agent_action": "在 \"更多 → 智能体\" 中添加或启用智能体即可开始聊天。",
+  "session_lineage.new": "新会话",
+  "session_lineage.reason_agent_changed": "换了智能体",
+  "session_lineage.reason_runtime_changed": "上次的会话在另一台机器上",
+  "session_lineage.reason_session_lost": "会话没能恢复",
+  "session_lineage.reason_fresh_requested": "按要求新开",
+  "queue": {
+    "steer": "打断重来",
+    "steer_unavailable": "当前回复开始后才能打断重来",
+    "steer_no_permission": "你已没有运行该智能体的权限",
+    "steer_unavailable_toast": "暂时无法打断重来，正在刷新队列。",
+    "remove": "移除排队消息",
+    "fallback": "排队消息",
+    "action_failed_toast": "无法更新排队消息",
+    "steering": "插话中"
+  }
 }

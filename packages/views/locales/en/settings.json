@@ -190,8 +190,8 @@
     },
     "running_agent_reply": {
       "title": "When replying to a running agent",
-      "steer": "Add to current run",
-      "after_run": "Start after this run",
+      "steer": "Steer",
+      "after_run": "Queue",
       "hint": "Sets the default only. You can still change it for any message before sending."
     },
     "comments_title": "Comments & chat",

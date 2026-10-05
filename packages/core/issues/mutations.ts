@@ -38,7 +38,7 @@ import {
 import { useWorkspaceId } from "../hooks";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { useRecentIssuesStore } from "./stores";
-import type { InboxItem, Issue, IssueReaction } from "../types";
+import type { InboxItem, Issue, IssueDisposeRequest, IssueReaction } from "../types";
 import type {
   CloseIssueRequest,
   CreateCommentSubIssueManualRequest,
@@ -48,7 +48,7 @@ import type {
   UpdateIssueRequest,
 } from "../types";
 import type { CreateIssueGoalInput, IssueGoal } from "../types";
-import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
+import type { CommentSendMode, TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
 import { applyCommentDeletion, removeCommentSubtree } from "./comment-deletion";
 import { configStore } from "../config";
@@ -864,6 +864,7 @@ export function useCreateComment(issueId: string) {
       attachmentIds,
       suppressAgentIds,
       steerTaskIds,
+      mode,
     }: {
       content: string;
       type?: string;
@@ -872,7 +873,9 @@ export function useCreateComment(issueId: string) {
       suppressAgentIds?: string[];
       /** Running turns this comment goes into instead of a follow-up run. */
       steerTaskIds?: string[];
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds, steerTaskIds),
+      /** "handoff": the @agent takes over and every other agent's run here stops. */
+      mode?: CommentSendMode;
+    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds, steerTaskIds, mode),
     onSuccess: (comment) => {
       if (comment.issue_revision) {
         onIssueAuxiliaryRevision(qc, wsId, issueId, comment.issue_revision);
@@ -1262,6 +1265,24 @@ export function useHaltIssueRuns(issueId: string, workspaceId?: string) {
   });
 }
 
+/**
+ * Dispose of an issue nobody drives (DENE-1342). Awaits the server: reroute
+ * and cancel change the executor or status, split creates children.
+ */
+export function useDisposeIssue(issueId: string, workspaceId?: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: IssueDisposeRequest) => api.disposeIssue(issueId, body),
+    onSettled: () => {
+      client.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+      if (!workspaceId) return;
+      client.invalidateQueries({ queryKey: issueKeys.detail(workspaceId, issueId) });
+      client.invalidateQueries({ queryKey: issueKeys.childrenAll(workspaceId) });
+      client.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(workspaceId) });
+    },
+  });
+}
+
 export function useResumeIssueRuns(issueId: string, workspaceId?: string) {
   const client = useQueryClient();
   return useMutation({
@@ -1317,4 +1338,29 @@ export function useUndoIssueStall() {
       void qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
     },
   });
+}
+
+/**
+ * Add, rewrite or remove one of the state card's settled decisions
+ * (DENE-1328). Awaits the server — an agent-authored decision may be refused
+ * — then refetches the card.
+ */
+export function useIssueDecisionMutations(issueId: string, workspaceId: string) {
+  const client = useQueryClient();
+  const onSettled = () =>
+    client.invalidateQueries({ queryKey: issueKeys.context(workspaceId, issueId) });
+  const add = useMutation({
+    mutationFn: (text: string) => api.createIssueDecision(issueId, text),
+    onSettled,
+  });
+  const edit = useMutation({
+    mutationFn: ({ id, text }: { id: string; text: string }) =>
+      api.updateIssueDecision(issueId, id, text),
+    onSettled,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteIssueDecision(issueId, id),
+    onSettled,
+  });
+  return { add, edit, remove };
 }

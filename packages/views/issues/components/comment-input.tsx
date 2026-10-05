@@ -6,7 +6,7 @@ import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay,
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { Button } from "@multica/ui/components/ui/button";
-import { contentReferencesAttachment, type AgentTask } from "@multica/core/types";
+import { contentReferencesAttachment, type AgentTask, type CommentSendMode } from "@multica/core/types";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
 import { useCommentDraftStore } from "@multica/core/issues/stores";
 import { composeAnnotatedReply, hasReplyIntent } from "@multica/core/drafts/reply-annotation";
@@ -27,7 +27,7 @@ interface CommentInputProps {
   /** Resolves true on success, false on failure. The composer keeps the text
    *  (editor locked + button spinning) until this settles, then clears only on
    *  success — a failed send must not silently discard the user's draft. */
-  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], steerTaskIds?: string[]) => Promise<string | boolean>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], steerTaskIds?: string[], mode?: CommentSendMode) => Promise<string | boolean>;
   /** Called after the server accepts the comment and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
   onEditAnnotation?: (id: string) => boolean;
@@ -193,6 +193,8 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
         activeIds.length > 0 ? activeIds : undefined,
         suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
         steerTaskIds.length > 0 ? steerTaskIds : undefined,
+        // A handoff stops other agents' runs: only on a preview that matches the text.
+        triggerPreview.isCurrent ? routing.mode : undefined,
       ).then((commentId) => {
         acceptedCommentIdRef.current = typeof commentId === "string" ? commentId : null;
         return !!commentId;

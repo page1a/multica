@@ -105,6 +105,7 @@ func (h *Handler) chatMessageHistory(r *http.Request, scope chatHistoryScope) (c
 	}
 	// ListChatMessagesPage returns newest-first; the channel contract is
 	// oldest-first, so emit the rows in reverse.
+	lineage := h.loadTaskSessionLineage(r.Context(), chatMessageTaskIDs(messages))
 	out := make([]channel.HistoryMessage, 0, len(messages))
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
@@ -119,6 +120,10 @@ func (h *Handler) chatMessageHistory(r *http.Request, scope chatHistoryScope) (c
 			Author: transcriptAuthor(role),
 			TS:     m.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 		})
+		if l, ok := lineage[uuidToString(m.TaskID)]; ok && m.TaskID.Valid {
+			last := &out[len(out)-1]
+			last.SessionMode, last.ResumedFromRun, last.SessionBreakReason = l.mode, l.resumedFrom, l.breakReason
+		}
 	}
 	// Name the platform the transcript came from. HistoryPage.ChannelType is
 	// documented as empty ONLY for a session bound to no channel, so leaving it

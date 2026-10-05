@@ -769,11 +769,16 @@ type AgentTaskResponse struct {
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`
 
-	ID                    string `json:"id"`
-	AgentID               string `json:"agent_id"`
-	RuntimeID             string `json:"runtime_id"`
-	WorkThreadID          string `json:"work_thread_id,omitempty"`
-	ContextGeneration     int32  `json:"context_generation,omitempty"`
+	ID                string `json:"id"`
+	AgentID           string `json:"agent_id"`
+	RuntimeID         string `json:"runtime_id"`
+	WorkThreadID      string `json:"work_thread_id,omitempty"`
+	ContextGeneration int32  `json:"context_generation,omitempty"`
+	// DENE-1345 session lineage: "new" or "resumed"; the run whose session this
+	// one resumed; why a new session started. Empty on rows predating it.
+	SessionMode           string `json:"session_mode,omitempty"`
+	ResumedFromRun        string `json:"resumed_from_run,omitempty"`
+	SessionBreakReason    string `json:"session_break_reason,omitempty"`
 	ContextMessageLimit   int32  `json:"context_message_limit,omitempty"`
 	ContextTokenBudget    int32  `json:"context_token_budget,omitempty"`
 	ContinuityBreakReason string `json:"continuity_break_reason,omitempty"`
@@ -904,6 +909,7 @@ type AgentTaskResponse struct {
 	DeliveredCommentIDs   []string               `json:"delivered_comment_ids"`           // always present: [] is an authoritative empty receipt, while field absence identifies responses from legacy servers
 	SupplementCapability  string                 `json:"supplement_capability,omitempty"`
 	SupplementCommentIDs  []string               `json:"supplement_comment_ids,omitempty"`
+	SupplementSteerMode   string                 `json:"supplement_steer_mode,omitempty"` // DENE-1349: "same" reads the message in the running process, "restart" stops the CLI and resumes its session
 	CanSupplement         bool                   `json:"can_supplement,omitempty"`
 	TriggerThreadID       string                 `json:"trigger_thread_id,omitempty"`       // root comment ID for the triggering thread
 	TriggerCommentContent string                 `json:"trigger_comment_content,omitempty"` // content of the triggering comment
@@ -947,6 +953,9 @@ type AgentTaskResponse struct {
 	IssueSubIssues           []SubIssueRef         `json:"issue_sub_issues,omitempty"` // the task issue's sub-issues; non-empty tells the run it holds a coordinator (DENE-812)
 	IssueContextGeneratedAt  string                `json:"issue_context_generated_at,omitempty"`
 	IssueContextTruncated    bool                  `json:"issue_context_truncated,omitempty"`
+	// IssueHandoffCard is the rendered state card for the first run of an
+	// agent the issue was just handed to (DENE-1350); empty otherwise.
+	IssueHandoffCard string `json:"issue_handoff_card,omitempty"`
 	ChatSessionID            string                `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
 	ChatChannelType          string                `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
 	ChatChannelDeliversFiles bool                  `json:"chat_channel_delivers_files,omitempty"` // server capability: THIS deployment can put a file the agent produced into THIS conversation — the adapter goes back for the bound attachment AND object storage exists to go back to. Absent/false on a server predating it, which is the safe reading: the agent is told to describe its file in words. Never inferred daemon-side from chat_channel_type; see handler.Handler.channelDeliversFiles
@@ -1434,6 +1443,9 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		AgentID:                uuidToString(t.AgentID),
 		RuntimeID:              uuidToString(t.RuntimeID),
 		WorkThreadID:           uuidToString(t.WorkThreadID),
+		SessionMode:            t.SessionMode.String,
+		ResumedFromRun:         uuidToString(t.ResumedFromTaskID),
+		SessionBreakReason:     t.SessionBreakReason.String,
 		ContextGeneration:      t.ContextGeneration,
 		ContextMessageLimit:    t.ContextMessageLimit,
 		ContextTokenBudget:     t.ContextTokenBudget,

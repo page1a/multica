@@ -72,7 +72,11 @@ export type RecipientAction =
   /** Normal trigger for an idle recipient, or one whose run is still queued. */
   | "start"
   /** Post without triggering this recipient. */
-  | "skip";
+  | "skip"
+  /** Another agent is running here: stop it and hand the issue to this recipient, who opens a new session with the handoff card. */
+  | "handoff"
+  /** Another agent is running here: leave it, and start this recipient alongside it. */
+  | "parallel";
 
 export interface RecipientActionOptions {
   /** False while editing, or when the message carries files: a running turn takes text only. */
@@ -81,10 +85,14 @@ export interface RecipientActionOptions {
   canRestart: boolean;
   /** Steer by default. The composer sets this for the running turn's own thread. */
   steerByDefault: boolean;
+  /** Another agent, not a recipient, has an active run on the issue (and this is not an edit). */
+  othersRunning?: boolean;
 }
 
 export function recipientActions(state: AgentRunState, opts: RecipientActionOptions): RecipientAction[] {
-  if (state.kind === "idle" || state.kind === "queued") return ["start", "skip"];
+  if (state.kind === "idle" || state.kind === "queued") {
+    return opts.othersRunning ? ["handoff", "parallel", "skip"] : ["start", "skip"];
+  }
   const actions: RecipientAction[] = [];
   if (state.kind === "running" && state.steerable && opts.canSteer) actions.push("steer");
   actions.push("after_run");
@@ -111,6 +119,8 @@ export interface RecipientRouting {
   steerTaskIds: string[];
   /** Turns to stop before the comment is posted, so it starts a fresh run. */
   restartTaskIds: string[];
+  /** "handoff" when any recipient takes the issue over: the server stops every other agent's run. */
+  mode?: "handoff";
 }
 
 export function recipientRouting(
@@ -121,6 +131,7 @@ export function recipientRouting(
     if (action === "skip") routing.suppressAgentIds.push(agentId);
     else if (action === "steer" && state.kind === "running") routing.steerTaskIds.push(state.task.id);
     else if (action === "restart" && state.kind !== "idle") routing.restartTaskIds.push(state.task.id);
+    else if (action === "handoff") routing.mode = "handoff";
   }
   return routing;
 }

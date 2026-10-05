@@ -54,7 +54,12 @@ export interface Comment {
   supplement_status?: "pending" | "delivering" | "delivered" | "failed";
   supplement_failure_reason?: string;
   supplement_delivered_at?: string;
+  /** Runs a `mode: "handoff"` comment stopped. */
+  handoff_stopped_task_ids?: string[];
 }
+
+/** A comment's send mode beyond the per-recipient routing: "handoff" hands the issue to the @agent. */
+export type CommentSendMode = "handoff";
 
 export type CommentSupplementStatus = "pending" | "delivering" | "delivered" | "failed";
 

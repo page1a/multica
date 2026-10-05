@@ -394,7 +394,29 @@ func issueCloseLong() string {
 		"Every close records a knowledge audit in that same transaction, including a\n" +
 		"ticket with no pull request. --knowledge-none declares that nothing qualified\n" +
 		"for project memory. Repeat --knowledge <key>=<summary> for each checklist slot\n" +
-		"this close wrote. Keys: " + strings.Join(projectmemory.LocationKeys(), ", ") + "."
+		"this close wrote. Keys: " + strings.Join(projectmemory.LocationKeys(), ", ") + ".\n\n" +
+		"Repeat --decision \"...\" for each decision this round settled; it joins the\n" +
+		"state card's 已拍板 list that `multica issue context <id>` shows the next owner.\n" +
+		"--summary becomes the card's 上一棒交代."
+}
+
+var issueDisposeCmd = &cobra.Command{
+	Use:   "dispose <id>",
+	Short: "Decide what happens to an issue nobody is driving",
+	Long: "One command for an issue with no driver: no run, no recorded wait, no person\n" +
+		"named (the issue's driver.kind is \"none\" in `issue get` / `issue children`).\n" +
+		"The patrol reruns such an issue on its own seat, then asks the parent's\n" +
+		"executor to pick one of:\n\n" +
+		"  --action rerun                     run it again on the same seat\n" +
+		"  --action reroute                   empty the executor seat; routing picks anew\n" +
+		"  --action split --into \"title\"      create sub-issues (repeat --into, up to 10)\n" +
+		"                                     and block this issue on them\n" +
+		"  --action cancel --reason \"...\"     cancel it, with the reason on the issue\n\n" +
+		"The server refuses an issue that already has a driver, and an agent may only\n" +
+		"dispose a child of an issue it holds. The response reports status and the new\n" +
+		"driver — quote them, do not restate them from memory.",
+	Args: exactArgs(1),
+	RunE: runIssueDispose,
 }
 
 var issueHandoffCmd = &cobra.Command{
@@ -407,7 +429,9 @@ var issueHandoffCmd = &cobra.Command{
 		"  --to dispatcher   let routing pick the next owner\n" +
 		"  --to <agent>      a named agent (name or id)\n\n" +
 		"A close already hands over what it closes: `issue close --outcome in_review`\n" +
-		"routes the acceptance seat itself. The response reports target_name,\n" +
+		"routes the acceptance seat itself. --summary tells the next owner where things\n" +
+		"stand (the state card's 上一棒交代); repeat --decision for each settled decision.\n" +
+		"Both are read back with `multica issue context <id>`. The response reports target_name,\n" +
 		"run_created and duplicate — quote them, do not restate them from memory.",
 	Args: exactArgs(1),
 	RunE: runIssueHandoff,
@@ -451,8 +475,33 @@ var issueCommentListCmd = &cobra.Command{
 var issueCommentAddCmd = &cobra.Command{
 	Use:   "add <issue-id>",
 	Short: "Add a comment to an issue",
-	Args:  exactArgs(1),
-	RunE:  runIssueCommentAdd,
+	Long: `Add a comment to an issue.
+
+--mode decides what happens to agents the comment wakes that are still
+replying on this issue (omit it for the usual behaviour):
+
+  steer    add it to their running turn: read after the current step, the
+           original work continues (same process, same session on Claude,
+           Codex and Grok; one-shot CLIs such as Cursor restart on the same
+           session; text only, people only)
+  queue    answer it after the current turn (new process, same session)
+  restart  stop their current turn first, then start from this comment (new
+           process, same session; the half-done step is dropped)
+
+When no woken agent's running CLI can steer, the comment is refused with the
+reason and the modes that work; nothing is posted.
+
+When another agent is running and you @ a different one, choose how the
+@agent joins:
+
+  handoff   stop every other agent's run here, write the comment into the
+            state card as the handoff note, and start the @agent in a new
+            session that opens with that card (your own run is not stopped)
+  parallel  leave the running agent alone; the @agent starts its own run
+
+  multica issue comment add <issue-id> --content-file ./take-over.md --mode handoff`,
+	Args: exactArgs(1),
+	RunE: runIssueCommentAdd,
 }
 
 var issueCommentUpdateCmd = &cobra.Command{
@@ -715,6 +764,7 @@ func init() {
 	issueCmd.AddCommand(issueProgressCmd)
 	issueCmd.AddCommand(issueTitleCmd)
 	issueCmd.AddCommand(issueHandoffCmd)
+	issueCmd.AddCommand(issueDisposeCmd)
 	issueCmd.AddCommand(issueReorderCmd)
 	issueCmd.AddCommand(issueCommentCmd)
 	issueCmd.AddCommand(issueSubscriberCmd)
@@ -834,6 +884,7 @@ func init() {
 	issueStatusCmd.Flags().String("block-action", "", "One-line next step for blocked, at most 80 characters (required for agents)")
 	registerIssueCloseFlags(issueCloseCmd)
 	registerIssueHandoffFlags(issueHandoffCmd)
+	registerIssueDisposeFlags(issueDisposeCmd)
 	issueStatusCmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
 	issueStatusBatchCmd.Flags().Bool("no-start", false, "Change status without starting agent runs")
 	issueStatusBatchCmd.Flags().String("output", "table", "Output format: table or json")
@@ -892,6 +943,7 @@ func init() {
 	issueCommentAddCmd.Flags().String("verdict", "", "Acceptance verdict written as its own line: pass or hold. This is what merges and closes; the words 通过 in the body do not")
 	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times). Non-image files, HTML included, show as file cards that open in the viewer; to render a chart inside the comment, put a ```html or ```mermaid block in the content instead")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
+	issueCommentAddCmd.Flags().String("mode", "", "steer, queue or restart for agents still replying; handoff or parallel when you @ another agent (see --help)")
 
 	// issue comment update
 	issueCommentUpdateCmd.Flags().String("content", "", "New comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
@@ -1449,7 +1501,7 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		actors := loadActorDisplayLookup(ctx, client)
-		headers := []string{"STAGE", "KEY", "TITLE", "STATUS", "PRIORITY", "ASSIGNEE"}
+		headers := []string{"STAGE", "KEY", "TITLE", "STATUS", "PRIORITY", "ASSIGNEE", "DRIVER"}
 		rows := make([][]string, 0, len(children))
 		for _, c := range children {
 			stageCell := "-"
@@ -1463,6 +1515,7 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 				strVal(c, "status"),
 				strVal(c, "priority"),
 				formatAssignee(c, actors),
+				driverCell(c),
 			})
 		}
 		cli.PrintTable(os.Stdout, headers, rows)
@@ -2394,12 +2447,15 @@ func registerIssueCloseFlags(cmd *cobra.Command) {
 	cmd.Flags().String("pr", "", "Pull or merge request URL to register with this close. A verified link is stored; an unverifiable link still closes and is marked 未核实")
 	cmd.Flags().Bool("knowledge-none", false, "Declare this close wrote no qualified project memory")
 	cmd.Flags().StringArray("knowledge", nil, "Project-memory change as <key>=<summary>; repeat for each checklist location")
+	cmd.Flags().StringArray("decision", nil, "A decision settled this round, added to the state card's 已拍板 list (one line, 300 chars max; repeat for each)")
 	cmd.Flags().String("output", "json", "Output format: table or json")
 }
 
 // registerIssueHandoffFlags wires `issue handoff`; shared with its tests.
 func registerIssueHandoffFlags(cmd *cobra.Command) {
 	cmd.Flags().String("to", "", "reviewer, dispatcher, or an agent name/id (required)")
+	cmd.Flags().String("summary", "", "What the next owner needs to know; shown as the state card's 上一棒交代 (300 chars max)")
+	cmd.Flags().StringArray("decision", nil, "A decision settled this round, added to the state card's 已拍板 list (repeat for each)")
 	cmd.Flags().String("output", "table", "Output format: table or json")
 }
 
@@ -2452,6 +2508,9 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 	}
 	if verdict != "" {
 		body["verdict"] = verdict
+	}
+	if decisions, _ := cmd.Flags().GetStringArray("decision"); len(decisions) > 0 {
+		body["decisions"] = decisions
 	}
 	if outcome == "done" || outcome == "in_review" {
 		// The PR refresh below can merge locally, which cannot be undone.
@@ -3165,6 +3224,12 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 		"Deliver the file itself with `multica issue comment add <issue-id> --attachment <path>` (repeatable) and drop the link."); err != nil {
 		return err
 	}
+	mode, _ := cmd.Flags().GetString("mode")
+	switch mode {
+	case "", "steer", "queue", "restart", "handoff", "parallel":
+	default:
+		return fmt.Errorf("--mode must be steer, queue, restart, handoff or parallel")
+	}
 
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -3213,9 +3278,13 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	if len(attachmentIDs) > 0 {
 		body["attachment_ids"] = attachmentIDs
 	}
+	if mode != "" {
+		body["mode"] = mode
+	}
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues/"+issueID+"/comments", body, &result); err != nil {
-		return fmt.Errorf("add comment: %w", err)
+		output, _ := cmd.Flags().GetString("output")
+		return sendModeRefusal(err, output, "add comment")
 	}
 
 	fmt.Fprintf(os.Stderr, "Comment added to issue %s.\n", issueRef.Display)
@@ -3418,7 +3487,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "ERROR"}
+	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "SESSION", "ERROR"}
 	rows := make([][]string, 0, len(runs))
 	for _, r := range runs {
 		started := strVal(r, "started_at")
@@ -3440,6 +3509,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 			strVal(r, "status"),
 			started,
 			completed,
+			runSessionLabel(r, fullID),
 			errMsg,
 		})
 	}
@@ -4344,4 +4414,22 @@ func noteIgnoredAssignee(result map[string]any) bool {
 	fmt.Fprintf(os.Stderr, "Issue %s: the assignee you named was NOT applied; %s. %s.\n",
 		issueDisplayKey(result), kept, strings.TrimSuffix(reason, "."))
 	return true
+}
+
+// runSessionLabel is the SESSION column of `issue runs` (DENE-1345): "new
+// (<reason>)" or "resumed <run>". Empty for runs recorded before lineage.
+func runSessionLabel(r map[string]any, fullID bool) string {
+	switch strVal(r, "session_mode") {
+	case "resumed":
+		if from := strVal(r, "resumed_from_run"); from != "" {
+			return "resumed " + displayID(from, fullID)
+		}
+		return "resumed"
+	case "new":
+		if reason := strVal(r, "session_break_reason"); reason != "" {
+			return "new (" + reason + ")"
+		}
+		return "new"
+	}
+	return ""
 }

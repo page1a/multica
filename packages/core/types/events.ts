@@ -100,6 +100,7 @@ export interface WSMessage<T = unknown> {
   payload: T;
   actor_id?: string;
   actor_type?: string;
+  event_id?: string;
 }
 
 export interface IssueCreatedPayload {

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Archive,
   ArchiveRestore,
+  ArrowRightLeft,
   Copy,
   Globe,
   Link2,
@@ -25,8 +26,13 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import {
   AlertDialog,
@@ -43,6 +49,7 @@ import {
   useUpdateChatSession,
   useDeleteChatSession,
   useSetChatSessionArchived,
+  useHandoffChatSession,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
 import type { Agent, ChatMessage, ChatSession } from "@multica/core/types";
@@ -70,6 +77,7 @@ export function ChatSessionHeader({
   agent,
   onArchive,
   loadAllMessages,
+  handoffAgents = [],
 }: {
   // Host-supplied control before the avatar — the compact Chat page's way back,
   // so a phone gets one header bar instead of a back bar stacked on this one.
@@ -85,6 +93,8 @@ export function ChatSessionHeader({
   // Full transcript for "copy conversation". The open pane may only have the
   // recent page loaded; the parent fetches the rest when older messages exist.
   loadAllMessages?: () => Promise<ChatMessage[]>;
+  // Agents this chat can be handed to (DENE-1350); the current one is skipped.
+  handoffAgents?: Agent[];
 }) {
   const { t } = useT("chat");
   const currentUserId = useAuthStore((s) => s.user?.id ?? null);
@@ -184,6 +194,40 @@ export function ChatSessionHeader({
       ? onArchive(session)
       : setArchived.mutate({ sessionId: session.id, archived: true });
   const doUnarchive = () => setArchived.mutate({ sessionId: session.id, archived: false });
+
+  // Only the owner can hand a chat over; the server opens the new chat as them.
+  const handoffTargets = canManage ? handoffAgents.filter((a) => a.id !== session.agent_id) : [];
+  const handoff = useHandoffChatSession();
+  const doHandoff = (target: Agent) => {
+    if (handoff.isPending) return;
+    handoff.mutate(
+      { sessionId: session.id, to: target.id },
+      {
+        onSuccess: (res) => {
+          toast.success(t(($) => $.header.handoff_done, { name: target.name }));
+          setActiveSession(res.session.id);
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error && err.message ? err.message : t(($) => $.header.handoff_failed));
+        },
+      },
+    );
+  };
+  const handoffItems = handoffTargets.map((target) => (
+    <DropdownMenuItem key={target.id} disabled={handoff.isPending} onClick={() => doHandoff(target)} className="max-sm:min-h-11">
+      <ActorAvatar actorType="agent" actorId={target.id} size="xs" />
+      <span className="min-w-0 truncate">{target.name}</span>
+    </DropdownMenuItem>
+  ));
+  // A menu label must sit in a group, or the menu throws when it opens.
+  const handoffGroup = (
+    <DropdownMenuGroup>
+      <DropdownMenuLabel className="text-caption font-normal text-muted-foreground">
+        {t(($) => $.header.handoff_hint)}
+      </DropdownMenuLabel>
+      {handoffItems}
+    </DropdownMenuGroup>
+  );
 
   const copySessionLink = async (force = false) => {
     // A private chat opens as "can't open this" for whoever receives the link,
@@ -324,6 +368,27 @@ export function ChatSessionHeader({
         }
       />
 
+      {handoffTargets.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="chat-handoff-trigger"
+                className="hidden h-7 gap-1.5 px-2 text-caption text-muted-foreground sm:inline-flex"
+              />
+            }
+          >
+            <ArrowRightLeft className="size-3.5" aria-hidden="true" />
+            {t(($) => $.header.handoff)}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-h-80 w-64 overflow-y-auto">
+            {handoffGroup}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
       <Button
         variant="ghost"
         size="icon-sm"
@@ -355,6 +420,18 @@ export function ChatSessionHeader({
               <Pencil className="h-4 w-4" />
               {t(($) => $.header.rename)}
             </DropdownMenuItem>
+          )}
+          {handoffTargets.length > 0 && (
+            // Phones have no room for the header button; it lives here instead.
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger className="sm:hidden max-sm:min-h-11">
+                <ArrowRightLeft className="h-4 w-4" />
+                {t(($) => $.header.handoff)}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-80 w-56 overflow-y-auto">
+                {handoffGroup}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
           )}
           <DropdownMenuItem onClick={() => void copyConversation()}>
             <Copy className="h-4 w-4" />

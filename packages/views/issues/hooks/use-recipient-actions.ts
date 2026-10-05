@@ -52,12 +52,14 @@ export function useRecipientActions({
 }) {
   // Every comment row mounts this hook for its edit composer, so it reads only
   // the active runs of its own recipients: with none (the usual idle row) it
-  // neither fetches nor re-renders on unrelated task events.
+  // neither fetches nor re-renders on unrelated task events. A new message
+  // also reads other agents' active runs: @-ing someone else while one runs
+  // offers a handoff.
   const agentKey = agents.map((agent) => agent.id).join(",");
   const selectActive = useCallback((all: AgentTask[]) => {
     const ids = new Set(agentKey.split(","));
-    return all.filter((task) => ids.has(task.agent_id) && ACTIVE_STATUSES.has(task.status));
-  }, [agentKey]);
+    return all.filter((task) => (allowSteer || ids.has(task.agent_id)) && ACTIVE_STATUSES.has(task.status));
+  }, [agentKey, allowSteer]);
   const { data: tasks = NO_TASKS } = useQuery({
     ...issueTasksOptions(issueId),
     enabled: !!issueId && agents.length > 0,
@@ -85,12 +87,18 @@ export function useRecipientActions({
     });
   }, [agents]);
 
+  const othersRunning = useMemo(() => {
+    const ids = new Set(agents.map((agent) => agent.id));
+    return allowSteer && tasks.some((task) => !ids.has(task.agent_id) && task.status !== "queued" && task.status !== "deferred");
+  }, [agents, tasks, allowSteer]);
+
   const recipients = useMemo<RecipientEntry[]>(() => agents.map((agent) => {
     const state = agentRunState(tasks, agent.id);
     const opts = {
       canSteer: allowSteer && !hasAttachments,
       canRestart: allowSteer,
       steerByDefault: state.kind === "running" && steerByDefault(state.task),
+      othersRunning,
     };
     return {
       agent,
@@ -98,7 +106,7 @@ export function useRecipientActions({
       action: resolveRecipientAction(state, chosen[agent.id], opts),
       actions: recipientActions(state, opts),
     };
-  }), [agents, tasks, chosen, allowSteer, hasAttachments, steerByDefault]);
+  }), [agents, tasks, chosen, allowSteer, hasAttachments, steerByDefault, othersRunning]);
 
   // A recipient would take this in its running turn, but files cannot go there.
   const attachmentsBlockSteer = allowSteer && hasAttachments && recipients.some((r) =>
@@ -117,5 +125,11 @@ export function useRecipientActions({
     agentId: r.agent.id, action: r.action, state: r.state,
   }))), [recipients]);
 
-  return { recipients, attachmentsBlockSteer, routing, setAction, reset };
+  // Who a handoff stops: the agents running here that the message does not wake.
+  const handoffFromAgentIds = useMemo(() => {
+    const ids = new Set(agents.map((agent) => agent.id));
+    return [...new Set(tasks.filter((task) => !ids.has(task.agent_id)).map((task) => task.agent_id))];
+  }, [agents, tasks]);
+
+  return { recipients, attachmentsBlockSteer, routing, setAction, reset, handoffFromAgentIds };
 }

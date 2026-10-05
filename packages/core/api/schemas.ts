@@ -910,6 +910,10 @@ export const ChatMessageSchema = z.object({
   quick_actions: z.array(ChatQuickActionSchema).catch([]).optional().default([]),
   sender_user_id: z.string().nullable().optional(),
   linked_session_id: z.string().nullable().optional().catch(undefined),
+  // Session lineage (DENE-1345): additive display metadata, degraded alone.
+  session_mode: z.enum(["new", "resumed"]).optional().catch(undefined),
+  resumed_from_run: z.string().optional().catch(undefined),
+  session_break_reason: z.string().optional().catch(undefined),
 }).loose();
 
 export const ChatMessageListSchema = z.array(ChatMessageSchema).default([]);
@@ -1250,6 +1254,21 @@ export const IssueTriggerPreviewSchema = z.object({
 // to {} so consumers never need to nil-guard `issue.metadata`.
 const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
 
+const IssueDriverSchema = z.object({
+  kind: z.string(),
+  reason: z.string().default(""),
+  revives: z.number().optional(),
+  escalated: z.boolean().optional(),
+}).loose();
+
+export const IssueDisposeResponseSchema = z.object({
+  action: z.enum(["rerun", "reroute", "split", "cancel"]),
+  status: z.string(),
+  driver: IssueDriverSchema.optional().catch(undefined),
+  created: z.array(z.string()).optional(),
+  note: z.string().optional(),
+}).loose();
+
 export const IssueAgentGuardResponseSchema = z.object({
   issue_id: z.string(),
   halted: z.boolean(),
@@ -1380,6 +1399,84 @@ export const ProgressHistorySchema = z.object({
   progress: z.array(ProgressSchema).default([]),
 });
 
+/** Issue state card (DENE-1328). Lenient: an older server lacks the endpoint
+ *  and a newer one may add fields. */
+export const StateCardDecisionSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  source: z.string().default(""),
+  author_type: z.string().default(""),
+  author_id: z.string().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+});
+
+export const IssueStateCardSchema = z.object({
+  issue_id: z.string().default(""),
+  identifier: z.string().default(""),
+  goal: z
+    .object({
+      title: z.string().default(""),
+      goal_status: z.string().optional(),
+      finish_line: z
+        .array(z.object({ description: z.string(), status: z.string().default("") }))
+        .optional(),
+    })
+    .default({ title: "" }),
+  decisions: z.array(StateCardDecisionSchema).nullable().default([]).transform((v) => v ?? []),
+  now: z
+    .object({
+      status: z.string().default(""),
+      closed: z.boolean().default(false),
+      conclusion: z.string().optional(),
+      close_status: z.string().optional(),
+      next_owner_type: z.string().optional(),
+      next_owner_id: z.string().optional(),
+      waiting_on: z.string().optional(),
+      wait_condition: z.string().optional(),
+      wake_at: z.string().optional(),
+      needs_human: z.string().optional(),
+      closed_at: z.string().optional(),
+      superseded: z.boolean().optional(),
+      stale: z.boolean().optional(),
+    })
+    .default({ status: "", closed: false }),
+  baton: z
+    .object({
+      kind: z.string(),
+      summary: z.string().optional(),
+      by_type: z.string().optional(),
+      by_id: z.string().optional(),
+      to: z.string().optional(),
+      at: z.string().optional(),
+      comment_id: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+  changes: z
+    .object({
+      anchor: z.string().default("none"),
+      since: z.string().optional(),
+      threads: z
+        .array(
+          z.object({
+            thread_id: z.string(),
+            title: z.string().default(""),
+            author_type: z.string().default(""),
+            author_id: z.string().optional(),
+            new_count: z.number().default(0),
+            last_at: z.string().default(""),
+          }),
+        )
+        .nullable()
+        .default([])
+        .transform((v) => v ?? []),
+      more: z.number().optional(),
+    })
+    .default({ anchor: "none", threads: [] }),
+  text: z.string().default(""),
+});
+
 export const IssueSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1453,6 +1550,8 @@ export const IssueSchema = z.object({
   // the entry, not the whole issue. (DENE-371)
   origin_type: z.string().optional().catch(undefined),
   origin_id: z.string().optional().catch(undefined),
+  // Additive (DENE-1342): a malformed driver costs the hint, not the issue.
+  driver: IssueDriverSchema.optional().catch(undefined),
 }).loose();
 
 export const ListIssuesResponseSchema = z.object({
@@ -2314,6 +2413,10 @@ export const AgentTaskSchema = z.object({
   agent_id: z.string().default(""),
   runtime_id: z.string().default(""),
   work_thread_id: z.string().optional().catch(undefined),
+  // Session lineage (DENE-1345): additive display metadata, degraded alone.
+  session_mode: z.enum(["new", "resumed"]).optional().catch(undefined),
+  resumed_from_run: z.string().optional().catch(undefined),
+  session_break_reason: z.string().optional().catch(undefined),
   context_generation: z.number().int().optional().catch(undefined),
   context_message_limit: z.number().int().optional().catch(undefined),
   context_token_budget: z.number().int().optional().catch(undefined),
@@ -2340,6 +2443,7 @@ export const AgentTaskSchema = z.object({
   supplement_capability: z.string().optional().catch(undefined),
   supplement_comment_ids: OptionalStringArraySchema,
   can_supplement: z.boolean().optional().catch(undefined),
+  supplement_steer_mode: z.string().optional().catch(undefined),
   trigger_summary: z.string().optional(),
   kind: z.string().optional(),
   work_dir: z.string().optional().catch(undefined),
@@ -2590,6 +2694,7 @@ const ChatQueuedTaskSchema = z.object({
   created_at: z.string().default(""),
   message_id: z.string().optional(),
   content: z.string().optional(),
+  steering: z.boolean().optional().catch(undefined),
 }).loose();
 
 const ChatQueuedTasksSchema = z.array(z.unknown()).transform((tasks) =>
@@ -2608,6 +2713,9 @@ export const ChatPendingTaskSchema: z.ZodType<ChatPendingTask> = z.object({
   created_at: z.string().optional(),
   supports_queue: z.boolean().optional(),
   queued_tasks: ChatQueuedTasksSchema.optional(),
+  steer_supported: z.boolean().optional().catch(undefined),
+  steer_provider: z.string().optional().catch(undefined),
+  steer_mode: z.string().optional().catch(undefined),
 }).loose();
 
 export const EMPTY_CHAT_PENDING_TASK: ChatPendingTask = {};
@@ -2617,6 +2725,7 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   task_id: z.string().min(1),
   supports_queue: z.boolean().optional(),
   queued: z.boolean().optional().catch(undefined),
+  mode: z.enum(["steer", "queue", "restart", "start"]).optional().catch(undefined),
   created_at: z.string().min(1),
   attachment_ids: z.array(z.string()).nullish().transform((ids) => ids ?? undefined),
 }).loose();

@@ -120,6 +120,11 @@ actually landed (`target_name`, `run_created`, `duplicate`):
 A close already hands over what it closes: `--outcome in_review` routes the
 seat itself, so do not follow it with `handoff --to reviewer`.
 
+Both calls take a repeatable `--decision "..."` for what this round settled,
+and `handoff` takes `--summary` for what the next owner needs to know. The
+next owner reads both back with `multica issue context <id>`
+(`references/state-card.md`).
+
 Calling a person is `multica issue summon <id> --to <member> --reason "..."`
 (DENE-880, `POST /api/issues/{id}/summon`), not a hand-written @mention. One
 call writes their inbox row (`needs_you`, highest severity), subscribes them,

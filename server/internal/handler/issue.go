@@ -152,6 +152,9 @@ type IssueResponse struct {
 	// CapacityRetry is detail-only: the waiting in-place retry after a full
 	// model (DENE-1093), absent when nothing is waiting.
 	CapacityRetry *CapacityRetryResponse `json:"capacity_retry,omitempty"`
+	// Driver is who or what moves this issue now (ADR-0006, DENE-1342). Set
+	// on the detail and the children list; absent for a closed or parked one.
+	Driver *DriverResponse `json:"driver,omitempty"`
 	// duplicateOfIssueID is the raw mark, kept off the wire; see DuplicateOf.
 	duplicateOfIssueID pgtype.UUID
 }
@@ -2688,6 +2691,9 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	if row, err := h.Queries.GetIssueCapacityRetry(r.Context(), issue.ID); err == nil {
 		resp.CapacityRetry = capacityRetryResponse(row.ID, row.Attempt, row.FireAt)
 	}
+	if driver, ok := h.issueDriver(r.Context(), issue); ok {
+		resp.Driver = driverResponse(driver)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -2723,9 +2729,13 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 	// built-in statuses still cost no query, and a list full of custom ones
 	// costs one catalog read rather than one per row.
 	statusResolver := issuestatus.NewResolver(issue.WorkspaceID)
+	drivers := h.issueDrivers(r.Context(), issue.WorkspaceID, children)
 	resp := make([]IssueResponse, len(children))
 	for i, child := range children {
 		resp[i] = issueToResponse(child, prefix)
+		if driver, ok := drivers[uuidToString(child.ID)]; ok {
+			resp[i].Driver = driverResponse(driver)
+		}
 		resp[i].StatusCategory = issuestatus.WireCategory(child.Status, statusResolver.Category(r.Context(), h.Queries, child.Status))
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {

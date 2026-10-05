@@ -8,7 +8,7 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { contentReferencesAttachment, type AgentTask } from "@multica/core/types";
+import { contentReferencesAttachment, type AgentTask, type CommentSendMode } from "@multica/core/types";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
 import { useCommentDraftStore, type CommentDraftKey } from "@multica/core/issues/stores";
 import { cn } from "@multica/ui/lib/utils";
@@ -34,7 +34,7 @@ interface ReplyInputProps {
   avatarId: string;
   /** Resolves true on success, false on failure — the reply box keeps its text
    *  (locked + spinning) until then, clearing only on success. */
-  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], steerTaskIds?: string[]) => Promise<string | boolean>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], steerTaskIds?: string[], mode?: CommentSendMode) => Promise<string | boolean>;
   /** Called after the server accepts the reply and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
   size?: "sm" | "default";
@@ -200,6 +200,8 @@ function ReplyInput({
         activeIds.length > 0 ? activeIds : undefined,
         suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
         steerTaskIds.length > 0 ? steerTaskIds : undefined,
+        // A handoff stops other agents' runs: only on a preview that matches the text.
+        triggerPreview.isCurrent ? routing.mode : undefined,
       ).then((commentId) => {
         acceptedCommentIdRef.current = typeof commentId === "string" ? commentId : null;
         return !!commentId;

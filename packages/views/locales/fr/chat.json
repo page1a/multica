@@ -77,7 +77,6 @@
     "placeholder_named": "Écrire à {{name}}…",
     "placeholder_default": "Rédiger un message…",
     "send_tooltip": "Envoyer",
-    "queue_send_tooltip": "Mettre le message en file d'attente",
     "stop_tooltip": "Arrêter",
     "send_failed_toast": "Échec de l'envoi du message",
     "send_blocked_toast": "Message non envoyé — vous n'avez plus la permission d'utiliser cet agent",
@@ -93,21 +92,38 @@
     "project_context_unsupported": "La description du projet ne s'appliquera pas — le daemon de cet agent doit être mis à jour",
     "remove_all_project_context": "Retirer tout le contexte de projet",
     "switch_project": "Passer à un autre projet…",
-    "to_goal": "转成目标任务"
+    "to_goal": "转成目标任务",
+    "mode_menu": "Mode d'envoi",
+    "mode_steer": "Intervenir",
+    "mode_steer_desc": "Lu après cette étape",
+    "mode_steer_restart_desc": "Lu tout de suite ; l’étape en cours est interrompue",
+    "mode_steer_process": "Même processus · même session",
+    "mode_steer_restart_process": "Redémarre la CLI · même session",
+    "mode_queue": "File d'attente",
+    "mode_queue_desc": "Envoyé après cette réponse",
+    "mode_queue_process": "Nouveau processus · reprend la même session",
+    "mode_restart": "Interrompre et recommencer",
+    "mode_restart_desc": "Arrête cette réponse et recommence à partir de ce message",
+    "mode_restart_process": "Nouveau processus · reprend la même session",
+    "mode_steer_unsupported": "{{cli}} ne peut pas encore lire un message en cours de réponse",
+    "mode_steer_unsupported_generic": "Cet agent ne peut pas encore lire un message en cours de réponse",
+    "enter_hint": "Entrée = {{mode}}",
+    "steer_fell_back_toast": "Cette réponse ne peut pas lire le message en cours, il a été mis en file d'attente"
   },
   "queue": {
     "title_one": "{{count}} message en file d'attente",
     "title_other": "{{count}} messages en file d'attente",
     "clear": "Tout effacer",
-    "steer": "Réorienter",
-    "steer_unavailable": "La réorientation est possible une fois la réponse en cours démarrée",
+    "steer": "Interrompre et recommencer",
+    "steer_unavailable": "Disponible une fois la réponse en cours démarrée",
     "steer_no_permission": "Vous n'avez plus l'autorisation d'exécuter cet agent",
-    "steer_unavailable_toast": "La réorientation est indisponible. Actualisation de la file d'attente.",
+    "steer_unavailable_toast": "Impossible de recommencer pour l'instant. Actualisation de la file.",
     "edit": "Modifier le message en file d'attente",
     "remove": "Retirer le message de la file d'attente",
     "more": "Plus d'actions sur la file d'attente",
     "fallback": "Message en file d'attente",
-    "action_failed_toast": "Impossible de mettre à jour le message en file d'attente"
+    "action_failed_toast": "Impossible de mettre à jour le message en file d'attente",
+    "steering": "Intervention"
   },
   "message_list": {
     "show_details": "Afficher les détails",
@@ -336,7 +352,11 @@
     "copy_conversation": "Copier la conversation en Markdown",
     "conversation_copied": "Conversation copiée",
     "copy_role_user": "Vous",
-    "copy_role_assistant": "Assistant"
+    "copy_role_assistant": "Assistant",
+    "handoff": "Confier à…",
+    "handoff_hint": "Ouvre une nouvelle discussion qui commence par le résumé de celle-ci",
+    "handoff_done": "Confiée à {{name}}",
+    "handoff_failed": "Impossible de confier la discussion"
   },
   "sharing": {
     "title": "Modifier l'accès",
@@ -381,5 +401,12 @@
     "from_prefix": "Ouvert depuis",
     "from_suffix": "",
     "from_hidden": "Ouvert depuis une autre discussion"
+  },
+  "session_lineage": {
+    "new": "Nouvelle session",
+    "reason_agent_changed": "autre agent",
+    "reason_runtime_changed": "la dernière session est sur une autre machine",
+    "reason_session_lost": "la session précédente n'a pas pu être restaurée",
+    "reason_fresh_requested": "nouvelle session demandée"
   }
 }

@@ -13,7 +13,8 @@ import { getCurrentWsId } from "@multica/core/platform";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "../../issues/components/pickers/assignee-picker";
-import { api, dispatchReasonCode } from "@multica/core/api";
+import { dispatchReasonCode } from "@multica/core/api";
+import { sendChatMessageInMode } from "./send-chat-message";
 import {
   isAgentRuntimeBound as hasAgentRuntime,
   useAgentPresenceDetail,
@@ -53,6 +54,7 @@ import type {
   Attachment,
   ChatMessage,
   ChatPendingTask,
+  ChatSendMode,
 } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { useAppForeground } from "../../common/use-app-foreground";
@@ -527,6 +529,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      mode?: ChatSendMode,
     ): Promise<boolean> => {
       if (isChatViewOnly) return false;
       if (!activeAgent && !sharedSpeaker) {
@@ -608,7 +611,16 @@ export function useChatController(opts?: { isActive?: boolean }) {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        // A mode only matters to a reply already running; a fresh session or
+        // an idle one just starts.
+        const sent = await sendChatMessageInMode(
+          sessionId,
+          finalContent,
+          attachmentIds,
+          pendingTaskId ? mode : undefined,
+        );
+        result = sent.result;
+        if (sent.steerFellBack) toast.info(t(($) => $.input.steer_fell_back_toast));
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         // Invoke permission can be revoked mid-session; the send is refused with

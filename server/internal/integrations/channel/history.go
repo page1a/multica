@@ -42,6 +42,13 @@ type HistoryMessage struct {
 	// platform (Slack "1700000000.000100"). It doubles as the paging cursor.
 	TS string `json:"ts"`
 
+	// Session lineage of the Multica run behind this message (DENE-1345):
+	// "new" or "resumed", the run whose session it resumed, and why a new one
+	// started. Empty for platform channels and for rows predating it.
+	SessionMode        string `json:"session_mode,omitempty"`
+	ResumedFromRun     string `json:"resumed_from_run,omitempty"`
+	SessionBreakReason string `json:"session_break_reason,omitempty"`
+
 	// The following are set only on a CHANNEL-OVERVIEW row that heads a thread,
 	// so the agent can `multica chat thread <thread_id>` to read its contents.
 	// They are absent on a plain message and on thread-read rows.

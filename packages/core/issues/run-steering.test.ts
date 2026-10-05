@@ -83,4 +83,21 @@ describe("recipient actions", () => {
     ]);
     expect(routing).toEqual({ steerTaskIds: [steerable.task.id], suppressAgentIds: ["b"], restartTaskIds: ["turn-c"] });
   });
+
+  it("offers handoff or working alongside while another agent runs here", () => {
+    const others = { ...inThread, othersRunning: true };
+    expect(recipientActions({ kind: "idle" }, others)).toEqual(["handoff", "parallel", "skip"]);
+    expect(resolveRecipientAction({ kind: "idle" }, undefined, others)).toBe("handoff");
+    expect(resolveRecipientAction({ kind: "idle" }, "parallel", others)).toBe("parallel");
+    // The other run ended: a stale handoff choice falls back to a plain start.
+    expect(resolveRecipientAction({ kind: "idle" }, "handoff", inThread)).toBe("start");
+    // A recipient that is itself running keeps its own choices.
+    expect(recipientActions(busy, others)).toEqual(["after_run", "restart", "skip"]);
+  });
+
+  it("sends handoff mode when any recipient takes over", () => {
+    expect(recipientRouting([{ agentId: "b", action: "handoff", state: { kind: "idle" } }]))
+      .toEqual({ steerTaskIds: [], suppressAgentIds: [], restartTaskIds: [], mode: "handoff" });
+    expect(recipientRouting([{ agentId: "b", action: "parallel", state: { kind: "idle" } }]).mode).toBeUndefined();
+  });
 });

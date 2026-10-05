@@ -124,6 +124,19 @@
     "all": "No issues in this workspace.",
     "members": "No issues assigned to a member."
   },
+  "driver": {
+    "none": "Nobody is moving this",
+    "revived": "rerun {{count}}×",
+    "escalated": "escalated to the parent's owner",
+    "actions": "Dispose",
+    "rerun": "Rerun on the same seat",
+    "reroute": "Let routing pick again",
+    "split": "Split into a sub-issue",
+    "cancel": "Cancel issue",
+    "split_prompt": "Sub-issue title",
+    "cancel_prompt": "Why cancel",
+    "failed": "Could not dispose of the issue"
+  },
   "menu": {
     "pin": "Pin",
     "unpin": "Unpin",
@@ -250,6 +263,16 @@
       "completed": "Run succeeded",
       "failed": "Run failed",
       "cancelled": "Cancelled"
+    },
+    "session": {
+      "round": "Run {{round}}",
+      "new": "New session",
+      "resumed": "Continues run {{round}}'s session",
+      "resumed_earlier": "Continues an earlier session",
+      "reason_agent_changed": "different agent",
+      "reason_runtime_changed": "last session is on another machine",
+      "reason_session_lost": "session could not be restored",
+      "reason_fresh_requested": "fresh session requested"
     }
   },
   "header_filter": "Filter",
@@ -267,5 +290,24 @@
   "summary.chat": "Chat run",
   "summary.direct": "Run",
   "cancel.title": "Cancel run?",
-  "cancel.cancel_task": "Cancel run"
+  "cancel.cancel_task": "Cancel run",
+  "state_card": {
+    "section_title": "State card",
+    "decisions": "Settled",
+    "decisions_empty": "Nothing settled yet",
+    "decision_add": "Add a decision",
+    "decision_placeholder": "One line, what was settled",
+    "decision_edit": "Edit",
+    "decision_delete": "Delete",
+    "decision_failed": "Could not save: {{reason}}",
+    "baton": "Last baton",
+    "baton_close": "Close",
+    "baton_handoff": "Handoff to {{to}}",
+    "baton_none": "No close or handoff yet",
+    "changes": "Since you were here",
+    "changes_first": "Since you were here (first visit)",
+    "changes_none": "No new threads",
+    "changes_count": "{{count}} new",
+    "changes_more": "{{count}} more threads"
+  }
 }

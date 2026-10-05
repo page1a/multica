@@ -45,6 +45,8 @@ import {
 import { canRetryRun, RetryRunButton } from "./retry-run-button";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 import { WakeupRunLabel } from "./wakeup-source-chip";
+import { RunSessionCaption } from "./run-session-lineage";
+import { runSessionLineage, type RunSessionLineage } from "@multica/core/issues/session-lineage";
 
 // The issue's runs laid out in time — the surface the execution log's header
 // and spend strip open.
@@ -113,6 +115,7 @@ export function IssueRunsDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tasks, pricings, open],
   );
+  const lineage = useMemo(() => runSessionLineage(tasks), [tasks]);
   // Models with no rate-table entry and no provider-reported cost: their tokens
   // are counted but their spend is not, so the totals understate reality.
   const unmapped = useMemo(
@@ -141,7 +144,7 @@ export function IssueRunsDialog({
             {/* `min-h-0`: the dialog is a flex column; without it this flex
                 item sizes to its content and the list never scrolls. */}
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
-              <RunDayList timeline={timeline} issueId={issueId} />
+              <RunDayList timeline={timeline} issueId={issueId} lineage={lineage} />
               <div className="mt-4 space-y-1 text-micro text-muted-foreground">
                 {unmapped.length > 0 && (
                   <p>{t(($) => $.runs_timeline.note_unmapped, { models: unmapped.join(", ") })}</p>
@@ -696,7 +699,11 @@ function IdleHoverCard({
 
 // ─── List ──────────────────────────────────────────────────────────────────
 
-function RunDayList({ timeline, issueId }: { timeline: RunTimeline; issueId: string }) {
+function RunDayList({ timeline, issueId, lineage }: {
+  timeline: RunTimeline;
+  issueId: string;
+  lineage: Map<string, RunSessionLineage>;
+}) {
   const { t } = useT("issues");
   const locale = useLocale();
   const partLabel = useCostPartLabel();
@@ -749,6 +756,7 @@ function RunDayList({ timeline, issueId }: { timeline: RunTimeline; issueId: str
               run={run}
               issueId={issueId}
               maxCost={timeline.maxRunCost}
+              lineage={lineage.get(run.task.id)}
             />
           ))}
         </section>
@@ -761,10 +769,12 @@ function RunListRow({
   run,
   issueId,
   maxCost,
+  lineage,
 }: {
   run: TimelineRun;
   issueId: string;
   maxCost: number;
+  lineage?: RunSessionLineage;
 }) {
   const { t } = useT("issues");
   const { t: tAgents } = useT("agents");
@@ -794,7 +804,8 @@ function RunListRow({
   const label = quoted ? t(($) => $.runs_timeline.quoted, { text: trigger }) : trigger;
 
   return (
-    <div className="group/run-row flex h-9 items-center gap-2.5 border-b text-caption transition-colors hover:bg-accent/40">
+    <div className="group/run-row border-b transition-colors hover:bg-accent/40">
+    <div className="flex h-9 items-center gap-2.5 text-caption">
       <span className="w-10 shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
         {time}
       </span>
@@ -865,6 +876,9 @@ function RunListRow({
         />
         {canRetryRun(task) && <RetryRunButton task={task} issueId={issueId} />}
       </span>
+    </div>
+    {/* Own line under the row: wraps on a phone instead of being cut off. */}
+    <RunSessionCaption lineage={lineage} withReason className="-mt-1.5 pb-1.5 pl-[4.25rem] text-micro" />
     </div>
   );
 }

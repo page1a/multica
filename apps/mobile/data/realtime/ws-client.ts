@@ -94,6 +94,8 @@ export class WSClient {
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private awaitingPong = false;
   private hasConnectedBefore = false;
+  private lastEventID: string | null = null;
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly handlers = new Map<WSEventType, Set<EventHandler>>();
   private readonly anyHandlers = new Set<AnyHandler>();
@@ -123,6 +125,8 @@ export class WSClient {
     this.teardownSocket();
     this.reconnectAttempt = 0;
     this.hasConnectedBefore = false;
+    this.lastEventID = null;
+    this.clearResumeTimer();
   }
 
   /** Active → paused. Used by the provider when AppState=background.
@@ -242,14 +246,14 @@ export class WSClient {
         this.logger.warn("[ws] frame without a string type", event.data);
         return;
       }
-      if (type === "auth_ack") {
-        this.onAuthenticated();
-        return;
-      }
+      if (type === "auth_ack") { this.onAuthenticated(); return; }
+      if (type === "resume_ack") { this.clearResumeTimer(); return; }
+      if (type === "resume_failed") { this.clearResumeTimer(); for (const cb of this.onReconnectCallbacks) { try { cb(); } catch (err) { this.logger.warn("[ws] fallback callback threw", err); } } return; }
       if (type === "pong") {
         this.onPong();
         return;
       }
+      if (msg.event_id) this.lastEventID = msg.event_id;
       this.logger.debug("[ws] event", type);
       const set = this.handlers.get(msg.type);
       if (set) {
@@ -282,13 +286,10 @@ export class WSClient {
     this.logger.info("[ws] authenticated");
     this.startHeartbeat();
     if (this.hasConnectedBefore) {
-      for (const cb of this.onReconnectCallbacks) {
-        try {
-          cb();
-        } catch (err) {
-          this.logger.warn("[ws] onReconnect callback threw", err);
-        }
-      }
+      if (this.lastEventID) {
+        this.send({ type: "resume", payload: { event_id: this.lastEventID } } as unknown as WSMessage);
+        this.resumeTimer = setTimeout(() => { this.resumeTimer = null; for (const cb of this.onReconnectCallbacks) { try { cb(); } catch {} } }, 3000);
+      } else { for (const cb of this.onReconnectCallbacks) { try { cb(); } catch {} } }
     }
     this.hasConnectedBefore = true;
   }
@@ -386,8 +387,11 @@ export class WSClient {
     this.awaitingPong = false;
   }
 
+  private clearResumeTimer() { if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; } }
+
   private teardownSocket() {
     this.clearHeartbeat();
+    this.clearResumeTimer();
     if (!this.ws) return;
     const ws = this.ws;
     // Detach BEFORE close — onclose firing after teardown would re-enter

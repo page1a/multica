@@ -128,6 +128,18 @@ export function useCreateChatSession() {
   });
 }
 
+/** Hands a chat to another agent; the old chat stays as it is (DENE-1350). */
+export function useHandoffChatSession() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ sessionId, to }: { sessionId: string; to: string }) => api.handoffChatSession(sessionId, to),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+    },
+  });
+}
+
 /**
  * Clears the session's unread state server-side. Optimistically flips
  * has_unread to false in the cached list so the FAB badge drops

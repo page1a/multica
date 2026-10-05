@@ -64,11 +64,11 @@ test("a reply steers the thread agent's running turn and shows its receipt", asy
     const placeholder = "Leave a reply...";
     const editor = page.locator(`.ProseMirror[data-placeholder="${placeholder}"], .ProseMirror:has([data-placeholder="${placeholder}"])`).first();
     await editor.fill("This PR only fixes web; leave the desktop login page alone.");
-    const chip = page.getByRole("button", { name: "Lambda trigger: Add to current run" });
+    const chip = page.getByRole("button", { name: "Lambda trigger: Steer" });
     await expect(chip).toBeVisible({ timeout: 15_000 });
     await page.screenshot({ path: testInfo.outputPath("steer-composer.png") });
     await chip.click();
-    await expect(page.getByRole("menuitemradio", { name: /Stop and start over/ })).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: /Interrupt and restart/ })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("steer-menu.png") });
     await page.keyboard.press("Escape");
 

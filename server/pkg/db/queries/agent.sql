@@ -3264,3 +3264,89 @@ WHERE i.assignee_type = 'agent'
   )
 ORDER BY i.updated_at
 LIMIT 200;
+
+-- name: SetAgentTaskSessionLineage :exec
+-- DENE-1345: records, at claim, whether this run resumes an earlier run's CLI
+-- session or starts a new one, and why a new one. Best-effort display metadata.
+UPDATE agent_task_queue
+SET session_mode = sqlc.arg('session_mode')::text,
+    resumed_from_task_id = sqlc.narg('resumed_from_task_id')::uuid,
+    session_break_reason = sqlc.narg('session_break_reason')::text
+WHERE id = sqlc.arg('id');
+
+-- name: MarkAgentTaskSessionResumeDropped :exec
+-- DENE-1345: the daemon could not resume the session the claim pointed at
+-- (session file missing, rollout gone, provider rejected it) and ran a fresh
+-- one instead. Only flips rows the claim recorded as resumed.
+UPDATE agent_task_queue
+SET session_mode = 'new',
+    resumed_from_task_id = NULL,
+    session_break_reason = 'session_lost'
+WHERE id = $1 AND session_mode = 'resumed';
+
+-- name: GetIssueSessionSourceTask :one
+-- DENE-1345: the latest earlier run of this agent on this issue that used the
+-- session being resumed.
+SELECT id FROM agent_task_queue
+WHERE issue_id = sqlc.arg('issue_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND session_id = sqlc.arg('session_id')::text
+  AND id <> sqlc.arg('task_id')
+  AND started_at IS NOT NULL
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: GetChatSessionSourceTask :one
+SELECT id FROM agent_task_queue
+WHERE chat_session_id = sqlc.arg('chat_session_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND session_id = sqlc.arg('session_id')::text
+  AND id <> sqlc.arg('task_id')
+  AND started_at IS NOT NULL
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: GetIssueRunBreakContext :one
+-- DENE-1345: what the scope looked like before a run that starts a new
+-- session — did this agent run here before (and on which runtime), and did
+-- any other agent.
+SELECT
+    EXISTS (
+        SELECT 1 FROM agent_task_queue o
+        WHERE o.issue_id = sqlc.arg('issue_id')
+          AND o.agent_id <> sqlc.arg('agent_id')
+          AND o.started_at IS NOT NULL
+    )::bool AS other_agent_ran,
+    COALESCE((
+        SELECT s.runtime_id::text FROM agent_task_queue s
+        WHERE s.issue_id = sqlc.arg('issue_id')
+          AND s.agent_id = sqlc.arg('agent_id')
+          AND s.id <> sqlc.arg('task_id')
+          AND s.started_at IS NOT NULL
+        ORDER BY s.started_at DESC
+        LIMIT 1
+    ), '')::text AS own_last_runtime_id;
+
+-- name: GetChatRunBreakContext :one
+SELECT
+    EXISTS (
+        SELECT 1 FROM agent_task_queue o
+        WHERE o.chat_session_id = sqlc.arg('chat_session_id')
+          AND o.agent_id <> sqlc.arg('agent_id')
+          AND o.started_at IS NOT NULL
+    )::bool AS other_agent_ran,
+    COALESCE((
+        SELECT s.runtime_id::text FROM agent_task_queue s
+        WHERE s.chat_session_id = sqlc.arg('chat_session_id')
+          AND s.agent_id = sqlc.arg('agent_id')
+          AND s.id <> sqlc.arg('task_id')
+          AND s.started_at IS NOT NULL
+        ORDER BY s.started_at DESC
+        LIMIT 1
+    ), '')::text AS own_last_runtime_id;
+
+-- name: ListTaskSessionLineageByIDs :many
+-- DENE-1345: session lineage for the runs behind a page of chat messages.
+SELECT id, session_mode, resumed_from_task_id, session_break_reason
+FROM agent_task_queue
+WHERE id = ANY(sqlc.arg('ids')::uuid[]);

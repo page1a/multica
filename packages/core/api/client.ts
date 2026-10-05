@@ -10,7 +10,7 @@ import type { WorkThreadSnapshot } from "../types/work_thread";
 import type { Ask, CreateAskRequest, AnswerAskRequest } from "../types/ask";
 import type { LinkedView, LinkedViewParams, ListWorkspaceLinksResponse, WorkspaceLink, WorkspaceLinkAuditEntry } from "../types/workspace-link";
 import { configStore } from "../config";
-import { IssueGoalSchema, type CreateIssueGoalInput } from "../types";
+import { IssueGoalSchema, type CommentSendMode, type CreateIssueGoalInput } from "../types";
 import type {
   Issue,
   IssuePriority,
@@ -74,6 +74,8 @@ import type {
   Reaction,
   IssueReaction,
   IssueAgentGuardResponse,
+  IssueDisposeRequest,
+  IssueDisposeResponse,
   Workspace,
   WorkspaceRepo,
   ModuleKey,
@@ -113,6 +115,8 @@ import type {
   RuntimeLocalSkillImportRequest,
   TimelineEntry,
   Progress,
+  IssueStateCard,
+  StateCardDecision,
   AssigneeFrequencyEntry,
   TaskMessagePayload,
   Attachment,
@@ -128,6 +132,7 @@ import type {
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
+  ChatSendMode,
   StartMikaOnboardingResponse,
   CancelTaskResponse,
   Project,
@@ -333,6 +338,7 @@ import {
   AgentTaskPageSchema,
   AgentActivityBucketListSchema,
   IssueAgentGuardResponseSchema,
+  IssueDisposeResponseSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChatDraftRestoresResponseSchema,
@@ -458,6 +464,8 @@ import {
   TaskMessageListSchema,
   TimelineEntriesSchema,
   ProgressHistorySchema,
+  IssueStateCardSchema,
+  StateCardDecisionSchema,
   UserSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
@@ -662,6 +670,26 @@ export interface ClientUsageRequest {
 export interface LoginResponse {
   token: string;
   user: User;
+}
+
+export type IncrementalResource = "issues" | "inbox" | "chats" | "timeline";
+
+export interface IncrementalChanges<T = unknown> {
+  resource: IncrementalResource;
+  upserts: Array<{ id: string; updated_at: string; data: T }>;
+  deleted: string[];
+  next_cursor: string;
+  has_more: boolean;
+}
+
+/** Deterministically applies one server page to a persisted list snapshot. */
+export function mergeIncrementalChanges<T extends { id: string }>(current: T[], page: IncrementalChanges<T>): T[] {
+  const deleted = new Set(page.deleted);
+  const byId = new Map(current.filter((item) => !deleted.has(item.id)).map((item) => [item.id, item]));
+  for (const change of page.upserts) {
+    if (!deleted.has(change.id)) byId.set(change.id, change.data);
+  }
+  return [...byId.values()];
 }
 
 function parseSearchIndexResponse<T>(raw: unknown, schema: ZodType, endpoint: string): T {
@@ -1925,6 +1953,7 @@ export class ApiClient {
     attachmentIds?: string[],
     suppressAgentIds?: string[],
     steerTaskIds?: string[],
+    mode?: CommentSendMode,
   ): Promise<Comment> {
     return this.fetch(`/api/issues/${issueId}/comments`, {
       method: "POST",
@@ -1935,6 +1964,7 @@ export class ApiClient {
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
         ...(steerTaskIds?.length ? { steer_task_ids: steerTaskIds } : {}),
+        ...(mode ? { mode } : {}),
       }),
     });
   }
@@ -1981,6 +2011,50 @@ export class ApiClient {
     return parseWithFallback(raw, ProgressHistorySchema, { progress: [] }, {
       endpoint: "GET /api/issues/:id/progress",
     }).progress as Progress[];
+  }
+
+  /** The issue state card for the caller (DENE-1328). */
+  async getIssueContext(issueId: string): Promise<IssueStateCard> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/context`,
+    );
+    return parseWithFallback(
+      raw,
+      IssueStateCardSchema,
+      {
+        issue_id: issueId,
+        identifier: "",
+        goal: { title: "" },
+        decisions: [],
+        now: { status: "", closed: false },
+        changes: { anchor: "none", threads: [] },
+        text: "",
+      },
+      { endpoint: "GET /api/issues/:id/context" },
+    ) as IssueStateCard;
+  }
+
+  async createIssueDecision(issueId: string, text: string): Promise<StateCardDecision> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/decisions`,
+      { method: "POST", body: JSON.stringify({ text }) },
+    );
+    return StateCardDecisionSchema.parse(raw) as StateCardDecision;
+  }
+
+  async updateIssueDecision(issueId: string, decisionId: string, text: string): Promise<StateCardDecision> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/decisions/${encodeURIComponent(decisionId)}`,
+      { method: "PATCH", body: JSON.stringify({ text }) },
+    );
+    return StateCardDecisionSchema.parse(raw) as StateCardDecision;
+  }
+
+  async deleteIssueDecision(issueId: string, decisionId: string): Promise<void> {
+    await this.fetch(
+      `/api/issues/${encodeURIComponent(issueId)}/decisions/${encodeURIComponent(decisionId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async listTimeline(issueId: string): Promise<TimelineEntry[]> {
@@ -3615,6 +3689,16 @@ export class ApiClient {
     });
   }
 
+  async disposeIssue(issueId: string, body: IssueDisposeRequest): Promise<IssueDisposeResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/dispose`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const parsed = IssueDisposeResponseSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("Invalid dispose response");
+    return parsed.data;
+  }
+
   async rerunIssue(issueId: string, taskId?: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/rerun`, {
       method: "POST",
@@ -3638,6 +3722,27 @@ export class ApiClient {
     const raw = await this.fetch<unknown>("/api/inbox");
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox",
+    });
+  }
+
+  /** Fetches one replayable page of changes for a high-frequency list. */
+  async listIncrementalChanges<T = unknown>(
+    resource: IncrementalResource,
+    options: {
+      updatedSince?: string;
+      cursor?: string;
+      issueId?: string;
+      limit?: number;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<IncrementalChanges<T>> {
+    const params = new URLSearchParams({ resource });
+    if (options.updatedSince) params.set("updated_since", options.updatedSince);
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (options.issueId) params.set("issue_id", options.issueId);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    return this.fetch<IncrementalChanges<T>>(`/api/sync/changes?${params.toString()}`, {
+      signal: options.signal,
     });
   }
 
@@ -4997,6 +5102,17 @@ export class ApiClient {
     });
   }
 
+  /** Hand a chat to another agent: a new chat with `to` whose first message summarises this one (DENE-1350). */
+  async handoffChatSession(
+    sessionId: string,
+    to: string,
+  ): Promise<{ from_session_id: string; session: ChatSession; message_id: string; task_id: string }> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/handoff`, {
+      method: "POST",
+      body: JSON.stringify({ to }),
+    });
+  }
+
   async deleteChatSession(id: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
@@ -5123,14 +5239,17 @@ export class ApiClient {
     sessionId: string,
     content: string,
     attachmentIds?: string[],
+    mode?: ChatSendMode,
   ): Promise<SendChatMessageResponse> {
     const body: {
       content: string;
       attachment_ids?: string[];
+      mode?: ChatSendMode;
     } = { content };
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
+    if (mode) body.mode = mode;
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify(body),

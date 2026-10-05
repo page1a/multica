@@ -647,3 +647,42 @@ func TestTerminalReportsCarryDurableWorkDir(t *testing.T) {
 		})
 	}
 }
+
+// DENE-1345: a run that fell back from the claimed session to a fresh one says
+// so on both terminal paths, and the common case keeps the field off the wire.
+func TestTerminalReportsCarrySessionResumeDropped(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dropped bool
+		call    func(*Client, bool) error
+	}{
+		{"complete dropped", true, func(c *Client, d bool) error {
+			return c.completeTaskWithRetrySchedule(context.Background(), "task-1", "done", "", "", "/tmp/wd", false, "", "", "", d, nil)
+		}},
+		{"fail dropped", true, func(c *Client, d bool) error {
+			return c.failTaskWithRetrySchedule(context.Background(), "task-1", "boom", "", "/tmp/wd", "", "agent_error", false, "", "", "", d, nil)
+		}},
+		{"complete kept", false, func(c *Client, d bool) error {
+			return c.completeTaskWithRetrySchedule(context.Background(), "task-1", "done", "", "s", "/tmp/wd", false, "", "", "", d, nil)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			if err := tc.call(NewClient(srv.URL), tc.dropped); err != nil {
+				t.Fatalf("terminal report: %v", err)
+			}
+			got, present := body["session_resume_dropped"]
+			if tc.dropped && got != true {
+				t.Fatalf("session_resume_dropped = %v, want true (body: %v)", got, body)
+			}
+			if !tc.dropped && present {
+				t.Fatalf("session_resume_dropped must be omitted when the resume held, got %v", body)
+			}
+		})
+	}
+}

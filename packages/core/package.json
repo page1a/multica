@@ -51,6 +51,7 @@
     "./issues/comment-deletion": "./issues/comment-deletion.ts",
     "./issues/comment-trigger-outcomes": "./issues/comment-trigger-outcomes.ts",
     "./issues/run-steering": "./issues/run-steering.ts",
+    "./issues/session-lineage": "./issues/session-lineage.ts",
     "./issues/date": "./issues/date.ts",
     "./issues/close-protocol": "./issues/close-protocol.ts",
     "./issues/ws-updaters": "./issues/ws-updaters.ts",
