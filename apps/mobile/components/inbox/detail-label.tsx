@@ -35,6 +35,8 @@ const PRIORITY_LABEL: Record<IssuePriority, string> = {
 
 // Mirrors useTypeLabels in packages/views/inbox/components/inbox-detail-label.tsx
 const TYPE_KEY: Record<InboxItemType, string> = {
+  needs_you: "type.needs_you",
+  ask_answered: "type.ask_answered",
   issue_assigned: "type.assigned",
   issue_subscribed: "type.subscribed",
   unassigned: "type.unassigned",
@@ -56,6 +58,11 @@ const TYPE_KEY: Record<InboxItemType, string> = {
   quick_create_unconfirmed: "type.quick_create_unconfirmed",
   autopilot_paused: "type.autopilot_paused",
   autopilot_quota_exceeded: "type.autopilot_quota_exceeded",
+  agent_access_request: "type.agent_access_request",
+  agent_access_approved: "type.agent_access_approved",
+  agent_access_declined: "type.agent_access_declined",
+  parking_unexplained: "type.parking_unexplained",
+  issue_stall_action: "type.issue_stall_action",
   children_done: "type.children_done",
 };
 

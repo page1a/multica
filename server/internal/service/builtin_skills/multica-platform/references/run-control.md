@@ -48,8 +48,11 @@ multica issue comment add <issue-id> --content-file ./msg.md --mode restart
     resumes the same session at once with the message; the step in flight is
     cut off. The run, its receipt and the session ID stay the same.
     Antigravity can only do this on a run that resumed a session.
+  - ACP CLIs (Hermes, Kimi, Kiro, Qoder, QwenPaw, Reasonix, Trae, ZeroClaw,
+    Devin, DIM, MCode) cancel the current step and prompt the same session in
+    the same process with the message; the step in flight is cut off.
   The chat pending task reports this as `steer_mode` and an issue task as
-  `supplement_steer_mode` (`same` or `restart`).
+  `supplement_steer_mode` (`same`, `restart` or `handoff`).
 - Any other CLI, or one too old to negotiate `steer`, is refused with exit status 1, the reason, and
   `available_modes: [queue, restart]` in the JSON body; nothing is posted, so
   resend with one of those.

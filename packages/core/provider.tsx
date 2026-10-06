@@ -41,6 +41,9 @@ export function QueryProvider({
     return () => {
       stopPersistenceRef.current?.();
       stopPersistenceRef.current = null;
+      // React StrictMode replays mount effects. Clear the marker so the
+      // replay reinstalls the subscription instead of returning early.
+      if (activeUserRef.current === userId) activeUserRef.current = null;
     };
   }, [queryClient, storage, userId]);
 

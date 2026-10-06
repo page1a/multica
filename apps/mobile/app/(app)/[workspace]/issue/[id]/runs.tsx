@@ -34,7 +34,6 @@ const PAST_STATUS_ORDER: Record<AgentTask["status"], number> = {
   deferred: 99,
   dispatched: 99,
   waiting_local_directory: 99,
-  deferred: 99,
   running: 99,
 };
 

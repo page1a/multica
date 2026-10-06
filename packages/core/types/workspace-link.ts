@@ -36,6 +36,11 @@ export interface WorkspaceLinkAbilities {
   audit: boolean;
 }
 
+/** The workspace a pasted link or slug names (exact match, owner only). */
+export interface WorkspaceLinkLookup {
+  workspace: WorkspaceLinkWorkspace;
+}
+
 export interface ListWorkspaceLinksResponse {
   links: WorkspaceLink[];
   can: WorkspaceLinkAbilities;

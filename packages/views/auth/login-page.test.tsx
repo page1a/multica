@@ -36,12 +36,14 @@ const mockApiLoginWithPassword = vi.hoisted(() => vi.fn());
 const mockApiSetToken = vi.hoisted(() => vi.fn());
 const mockApiGetMe = vi.hoisted(() => vi.fn());
 const mockApiIssueCliToken = vi.hoisted(() => vi.fn());
+const mockApiResetPassword = vi.hoisted(() => vi.fn());
 const mockSetQueryData = vi.hoisted(() => vi.fn());
 // Mutable slice of auth state the component subscribes to.
 const mockAuthState = vi.hoisted(() => ({ expired: false }));
 const mockConfigState = vi.hoisted(() => ({
   passwordAuth: false,
   allowSignup: true,
+  signupTotpRequired: false,
 }));
 
 vi.mock("@tanstack/react-query", async () => {
@@ -81,16 +83,22 @@ vi.mock("@multica/core/api", () => ({
     setToken: mockApiSetToken,
     getMe: mockApiGetMe,
     issueCliToken: mockApiIssueCliToken,
+    resetPassword: mockApiResetPassword,
   },
 }));
 
 vi.mock("@multica/core/config", () => ({
   useConfigStore: (
-    selector?: (s: { passwordAuth: boolean; allowSignup: boolean }) => unknown,
+    selector?: (s: {
+      passwordAuth: boolean;
+      allowSignup: boolean;
+      signupTotpRequired: boolean;
+    }) => unknown,
   ) => {
     const state = {
       passwordAuth: mockConfigState.passwordAuth,
       allowSignup: mockConfigState.allowSignup,
+      signupTotpRequired: mockConfigState.signupTotpRequired,
     };
     return selector ? selector(state) : state;
   },
@@ -126,6 +134,7 @@ describe("LoginPage", () => {
     mockAuthState.expired = false;
     mockConfigState.passwordAuth = false;
     mockConfigState.allowSignup = true;
+    mockConfigState.signupTotpRequired = false;
     // Default: no existing session (getMe rejects when no auth)
     mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
     localStorage.clear();
@@ -822,6 +831,78 @@ describe("LoginPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  // -------------------------------------------------------------------------
+  // Forgot password (DENE-1416)
+  // -------------------------------------------------------------------------
+
+  it("offers forgot password only when the team 2FA gate is on", () => {
+    mockConfigState.passwordAuth = true;
+    const { unmount } = renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+    expect(
+      screen.queryByRole("button", { name: /forgot password/i }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    mockConfigState.signupTotpRequired = true;
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+    expect(
+      screen.getByRole("button", { name: /forgot password/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("resets the password and returns to sign-in", async () => {
+    mockConfigState.passwordAuth = true;
+    mockConfigState.signupTotpRequired = true;
+    mockApiResetPassword.mockResolvedValueOnce(undefined);
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/username/i), "vito");
+    await user.click(screen.getByRole("button", { name: /forgot password/i }));
+    expect(screen.getByLabelText(/username/i)).toHaveValue("vito");
+    await user.type(screen.getByLabelText(/team 2fa code/i), "123456");
+    await user.type(screen.getByLabelText(/^new password$/i), "new-password-1");
+    await user.type(screen.getByLabelText(/confirm password/i), "new-password-1");
+    await user.click(screen.getByRole("button", { name: /^reset password$/i }));
+
+    await waitFor(() => {
+      expect(mockApiResetPassword).toHaveBeenCalledWith(
+        "vito",
+        "123456",
+        "new-password-1",
+      );
+      expect(
+        screen.getByText(/password reset\. sign in with the new password/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText(/^password$/i)).toHaveValue("");
+  });
+
+  it("keeps the reset form open and shows the server error", async () => {
+    mockConfigState.passwordAuth = true;
+    mockConfigState.signupTotpRequired = true;
+    mockApiResetPassword.mockRejectedValueOnce(
+      new Error("invalid username or team 2FA code"),
+    );
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /forgot password/i }));
+    await user.type(screen.getByLabelText(/username/i), "vito");
+    await user.type(screen.getByLabelText(/team 2fa code/i), "000000");
+    await user.type(screen.getByLabelText(/^new password$/i), "new-password-1");
+    await user.type(screen.getByLabelText(/confirm password/i), "new-password-1");
+    await user.click(screen.getByRole("button", { name: /^reset password$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/invalid username or team 2fa code/i),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: /^reset password$/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------

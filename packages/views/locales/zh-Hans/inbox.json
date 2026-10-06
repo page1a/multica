@@ -173,6 +173,11 @@
         "hint": "只亮一个标记，不打扰你",
         "empty": "现在没有智能体在跑"
       },
+      "blocked": {
+        "title": "在等",
+        "hint": "在等别的任务做完，做完后会自动接着做。",
+        "empty": "没有在等的票"
+      },
       "todo": {
         "title": "待做",
         "hint": "分给你、还没开始的任务。",
@@ -204,6 +209,7 @@
       "stalled_unclosed": "做完没收口",
       "stalled_reply_unclosed": "回了话没收口",
       "running": "在跑",
+      "blocked": "在等",
       "todo": "待做",
       "fresh": "新动态",
       "done": "做完"
@@ -265,6 +271,7 @@
       "waiting": "等你",
       "stalled": "停了没交代",
       "running": "在跑",
+      "blocked": "在等",
       "todo": "待做",
       "fresh": "新动态",
       "done": "做完"

@@ -175,6 +175,12 @@ func (b *mcodeBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			}
 		},
 	}
+	// No in-turn interjection method in ACP: a supplement stops the current
+	// step and continues in the same session (DENE-1347).
+	var steer *acpHandoffSteer
+	if opts.EnableTaskSupplement {
+		steer = newACPHandoffSteer(c)
+	}
 
 	readerDone := make(chan struct{})
 	go func() {
@@ -306,12 +312,7 @@ func (b *mcodeBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			b.cfg.Logger.Debug("mcode ignoring ExecOptions.SystemPrompt; using cwd-scoped AGENTS.md", "cwd", opts.Cwd)
 		}
 		streamingCurrentTurn.Store(true)
-		_, err = c.request(runCtx, "session/prompt", map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": prompt},
-			},
-		})
+		_, err = sendACPPrompt(runCtx, c, steer, sessionID, prompt)
 		if err != nil {
 			finalStatus, finalError = mcodeRequestFailure(runCtx, opts.Timeout, "session/prompt", err)
 			if opts.ResumeSessionID != "" && isACPSessionNotFound(err) {
@@ -363,7 +364,7 @@ func (b *mcodeBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 	}()
 
-	return &Session{Messages: msgStream.ch, Result: resCh}, nil
+	return attachACPHandoffSteer(&Session{Messages: msgStream.ch, Result: resCh}, steer), nil
 }
 
 func mcodeLoadSessionSupported(result json.RawMessage) bool {

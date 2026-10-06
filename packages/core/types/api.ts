@@ -649,6 +649,13 @@ export interface UpdateMemberRequest {
   role: MemberRole;
 }
 
+/** The temporary password is returned once and never stored client-side. */
+export interface MemberPasswordResetResponse {
+  user_id: string;
+  username: string;
+  temporary_password: string;
+}
+
 // Personal Access Tokens
 export interface PersonalAccessToken {
   id: string;

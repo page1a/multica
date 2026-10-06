@@ -122,6 +122,12 @@ function isRestartSteer(entry: RecipientEntry): boolean {
   return entry.state.kind === "running" && entry.state.task.supplement_steer_mode === "restart";
 }
 
+// An ACP CLI takes a message by stopping the current step and prompting the
+// same session again (DENE-1347).
+function isHandoffSteer(entry: RecipientEntry): boolean {
+  return entry.state.kind === "running" && entry.state.task.supplement_steer_mode === "handoff";
+}
+
 // Only choices whose consequence is not obvious from the label carry a line.
 function actionDescription(action: RecipientAction, entry: RecipientEntry, presenceLine: string | null, t: IssuesT): string | null {
   const name = entry.agent.name;
@@ -129,7 +135,9 @@ function actionDescription(action: RecipientAction, entry: RecipientEntry, prese
     case "steer":
       return isRestartSteer(entry)
         ? t(($) => $.comment.recipient_steer_restart_desc)
-        : t(($) => $.comment.recipient_steer_desc);
+        : isHandoffSteer(entry)
+          ? t(($) => $.comment.recipient_steer_desc_handoff)
+          : t(($) => $.comment.recipient_steer_desc);
     case "after_run":
       return t(($) => $.comment.recipient_after_run_desc);
     case "restart":
@@ -155,7 +163,9 @@ function actionProcessLine(action: RecipientAction, entry: RecipientEntry, t: Is
     case "steer":
       return isRestartSteer(entry)
         ? t(($) => $.comment.recipient_steer_restart_process)
-        : t(($) => $.comment.recipient_steer_process);
+        : isHandoffSteer(entry)
+          ? t(($) => $.comment.recipient_steer_process_handoff)
+          : t(($) => $.comment.recipient_steer_process);
     case "after_run":
       return t(($) => $.comment.recipient_after_run_process);
     case "restart":

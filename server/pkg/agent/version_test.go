@@ -16,7 +16,9 @@ func TestTaskSupplementVersionGate(t *testing.T) {
 		{"opencode", "1.18.34", true}, {"opencode", "1.17.9", false}, {"opencode", "opencode v2.0.10", false},
 		{"pi", "0.73.1", true}, {"pi", "0.72.0", false},
 		{"qwen", "0.24.4", false}, {"codebuddy", "2.161.2", false}, {"dsh", "0.1.5-rc.1", false},
-		{"codex", "", false}, {"claude", "dev", false}, {"kimi", "9.0.0", false},
+		{"codex", "", false}, {"claude", "dev", false},
+		// ACP stop-and-continue needs only session/cancel, so any version works.
+		{"kimi", "0.40.1", true}, {"hermes", "", true}, {"kiro", "dev", true},
 	} {
 		if got := SupportsTaskSupplement(tc.provider, tc.version); got != tc.want {
 			t.Errorf("%s %q: supported=%v, want %v", tc.provider, tc.version, got, tc.want)

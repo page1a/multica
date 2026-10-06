@@ -88,7 +88,9 @@ export function ChatSendModeButton({
     m === "steer"
       ? steerMode === "restart"
         ? t(($) => $.input.mode_steer_restart_desc)
-        : t(($) => $.input.mode_steer_desc)
+        : steerMode === "handoff"
+          ? t(($) => $.input.mode_steer_desc_handoff)
+          : t(($) => $.input.mode_steer_desc)
       : m === "queue"
         ? t(($) => $.input.mode_queue_desc)
         : t(($) => $.input.mode_restart_desc);
@@ -96,7 +98,9 @@ export function ChatSendModeButton({
     m === "steer"
       ? steerMode === "restart"
         ? t(($) => $.input.mode_steer_restart_process)
-        : t(($) => $.input.mode_steer_process)
+        : steerMode === "handoff"
+          ? t(($) => $.input.mode_steer_process_handoff)
+          : t(($) => $.input.mode_steer_process)
       : m === "queue"
         ? t(($) => $.input.mode_queue_process)
         : t(($) => $.input.mode_restart_process);

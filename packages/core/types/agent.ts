@@ -496,7 +496,7 @@ export interface AgentTask {
   supplement_comment_ids?: string[];
   /** Server-side invocation verdict for the current member and this agent. */
   can_supplement?: boolean;
-  /** How a message reaches this run (DENE-1349): "same" in the running CLI, "restart" stops it and resumes the session. */
+  /** How a message reaches this run (DENE-1349): "same" in the running CLI, "restart" stops it and resumes the session, "handoff" (DENE-1347) stops the current step in the same session. */
   supplement_steer_mode?: string;
   /**
    * Canonical short description of what triggered this task — snapshot

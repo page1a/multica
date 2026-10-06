@@ -91,6 +91,21 @@ func (w BlockWait) AllEnded() bool {
 	return len(w.BlockedBy) > 0 && len(w.Ended) == len(w.BlockedBy)
 }
 
+// Pending lists the named tickets that still hold the ticket.
+func (w BlockWait) Pending() []string {
+	ended := make(map[string]bool, len(w.Ended))
+	for _, ref := range w.Ended {
+		ended[ref] = true
+	}
+	var out []string
+	for _, ref := range w.BlockedBy {
+		if !ended[ref] {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
 // ReviewerTarget is what the reviewer slot holds. The values are the strings
 // stored in issue.reviewer_type, so the module and the column agree by
 // construction.

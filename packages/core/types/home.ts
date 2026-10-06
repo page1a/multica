@@ -119,7 +119,7 @@ export interface InboxBoardRowPayload {
   /** Current lifecycle key, used to make board status actions reversible. */
   status?: string;
   parent_issue_id: string | null;
-  lane: "waiting" | "stalled" | "running" | "todo" | "fresh" | "done";
+  lane: "waiting" | "stalled" | "running" | "blocked" | "todo" | "fresh" | "done";
   kind: string;
   stuck_kind: string;
   reason: string;
@@ -143,6 +143,8 @@ export interface InboxBoardResponse {
   waiting: InboxBoardRowPayload[];
   stalled: InboxBoardRowPayload[];
   running: InboxBoardRowPayload[];
+  /** Absent from servers older than DENE-1409. */
+  blocked?: InboxBoardRowPayload[];
   todo: InboxBoardRowPayload[];
   fresh: InboxBoardRowPayload[];
   done: InboxBoardRowPayload[];

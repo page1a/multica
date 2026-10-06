@@ -109,7 +109,24 @@ func (h *Handler) ListWorkspaceLinkAudit(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
+// LookupWorkspaceLinkTarget — GET /api/workspace-links/lookup?target=<address>
+// Reads a pasted link or slug the same way Create does and names the
+// workspace it points to. Exact match only; there is no search.
+func (h *Handler) LookupWorkspaceLinkTarget(w http.ResponseWriter, r *http.Request) {
+	ws, _, actor, ok := h.workspaceLinkCaller(w, r)
+	if !ok {
+		return
+	}
+	target, err := h.workspaceLinks().Lookup(r.Context(), ws, actor, r.URL.Query().Get("target"))
+	if err != nil {
+		writeWorkspaceLinkError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspace": target})
+}
+
 type createWorkspaceLinkRequest struct {
+	// TargetSlug takes any address workspacelink.TargetSlug reads.
 	TargetSlug string   `json:"target_slug"`
 	ProjectIDs []string `json:"project_ids"`
 }

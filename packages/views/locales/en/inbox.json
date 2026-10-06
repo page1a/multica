@@ -176,6 +176,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "blocked": {
+        "title": "Waiting on tickets",
+        "hint": "Waiting for other issues to finish; they pick up again on their own.",
+        "empty": "Nothing waiting on other tickets"
+      },
       "todo": {
         "title": "To do",
         "hint": "Assigned to you and not started yet.",
@@ -207,6 +212,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "blocked": "Waiting on",
       "todo": "To do",
       "fresh": "New",
       "done": "Done"
@@ -271,6 +277,7 @@
       "waiting": "Waiting",
       "stalled": "Stopped",
       "running": "Running",
+      "blocked": "Waiting on",
       "todo": "To do",
       "fresh": "New",
       "done": "Done"

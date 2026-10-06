@@ -2,18 +2,22 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { projectListOptions } from "@multica/core/projects";
+import { workspaceListOptions } from "@multica/core/workspace/queries";
 import {
   useAcceptWorkspaceLink,
   useCreateWorkspaceLink,
   useRevokeWorkspaceLink,
   useUpdateWorkspaceLinkProjects,
   workspaceLinkAuditOptions,
+  workspaceLinkKeys,
+  workspaceLinkLookupOptions,
   workspaceLinksOptions,
 } from "@multica/core/workspace-links";
-import type { WorkspaceLink, WorkspaceLinkAuditEntry } from "@multica/core/types";
+import type { WorkspaceLink, WorkspaceLinkAuditEntry, WorkspaceLinkWorkspace } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
@@ -24,6 +28,7 @@ import {
 import { SettingsSection, SettingsTab } from "./settings-layout";
 import { WorkspaceAvatar } from "../../workspace/workspace-avatar";
 import { useT, useTimeAgo } from "../../i18n";
+import { useDebouncedValue } from "../../common/use-debounced-value";
 
 const EMPTY_LINKS: WorkspaceLink[] = [];
 
@@ -50,7 +55,12 @@ export function WorkspaceLinksTab() {
   return (
     <SettingsTab title={t(($) => $.links.tab.title)} description={t(($) => $.links.tab.description)}>
       <SettingsSection title={t(($) => $.links.tab.outgoing_title)} description={t(($) => $.links.tab.outgoing_description)}>
-        <CreateLinkForm wsId={wsId} enabled={!!can?.create} loaded={!!can} />
+        <CreateLinkForm
+          wsId={wsId}
+          enabled={!!can?.create}
+          loaded={!!can}
+          linkedSlugs={outgoing.map((link) => link.target.slug)}
+        />
         {!isLoading && outgoing.length === 0 ? (
           <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.outgoing_empty)}</p>
         ) : null}
@@ -149,24 +159,39 @@ function ProjectPicker({
   );
 }
 
-function CreateLinkForm({ wsId, enabled, loaded }: { wsId: string; enabled: boolean; loaded: boolean }) {
+function CreateLinkForm({
+  wsId,
+  enabled,
+  loaded,
+  linkedSlugs,
+}: {
+  wsId: string;
+  enabled: boolean;
+  loaded: boolean;
+  linkedSlugs: string[];
+}) {
   const { t } = useT("workspace");
-  const [slug, setSlug] = useState("");
+  const [address, setAddress] = useState("");
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const create = useCreateWorkspaceLink(wsId);
-  const ready = enabled && slug.trim() !== "" && projectIds.length > 0 && !create.isPending;
+  const target = useLinkTarget(wsId, address, enabled);
+  const reason = !target.workspace
+    ? t(($) => $.links.tab.need_target)
+    : projectIds.length === 0
+      ? t(($) => $.links.tab.need_projects)
+      : null;
+  const ready = enabled && reason === null && !create.isPending;
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
-        <label className="block space-y-1.5">
-          <span className="text-label">{t(($) => $.links.tab.target_label)}</span>
-          <Input
-            value={slug}
-            disabled={!enabled}
-            placeholder={t(($) => $.links.tab.target_placeholder)}
-            onChange={(event) => setSlug(event.target.value)}
-          />
-        </label>
+        <TargetField
+          wsId={wsId}
+          value={address}
+          onChange={setAddress}
+          disabled={!enabled}
+          excludeSlugs={linkedSlugs}
+          target={target}
+        />
         <div className="space-y-1.5">
           <span className="text-label">{t(($) => $.links.tab.projects_label)}</span>
           <ProjectPicker wsId={wsId} selected={projectIds} onChange={setProjectIds} disabled={!enabled} />
@@ -175,17 +200,18 @@ function CreateLinkForm({ wsId, enabled, loaded }: { wsId: string; enabled: bool
           <p className="text-caption text-muted-foreground">
             {/* Hold the refusal until the server has answered, so an owner
                 never sees it flash while the list loads. */}
-            {enabled ? t(($) => $.links.tab.create_hint) : loaded ? t(($) => $.links.tab.create_reason) : null}
+            {enabled ? (reason ?? t(($) => $.links.tab.create_hint)) : loaded ? t(($) => $.links.tab.create_reason) : null}
           </p>
           <Button
             size="sm"
             disabled={!ready}
             onClick={() =>
+              target.workspace &&
               create.mutate(
-                { target_slug: slug.trim(), project_ids: projectIds },
+                { target_slug: target.workspace.slug, project_ids: projectIds },
                 {
                   onSuccess: () => {
-                    setSlug("");
+                    setAddress("");
                     setProjectIds([]);
                     toast.success(t(($) => $.links.tab.created));
                   },
@@ -199,6 +225,147 @@ function CreateLinkForm({ wsId, enabled, loaded }: { wsId: string; enabled: bool
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+type LinkTarget = {
+  /** The workspace the address names, once the server has confirmed it. */
+  workspace: WorkspaceLinkWorkspace | null;
+  checking: boolean;
+  /** Why the address names nothing usable, in words. */
+  problem: string | null;
+};
+
+/**
+ * Asks the server which workspace the typed address names. The server reads
+ * links and slugs (workspacelink.TargetSlug); this only debounces and words
+ * the answer.
+ */
+function useLinkTarget(wsId: string, address: string, enabled: boolean): LinkTarget {
+  const { t } = useT("workspace");
+  const typed = address.trim();
+  const settled = useDebouncedValue(typed, 300);
+  const lookup = useQuery(workspaceLinkLookupOptions(wsId, settled, enabled));
+  if (typed === "") return { workspace: null, checking: false, problem: null };
+  if (settled !== typed || lookup.isFetching) return { workspace: null, checking: true, problem: null };
+  if (lookup.error) {
+    const status = lookup.error instanceof ApiError ? lookup.error.status : 0;
+    return {
+      workspace: null,
+      checking: false,
+      problem:
+        status === 404
+          ? t(($) => $.links.tab.target_not_found)
+          : status === 400
+            ? t(($) => $.links.tab.target_self)
+            : errorMessage(lookup.error, t(($) => $.links.tab.failed)),
+    };
+  }
+  return { workspace: lookup.data?.workspace ?? null, checking: false, problem: null };
+}
+
+function TargetField({
+  wsId,
+  value,
+  onChange,
+  disabled,
+  excludeSlugs,
+  target,
+}: {
+  wsId: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  excludeSlugs: string[];
+  target: LinkTarget;
+}) {
+  const { t } = useT("workspace");
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const { data: workspaces = [] } = useQuery(workspaceListOptions());
+  const needle = value.trim().toLowerCase();
+  // Only workspaces the caller already belongs to: there is no search over
+  // the deployment, which would hand out other people's workspace names.
+  const mine = workspaces.filter(
+    (ws) =>
+      ws.id !== wsId &&
+      !excludeSlugs.includes(ws.slug) &&
+      (needle === "" || ws.slug.includes(needle) || ws.name.toLowerCase().includes(needle) || needle.includes(`/${ws.slug}`)),
+  );
+  const pick = (ws: { name: string; slug: string; avatar_url: string | null }) => {
+    // The server would answer the same for a slug of the caller's own
+    // workspace; seed it so the confirmation shows without a round trip.
+    qc.setQueryData(workspaceLinkKeys.lookup(wsId, ws.slug), {
+      workspace: { name: ws.name, slug: ws.slug, avatar_url: ws.avatar_url },
+    });
+    onChange(ws.slug);
+    setOpen(false);
+  };
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor="workspace-link-target" className="text-label">
+        {t(($) => $.links.tab.target_label)}
+      </label>
+      <div className="relative">
+        <Input
+          id="workspace-link-target"
+          role="combobox"
+          aria-expanded={open && mine.length > 0}
+          aria-controls="workspace-link-target-options"
+          autoComplete="off"
+          value={value}
+          disabled={disabled}
+          placeholder={t(($) => $.links.tab.target_placeholder)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+        />
+        {open && mine.length > 0 ? (
+          <div
+            id="workspace-link-target-options"
+            role="listbox"
+            aria-label={t(($) => $.links.tab.target_mine)}
+            className="absolute inset-x-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
+          >
+            <p className="px-2 py-1 text-caption text-muted-foreground">{t(($) => $.links.tab.target_mine)}</p>
+            {mine.map((ws) => (
+              <button
+                key={ws.id}
+                type="button"
+                role="option"
+                aria-selected={value === ws.slug}
+                className="flex min-h-11 w-full items-center gap-2 rounded-sm px-2 text-left text-body hover:bg-accent"
+                // Keep focus in the input so blur does not close the list
+                // before the pick lands.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => pick(ws)}
+              >
+                <WorkspaceAvatar name={ws.name} avatarUrl={ws.avatar_url} size="sm" className="size-5 shrink-0 rounded-xs" />
+                <span className="truncate">{ws.name}</span>
+                <span className="ml-auto shrink-0 truncate text-caption text-muted-foreground">{ws.slug}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {target.workspace ? (
+        <div className="flex min-w-0 items-center gap-2 text-body" data-testid="workspace-link-target">
+          <WorkspaceAvatar name={target.workspace.name} avatarUrl={target.workspace.avatar_url} size="sm" className="size-5 shrink-0 rounded-xs" />
+          <span className="truncate font-medium">{target.workspace.name}</span>
+          <span className="truncate text-caption text-muted-foreground">{target.workspace.slug}</span>
+        </div>
+      ) : target.checking ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.target_checking)}</p>
+      ) : target.problem ? (
+        <p className="text-caption text-destructive">{target.problem}</p>
+      ) : null}
+    </div>
   );
 }
 

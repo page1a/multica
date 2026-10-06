@@ -4535,6 +4535,7 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 var steerProviders = map[string][]string{
 	protocol.SteerModeSame:    {"codex", "claude", "grok"},
 	protocol.SteerModeRestart: {"cursor", "copilot", "codearts", "deveco", "antigravity", "openclaw"},
+	protocol.SteerModeHandoff: {"hermes", "kimi", "kiro", "qoder", "qoderclicn", "qwenpaw", "reasonix", "traecli", "zeroclaw", "devin", "dim", "mcode"},
 }
 
 // startWithSupplementParams turns the capabilities a daemon offered for one
@@ -4543,6 +4544,8 @@ func startWithSupplementParams(taskID pgtype.UUID, capabilities []string) db.Sta
 	mode := protocol.SteerModeSame
 	if slices.Contains(capabilities, protocol.DaemonCapabilitySteerRestartV1) {
 		mode = protocol.SteerModeRestart
+	} else if slices.Contains(capabilities, protocol.DaemonCapabilitySteerHandoffV1) {
+		mode = protocol.SteerModeHandoff
 	}
 	return db.StartAgentTaskWithSupplementParams{
 		TaskID:               taskID,

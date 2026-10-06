@@ -5,6 +5,7 @@ import {
   AlertCircle,
   Copy,
   Crown,
+  KeyRound,
   Eye,
   Link,
   Loader2,
@@ -74,7 +75,7 @@ import {
   workspaceSubscriptionSummaryOptions,
 } from "@multica/core/billing";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useFeatureEnabled } from "@multica/core/config";
+import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
 import { BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG } from "@multica/core/feature-flags";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import {
@@ -221,6 +222,7 @@ function MemberRow({
   error,
   onRoleChange,
   onRemove,
+  onResetPassword,
 }: {
   member: MemberWithUser;
   canManage: boolean;
@@ -235,6 +237,8 @@ function MemberRow({
   error: string | null;
   onRoleChange: (role: MemberRole) => void;
   onRemove: () => void;
+  /** Present only when this instance signs in with username and password. */
+  onResetPassword?: () => void;
 }) {
   const { t } = useT("settings");
   const locale = useLocale();
@@ -279,9 +283,11 @@ function MemberRow({
         )}
       </div>
       <span className="hidden w-32 shrink-0 text-caption tabular-nums text-muted-foreground md:block">
-        {t(($) => $.members.joined, {
-          date: new Date(member.created_at).toLocaleDateString(locale),
-        })}
+        {member.created_at
+          ? t(($) => $.members.joined, {
+              date: new Date(member.created_at).toLocaleDateString(locale),
+            })
+          : null}
       </span>
       {canEditRole && role ? (
         <Select
@@ -333,6 +339,9 @@ function MemberRow({
             })}
           </SelectContent>
         </Select>
+      ) : !member.role ? (
+        // An admin's roster has other members' roles redacted (DENE-1022).
+        <span className="w-24 shrink-0" />
       ) : (
         <span
           className="flex w-24 shrink-0 items-center gap-1.5 text-body"
@@ -343,7 +352,7 @@ function MemberRow({
         </span>
       )}
       <span className="flex size-7 shrink-0 items-center justify-center">
-      {canRemove && (
+      {(canRemove || onResetPassword) && (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -358,10 +367,18 @@ function MemberRow({
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
-            <DropdownMenuItem variant="destructive" onClick={onRemove}>
-              <UserMinus className="h-3.5 w-3.5" />
-              {t(($) => $.members.remove_action)}
-            </DropdownMenuItem>
+            {onResetPassword && (
+              <DropdownMenuItem onClick={onResetPassword}>
+                <KeyRound className="h-3.5 w-3.5" />
+                {t(($) => $.members.reset_password_action)}
+              </DropdownMenuItem>
+            )}
+            {canRemove && (
+              <DropdownMenuItem variant="destructive" onClick={onRemove}>
+                <UserMinus className="h-3.5 w-3.5" />
+                {t(($) => $.members.remove_action)}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -537,6 +554,7 @@ export function MembersTab() {
   // Member management is owner-only (DENE-1022): the page, the pending
   // invitation list and the invite links all belong to the owner.
   const isOwner = currentMember?.role === "owner";
+  const isAdmin = currentMember?.role === "admin";
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId, isOwner));
 
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -579,6 +597,10 @@ export function MembersTab() {
   const [shareLinkLoading, setShareLinkLoading] = useState(false);
   const [shareLinkRole, setShareLinkRole] = useState<MemberRole>("member");
   const [shareLinkExpiry, setShareLinkExpiry] = useState<string>("168"); // default 7 days
+  const passwordAuth = useConfigStore((state) => state.passwordAuth);
+  // The temporary password lives only in this dialog's state and is dropped
+  // when it closes; the server keeps nothing but the hash.
+  const [tempPassword, setTempPassword] = useState<{ name: string; password: string } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     description: string;
@@ -994,6 +1016,33 @@ export function MembersTab() {
     });
   };
 
+  const handleResetPassword = (member: MemberWithUser) => {
+    if (!workspace) return;
+    setConfirmAction({
+      title: t(($) => $.members.reset_password_title, { name: member.name }),
+      description: t(($) => $.members.reset_password_description),
+      onConfirm: async () => {
+        setMemberActionId(member.id);
+        try {
+          const res = await api.resetMemberPassword(workspace.id, member.id);
+          setTempPassword({ name: member.name, password: res.temporary_password });
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_password_reset_failed));
+        } finally {
+          setMemberActionId(null);
+        }
+      },
+    });
+  };
+
+  const handleCopyTempPassword = () => {
+    if (!tempPassword || !navigator.clipboard) return;
+    navigator.clipboard.writeText(tempPassword.password).then(
+      () => toast.success(t(($) => $.members.toast_password_copied)),
+      () => toast.error(t(($) => $.members.toast_share_link_copy_failed)),
+    );
+  };
+
   const handleCreateShareLink = async () => {
     if (!workspace) return;
     setShareLinkLoading(true);
@@ -1049,7 +1098,11 @@ export function MembersTab() {
 
   if (!workspace) return null;
 
-  if (!membersLoading && !isOwner) {
+  // Admins see the roster only to reset passwords (DENE-1416); the rest of
+  // member management stays with the owner.
+  const canResetPasswords = passwordAuth && (isOwner || isAdmin);
+
+  if (!membersLoading && !isOwner && !canResetPasswords) {
     return (
       <SettingsTab title={t(($) => $.page.tabs.members)}>
         <div
@@ -1078,9 +1131,11 @@ export function MembersTab() {
   ];
   const views: { value: MembersView; label: string; count: number }[] = [
     { value: "members", label: t(($) => $.members.members_label), count: members.length },
-    { value: "invitations", label: t(($) => $.members.pending_label), count: invitations.length },
     ...(canManageWorkspace
-      ? [{ value: "links" as const, label: t(($) => $.members.share_links_label), count: shareLinks.length }]
+      ? [
+          { value: "invitations" as const, label: t(($) => $.members.pending_label), count: invitations.length },
+          { value: "links" as const, label: t(($) => $.members.share_links_label), count: shareLinks.length },
+        ]
       : []),
   ];
   const activeView = views.some((item) => item.value === view) ? view : "members";
@@ -1098,7 +1153,7 @@ export function MembersTab() {
         ) : undefined
       }
     >
-      {currentMember && !canManageWorkspace ? (
+      {currentMember && !canManageWorkspace && !canResetPasswords ? (
         <SettingsReadOnlyNotice wsId={wsId} />
       ) : null}
       <section className="space-y-3">
@@ -1176,6 +1231,11 @@ export function MembersTab() {
                     error={roleErrors[m.id] ?? null}
                     onRoleChange={(role) => handleRoleChange(m, role)}
                     onRemove={() => handleRemoveMember(m)}
+                    onResetPassword={
+                      canResetPasswords && m.user_id !== user?.id
+                        ? () => handleResetPassword(m)
+                        : undefined
+                    }
                   />
                 </div>
               ))}
@@ -1489,6 +1549,44 @@ export function MembersTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!tempPassword}
+        onOpenChange={(open) => {
+          if (!open) setTempPassword(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.members.reset_password_done_title)}</DialogTitle>
+            <DialogDescription>
+              {t(($) => $.members.reset_password_done_description, { name: tempPassword?.name ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <Input
+              readOnly
+              value={tempPassword?.password ?? ""}
+              aria-label={t(($) => $.members.reset_password_done_title)}
+              className="min-w-0 flex-1 font-mono"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleCopyTempPassword}
+              aria-label={t(($) => $.members.reset_password_copy)}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setTempPassword(null)}>
+              {t(($) => $.members.reset_password_done)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
         <AlertDialogContent>

@@ -181,6 +181,12 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			}
 		},
 	}
+	// No in-turn interjection method in ACP: a supplement stops the current
+	// step and continues in the same session (DENE-1347).
+	var steer *acpHandoffSteer
+	if opts.EnableTaskSupplement {
+		steer = newACPHandoffSteer(c)
+	}
 
 	// Start reading stdout in background.
 	readerDone := make(chan struct{})
@@ -389,12 +395,7 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 
 		// 5. Send the prompt and wait for PromptResponse.
 		streamingCurrentTurn.Store(true)
-		_, err = c.request(runCtx, "session/prompt", map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
-			},
-		})
+		_, err = sendACPPrompt(runCtx, c, steer, sessionID, userText)
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
 				finalStatus = "timeout"
@@ -531,7 +532,7 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		}
 	}()
 
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	return attachACPHandoffSteer(&Session{Messages: msgCh, Result: resCh}, steer), nil
 }
 
 // kimiToolNameFromTitle normalises tool names emitted by Kimi's ACP

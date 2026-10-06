@@ -90,6 +90,7 @@ export function MobileQueryPersistence() {
     return () => {
       stop.current?.();
       stop.current = null;
+      if (previousUser.current === userId) previousUser.current = null;
     };
   }, [userId]);
   return null;

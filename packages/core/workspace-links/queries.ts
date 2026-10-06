@@ -10,6 +10,7 @@ export const workspaceLinkKeys = {
   all: (wsId: string) => ["workspace-links", wsId] as const,
   list: (wsId: string) => [...workspaceLinkKeys.all(wsId), "list"] as const,
   audit: (wsId: string) => [...workspaceLinkKeys.all(wsId), "audit"] as const,
+  lookup: (wsId: string, target: string) => [...workspaceLinkKeys.all(wsId), "lookup", target] as const,
   view: (wsId: string, linkId: string, projectId: string | null) =>
     [...workspaceLinkKeys.all(wsId), "view", linkId, projectId ?? "all"] as const,
 };
@@ -26,6 +27,16 @@ export const workspaceLinkAuditOptions = (wsId: string, enabled: boolean) =>
     queryKey: workspaceLinkKeys.audit(wsId),
     queryFn: () => api.listWorkspaceLinkAudit(),
     enabled: !!wsId && enabled,
+  });
+
+/** Which workspace an address names. A miss is an answer, not a retry. */
+export const workspaceLinkLookupOptions = (wsId: string, target: string, enabled: boolean) =>
+  queryOptions({
+    queryKey: workspaceLinkKeys.lookup(wsId, target),
+    queryFn: () => api.lookupWorkspaceLinkTarget(target),
+    enabled: !!wsId && enabled && target !== "",
+    retry: false,
+    staleTime: 60_000,
   });
 
 export const linkedViewOptions = (wsId: string, linkId: string, projectId: string | null) =>

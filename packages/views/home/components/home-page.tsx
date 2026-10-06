@@ -51,6 +51,7 @@ export const LANE_TAG_CLASS: Record<BoardLane, string> = {
   waiting: "bg-destructive/10 text-destructive",
   stalled: "bg-warning/15 text-warning-foreground dark:text-warning",
   running: "bg-success/10 text-success",
+  blocked: "bg-muted text-foreground",
   todo: "bg-primary/10 text-primary",
   fresh: "bg-info/10 text-info",
   done: "bg-muted text-muted-foreground",
@@ -60,6 +61,7 @@ const LANE_PILL_CLASS: Record<BoardLane, string> = {
   waiting: "border-destructive/30 text-destructive",
   stalled: "border-warning/40 text-warning-foreground dark:text-warning",
   running: "border-success/30 text-success",
+  blocked: "text-foreground",
   todo: "border-primary/30 text-primary",
   fresh: "border-info/30 text-info",
   done: "text-muted-foreground",
@@ -77,6 +79,7 @@ function useBoardCopy() {
       if (row.lane === "stalled") return tags[row.kind] ?? t(($) => $.board.stuck.default);
       if (row.lane === "fresh") return t(($) => $.board.tag.fresh);
       if (row.lane === "todo") return t(($) => $.board.tag.todo);
+      if (row.lane === "blocked") return t(($) => $.board.tag.blocked);
       return row.lane === "running" ? t(($) => $.board.tag.running) : t(($) => $.board.tag.done);
     };
     const reason = (row: BoardRow): string => {
@@ -99,6 +102,8 @@ function useBoardCopy() {
             : t(($) => $.board.next_none);
         case "running":
           return row.next ? getActorName(row.next.type, row.next.id) : "";
+        case "blocked":
+          return row.next ? ownerName(row.next) : "";
         default:
           return "";
       }
@@ -622,6 +627,7 @@ export function InboxBoardLanes({
       waiting: filter(board.waiting, true),
       stalled: filter(board.stalled),
       running: filter(board.running),
+      blocked: filter(board.blocked),
       todo: filter(board.todo),
       fresh: filter(board.fresh),
       done: filter(board.done),
@@ -670,6 +676,7 @@ export function InboxBoardLanes({
     visit(filteredRows.waiting);
     visit(filteredRows.stalled);
     visit(filteredRows.running);
+    visit(filteredRows.blocked);
     visit(filteredRows.todo);
     visit(filteredRows.fresh);
     visit(done.fresh);
@@ -743,6 +750,7 @@ export function InboxBoardLanes({
           <LaneSection lane="waiting" rows={filteredRows.waiting} copy={copy} />
           <LaneSection lane="stalled" rows={filteredRows.stalled} copy={copy} />
           <LaneSection lane="running" rows={filteredRows.running} copy={copy} />
+          {filteredRows.blocked.length > 0 && <LaneSection lane="blocked" rows={filteredRows.blocked} copy={copy} />}
           <LaneSection lane="todo" rows={filteredRows.todo} copy={copy} />
           {filteredRows.fresh.length > 0 && <LaneSection lane="fresh" rows={filteredRows.fresh} copy={copy} />}
           <LaneSection lane="done" rows={done.fresh} copy={copy} footer={seenFooter} />

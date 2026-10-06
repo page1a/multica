@@ -270,7 +270,7 @@ func TestFoldChildrenLeavesChildWhoseParentIsElsewhere(t *testing.T) {
 
 func TestEmptyLanesMarshalAsArrays(t *testing.T) {
 	b := Build(Input{})
-	for name, lane := range map[string][]*Row{"waiting": b.Waiting, "stalled": b.Stalled, "running": b.Running, "todo": b.Todo, "fresh": b.Fresh, "done": b.Done} {
+	for name, lane := range map[string][]*Row{"waiting": b.Waiting, "stalled": b.Stalled, "running": b.Running, "blocked": b.Blocked, "todo": b.Todo, "fresh": b.Fresh, "done": b.Done} {
 		if lane == nil {
 			t.Fatalf("%s lane is nil, would marshal as null", name)
 		}
@@ -341,4 +341,41 @@ func TestTodoLaneLeavesEarlierLanesAlone(t *testing.T) {
 	eq(t, b.Todo[0].Unread, int64(2))
 	// An unread todo ticket sits in todo, not again in fresh.
 	eq(t, ids(b.Fresh), []string{})
+}
+
+func waitingOn(id, blocker string) Parking {
+	return record(id, func(p *Parking) {
+		p.CurrentStatus, p.RecordedStatus = "blocked", "blocked"
+		p.Category, p.StuckKind, p.Unexplained = "blocked", "dependency", false
+		p.Summary, p.SummarySource = "等 "+blocker+" 合并后接做", "close"
+		p.NextOwner = Owner{Type: "issue", ID: blocker}
+	})
+}
+
+// DENE-1409: a held ticket waiting on another ticket is waiting, not a call
+// on the viewer — even when routing advice already called them about it.
+func TestHeldTicketWaitingOnTicketsIsBlockedNotWaiting(t *testing.T) {
+	routed := summon("1", func(s *Summon) {
+		s.Source, s.CallerType, s.AssigneeType, s.AssigneeID = "routing", "system", "agent", "agent-1"
+	})
+	b := Build(Input{UserID: me, Summons: []Summon{routed}, Parking: []Parking{waitingOn("1", "DENE-9"), waitingOn("2", "DENE-9")}})
+	eq(t, ids(b.Waiting), []string{})
+	eq(t, ids(b.Blocked), []string{"1", "2"})
+	eq(t, b.Blocked[0].Reason, "等 DENE-9 合并后接做")
+	eq(t, *b.Blocked[0].Next, Owner{Type: "issue", ID: "DENE-9"})
+}
+
+func TestBlockedLaneKeepsRealCallsAndRunningWork(t *testing.T) {
+	asked := summon("1", nil)                                         // needs_human: a person was asked something
+	unseated := summon("2", func(s *Summon) { s.Source = "routing" }) // no executor: someone must act
+	b := Build(Input{
+		UserID:        me,
+		Summons:       []Summon{asked, unseated},
+		Parking:       []Parking{waitingOn("1", "DENE-9"), waitingOn("2", "DENE-9"), waitingOn("3", "DENE-9")},
+		Tasks:         []Task{task("3", nil)},
+		RunningIssues: []Issue{issue("3", func(i *Issue) { i.Status = "blocked" })},
+	})
+	eq(t, ids(b.Waiting), []string{"1", "2"})
+	eq(t, ids(b.Running), []string{"3"})
+	eq(t, ids(b.Blocked), []string{})
 }

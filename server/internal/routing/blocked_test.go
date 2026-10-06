@@ -166,3 +166,28 @@ func TestSeatExecutorFillsWithoutStarting(t *testing.T) {
 		t.Fatalf("held slot: action = %q err = %v, want noop", out.Action, err)
 	}
 }
+
+// DENE-1395/1396/1397: a held ticket waiting on a ticket that is still open
+// is waiting, not stuck. No model, no comment, nobody @'d.
+func TestBlockedWaitingOnOpenTicketIsLeftAlone(t *testing.T) {
+	store := newFakeStore()
+	store.issue.Status = "blocked"
+	store.issue.AssigneeType = "agent"
+	store.issue.AssigneeID = "a-piccolo-g"
+	store.issue.Wait = BlockWait{Registered: true, BlockedBy: []string{"DENE-1393", "DENE-1394"}, Ended: []string{"DENE-1394"}}
+	judge := &fakeJudge{advice: Advice{Cause: "human"}}
+
+	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
+	if err != nil {
+		t.Fatalf("route: %v", err)
+	}
+	if judge.callCount() != 0 {
+		t.Errorf("asked a model %d times about a ticket that is only waiting", judge.callCount())
+	}
+	if out.Action != ActionNoop || out.Mentioned || len(store.comments[KindAdvice]) != 0 {
+		t.Fatalf("action = %q mentioned = %v advice = %v, want a silent noop", out.Action, out.Mentioned, store.comments[KindAdvice])
+	}
+	if !strings.Contains(out.Reason, "DENE-1393") || strings.Contains(out.Reason, "DENE-1394") {
+		t.Errorf("reason = %q, want only the open blocker named", out.Reason)
+	}
+}

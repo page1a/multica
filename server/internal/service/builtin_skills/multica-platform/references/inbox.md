@@ -17,8 +17,10 @@ the inbox page uses, so your answer matches what the user sees there.
 
 This call is read-only. It never marks anything read, so the page still shows
 the user what is new. `--tz <IANA zone>` sets the zone that "done today" is
-counted in; the default is the machine's zone. The JSON has six lanes:
-`waiting`, `stalled`, `running`, `todo`, `fresh` and `done`. Every issue appears in
+counted in; the default is the machine's zone. The JSON has seven lanes:
+`waiting`, `stalled`, `running`, `blocked`, `todo`, `fresh` and `done`.
+`blocked` holds tickets that have an executor and wait on other tickets; they
+move on by themselves when those end, so nobody is asked anything. Every issue appears in
 exactly one lane. A child can nest under its parent in `children`; `fresh`
 never nests.
 
@@ -64,7 +66,8 @@ whose lanes are empty rather than writing "none".
    (`from_name`, else `next_name`).
 2. **卡住了** (`stalled`): one line per ticket, giving where it stopped
    (`before`, else `kind`) and who holds the next move (`next_name`).
-3. **正在进行** (`running`): a count and the ticket numbers only.
+3. **正在进行** (`running`) and **在等** (`blocked`): counts and ticket
+   numbers only; for `blocked`, add which ticket it waits on (`next_name`).
 4. **待做** (`todo`): a count and the ticket numbers only. These are tickets
    assigned to the user and still in todo.
 5. **其他新动态和今日完成** (`fresh` + `done`): one line in total, with counts

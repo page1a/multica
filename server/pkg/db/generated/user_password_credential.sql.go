@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPrivilegedMembershipsOutsideOwner = `-- name: CountPrivilegedMembershipsOutsideOwner :one
+SELECT count(*) FROM member target
+WHERE target.user_id = $1
+  AND target.role IN ('owner', 'admin')
+  AND NOT EXISTS (
+    SELECT 1 FROM member actor
+    WHERE actor.workspace_id = target.workspace_id
+      AND actor.user_id = $2
+      AND actor.role = 'owner'
+  )
+`
+
+type CountPrivilegedMembershipsOutsideOwnerParams struct {
+	TargetUserID pgtype.UUID `json:"target_user_id"`
+	ActorUserID  pgtype.UUID `json:"actor_user_id"`
+}
+
+// Workspaces where the target holds owner/admin but the actor is not an owner.
+// An admin reset there would hand the actor that workspace's privileges.
+func (q *Queries) CountPrivilegedMembershipsOutsideOwner(ctx context.Context, arg CountPrivilegedMembershipsOutsideOwnerParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPrivilegedMembershipsOutsideOwner, arg.TargetUserID, arg.ActorUserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPasswordCredential = `-- name: CreatePasswordCredential :one
 INSERT INTO user_password_credential (user_id, username, password_hash)
 VALUES ($1, $2, $3)
@@ -36,6 +62,24 @@ func (q *Queries) CreatePasswordCredential(ctx context.Context, arg CreatePasswo
 	return i, err
 }
 
+const getPasswordCredentialByUserID = `-- name: GetPasswordCredentialByUserID :one
+SELECT user_id, username, password_hash, created_at, updated_at FROM user_password_credential
+WHERE user_id = $1
+`
+
+func (q *Queries) GetPasswordCredentialByUserID(ctx context.Context, userID pgtype.UUID) (UserPasswordCredential, error) {
+	row := q.db.QueryRow(ctx, getPasswordCredentialByUserID, userID)
+	var i UserPasswordCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Username,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPasswordCredentialByUsername = `-- name: GetPasswordCredentialByUsername :one
 SELECT user_id, username, password_hash, created_at, updated_at FROM user_password_credential
 WHERE lower(username) = lower($1)
@@ -43,6 +87,55 @@ WHERE lower(username) = lower($1)
 
 func (q *Queries) GetPasswordCredentialByUsername(ctx context.Context, username string) (UserPasswordCredential, error) {
 	row := q.db.QueryRow(ctx, getPasswordCredentialByUsername, username)
+	var i UserPasswordCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.Username,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertPasswordResetAudit = `-- name: InsertPasswordResetAudit :exec
+INSERT INTO password_reset_audit (user_id, method, actor_user_id, workspace_id, client_ip)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertPasswordResetAuditParams struct {
+	UserID      pgtype.UUID `json:"user_id"`
+	Method      string      `json:"method"`
+	ActorUserID pgtype.UUID `json:"actor_user_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ClientIp    string      `json:"client_ip"`
+}
+
+func (q *Queries) InsertPasswordResetAudit(ctx context.Context, arg InsertPasswordResetAuditParams) error {
+	_, err := q.db.Exec(ctx, insertPasswordResetAudit,
+		arg.UserID,
+		arg.Method,
+		arg.ActorUserID,
+		arg.WorkspaceID,
+		arg.ClientIp,
+	)
+	return err
+}
+
+const updatePasswordCredentialHash = `-- name: UpdatePasswordCredentialHash :one
+UPDATE user_password_credential
+SET password_hash = $1, updated_at = now()
+WHERE user_id = $2
+RETURNING user_id, username, password_hash, created_at, updated_at
+`
+
+type UpdatePasswordCredentialHashParams struct {
+	PasswordHash string      `json:"password_hash"`
+	UserID       pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) UpdatePasswordCredentialHash(ctx context.Context, arg UpdatePasswordCredentialHashParams) (UserPasswordCredential, error) {
+	row := q.db.QueryRow(ctx, updatePasswordCredentialHash, arg.PasswordHash, arg.UserID)
 	var i UserPasswordCredential
 	err := row.Scan(
 		&i.UserID,

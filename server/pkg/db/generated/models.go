@@ -1569,6 +1569,16 @@ type NotificationPreference struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PasswordResetAudit struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Method      string             `json:"method"`
+	ActorUserID pgtype.UUID        `json:"actor_user_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ClientIp    string             `json:"client_ip"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type PersonalAccessToken struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`

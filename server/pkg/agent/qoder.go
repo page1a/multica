@@ -191,6 +191,12 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			}
 		},
 	}
+	// No in-turn interjection method in ACP: a supplement stops the current
+	// step and continues in the same session (DENE-1347).
+	var steer *acpHandoffSteer
+	if opts.EnableTaskSupplement {
+		steer = newACPHandoffSteer(c)
+	}
 
 	readerDone := make(chan struct{})
 	go func() {
@@ -348,12 +354,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		// Flip just before session/prompt so history replay flushed during setup
 		// is dropped; every notification for this turn is processed afterward.
 		streamingCurrentTurn.Store(true)
-		_, err = c.request(runCtx, "session/prompt", map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
-			},
-		})
+		_, err = sendACPPrompt(runCtx, c, steer, sessionID, userText)
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
 				finalStatus = "timeout"
@@ -451,5 +452,5 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 	}()
 
-	return &Session{Messages: msgStream.ch, Result: resCh}, nil
+	return attachACPHandoffSteer(&Session{Messages: msgStream.ch, Result: resCh}, steer), nil
 }

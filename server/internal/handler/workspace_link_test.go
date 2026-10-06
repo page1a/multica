@@ -23,6 +23,7 @@ func workspaceLinkRouter() http.Handler {
 		r.Route("/api/workspace-links", func(r chi.Router) {
 			r.Get("/", testHandler.ListWorkspaceLinks)
 			r.Post("/", testHandler.CreateWorkspaceLink)
+			r.Get("/lookup", testHandler.LookupWorkspaceLinkTarget)
 			r.Patch("/{id}", testHandler.UpdateWorkspaceLink)
 			r.Delete("/{id}", testHandler.RevokeWorkspaceLink)
 			r.Get("/{id}/view", testHandler.GetWorkspaceLinkView)
@@ -78,8 +79,24 @@ func TestWorkspaceLinkRoutesStayInsideTheCallersWorkspace(t *testing.T) {
 	agent := dbfx.Agent(t, "link-agent-"+tag, runtime, testutil.Cols{"workspace_id": viewer, "owner_id": vMember})
 
 	srcOwnerCall := linkCaller{ws: source, user: srcOwner}
+	// A pasted workspace link names the workspace the same way the slug does,
+	// on the lookup the form confirms with and on create.
+	pasted := "https://ai.example.test/link-view-" + tag + "/issues"
+	lookup := srcOwnerCall
+	lookup.query = "target=" + pasted
+	if rec := lookup.do(t, http.MethodGet, "/api/workspace-links/lookup", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"link-view"`) {
+		t.Fatalf("lookup = %d %s", rec.Code, rec.Body)
+	}
+	lookup.query = "target=no-such-" + tag
+	if rec := lookup.do(t, http.MethodGet, "/api/workspace-links/lookup", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("lookup missing = %d %s", rec.Code, rec.Body)
+	}
+	memberLookup := linkCaller{ws: viewer, user: vMember, query: "target=link-src-" + tag}
+	if rec := memberLookup.do(t, http.MethodGet, "/api/workspace-links/lookup", ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("member lookup = %d, want 403", rec.Code)
+	}
 	rec := srcOwnerCall.do(t, http.MethodPost, "/api/workspace-links",
-		fmt.Sprintf(`{"target_slug":"link-view-%s","project_ids":["%s"]}`, tag, project))
+		fmt.Sprintf(`{"target_slug":%q,"project_ids":["%s"]}`, pasted, project))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body)
 	}

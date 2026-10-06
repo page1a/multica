@@ -8,7 +8,7 @@ import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import type { InboxBoardResponse, ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
 import type { WorkThreadSnapshot } from "../types/work_thread";
 import type { Ask, CreateAskRequest, AnswerAskRequest } from "../types/ask";
-import type { LinkedView, LinkedViewParams, ListWorkspaceLinksResponse, WorkspaceLink, WorkspaceLinkAuditEntry } from "../types/workspace-link";
+import type { LinkedView, LinkedViewParams, ListWorkspaceLinksResponse, WorkspaceLink, WorkspaceLinkAuditEntry, WorkspaceLinkLookup } from "../types/workspace-link";
 import { configStore } from "../config";
 import { IssueGoalSchema, type CommentSendMode, type CreateIssueGoalInput } from "../types";
 import type {
@@ -34,6 +34,7 @@ import type {
   UpdateMeRequest,
   CreateMemberRequest,
   UpdateMemberRequest,
+  MemberPasswordResetResponse,
   ListIssuesParams,
   ListGroupedIssuesParams,
   IssueTableFacetsRequest,
@@ -1249,6 +1250,13 @@ export class ApiClient {
         ...(trimmedEmail ? { email: trimmedEmail } : {}),
         ...(totp ? { totp } : {}),
       }),
+    });
+  }
+
+  async resetPassword(username: string, totp: string, newPassword: string): Promise<void> {
+    await this.fetch("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ username, totp, new_password: newPassword }),
     });
   }
 
@@ -4516,6 +4524,12 @@ export class ApiClient {
     });
   }
 
+  async resetMemberPassword(workspaceId: string, memberId: string): Promise<MemberPasswordResetResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}/reset-password`, {
+      method: "POST",
+    });
+  }
+
   async deleteMember(workspaceId: string, memberId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
@@ -6523,6 +6537,11 @@ export class ApiClient {
   async listWorkspaceLinkAudit(): Promise<WorkspaceLinkAuditEntry[]> {
     const raw = await this.fetch<{ entries?: WorkspaceLinkAuditEntry[] }>("/api/workspace-links/audit");
     return Array.isArray(raw?.entries) ? raw.entries : [];
+  }
+
+  /** Names the workspace a pasted link or slug points to; 404 when none. */
+  async lookupWorkspaceLinkTarget(target: string): Promise<WorkspaceLinkLookup> {
+    return this.fetch(`/api/workspace-links/lookup?target=${encodeURIComponent(target)}`);
   }
 
   async createWorkspaceLink(body: { target_slug: string; project_ids: string[] }): Promise<WorkspaceLink> {

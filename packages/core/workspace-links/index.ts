@@ -3,6 +3,7 @@ export {
   linkedViewOptions,
   workspaceLinkAuditOptions,
   workspaceLinkKeys,
+  workspaceLinkLookupOptions,
   workspaceLinksOptions,
 } from "./queries";
 export {

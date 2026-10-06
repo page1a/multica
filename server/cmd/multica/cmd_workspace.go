@@ -84,6 +84,24 @@ var workspaceMemberInviteCmd = &cobra.Command{
 	RunE: runWorkspaceMemberInvite,
 }
 
+var workspaceMemberResetPasswordCmd = &cobra.Command{
+	Use:   "reset-password <user-id|member-id> [workspace-id|slug|prefix]",
+	Short: "Give a member a temporary password",
+	Long: "Replaces a member's password with a random temporary password and " +
+		"prints it once. Pass the user ID from 'workspace member list' (or the " +
+		"member ID). Hand the password to the member over a private channel; " +
+		"nothing else stores it.\n\n" +
+		"A workspace owner or admin can run this, only for accounts that sign " +
+		"in with username and password. An admin can reset members and guests; " +
+		"a member who is owner or admin of any workspace you do not own is " +
+		"refused. Agents cannot run it: the temporary " +
+		"password would land in a task log. Members who forgot their own " +
+		"password use 'Forgot password' on the sign-in page with the team 2FA code.\n\n" +
+		"Existing sessions and personal access tokens stay valid after a reset.",
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runWorkspaceMemberResetPassword,
+}
+
 var workspaceUpdateCmd = &cobra.Command{
 	Use:   "update [workspace-id|slug|prefix]",
 	Short: "Update workspace metadata (admin/owner only)",
@@ -179,6 +197,7 @@ func init() {
 	workspaceCmd.AddCommand(workspaceMemberCmd)
 	workspaceMemberCmd.AddCommand(workspaceMemberListCmd)
 	workspaceMemberCmd.AddCommand(workspaceMemberInviteCmd)
+	workspaceMemberCmd.AddCommand(workspaceMemberResetPasswordCmd)
 	workspaceCmd.AddCommand(workspaceUpdateCmd)
 	workspaceCmd.AddCommand(workspaceNamingCmd)
 	workspaceCmd.AddCommand(workspaceSwitchCmd)
@@ -202,6 +221,7 @@ func init() {
 	workspaceMemberListCmd.Flags().String("output", "table", "Output format: table or json")
 	workspaceMemberInviteCmd.Flags().String("role", "member", "Member role to grant: member or admin (owner is not allowed)")
 	workspaceMemberInviteCmd.Flags().String("output", "table", "Output format: table or json")
+	workspaceMemberResetPasswordCmd.Flags().String("output", "table", "Output format: table or json")
 
 	workspaceUpdateCmd.Flags().String("name", "", "New workspace name")
 	workspaceUpdateCmd.Flags().String("description", "", "New description (decodes \\n, \\r, \\t, \\\\; pipe via --description-stdin to preserve literal backslashes)")
@@ -946,6 +966,59 @@ func runWorkspaceMemberInvite(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stdout, "Invitation sent to %s (role: %s, status: %s)\n",
 		strVal(inv, "invitee_email"), strVal(inv, "role"), strVal(inv, "status"))
+	return nil
+}
+
+func runWorkspaceMemberResetPassword(cmd *cobra.Command, args []string) error {
+	target := strings.TrimSpace(args[0])
+	if target == "" {
+		return fmt.Errorf("user ID or member ID is required")
+	}
+
+	wsID, err := resolveWorkspaceArg(cmd, args[1:])
+	if err != nil {
+		return err
+	}
+	if wsID == "" {
+		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	// The roster lists user IDs; the endpoint is keyed by member ID. Accept
+	// either so the ID printed by 'workspace member list' works as-is.
+	var members []map[string]any
+	if err := client.GetJSON(ctx, "/api/workspaces/"+wsID+"/members", &members); err != nil {
+		return fmt.Errorf("list members: %w", err)
+	}
+	memberID := ""
+	for _, m := range members {
+		if strings.EqualFold(strVal(m, "user_id"), target) || strings.EqualFold(strVal(m, "id"), target) {
+			memberID = strVal(m, "id")
+			break
+		}
+	}
+	if memberID == "" {
+		return fmt.Errorf("no member %q in this workspace", target)
+	}
+
+	var resp map[string]any
+	if err := client.PostJSON(ctx, "/api/workspaces/"+wsID+"/members/"+memberID+"/reset-password", map[string]any{}, &resp); err != nil {
+		return fmt.Errorf("reset password: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, resp)
+	}
+	fmt.Fprintf(os.Stdout, "Temporary password for %s: %s\n", strVal(resp, "username"), strVal(resp, "temporary_password"))
+	fmt.Fprintln(os.Stderr, "Shown once. Send it to the member privately.")
 	return nil
 }
 

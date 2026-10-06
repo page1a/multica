@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>DENE-1347 插话菜单：停一步续接</title>
+<style>
+  body { font: 14px/1.5 -apple-system, "PingFang SC", sans-serif; margin: 24px; color: #18181b; background: #fafafa; }
+  h2 { font-size: 13px; font-weight: 500; color: #71717a; margin: 24px 0 8px; }
+  .row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+  .frame { background: #fff; border: 1px solid #e4e4e7; border-radius: 10px; padding: 12px; }
+  .desktop { width: 320px; }
+  .phone { width: 390px; box-sizing: border-box; }
+  .item { display: flex; gap: 10px; padding: 10px 8px; border-radius: 6px; min-height: 44px; box-sizing: border-box; }
+  .item.on { background: #f4f4f5; }
+  .check { width: 14px; color: #18181b; }
+  .name { font-weight: 500; }
+  .desc { color: #3f3f46; font-size: 13px; }
+  .proc { color: #a1a1aa; font-size: 12px; }
+  .label { color: #71717a; font-size: 12px; padding: 4px 8px; }
+</style>
+</head>
+<body>
+<h2>桌面：发送方式菜单（Kimi / Hermes 等 ACP 类 CLI）</h2>
+<div class="row">
+  <div class="frame desktop">
+    <div class="label">发送方式</div>
+    <div class="item on"><span class="check">✓</span><div><div class="name">插话</div><div class="desc">停下这一步，马上读到</div><div class="proc">当前这一步会中止 · 同一段会话</div></div></div>
+    <div class="item"><span class="check"></span><div><div class="name">排队</div><div class="desc">这条回复完再发</div><div class="proc">新进程 · 接着同一段会话</div></div></div>
+    <div class="item"><span class="check"></span><div><div class="name">打断重来</div><div class="desc">停掉这条回复，按这句重来</div><div class="proc">新进程 · 接着同一段会话</div></div></div>
+  </div>
+  <div class="frame desktop">
+    <div class="label">对照：Claude / Codex（不变）</div>
+    <div class="item on"><span class="check">✓</span><div><div class="name">插话</div><div class="desc">这一步做完就读到</div><div class="proc">同一个进程 · 同一段会话</div></div></div>
+  </div>
+</div>
+
+<h2>手机网页 390px：同一份菜单以底部面板出现，每行 ≥44px，点外面关闭</h2>
+<div class="frame phone">
+  <div class="label">发送方式</div>
+  <div class="item on"><span class="check">✓</span><div><div class="name">插话</div><div class="desc">停下这一步，马上读到</div><div class="proc">当前这一步会中止 · 同一段会话</div></div></div>
+  <div class="item"><span class="check"></span><div><div class="name">排队</div><div class="desc">这条回复完再发</div><div class="proc">新进程 · 接着同一段会话</div></div></div>
+  <div class="item"><span class="check"></span><div><div class="name">打断重来</div><div class="desc">停掉这条回复，按这句重来</div><div class="proc">新进程 · 接着同一段会话</div></div></div>
+</div>
+
+<h2>任务评论：运行中的接收人小标签说明</h2>
+<div class="frame desktop">
+  <div class="item"><div><div class="name">插话给 孙悟空</div><div class="desc">停下这一步马上读到，接着干原来的活</div><div class="proc">当前这一步会中止 · 同一段会话</div></div></div>
+</div>
+</body>
+</html>

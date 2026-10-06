@@ -138,6 +138,11 @@ func SupportsTaskSupplement(provider, version string) bool {
 		// every supported version of these CLIs resumes by session id.
 		return true
 	}
+	if SteersByHandoff(provider) {
+		// Stop-and-continue rides on ACP's session/cancel and session/prompt,
+		// which every ACP agent implements, so no version floor applies.
+		return true
+	}
 	var minimum, maximum string
 	switch provider {
 	case "codex":

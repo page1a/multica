@@ -1367,7 +1367,7 @@ function nativelyFrameablePdfUrl(rawUrl: string): string {
 function usePdfObjectUrl(blob: Blob | undefined): string {
   const [url, setUrl] = useState("");
   useEffect(() => {
-    if (!blob || typeof URL.createObjectURL !== "function") {
+    if (!(blob instanceof Blob) || typeof URL.createObjectURL !== "function") {
       setUrl("");
       return;
     }

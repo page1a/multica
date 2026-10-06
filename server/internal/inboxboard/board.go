@@ -1,4 +1,4 @@
-// Package inboxboard sorts one person's inbox into its six lanes (DENE-882,
+// Package inboxboard sorts one person's inbox into its seven lanes (DENE-882,
 // moved server-side in DENE-975 so the web page, the CLI and an agent reading
 // the inbox for its user all get the same answer).
 //
@@ -8,6 +8,8 @@
 //	          issue's parking record names the viewer as the next owner;
 //	stalled — the parking record says it stopped without explaining why;
 //	running — an agent is on it right now;
+//	blocked — it is held by someone and waits on other tickets the platform
+//	          watches; it moves on by itself when they end;
 //	todo    — it is assigned to the viewer and in todo (DENE-975);
 //	done    — it was finished today;
 //	fresh   — it has unread inbox rows for the viewer but none of the lanes
@@ -34,6 +36,7 @@ const (
 	LaneWaiting Lane = "waiting"
 	LaneStalled Lane = "stalled"
 	LaneRunning Lane = "running"
+	LaneBlocked Lane = "blocked"
 	LaneTodo    Lane = "todo"
 	LaneFresh   Lane = "fresh"
 	LaneDone    Lane = "done"
@@ -80,11 +83,12 @@ type Row struct {
 	Children []*Row `json:"children"`
 }
 
-// Board is the six lanes, each newest first.
+// Board is the seven lanes, each newest first.
 type Board struct {
 	Waiting []*Row `json:"waiting"`
 	Stalled []*Row `json:"stalled"`
 	Running []*Row `json:"running"`
+	Blocked []*Row `json:"blocked"`
 	Todo    []*Row `json:"todo"`
 	Fresh   []*Row `json:"fresh"`
 	Done    []*Row `json:"done"`
@@ -199,6 +203,12 @@ func spokenSummary(p *Parking) string {
 // it by hand since.
 func recordIsCurrent(p Parking) bool { return p.CurrentStatus == p.RecordedStatus }
 
+// waitsOnTickets: a held ticket parked on other tickets. Nothing is asked of
+// anyone; the block patrol wakes its executor when they end.
+func waitsOnTickets(p *Parking) bool {
+	return p != nil && recordIsCurrent(*p) && p.Category == "blocked" && p.NextOwner.Type == "issue"
+}
+
 func owner(typ, id string) *Owner {
 	if typ == "" || typ == "none" || id == "" {
 		return nil
@@ -282,8 +292,13 @@ func Build(in Input) Board {
 		if placed[s.IssueID] || isClosed(s.IssueStatus) {
 			continue
 		}
-		placed[s.IssueID] = true
 		record := records[s.IssueID]
+		// Routing advice on a held ticket that only waits on other tickets
+		// asked nobody anything (DENE-1409); it reads as waiting, not as a call.
+		if s.Source == "routing" && s.AssigneeType != "" && waitsOnTickets(record) {
+			continue
+		}
+		placed[s.IssueID] = true
 		next := owner(s.AssigneeType, s.AssigneeID)
 		if next == nil {
 			next = owner("member", in.UserID)
@@ -402,6 +417,33 @@ func Build(in Input) Board {
 		running = append(running, row)
 	}
 
+	// --- blocked: held tickets waiting on other tickets.
+	blocked := []*Row{}
+	for i := range in.Parking {
+		r := &in.Parking[i]
+		if placed[r.IssueID] || !waitsOnTickets(r) {
+			continue
+		}
+		if _, running := active[r.IssueID]; isClosed(r.CurrentStatus) || running {
+			continue
+		}
+		placed[r.IssueID] = true
+		blocked = append(blocked, &Row{
+			IssueID:       r.IssueID,
+			Identifier:    r.Identifier,
+			Title:         r.Title,
+			Status:        r.CurrentStatus,
+			ParentIssueID: optional(r.ParentIssueID),
+			Lane:          LaneBlocked,
+			Kind:          r.Category,
+			StuckKind:     r.StuckKind,
+			Reason:        spokenSummary(r),
+			Next:          owner(r.NextOwner.Type, r.NextOwner.ID),
+			At:            r.EvaluatedAt,
+			Timeline:      timeline(r.Timeline),
+		})
+	}
+
 	// --- todo: the viewer's assigned work nobody has picked up yet.
 	todo := []*Row{}
 	for _, issue := range in.TodoIssues {
@@ -488,6 +530,7 @@ func Build(in Input) Board {
 		Waiting: FoldChildren(mark(waiting)),
 		Stalled: FoldChildren(mark(stalled)),
 		Running: FoldChildren(mark(running)),
+		Blocked: FoldChildren(mark(blocked)),
 		Todo:    FoldChildren(mark(todo)),
 		// A ticket per row: a child here is new on its own account, not part
 		// of its parent's story.
@@ -508,7 +551,7 @@ func (b *Board) NameOwners(name func(Owner) string) {
 			walk(row.Children)
 		}
 	}
-	for _, lane := range [][]*Row{b.Waiting, b.Stalled, b.Running, b.Todo, b.Fresh, b.Done} {
+	for _, lane := range [][]*Row{b.Waiting, b.Stalled, b.Running, b.Blocked, b.Todo, b.Fresh, b.Done} {
 		walk(lane)
 	}
 }

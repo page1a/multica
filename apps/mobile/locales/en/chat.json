@@ -27,6 +27,8 @@
     "mode_steer_process": "Same process · same session",
     "mode_steer_restart_desc": "Reads it right away; the current step is cut off",
     "mode_steer_restart_process": "Restarts the CLI · same session",
+    "mode_steer_handoff_desc": "Stops this step and reads it now",
+    "mode_steer_handoff_process": "Current step stops · same session",
     "mode_queue": "Queue",
     "mode_queue_desc": "Sent after this reply",
     "mode_queue_process": "New process · resumes the same session",

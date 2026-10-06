@@ -28,7 +28,7 @@ const (
 	inboxBoardTodoLimit    = 100
 )
 
-// InboxBoardResponse is the inbox in its six lanes (DENE-975).
+// InboxBoardResponse is the inbox in its seven lanes (DENE-975).
 type InboxBoardResponse struct {
 	inboxboard.Board
 	// ViewerID is the person whose inbox this is: the caller, or for an
@@ -45,8 +45,8 @@ type InboxBoardResponse struct {
 	UnreadMarkable int64 `json:"unread_markable"`
 }
 
-// GetInboxBoard — GET /api/inbox/board — one person's inbox in six lanes:
-// waiting / stalled / running / todo / fresh / done today. The lane rules live in
+// GetInboxBoard — GET /api/inbox/board — one person's inbox in seven lanes:
+// waiting / stalled / running / blocked / todo / fresh / done today. The lane rules live in
 // internal/inboxboard; this only gathers their inputs.
 //
 //   - tz: IANA zone "done today" is counted in (default UTC).

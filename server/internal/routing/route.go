@@ -1138,6 +1138,8 @@ func (r *Router) decideReviewerNow(ctx context.Context, workspaceID string, sett
 // The advice reads the wait record before any model: an empty executor slot,
 // a block that names nothing to wait on, and a blocker that already ended are
 // facts, and a model guessing around them pointed people at the wrong thing.
+// A wait on tickets still open is no advice at all: the ticket is waiting,
+// not stuck.
 func (r *Router) routeBlocked(ctx context.Context, workspaceID string, settings Settings, issue Issue) (Outcome, error) {
 	out := Outcome{State: StateEnabled, Action: ActionAdvised}
 	fillWhy := ""
@@ -1170,6 +1172,15 @@ func (r *Router) routeBlocked(ctx context.Context, workspaceID string, settings 
 
 	if body, mention, ok := blockedFactComment(issue, fillWhy); ok {
 		return r.deliver(ctx, workspaceID, issue, KindAdvice, body, mention, out)
+	}
+	// A held ticket waiting on open tickets is not stuck: the block patrol
+	// wakes its executor when they end. Asking a model here read the wait as
+	// "needs a person" and @'d the owner for nothing.
+	if pending := issue.Wait.Pending(); issue.AssigneeType != "" && issue.Wait.Registered && len(pending) > 0 {
+		if out.Action == ActionAssigned {
+			return out, nil
+		}
+		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "waiting on " + strings.Join(pending, ", ")}, nil
 	}
 
 	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())

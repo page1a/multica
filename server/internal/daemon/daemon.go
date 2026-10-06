@@ -9444,6 +9444,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilityTaskSupplementV1)
 		if agent.SteersByRestart(provider) {
 			taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilitySteerRestartV1)
+		} else if agent.SteersByHandoff(provider) {
+			taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilitySteerHandoffV1)
 		}
 	}
 	taskSupplementNegotiated, err := d.client.StartTask(prepareCtx, task, taskCapabilities...)

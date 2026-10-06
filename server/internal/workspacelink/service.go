@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -213,24 +212,15 @@ func (s *Service) Audit(ctx context.Context, actorWS pgtype.UUID, actor Actor) (
 }
 
 // Create offers a pending link from the caller's workspace (the source) to
-// the workspace named by targetSlug, exposing projectIDs.
+// the workspace named by targetSlug (any address TargetSlug reads),
+// exposing projectIDs.
 func (s *Service) Create(ctx context.Context, actorWS pgtype.UUID, actorUser pgtype.UUID, actor Actor, targetSlug string, projectIDs []pgtype.UUID) (Link, error) {
 	if !Decide(OpCreate, SideSource, actor) {
 		return Link{}, forbidden("only the workspace owner can link data out of the workspace")
 	}
-	targetSlug = strings.TrimSpace(targetSlug)
-	if targetSlug == "" {
-		return Link{}, invalid("target workspace slug is required")
-	}
-	target, err := s.q.GetWorkspaceBySlug(ctx, targetSlug)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Link{}, invalid("target workspace not found")
-	}
+	target, err := s.target(ctx, s.q, actorWS, targetSlug)
 	if err != nil {
 		return Link{}, err
-	}
-	if target.ID == actorWS {
-		return Link{}, invalid("a workspace cannot link to itself")
 	}
 
 	var created db.WorkspaceLink

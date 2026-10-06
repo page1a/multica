@@ -1599,6 +1599,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/login", h.PasswordLogin)
 	r.With(authRL).Post("/auth/signup", h.PasswordSignup)
+	r.With(authRL).Post("/auth/reset-password", h.PasswordReset)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
 	r.Post("/auth/logout", h.Logout)
 
@@ -1953,6 +1954,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/share-links", h.ListShareLinks)
 				})
 
+				// Password reset is the one member action admins keep (DENE-1416):
+				// the handler stops an admin from resetting an owner or admin.
+				r.With(
+					middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"),
+					handler.RequireHumanActor,
+				).Post("/members/{memberId}/reset-password", h.ResetMemberPassword)
+
 				// GitHub integration — connect / disconnect remain admin-only;
 				// the read-only list endpoint lives in the member-level group
 				// above so non-admins can see the workspace's connection state.
@@ -2169,6 +2177,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.ListWorkspaceLinks)
 				r.Post("/", h.CreateWorkspaceLink)
 				r.Get("/audit", h.ListWorkspaceLinkAudit)
+				r.Get("/lookup", h.LookupWorkspaceLinkTarget)
 				r.Patch("/{id}", h.UpdateWorkspaceLink)
 				r.Delete("/{id}", h.RevokeWorkspaceLink)
 				r.Get("/{id}/view", h.GetWorkspaceLinkView)

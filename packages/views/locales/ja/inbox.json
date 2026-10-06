@@ -173,6 +173,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "blocked": {
+        "title": "待機中",
+        "hint": "他の課題の完了待ち。完了すると自動で再開します。",
+        "empty": "待機中の課題はありません"
+      },
       "todo": {
         "title": "未着手",
         "hint": "あなたに割り当てられ、まだ始まっていないタスク。",
@@ -204,6 +209,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "blocked": "待機中",
       "todo": "未着手",
       "fresh": "新着",
       "done": "Done"
@@ -265,6 +271,7 @@
       "waiting": "対応待ち",
       "stalled": "停止",
       "running": "実行中",
+      "blocked": "待機中",
       "todo": "未着手",
       "fresh": "新着",
       "done": "完了"

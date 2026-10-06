@@ -27,6 +27,8 @@
     "mode_steer_process": "同一个进程 · 同一段会话",
     "mode_steer_restart_desc": "马上读到，当前这步会中断",
     "mode_steer_restart_process": "会重启 CLI · 同一段会话",
+    "mode_steer_handoff_desc": "停下这一步，马上读到",
+    "mode_steer_handoff_process": "当前这一步会中止 · 同一段会话",
     "mode_queue": "排队",
     "mode_queue_desc": "这条回复完再发",
     "mode_queue_process": "新进程 · 接着同一段会话",

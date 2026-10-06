@@ -598,6 +598,12 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			}
 		},
 	}
+	// No in-turn interjection method in ACP: a supplement stops the current
+	// step and continues in the same session (DENE-1347).
+	var steer *acpHandoffSteer
+	if opts.EnableTaskSupplement {
+		steer = newACPHandoffSteer(c)
+	}
 
 	// Start reading stdout in background.
 	readerDone := make(chan struct{})
@@ -870,12 +876,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 
 		streamingCurrentTurn.Store(true)
-		_, err = c.request(runCtx, "session/prompt", map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": hermesTurnText(prompt, opts.ResumeExpected, resumeLanded, opts.ResumeContinuityNotice)},
-			},
-		})
+		_, err = sendACPPrompt(runCtx, c, steer, sessionID, hermesTurnText(prompt, opts.ResumeExpected, resumeLanded, opts.ResumeContinuityNotice))
 		if err != nil {
 			// If the request itself failed (not just context cancelled),
 			// check if the context was cancelled/timed out.
@@ -1050,7 +1051,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 	}()
 
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	return attachACPHandoffSteer(&Session{Messages: msgCh, Result: resCh}, steer), nil
 }
 
 // waitForHermesNotificationQuiescence gives the stdout reader a bounded chance
@@ -1145,6 +1146,10 @@ type hermesClient struct {
 	sessionID    string
 	onMessage    func(Message)
 	onPromptDone func(hermesPromptResult)
+	// absorbPromptResult, when set, sees every successful session/prompt
+	// result first; true means a handoff steer is about to send a follow-up
+	// prompt, so the result is billed but not reported as the turn's end.
+	absorbPromptResult func() bool
 	// selectPermission lets an ACP dialect narrow the generic headless
 	// permission policy. Reasonix uses this to reject user questions and
 	// fresh-human approvals that also happen to carry allow_once options.
@@ -1275,6 +1280,20 @@ func (c *hermesClient) requestAndNotifySent(ctx context.Context, method string, 
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+// notify writes a JSON-RPC notification (no id, no response expected), such
+// as ACP's session/cancel.
+func (c *hermesClient) notify(method string, params any) error {
+	data, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	})
+	if err != nil {
+		return err
+	}
+	return c.writeLine(append(data, '\n'))
 }
 
 func (c *hermesClient) closeAllPending(err error) {
@@ -1788,6 +1807,10 @@ func (c *hermesClient) extractPromptResult(data json.RawMessage) {
 	// cache bucket or provider-reported cost.
 	pr.usage = usage.withFallback(parseACPTokenUsageSnapshotFromMeta(resp.Meta))
 
+	if c.absorbPromptResult != nil && c.absorbPromptResult() {
+		c.mergeUsage(pr.usage)
+		return
+	}
 	if c.onPromptDone != nil {
 		c.onPromptDone(pr)
 	}

@@ -30,8 +30,15 @@ var workspaceLinkListCmd = &cobra.Command{
 	RunE:  runWorkspaceLinkList,
 }
 
+var workspaceLinkLookupCmd = &cobra.Command{
+	Use:   "lookup <workspace-link-or-slug>",
+	Short: "Show which workspace a pasted link or slug names (owner only, exact match)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runWorkspaceLinkLookup,
+}
+
 var workspaceLinkCreateCmd = &cobra.Command{
-	Use:   "create --to <workspace-slug> --project <project>...",
+	Use:   "create --to <workspace-link-or-slug> --project <project>...",
 	Short: "Offer a read-only link to another workspace (owner only)",
 	Args:  cobra.NoArgs,
 	RunE:  runWorkspaceLinkCreate,
@@ -59,11 +66,11 @@ var workspaceLinkViewCmd = &cobra.Command{
 }
 
 func init() {
-	for _, c := range []*cobra.Command{workspaceLinkListCmd, workspaceLinkCreateCmd, workspaceLinkUpdateCmd, workspaceLinkRevokeCmd, workspaceLinkViewCmd} {
+	for _, c := range []*cobra.Command{workspaceLinkListCmd, workspaceLinkLookupCmd, workspaceLinkCreateCmd, workspaceLinkUpdateCmd, workspaceLinkRevokeCmd, workspaceLinkViewCmd} {
 		c.Flags().String("output", "table", "Output format: table or json")
 		workspaceLinkCmd.AddCommand(c)
 	}
-	workspaceLinkCreateCmd.Flags().String("to", "", "Slug of the workspace that will see the projects")
+	workspaceLinkCreateCmd.Flags().String("to", "", "The workspace that will see the projects: its link (https://host/<slug>/...) or slug")
 	workspaceLinkCreateCmd.Flags().StringArray("project", nil, "Project to share (id, id prefix or exact name); repeatable")
 	workspaceLinkUpdateCmd.Flags().StringArray("project", nil, "Replace the shared projects with these; repeatable")
 	workspaceLinkUpdateCmd.Flags().Bool("accept", false, "Accept a pending link offered to this workspace")
@@ -119,6 +126,25 @@ func printLink(cmd *cobra.Command, link map[string]any) error {
 		return cli.PrintJSON(os.Stdout, link)
 	}
 	fmt.Fprintf(os.Stdout, "%s  %s  %s\n", strVal(link, "id"), strVal(link, "side"), strVal(link, "status"))
+	return nil
+}
+
+func runWorkspaceLinkLookup(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var resp map[string]any
+	if err := client.GetJSON(ctx, "/api/workspace-links/lookup?target="+url.QueryEscape(args[0]), &resp); err != nil {
+		return fmt.Errorf("look up workspace: %w", err)
+	}
+	if out, _ := cmd.Flags().GetString("output"); out == "json" {
+		return cli.PrintJSON(os.Stdout, resp)
+	}
+	ws, _ := resp["workspace"].(map[string]any)
+	fmt.Fprintf(os.Stdout, "%s (%s)\n", strVal(ws, "name"), strVal(ws, "slug"))
 	return nil
 }
 

@@ -8,6 +8,8 @@ import type { InboxBoardResponse, InboxBoardRowPayload, ParkingEvent } from "../
  *             issue's parking record names the viewer as the next owner;
  *   stalled — the parking record says it stopped without explaining why;
  *   running — an agent is on it right now;
+ *   blocked — it is held and waits on other tickets; it moves on by itself
+ *             when they end, so nobody is asked anything (DENE-1409);
  *   todo    — it is assigned to the viewer and still in todo (DENE-975);
  *   fresh   — it has unread inbox rows for the viewer but none of the
  *             lanes above or below takes it (DENE-901);
@@ -20,7 +22,7 @@ import type { InboxBoardResponse, InboxBoardRowPayload, ParkingEvent } from "../
  * page, the CLI and an agent reading the inbox for its person all see the
  * same board. Here it is only reshaped for the page.
  */
-export type BoardLane = "waiting" | "stalled" | "running" | "todo" | "fresh" | "done";
+export type BoardLane = "waiting" | "stalled" | "running" | "blocked" | "todo" | "fresh" | "done";
 
 export interface BoardOwner {
   type: string;
@@ -64,6 +66,7 @@ export interface InboxBoard {
   waiting: BoardRow[];
   stalled: BoardRow[];
   running: BoardRow[];
+  blocked: BoardRow[];
   todo: BoardRow[];
   fresh: BoardRow[];
   done: BoardRow[];
@@ -98,6 +101,7 @@ export function boardFromResponse(res: InboxBoardResponse): InboxBoard {
     waiting: (res.waiting ?? []).map(row),
     stalled: (res.stalled ?? []).map(row),
     running: (res.running ?? []).map(row),
+    blocked: (res.blocked ?? []).map(row),
     todo: (res.todo ?? []).map(row),
     fresh: (res.fresh ?? []).map(row),
     done: (res.done ?? []).map(row),
@@ -121,7 +125,7 @@ export function splitSeenDone(
   return { fresh, seen };
 }
 
-export const BOARD_LANES: readonly BoardLane[] = ["waiting", "stalled", "running", "todo", "fresh", "done"];
+export const BOARD_LANES: readonly BoardLane[] = ["waiting", "stalled", "running", "blocked", "todo", "fresh", "done"];
 
 /**
  * Which lane each issue sits in on the board, sub-issues filed under the lane

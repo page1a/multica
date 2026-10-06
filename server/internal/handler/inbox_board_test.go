@@ -44,7 +44,7 @@ func boardRow(b InboxBoardResponse, issueID string) *inboxboard.Row {
 		}
 		return nil
 	}
-	for _, lane := range [][]*inboxboard.Row{b.Waiting, b.Stalled, b.Running, b.Todo, b.Fresh, b.Done} {
+	for _, lane := range [][]*inboxboard.Row{b.Waiting, b.Stalled, b.Running, b.Blocked, b.Todo, b.Fresh, b.Done} {
 		if r := walk(lane); r != nil {
 			return r
 		}

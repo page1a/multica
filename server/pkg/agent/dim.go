@@ -278,6 +278,12 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			}
 		},
 	}
+	// No in-turn interjection method in ACP: a supplement stops the current
+	// step and continues in the same session (DENE-1347).
+	var steer *acpHandoffSteer
+	if opts.EnableTaskSupplement {
+		steer = newACPHandoffSteer(c)
+	}
 
 	readerDone := make(chan struct{})
 	go func() {
@@ -591,12 +597,7 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		// here and the prompt response is still covered: this send happens first.
 		msgStream.send(Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 
-		_, err = c.request(runCtx, "session/prompt", map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
-			},
-		})
+		_, err = sendACPPrompt(runCtx, c, steer, sessionID, userText)
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
 				finalStatus = "timeout"
@@ -692,5 +693,5 @@ func (b *dimBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		}
 	}()
 
-	return &Session{Messages: msgStream.ch, Result: resCh}, nil
+	return attachACPHandoffSteer(&Session{Messages: msgStream.ch, Result: resCh}, steer), nil
 }

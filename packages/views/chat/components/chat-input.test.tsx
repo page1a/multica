@@ -744,6 +744,16 @@ describe("ChatInput project context", () => {
     expect(onSend.mock.calls[0]![4]).toBe("restart");
   });
 
+  it("says an ACP CLI stops the current step to take a steer", async () => {
+    renderInput({ isRunning: true, allowSubmitWhileRunning: true, steerSupported: true, steerProvider: "kimi", steerMode: "handoff" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Send mode" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText("Stops this step and reads it now")).toBeInTheDocument();
+    expect(within(menu).getByText("Current step stops · same session")).toBeInTheDocument();
+    expect(within(menu).queryByText("Same process · same session")).not.toBeInTheDocument();
+  });
+
   it("says a one-shot CLI restarts to take a steer", async () => {
     renderInput({ isRunning: true, allowSubmitWhileRunning: true, steerSupported: true, steerProvider: "cursor", steerMode: "restart" });
 

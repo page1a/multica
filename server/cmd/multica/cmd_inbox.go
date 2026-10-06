@@ -22,11 +22,12 @@ var inboxCmd = &cobra.Command{
 
 var inboxBoardCmd = &cobra.Command{
 	Use:   "board",
-	Short: "The inbox in its six lanes: waiting on you, stalled, running, to do, new, done today",
+	Short: "The inbox in its seven lanes: waiting on you, stalled, running, waiting on tickets, to do, new, done today",
 	Long: "The same lanes the inbox page shows (DENE-975), from GET /api/inbox/board:\n\n" +
 		"  waiting  — someone called this person, or a ticket stopped waiting on them\n" +
 		"  stalled  — a ticket stopped without saying why\n" +
 		"  running  — an agent is on it now\n" +
+		"  blocked  — held, waiting on other tickets; moves on when they end\n" +
 		"  todo     — assigned to this person, still in todo\n" +
 		"  fresh    — unread activity no lane above took\n" +
 		"  done     — finished today (in --tz, default this machine's zone)\n\n" +
@@ -106,6 +107,7 @@ type inboxBoardView struct {
 	Waiting  []inboxBoardRow `json:"waiting"`
 	Stalled  []inboxBoardRow `json:"stalled"`
 	Running  []inboxBoardRow `json:"running"`
+	Blocked  []inboxBoardRow `json:"blocked"`
 	Todo     []inboxBoardRow `json:"todo"`
 	Fresh    []inboxBoardRow `json:"fresh"`
 	Done     []inboxBoardRow `json:"done"`
@@ -263,6 +265,11 @@ func printInboxBoard(w io.Writer, b inboxBoardView) {
 	})
 	lane("Running", b.Running)
 	section("  ", b.Running, func(indent string, r inboxBoardRow) { detail(indent, "on it", who(r)) })
+	lane("Waiting on tickets", b.Blocked)
+	section("  ", b.Blocked, func(indent string, r inboxBoardRow) {
+		detail(indent, "waits", r.Reason)
+		detail(indent, "on", who(r))
+	})
 	lane("To do", b.Todo)
 	section("  ", b.Todo, func(string, inboxBoardRow) {})
 	lane("New activity", b.Fresh)

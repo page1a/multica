@@ -125,6 +125,7 @@ beforeEach(() => {
   data.shareLinks = [];
   data.summary = null;
   configStore.getState().setFeatureFlags({});
+  configStore.setState({ passwordAuth: false });
 });
 
 describe("MembersTab", () => {
@@ -256,5 +257,32 @@ describe("MembersTab", () => {
     expect(screen.queryByRole("button", { name: "Invite member" })).toBeNull();
     expect(screen.queryByRole("tab", { name: /Share links/ })).toBeNull();
     expect(screen.queryByText("Grace Hopper")).toBeNull();
+  });
+
+  it("lets an admin reset passwords and nothing else (DENE-1416)", async () => {
+    configStore.setState({ passwordAuth: true });
+    // What the server sends an admin: everyone else without role / email / joined.
+    const redacted = (id: string, name: string) => ({
+      ...member(id, name, ""),
+      email: "",
+      created_at: "",
+    });
+    data.members = [
+      member("user-1", "Ada Lovelace", "admin"),
+      redacted("user-2", "Grace Hopper"),
+      redacted("user-3", "Alan Turing"),
+    ];
+    renderWithI18n(<MembersTab />);
+
+    expect(screen.getByText("Alan Turing")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Invite member" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /Pending/ })).toBeNull();
+    expect(screen.queryByText(/Invalid Date/)).toBeNull();
+    expect(screen.queryByText(/contact/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions for Ada Lovelace" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Alan Turing" }));
+    expect(await screen.findByRole("menuitem", { name: "Reset password" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Remove/ })).toBeNull();
   });
 });

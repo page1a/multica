@@ -112,12 +112,18 @@ const (
 	// it (DENE-1349). Offered only together with task-supplement-v1. The server
 	// records it as the run's steer mode so clients can state the cost.
 	DaemonCapabilitySteerRestartV1 = "steer-restart-v1"
+	// DaemonCapabilitySteerHandoffV1 qualifies task-supplement-v1: the run takes
+	// the additional text by cancelling the current ACP step and prompting the
+	// same session in the same process (DENE-1347).
+	DaemonCapabilitySteerHandoffV1 = "steer-handoff-v1"
 
 	// Steer modes: how a run with task-supplement-v1 takes the text. "same"
 	// reads it inside the running process; "restart" restarts the CLI on the
-	// same session.
+	// same session; "handoff" stops the current step and continues the same
+	// session in the same process.
 	SteerModeSame    = "same"
 	SteerModeRestart = "restart"
+	SteerModeHandoff = "handoff"
 
 	TaskSupplementFailureTurnNotStarted   = "turn_not_started"
 	TaskSupplementFailureProviderRejected = "provider_rejected"

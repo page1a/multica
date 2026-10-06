@@ -176,6 +176,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "blocked": {
+        "title": "En attente",
+        "hint": "Attend la fin d'autres tickets ; reprend tout seul ensuite.",
+        "empty": "Rien n'attend d'autres tickets"
+      },
       "todo": {
         "title": "À faire",
         "hint": "Tâches qui vous sont assignées et pas encore commencées.",
@@ -207,6 +212,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "blocked": "En attente",
       "todo": "À faire",
       "fresh": "Nouveau",
       "done": "Done"
@@ -271,6 +277,7 @@
       "waiting": "En attente",
       "stalled": "Arrêté",
       "running": "En cours",
+      "blocked": "En attente",
       "todo": "À faire",
       "fresh": "Nouveau",
       "done": "Terminé"

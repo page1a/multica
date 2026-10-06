@@ -27,7 +27,7 @@ waiting for acceptance, or your workspace is not its viewer. Report it as "no
 access", not as a bug.
 
 Creating, changing projects, accepting and revoking (`create`, `update`,
-`revoke`) are refused for agents. When the user wants one, tell them where it
-lives: 设置 → 连通工作区. The source workspace's owner offers the link and
-picks the projects; the viewer's owner or admin accepts it; either side can
-revoke.
+`revoke`, and the `lookup` that confirms a target) are refused for agents.
+When the user wants one, tell them where it lives: 设置 → 连通工作区. The source workspace's owner offers the link and
+picks the projects (the target can be pasted as the other workspace's link or
+its slug); the viewer's owner or admin accepts it; either side can revoke.

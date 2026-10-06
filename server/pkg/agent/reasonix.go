@@ -210,6 +210,12 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 			}
 		},
 	}
+	// No in-turn interjection method in ACP: a supplement stops the current
+	// step and continues in the same session (DENE-1347).
+	var steer *acpHandoffSteer
+	if opts.EnableTaskSupplement {
+		steer = newACPHandoffSteer(c)
+	}
 
 	// Start reading stdout in background.
 	readerDone := make(chan struct{})
@@ -399,12 +405,7 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		// AGENTS.md from cwd, so the daemon deliberately does not duplicate the
 		// runtime brief in this user message.
 		streamingCurrentTurn.Store(true)
-		_, err = c.request(runCtx, "session/prompt", map[string]any{
-			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": prompt},
-			},
-		})
+		_, err = sendACPPrompt(runCtx, c, steer, sessionID, prompt)
 		if err != nil {
 			finalStatus, finalError = reasonixRequestFailure(runCtx, timeout, fmt.Sprintf("reasonix session/prompt failed: %v", err))
 			if finalStatus == "failed" {
@@ -506,7 +507,7 @@ func (b *reasonixBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		}
 	}()
 
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	return attachACPHandoffSteer(&Session{Messages: msgCh, Result: resCh}, steer), nil
 }
 
 // reasonixToolNameFromTitle normalises tool names emitted by Reasonix's ACP

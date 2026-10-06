@@ -299,7 +299,9 @@ function SendModeSheet({
     m === "steer"
       ? steerMode === "restart"
         ? "composer.mode_steer_restart_desc"
-        : "composer.mode_steer_desc"
+        : steerMode === "handoff"
+          ? "composer.mode_steer_handoff_desc"
+          : "composer.mode_steer_desc"
       : m === "queue"
         ? "composer.mode_queue_desc"
         : "composer.mode_restart_desc";
@@ -307,7 +309,9 @@ function SendModeSheet({
     m === "steer"
       ? steerMode === "restart"
         ? "composer.mode_steer_restart_process"
-        : "composer.mode_steer_process"
+        : steerMode === "handoff"
+          ? "composer.mode_steer_handoff_process"
+          : "composer.mode_steer_process"
       : m === "queue"
         ? "composer.mode_queue_process"
         : "composer.mode_restart_process";

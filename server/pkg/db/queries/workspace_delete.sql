@@ -816,6 +816,11 @@ detached_client_usage AS (
     SET workspace_id = NULL
     WHERE client_usage_daily.workspace_id = $1
 ),
+detached_password_reset_audit AS (
+    UPDATE password_reset_audit
+    SET workspace_id = NULL
+    WHERE password_reset_audit.workspace_id = $1
+),
 deleted_share_links AS (
     DELETE FROM workspace_share_link
     WHERE workspace_share_link.workspace_id = $1

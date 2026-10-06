@@ -173,6 +173,11 @@
         "hint": "Just a marker, no noise",
         "empty": "No agent is running right now"
       },
+      "blocked": {
+        "title": "대기 중",
+        "hint": "다른 이슈가 끝나길 기다립니다. 끝나면 자동으로 이어집니다.",
+        "empty": "대기 중인 이슈가 없습니다"
+      },
       "todo": {
         "title": "할 일",
         "hint": "나에게 배정되었고 아직 시작하지 않은 작업.",
@@ -204,6 +209,7 @@
       "stalled_unclosed": "Done, not closed",
       "stalled_reply_unclosed": "Replied, not closed",
       "running": "Running",
+      "blocked": "대기 중",
       "todo": "할 일",
       "fresh": "새 소식",
       "done": "Done"
@@ -265,6 +271,7 @@
       "waiting": "대기",
       "stalled": "멈춤",
       "running": "실행 중",
+      "blocked": "대기 중",
       "todo": "할 일",
       "fresh": "새 소식",
       "done": "완료"

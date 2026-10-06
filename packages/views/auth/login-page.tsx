@@ -72,6 +72,9 @@ interface LoginPageProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Mirrors the server's minPasswordSignupPasswordLen (auth_password.go).
+const MIN_PASSWORD_LEN = 8;
+
 export function redirectToCliCallback(url: string, token: string, state: string) {
   const separator = url.includes("?") ? "&" : "?";
   window.location.href = `${url}${separator}token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
@@ -116,12 +119,21 @@ export function LoginPage({
   const qc = useQueryClient();
   const passwordAuth = useConfigStore((state) => state.passwordAuth);
   const allowSignup = useConfigStore((state) => state.allowSignup);
-  const [step, setStep] = useState<"email" | "code" | "cli_confirm">("email");
+  // Self-service reset needs the team 2FA gate: without it a username alone
+  // would be enough to take over an account, so the server refuses (DENE-1416).
+  const passwordReset = useConfigStore(
+    (state) => state.passwordAuth && state.signupTotpRequired,
+  );
+  const [step, setStep] = useState<"email" | "code" | "cli_confirm" | "reset">("email");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [resetTotp, setResetTotp] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [existingUser, setExistingUser] = useState<User | null>(null);
@@ -231,6 +243,46 @@ export function LoginPage({
       }
     },
     [username, password, cliCallback, finishLogin, t],
+  );
+
+  const handlePasswordReset = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!username) {
+        setError(t(($) => $.common.username_required));
+        return;
+      }
+      if (!resetTotp.trim()) {
+        setError(t(($) => $.common.totp_required));
+        return;
+      }
+      if (newPassword.length < MIN_PASSWORD_LEN) {
+        setError(t(($) => $.common.password_min));
+        return;
+      }
+      if (newPassword !== confirmNewPassword) {
+        setError(t(($) => $.errors.password_mismatch));
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        await api.resetPassword(username, resetTotp.trim(), newPassword);
+        setStep("email");
+        setPassword("");
+        setResetTotp("");
+        setNewPassword("");
+        setConfirmNewPassword("");
+        setNotice(t(($) => $.reset.done));
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : t(($) => $.errors.reset_failed),
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [username, resetTotp, newPassword, confirmNewPassword, t],
   );
 
   const handleSendCode = useCallback(
@@ -474,6 +526,106 @@ export function LoginPage({
   }
 
   // -------------------------------------------------------------------------
+  // Forgot password step
+  // -------------------------------------------------------------------------
+
+  if (step === "reset") {
+    return (
+      <div className="flex min-h-svh flex-col items-center justify-center overflow-y-auto px-4 py-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:flex-row">
+        <Card className="my-auto w-full max-w-sm">
+          <CardHeader className="text-center">
+            {logo && <div className="mx-auto mb-4">{logo}</div>}
+            <CardTitle className="text-display-sm">
+              {t(($) => $.reset.title)}
+            </CardTitle>
+            <CardDescription>{t(($) => $.reset.description)}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form id="reset-form" onSubmit={handlePasswordReset} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="reset-username">{t(($) => $.common.username)}</Label>
+                <Input
+                  id="reset-username"
+                  type="text"
+                  autoComplete="username"
+                  placeholder={t(($) => $.common.username_placeholder)}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoFocus={!username}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reset-totp">{t(($) => $.common.totp)}</Label>
+                <Input
+                  id="reset-totp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder={t(($) => $.common.totp_placeholder)}
+                  value={resetTotp}
+                  onChange={(e) => setResetTotp(e.target.value)}
+                  autoFocus={!!username}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reset-new-password">{t(($) => $.reset.new_password)}</Label>
+                <Input
+                  id="reset-new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reset-confirm-password">{t(($) => $.common.confirm_password)}</Label>
+                <Input
+                  id="reset-confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  required
+                />
+              </div>
+              {error && <p className="text-body text-destructive">{error}</p>}
+            </form>
+          </CardContent>
+          <CardFooter className="flex flex-col gap-3">
+            <Button
+              type="submit"
+              form="reset-form"
+              className="w-full"
+              size="lg"
+              disabled={
+                loading || !username || !resetTotp || !newPassword || !confirmNewPassword
+              }
+            >
+              {loading ? t(($) => $.reset.submitting) : t(($) => $.reset.submit)}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                setStep("email");
+                setError("");
+              }}
+            >
+              {t(($) => $.common.back)}
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Email / password step
   // -------------------------------------------------------------------------
 
@@ -499,6 +651,11 @@ export function LoginPage({
               </AlertDescription>
             </Alert>
           )}
+          {notice && (
+            <Alert>
+              <AlertDescription>{notice}</AlertDescription>
+            </Alert>
+          )}
           {passwordAuth ? (
             <form id="login-form" onSubmit={handlePasswordLogin} className="space-y-4">
               <div className="space-y-2">
@@ -515,7 +672,22 @@ export function LoginPage({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="login-password">{t(($) => $.common.password)}</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="login-password">{t(($) => $.common.password)}</Label>
+                  {passwordReset && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStep("reset");
+                        setError("");
+                        setNotice("");
+                      }}
+                      className="text-body text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      {t(($) => $.reset.forgot)}
+                    </button>
+                  )}
+                </div>
                 <Input
                   id="login-password"
                   type="password"

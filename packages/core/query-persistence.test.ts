@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { StorageAdapter } from "./types/storage";
 import {
   clearPersistedQueryCache,
@@ -38,10 +38,47 @@ describe("persisted query cache", () => {
     ]);
 
     const second = new QueryClient();
+    const invalidate = vi.spyOn(second, "invalidateQueries");
     createPersistedQueryCache(second, storage, "user-a");
     expect(second.getQueryData(["projects", "workspace-a"])).toEqual([{ id: "p1" }]);
     expect(second.getQueryData(["messages", "workspace-a"])).toBeUndefined();
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({
+      refetchType: "active",
+      predicate: expect.any(Function),
+    }));
     stop();
+    vi.useRealTimers();
+  });
+
+  it("never persists attachment bytes and drops them from an older snapshot", async () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    const writer = new QueryClient();
+    const stop = createPersistedQueryCache(writer, storage, "user-a");
+    writer.setQueryData(["attachment-inline-blob", "att-1"], new Blob(["x"]));
+    writer.setQueryData(["inline-bytes", "att-2"], new Blob(["y"]));
+    writer.setQueryData(["projects", "workspace-a"], [{ id: "p1" }]);
+    await vi.advanceTimersByTimeAsync(60);
+    stop();
+
+    const key = `${queryCacheStoragePrefix()}user-a`;
+    const envelope = JSON.parse(storage.data[key]!);
+    expect(envelope.state.queries.map((q: { queryKey: unknown[] }) => q.queryKey)).toEqual([
+      ["projects", "workspace-a"],
+    ]);
+
+    // A snapshot written before the fix holds the Blob as `{}`.
+    envelope.state.queries.push({
+      ...envelope.state.queries[0],
+      queryKey: ["attachment-inline-blob", "att-1"],
+      queryHash: JSON.stringify(["attachment-inline-blob", "att-1"]),
+      state: { ...envelope.state.queries[0].state, data: {} },
+    });
+    storage.setItem(key, JSON.stringify(envelope));
+    const reader = new QueryClient();
+    createPersistedQueryCache(reader, storage, "user-a");
+    expect(reader.getQueryData(["attachment-inline-blob", "att-1"])).toBeUndefined();
+    expect(reader.getQueryData(["projects", "workspace-a"])).toEqual([{ id: "p1" }]);
     vi.useRealTimers();
   });
 
@@ -53,5 +90,31 @@ describe("persisted query cache", () => {
     expect(storage.keys?.()).toEqual([`${queryCacheStoragePrefix()}b`]);
     clearPersistedQueryCache(storage);
     expect(storage.keys?.()).toEqual([]);
+  });
+
+  it("refetches a restored query when its page mounts", async () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    const writer = new QueryClient();
+    const stopWriter = createPersistedQueryCache(writer, storage, "user-a");
+    writer.setQueryData(["projects", "workspace-a"], [{ id: "old" }]);
+    await vi.advanceTimersByTimeAsync(60);
+    stopWriter();
+
+    const reader = new QueryClient();
+    const stopReader = createPersistedQueryCache(reader, storage, "user-a");
+    const queryFn = vi.fn().mockResolvedValue([{ id: "new" }]);
+    const observer = new QueryObserver(reader, {
+      queryKey: ["projects", "workspace-a"],
+      queryFn,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await vi.waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(reader.getQueryData(["projects", "workspace-a"])).toEqual([{ id: "new" }]),
+    );
+    unsubscribe();
+    stopReader();
+    vi.useRealTimers();
   });
 });

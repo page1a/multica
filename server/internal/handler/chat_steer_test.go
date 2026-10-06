@@ -38,6 +38,8 @@ func newChatSteerFixture(t *testing.T, provider string, negotiated bool) chatSte
 		capabilities = []string{protocol.DaemonCapabilityTaskSupplementV1}
 		if agent.SteersByRestart(provider) {
 			capabilities = append(capabilities, protocol.DaemonCapabilitySteerRestartV1)
+		} else if agent.SteersByHandoff(provider) {
+			capabilities = append(capabilities, protocol.DaemonCapabilitySteerHandoffV1)
 		}
 	}
 	if _, err := testHandler.TaskService.StartTask(t.Context(), parseUUID(sent.TaskID), capabilities...); err != nil {
@@ -112,6 +114,15 @@ func TestChatSteerOnOneShotCLIRestartsTheSession(t *testing.T) {
 	dbfx.QueryRow(t, `SELECT steer_mode FROM task_supplement_capability WHERE task_id = $1`, f.headID).Scan(&mode)
 	if mode != protocol.SteerModeRestart {
 		t.Fatalf("steer_mode = %q, want restart", mode)
+	}
+}
+
+// An ACP CLI steers by stopping the current step and prompting the same
+// session again (DENE-1347).
+func TestChatSteerOnACPCLIHandsOffTheStep(t *testing.T) {
+	f := newChatSteerFixture(t, "kimi", true)
+	if p := chatPending(t, f.sessionID); !p.SteerSupported || p.SteerMode != protocol.SteerModeHandoff {
+		t.Fatalf("pending = %+v, want handoff steer on kimi", p)
 	}
 }
 

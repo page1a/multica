@@ -143,6 +143,7 @@ beforeEach(() => {
       }),
     ],
     running: [row({ issueId: "882", lane: "running", next: { type: "agent", id: "a-2" } })],
+    blocked: [],
     todo: [row({ issueId: "890", lane: "todo", kind: "todo" })],
     fresh: [],
     done: [
@@ -266,6 +267,30 @@ describe("HomePage", () => {
     const lanes = screen.getAllByTestId(/^board-lane-/).map((el) => el.dataset.testid);
     expect(lanes.indexOf("board-lane-fresh")).toBe(lanes.indexOf("board-lane-done") - 1);
     expect(screen.getAllByTestId("board-row-unread")).toHaveLength(2);
+  });
+
+  it("shows tickets waiting on other tickets in their own lane, not as waiting on you (DENE-1409)", () => {
+    board.blocked = [
+      row({
+        issueId: "1396",
+        lane: "blocked",
+        kind: "blocked",
+        reason: "Resume once DENE-1393 merges",
+        next: { type: "issue", id: "DENE-1393" },
+      }),
+    ];
+    renderWithI18n(<HomePage />);
+    const blocked = screen.getByTestId("board-lane-blocked");
+    expect(within(blocked).getByText("Resume once DENE-1393 merges")).toBeInTheDocument();
+    expect(within(blocked).getByText("Waiting on DENE-1393")).toBeInTheDocument();
+    expect(within(screen.getByTestId("board-lane-waiting")).queryByText("title 1396")).toBeNull();
+    const lanes = screen.getAllByTestId(/^board-lane-/).map((el) => el.dataset.testid);
+    expect(lanes.indexOf("board-lane-blocked")).toBe(lanes.indexOf("board-lane-running") + 1);
+  });
+
+  it("hides the waiting-on-tickets lane when nothing waits", () => {
+    renderWithI18n(<HomePage />);
+    expect(screen.queryByTestId("board-lane-blocked")).toBeNull();
   });
 
   it("hides the new-activity lane when nothing is new", () => {

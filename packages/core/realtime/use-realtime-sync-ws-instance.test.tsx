@@ -18,7 +18,7 @@ import {
   unmarkWorkspaceDeletePending,
 } from "../workspace/pending-delete";
 import { setApiInstance } from "../api";
-import type { ApiClient } from "../api/client";
+import { ApiError, type ApiClient } from "../api/client";
 import type { IssueTableQuerySpec } from "../types";
 import { getCurrentWsId } from "../platform/workspace-storage";
 import { forgetLocalSearchIndex } from "../search-index/instance";
@@ -359,6 +359,51 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(chatKeys.messagesAll());
     expect(calls).toContainEqual(chatKeys.messagesPageAll());
     expect(calls).toContainEqual(chatKeys.pendingTaskAll());
+  });
+
+  it("establishes current baselines when incremental replay is empty", async () => {
+    const resources = ["issues", "inbox", "chats"] as const;
+    for (const resource of resources) defaultStorage.removeItem(`multica_sync_cursor:ws-1:${resource}`);
+    const listIncrementalChanges = vi.fn().mockResolvedValue({
+      upserts: [],
+      deleted: [],
+      next_cursor: "baseline",
+      has_more: false,
+    });
+    setApiInstance({ listIncrementalChanges } as unknown as ApiClient);
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), { wrapper: createWrapper(qc) });
+    const reconnect = vi.mocked(ws.onReconnect).mock.calls[0]?.[0];
+
+    invalidateSpy.mockClear();
+    await reconnect!();
+
+    expect(listIncrementalChanges).toHaveBeenCalledTimes(3);
+    for (const resource of resources) {
+      expect(listIncrementalChanges).toHaveBeenCalledWith(resource, expect.objectContaining({ updatedSince: expect.any(String) }));
+      expect(defaultStorage.getItem(`multica_sync_cursor:ws-1:${resource}`)).toBe("baseline");
+    }
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: workspaceKeys.list() });
+  });
+
+  it.each([
+    ["expired cursor", new ApiError("expired", 410, "Gone")],
+    ["transport failure", new Error("offline")],
+  ])("falls back to a workspace refresh after %s", async (_label, error) => {
+    for (const resource of ["issues", "inbox", "chats"] as const) {
+      defaultStorage.setItem(`multica_sync_cursor:ws-1:${resource}`, "old-cursor");
+    }
+    setApiInstance({
+      listIncrementalChanges: vi.fn().mockRejectedValue(error),
+    } as unknown as ApiClient);
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), { wrapper: createWrapper(qc) });
+    const reconnect = vi.mocked(ws.onReconnect).mock.calls[0]?.[0];
+
+    invalidateSpy.mockClear();
+    await reconnect!();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceKeys.list() });
   });
 
   it("invalidates one issue attachment cache after detached channel media binds", () => {

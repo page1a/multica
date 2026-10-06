@@ -185,7 +185,7 @@ vi.mock("@multica/ui/components/ui/resizable", () => ({
 // The merged inbox's board (DENE-1004). The stub exposes what the page hands
 // it — the highlighted issue, the active lane and the two callbacks.
 const boardData: { board: import("@multica/core/home").InboxBoard } = {
-  board: { waiting: [], stalled: [], running: [], todo: [], fresh: [], done: [] },
+  board: { waiting: [], stalled: [], running: [], blocked: [], todo: [], fresh: [], done: [] },
 };
 const boardReads: Array<{ autoRead?: boolean } | undefined> = [];
 vi.mock("@multica/core/home", async (importOriginal) => {
@@ -332,7 +332,7 @@ function reset() {
   searchParams = new URLSearchParams();
   replace.mockClear();
   push.mockClear();
-  boardData.board = { waiting: [], stalled: [], running: [], todo: [], fresh: [], done: [] };
+  boardData.board = { waiting: [], stalled: [], running: [], blocked: [], todo: [], fresh: [], done: [] };
   boardReads.length = 0;
   markReadMutate.mockClear();
   markUnreadMutate.mockClear();
