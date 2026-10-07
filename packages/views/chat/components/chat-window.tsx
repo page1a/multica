@@ -33,13 +33,9 @@ import {
   handleRowActivationKey,
   type RowActionItem,
 } from "../../common/row-actions-menu";
-import {
-  PickerEmpty,
-  PickerItem,
-  PickerSection,
-  PropertyPicker,
-} from "../../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { PropertyPicker } from "../../issues/components/pickers/property-picker";
+import { AgentPickerGroups } from "./agent-picker-groups";
+import { AgentPickerItem } from "./new-chat-button";
 import { OfflineBanner } from "./offline-banner";
 import { NoAgentBanner } from "./no-agent-banner";
 import { ArchivedAgentBanner } from "./archived-agent-banner";
@@ -103,7 +99,7 @@ import {
   useCurrentRouteProjectId,
 } from "./use-chat-project-follow";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatSendMode, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatSendMode, ChatSession, PendingChatTasksResponse, Project } from "@multica/core/types";
 import { useLocale, useT } from "../../i18n";
 import { openGoalCompletion } from "@multica/core/modals";
 
@@ -340,6 +336,12 @@ export function ChatWindow() {
   // (server confirmed: zero usable agents) drives the disabled UI.
   const agentAvailability = useWorkspaceAgentAvailability();
   const noAgent = agentAvailability === "none";
+
+  // Projects the chat is in, for ordering the agent picker by domain.
+  const activeProjects = useMemo(
+    () => projects.filter((project) => activeProjectIds.includes(project.id)),
+    [projects, activeProjectIds],
+  );
 
   // Presence drives both the avatar status dot (via ActorAvatar) and the
   // OfflineBanner / TaskStatusPill availability copy. `useAgentPresenceDetail`
@@ -1143,6 +1145,7 @@ export function ChatWindow() {
             agents={availableAgents}
             activeAgent={activeAgent}
             userId={user?.id}
+            projects={activeProjects}
             onSelect={handleSelectAgent}
           />
         }
@@ -1163,34 +1166,18 @@ export function AgentDropdown({
   agents,
   activeAgent,
   userId,
+  projects,
   onSelect,
 }: {
   agents: Agent[];
   activeAgent: Agent | null;
   userId: string | undefined;
+  projects: readonly Project[];
   onSelect: (agent: Agent) => void;
 }) {
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  // Split into the user's own agents and everyone else so the menu groups
-  // them — matches the old AgentSelector layout.
-  const { mine, others } = useMemo(() => {
-    const mine: Agent[] = [];
-    const others: Agent[] = [];
-    for (const a of agents) {
-      if (a.owner_id === userId) mine.push(a);
-      else others.push(a);
-    }
-    return { mine, others };
-  }, [agents, userId]);
-
-  const query = filter.trim().toLowerCase();
-  const matches = (name: string) =>
-    !query || name.toLowerCase().includes(query) || matchesPinyin(name, query);
-  const filteredMine = mine.filter((agent) => matches(agent.name));
-  const filteredOthers = others.filter((agent) => matches(agent.name));
-
   const handlePick = (agent: Agent) => {
     onSelect(agent);
     setOpen(false);
@@ -1230,74 +1217,21 @@ export function AgentDropdown({
         </>
       }
     >
-      {filteredMine.length === 0 && filteredOthers.length === 0 ? (
-        <PickerEmpty />
-      ) : (
-        <>
-          {filteredMine.length > 0 && (
-            <PickerSection label={t(($) => $.window.my_agents)}>
-              {filteredMine.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === activeAgent.id}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-          {filteredOthers.length > 0 && (
-            <PickerSection label={t(($) => $.window.others)}>
-              {filteredOthers.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === activeAgent.id}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-        </>
-      )}
-    </PropertyPicker>
-  );
-}
-
-function AgentPickerItem({
-  agent,
-  isCurrent,
-  onSelect,
-}: {
-  agent: Agent;
-  isCurrent: boolean;
-  onSelect: (agent: Agent) => void;
-}) {
-  const { t } = useT("chat");
-  const runtimeBound = isAgentRuntimeBound(agent);
-  return (
-    <PickerItem
-      selected={isCurrent}
-      disabled={!runtimeBound}
-      tooltip={
-        runtimeBound ? undefined : t(($) => $.window.agent_needs_runtime_hint)
-      }
-      onClick={() => onSelect(agent)}
-    >
-      <ActorAvatar
-        actorType="agent"
-        actorId={agent.id}
-        size="md"
-        enableHoverCard
-        showStatusDot
+      <AgentPickerGroups
+        agents={agents}
+        userId={userId}
+        projects={projects}
+        query={filter}
+        renderAgent={(agent) => (
+          <AgentPickerItem
+            key={agent.id}
+            agent={agent}
+            isCurrent={agent.id === activeAgent.id}
+            onSelect={handlePick}
+          />
+        )}
       />
-      <span className="truncate flex-1">{agent.name}</span>
-      {!runtimeBound && (
-        <span className="shrink-0 text-micro text-amber-600 dark:text-amber-400">
-          {t(($) => $.window.agent_needs_runtime)}
-        </span>
-      )}
-    </PickerItem>
+    </PropertyPicker>
   );
 }
 

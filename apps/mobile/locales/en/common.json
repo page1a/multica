@@ -49,5 +49,11 @@
     "hours_ago_other": "{{count}}h ago",
     "days_ago_other": "{{count}}d ago",
     "weeks_ago_other": "{{count}}w ago"
+  },
+  "domain": {
+    "label": "Domain",
+    "generic": "Generic",
+    "project_header": "Pick any; none means generic",
+    "issue_header": "Only the project's domains"
   }
 }

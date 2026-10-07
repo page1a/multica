@@ -53,6 +53,8 @@ export function useCreateAgentSubmit(options: {
    * rather than as an id the server will reject.
    */
   parentAgentId?: string | null;
+  /** Domain of the specialisation (DENE-1451); the server names it base role + domain. */
+  domainId?: string | null;
   /** Runs after the agent is committed, before navigation. */
   onCreated?: (agent: Agent) => Promise<void> | void;
 }) {
@@ -73,6 +75,7 @@ export function useCreateAgentSubmit(options: {
     template,
     duplicateSource,
     parentAgentId,
+    domainId,
     onCreated,
   } = options;
 
@@ -89,6 +92,7 @@ export function useCreateAgentSubmit(options: {
           template,
           duplicateSource,
           parentAgentId,
+          domainId,
         }),
       );
       if (!agent.id) throw new Error(t(($) => $.creation_studio.create_failed));

@@ -49,6 +49,9 @@ type ProjectResponse struct {
 	// value new resources joining this project inherit.
 	Visibility string `json:"visibility"`
 	CreatedBy  string `json:"created_by,omitempty"`
+	// DomainIDs are the workspace domains this project works in (DENE-1451).
+	// Empty means generic. Its issues each pick one of them.
+	DomainIDs []string `json:"domain_ids"`
 }
 
 func projectToResponse(p db.Project) ProjectResponse {
@@ -68,6 +71,7 @@ func projectToResponse(p db.Project) ProjectResponse {
 		UpdatedAt:   timestampToString(p.UpdatedAt),
 		Visibility:  p.Visibility,
 		CreatedBy:   uuidToString(p.CreatedBy),
+		DomainIDs:   domainIDStrings(p.DomainIds),
 	}
 }
 
@@ -116,6 +120,8 @@ type CreateProjectRequest struct {
 	StartDate   *string                               `json:"start_date"`
 	DueDate     *string                               `json:"due_date"`
 	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
+	// DomainIDs takes domain ids or names; empty or 通用 means generic.
+	DomainIDs []string `json:"domain_ids,omitempty"`
 }
 
 // CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
@@ -138,6 +144,9 @@ type UpdateProjectRequest struct {
 	LeadID      *string `json:"lead_id"`
 	StartDate   *string `json:"start_date"`
 	DueDate     *string `json:"due_date"`
+	// DomainIDs replaces the project's domains when present (ids or names);
+	// an empty list makes the project generic.
+	DomainIDs *[]string `json:"domain_ids"`
 }
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +414,21 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var domainIDs []pgtype.UUID
+	if len(req.DomainIDs) > 0 {
+		idx, err := h.loadDomainIndex(r.Context(), wsUUID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load domains")
+			return
+		}
+		if domainIDs, err = idx.resolveRefs(req.DomainIDs); err != nil {
+			writeError(w, http.StatusBadRequest, "domain_ids: "+err.Error())
+			return
+		}
+	}
+
 	createParams := db.CreateProjectParams{
+		DomainIds:   domainIDs,
 		WorkspaceID: wsUUID,
 		Title:       req.Title,
 		Description: ptrToText(req.Description),
@@ -657,9 +680,38 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
 		}
 	}
-	project, err := h.Queries.UpdateProject(r.Context(), params)
+	var domainIDs []pgtype.UUID
+	if req.DomainIDs != nil {
+		idx, err := h.loadDomainIndex(r.Context(), wsUUID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load domains")
+			return
+		}
+		if domainIDs, err = idx.resolveRefs(*req.DomainIDs); err != nil {
+			writeError(w, http.StatusBadRequest, "domain_ids: "+err.Error())
+			return
+		}
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update project")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	project, err := qtx.UpdateProject(r.Context(), params)
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "update")
+		return
+	}
+	if req.DomainIDs != nil {
+		if project, err = h.setProjectDomains(r.Context(), qtx, project, domainIDs); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update project domains")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update project")
 		return
 	}
 	resp := projectToResponse(project)

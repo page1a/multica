@@ -44,6 +44,7 @@ export function AgentConfigurationPanel({
   currentUserId,
   nameError,
   onNameChange,
+  nameLockedHint,
   compact = false,
   onRuntimeSelect,
   runtimeSwitchPending = false,
@@ -57,6 +58,9 @@ export function AgentConfigurationPanel({
   currentUserId: string | null;
   nameError: string | null;
   onNameChange: (name: string) => void;
+  /** Set when the name is generated (a specialisation's base role + domain):
+   *  the field turns read-only and shows this line instead. */
+  nameLockedHint?: string;
   compact?: boolean;
   /** Builder sessions rebind the server-side carrier instead of only editing
    *  the draft. Absent for the plain create flows, where the draft is the only
@@ -118,6 +122,7 @@ export function AgentConfigurationPanel({
             name={draft.name}
             error={nameError}
             onChange={onNameChange}
+            lockedHint={nameLockedHint}
           />
           <DraftFieldRow
             compact={compact}
@@ -331,11 +336,13 @@ export function AgentNameField({
   name,
   error,
   onChange,
+  lockedHint,
   compact = false,
 }: {
   name: string;
   error: string | null;
   onChange: (name: string) => void;
+  lockedHint?: string;
   compact?: boolean;
 }) {
   const { t } = useT("agents");
@@ -364,6 +371,7 @@ export function AgentNameField({
           aria-invalid={!!error}
           aria-describedby={error ? errorId : undefined}
           value={name}
+          readOnly={!!lockedHint}
           onChange={(event) => onChange(event.target.value)}
           placeholder={t(($) => $.create_dialog.name_placeholder)}
         />
@@ -371,6 +379,8 @@ export function AgentNameField({
           <p id={errorId} className="text-caption text-destructive">
             {error}
           </p>
+        ) : lockedHint ? (
+          <p className="text-caption text-muted-foreground">{lockedHint}</p>
         ) : null}
       </div>
     </DraftFieldRow>

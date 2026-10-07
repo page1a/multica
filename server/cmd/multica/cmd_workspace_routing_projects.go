@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -13,30 +14,36 @@ import (
 	"github.com/multica-ai/multica/server/internal/routing"
 )
 
-// The project -> direction table is workspace data: it lives in
-// workspace.settings.routing.projects, laid over the defaults shipped in
-// ladder.json. These commands are the way to edit a row without a release.
+// The project -> direction table is the FALLBACK for projects with no domain
+// of their own (DENE-1451): a project's domains are its own field now
+// (multica project update --domain), and this name table only answers for a
+// project nobody has set one on — chiefly the game-* prefix rule. It lives in
+// workspace.settings.routing.projects, laid over the defaults in ladder.json.
 
 var workspaceRoutingProjectsCmd = &cobra.Command{
 	Use:   "routing-projects",
-	Short: "Manage the project -> direction table used by automatic routing",
-	Long: `Automatic routing picks a direction-specialised seat (孙悟空游戏, 布尔玛出海, …)
-from the project an issue belongs to. This table says which project is which
-direction. It is workspace data: a change applies to the next routed issue,
-with no release and no restart.
+	Short: "Manage the fallback project-name -> domain table used by automatic routing",
+	Long: `Automatic routing picks a domain-specialised seat (孙悟空游戏, 布尔玛出海, …)
+from the issue's domain, else its project's domain. Set those directly:
 
-A row maps a project name — exact, or a prefix ending in * (game-*) — to one
-of the ladder's directions, or to 通用 for a project that is deliberately
-general-purpose. Matching ignores case; an exact row beats a prefix row, and
+  multica project update <project> --domain 出海 --domain 自媒体
+  multica issue update <issue> --domain 自媒体
+
+This table is only the fallback for a project with no domain of its own: a
+row maps a project name — exact, or a prefix ending in * (game-*) — to one of
+the workspace domains (multica domain list), or to 通用 for a project that is
+deliberately general-purpose.  Matching ignores case; an exact row beats a prefix row, and
 the longest prefix wins. A project with no row routes to the generic seats and
 the routing comment says the project is not in the table.
 
+The list also shows projects that carry their own domains (source
+"project"); those rows win over the table and are edited on the project.
+
 Examples:
   multica workspace routing-projects list
-  multica workspace routing-projects set tarot 出海
   multica workspace routing-projects set "game-*" 游戏
   multica workspace routing-projects set "Multica 魔改" 通用
-  multica workspace routing-projects unset tarot`,
+  multica workspace routing-projects unset "game-*"`,
 }
 
 var workspaceRoutingProjectsListCmd = &cobra.Command{
@@ -101,17 +108,69 @@ func findRoutingProjectRow(rows map[string]string, project string) (string, bool
 	return "", false
 }
 
-// validRoutingDirection accepts a declared direction or the generic marker.
-func validRoutingDirection(direction string) bool {
+// workspaceDomainNames is the workspace domain list, in its own order.
+func workspaceDomainNames(ctx context.Context, client *cli.APIClient) ([]string, error) {
+	domains, err := listDomains(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(domains))
+	for _, d := range domains {
+		names = append(names, strVal(d, "name"))
+	}
+	return names, nil
+}
+
+// validRoutingDirection accepts a workspace domain or the generic marker.
+func validRoutingDirection(direction string, domains []string) bool {
 	if direction == routing.GenericDirection {
 		return true
 	}
-	for _, d := range routing.DefaultLadder.Directions {
+	for _, d := range domains {
 		if d == direction {
 			return true
 		}
 	}
 	return false
+}
+
+// projectDomainRows lists projects that carry their own domains; those win
+// over any name-table row.
+func projectDomainRows(ctx context.Context, client *cli.APIClient) (map[string]string, error) {
+	domains, err := listDomains(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	nameByID := make(map[string]string, len(domains))
+	for _, d := range domains {
+		nameByID[strVal(d, "id")] = strVal(d, "name")
+	}
+	var result struct {
+		Projects []struct {
+			Title     string   `json:"title"`
+			DomainIDs []string `json:"domain_ids"`
+		} `json:"projects"`
+	}
+	path := "/api/projects"
+	if client.WorkspaceID != "" {
+		path += "?" + url.Values{"workspace_id": {client.WorkspaceID}}.Encode()
+	}
+	if err := client.GetJSON(ctx, path, &result); err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
+	}
+	rows := map[string]string{}
+	for _, p := range result.Projects {
+		names := make([]string, 0, len(p.DomainIDs))
+		for _, id := range p.DomainIDs {
+			if n, ok := nameByID[id]; ok {
+				names = append(names, n)
+			}
+		}
+		if len(names) > 0 {
+			rows[p.Title] = strings.Join(names, "+")
+		}
+	}
+	return rows, nil
 }
 
 func loadWorkspaceSettings(ctx context.Context, client *cli.APIClient, wsID string) (map[string]any, error) {
@@ -183,6 +242,14 @@ func runWorkspaceRoutingProjectsList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	own := routingProjectRows(settings)
+	domains, err := workspaceDomainNames(ctx, client)
+	if err != nil {
+		return err
+	}
+	fromProjects, err := projectDomainRows(ctx, client)
+	if err != nil {
+		return err
+	}
 
 	type row struct {
 		Project   string `json:"project"`
@@ -191,7 +258,14 @@ func runWorkspaceRoutingProjectsList(cmd *cobra.Command, _ []string) error {
 	}
 	rows := make([]row, 0, len(own)+len(routing.DefaultLadder.Projects))
 	seen := map[string]bool{}
+	for k, v := range fromProjects {
+		seen[routingProjectKey(k)] = true
+		rows = append(rows, row{Project: k, Direction: v, Source: "project"})
+	}
 	for k, v := range own {
+		if seen[routingProjectKey(k)] {
+			continue
+		}
 		seen[routingProjectKey(k)] = true
 		rows = append(rows, row{Project: k, Direction: v, Source: "workspace"})
 	}
@@ -204,7 +278,7 @@ func runWorkspaceRoutingProjectsList(cmd *cobra.Command, _ []string) error {
 
 	if format, _ := cmd.Flags().GetString("output"); format == "json" {
 		return cli.PrintJSON(os.Stdout, map[string]any{
-			"directions": append([]string{routing.GenericDirection}, routing.DefaultLadder.Directions...),
+			"directions": append([]string{routing.GenericDirection}, domains...),
 			"projects":   rows,
 		})
 	}
@@ -219,16 +293,21 @@ func runWorkspaceRoutingProjectsSet(cmd *cobra.Command, args []string) error {
 	if project == "" {
 		return fmt.Errorf("project name cannot be empty")
 	}
-	if !validRoutingDirection(direction) {
-		return fmt.Errorf("unknown direction %q; use one of: %s",
-			direction, strings.Join(append([]string{routing.GenericDirection}, routing.DefaultLadder.Directions...), ", "))
-	}
 	client, wsID, err := routingProjectsSession(cmd)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
+
+	domains, err := workspaceDomainNames(ctx, client)
+	if err != nil {
+		return err
+	}
+	if !validRoutingDirection(direction, domains) {
+		return fmt.Errorf("unknown domain %q; use one of: %s (add one with `multica domain add`)",
+			direction, strings.Join(append([]string{routing.GenericDirection}, domains...), ", "))
+	}
 
 	settings, err := loadWorkspaceSettings(ctx, client, wsID)
 	if err != nil {

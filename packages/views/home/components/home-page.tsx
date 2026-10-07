@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
-import { ChevronDown, ChevronRight, Check, FolderKanban, History, MoreHorizontal, RotateCcw, Sparkles, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, FolderKanban, MoreHorizontal, RotateCcw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -38,7 +38,7 @@ import { useT } from "../../i18n";
 import { PickerItem, PropertyPicker, PICKER_TRIGGER_CLASS } from "../../issues/components/pickers/property-picker";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useTimeAgo } from "../../inbox/components/inbox-list-item";
-import { ACTIVITY_LAYER_PARAM, LAYER_PARAM } from "../../inbox/components/inbox-view";
+import { InboxLayerTabs } from "../../inbox/components/inbox-layer-tabs";
 import { IssuePeekHost } from "../../issues/components/issue-peek";
 import {
   PEEK_TARGET_ATTR,
@@ -332,25 +332,26 @@ function BoardRowView({
         }}
         className={cn(
           "group grid cursor-pointer gap-3 px-4 py-3 outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40",
+          // Narrow screens stack the title under the tag/meta line; a fixed
+          // tag column there leaves the title one glyph wide.
+          "grid-cols-[minmax(0,1fr)_auto]",
           row.lane === "waiting" && !nested
-            ? "grid-cols-[auto_6.5rem_1fr_auto]"
-            : nested
-              ? "grid-cols-[auto_minmax(0,1fr)_auto] sm:grid-cols-[6.5rem_1fr_auto]"
-              : "grid-cols-[6.5rem_1fr_auto]",
+            ? "sm:grid-cols-[auto_6.5rem_minmax(0,1fr)_auto]"
+            : "sm:grid-cols-[6.5rem_minmax(0,1fr)_auto]",
           nested && "py-2 pl-4 sm:pl-8",
           highlighted && "bg-accent/60 shadow-[inset_3px_0_0_var(--color-primary)]",
         )}
       >
-        {row.lane === "waiting" && !nested && <span aria-hidden />}
+        {row.lane === "waiting" && !nested && <span aria-hidden className="hidden sm:block" />}
         <span
           className={cn(
-            "h-fit w-fit rounded-sm px-1.5 py-0.5 text-caption font-medium",
+            "order-1 h-fit w-fit rounded-sm sm:order-none px-1.5 py-0.5 text-caption font-medium",
             LANE_TAG_CLASS[row.lane],
           )}
         >
           {copy.tag(row)}
         </span>
-        <div className="min-w-0 space-y-0.5">
+        <div className="order-3 col-span-2 min-w-0 space-y-0.5 sm:order-none sm:col-span-1">
           <div className="flex min-w-0 items-baseline gap-2">
             <span className="shrink-0 text-caption text-muted-foreground tabular-nums">
               {row.identifier}
@@ -411,7 +412,7 @@ function BoardRowView({
             </button>
           )}
         </div>
-        <div className="flex flex-col items-end gap-0.5 text-right text-caption text-muted-foreground">
+        <div className="order-2 flex min-w-0 flex-col items-end gap-0.5 text-right text-caption text-muted-foreground sm:order-none">
           {meta && <span className="text-foreground">{meta}</span>}
           <div className="flex items-center gap-2">
             <span>{time}</span>
@@ -767,7 +768,6 @@ export function InboxBoardLanes({
  */
 function HomePageContent() {
   const wsId = useWorkspaceId();
-  const wsPaths = useWorkspacePaths();
   const copy = useBoardCopy();
   const project = useBoardProject(wsId);
   const { board, isLoading, isError } = useInboxBoard(wsId, { projectId: project.projectId });
@@ -777,18 +777,8 @@ function HomePageContent() {
       <PageHeader>
         <h1 className="flex-1 text-body font-semibold">{copy.t(($) => $.board.title)}</h1>
         <BoardProjectControls project={project} />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="min-h-11 min-w-11 justify-center text-muted-foreground sm:min-h-0 sm:min-w-0"
-          aria-label={copy.t(($) => $.board.activity_link)}
-          nativeButton={false}
-          render={<AppLink href={`${wsPaths.inbox()}?${LAYER_PARAM}=${ACTIVITY_LAYER_PARAM}`} />}
-        >
-          <History className="size-4" />
-          <span className="hidden sm:inline">{copy.t(($) => $.board.activity_link)}</span>
-        </Button>
       </PageHeader>
+      <InboxLayerTabs active="board" />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl space-y-6 px-6 py-6">
           <InboxBoardLanes board={board} isLoading={isLoading} isError={isError} />

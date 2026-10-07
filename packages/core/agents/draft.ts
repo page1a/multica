@@ -221,8 +221,10 @@ export function buildCreateAgentRequest(options: {
    * server answers 400 for it.
    */
   parentAgentId?: string | null;
+  /** Domain of the specialisation (DENE-1451); only sent with a base role. */
+  domainId?: string | null;
 }): CreateAgentRequest {
-  const { draft, runtimeId, template, duplicateSource, parentAgentId } = options;
+  const { draft, runtimeId, template, duplicateSource, parentAgentId, domainId } = options;
   const request: CreateAgentRequest = {
     name: draft.name.trim(),
     description: draft.description.trim(),
@@ -248,6 +250,7 @@ export function buildCreateAgentRequest(options: {
   };
   if (parentAgentId) {
     request.parent_agent_id = parentAgentId;
+    if (domainId) request.domain_id = domainId;
   }
   if (duplicateSource) {
     if (duplicateSource.custom_args.length > 0) {

@@ -1122,6 +1122,36 @@ func (q *Queries) MarkInboxRead(ctx context.Context, id pgtype.UUID) (InboxItem,
 	return i, err
 }
 
+const markInboxReadByIssue = `-- name: MarkInboxReadByIssue :execrows
+UPDATE inbox_item SET read = true, read_at = COALESCE(read_at, now())
+WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3
+  AND issue_id = $4 AND archived = false AND read = false
+`
+
+type MarkInboxReadByIssueParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	RecipientType string      `json:"recipient_type"`
+	RecipientID   pgtype.UUID `json:"recipient_id"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+}
+
+// Group-scoped read for the grouped inbox list (DENE-1505): the list ships one
+// row per issue, so the client no longer holds the sibling ids it used to mark
+// one by one. Same scope it marked: every active row of the issue, calls
+// included — unlike MarkIssueInboxRead, which keeps open-call rows unread.
+func (q *Queries) MarkInboxReadByIssue(ctx context.Context, arg MarkInboxReadByIssueParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markInboxReadByIssue,
+		arg.WorkspaceID,
+		arg.RecipientType,
+		arg.RecipientID,
+		arg.IssueID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markInboxUnread = `-- name: MarkInboxUnread :one
 UPDATE inbox_item SET read = false, read_at = NULL
 WHERE id = $1

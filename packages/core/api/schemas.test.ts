@@ -395,12 +395,15 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[0]?.metadata).toEqual({});
   });
 
-  it("rejects metadata with non-primitive values (nested object)", () => {
+  // Server-internal writers (routing's reviewer_relay) store objects in
+  // metadata; failing the issue would blank the whole list (DENE-1506).
+  it("drops non-primitive metadata values and keeps the issue", () => {
     const payload = {
-      issues: [{ ...baseIssue, metadata: { nested: { x: 1 } } }],
+      issues: [{ ...baseIssue, metadata: { nested: { x: 1 }, list: [1], none: null, pr: 7 } }],
       total: 1,
     };
-    expect(ListIssuesResponseSchema.safeParse(payload).success).toBe(false);
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ pr: 7 });
   });
 
   it("accepts a numeric stage", () => {

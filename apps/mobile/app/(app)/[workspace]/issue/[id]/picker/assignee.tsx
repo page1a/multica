@@ -29,6 +29,7 @@ export default function IssueAssigneePickerRoute() {
   return (
     <AssigneePickerBody
       value={value}
+      issueId={id}
       query={query}
       onChange={(next) => {
         if (next === null) {

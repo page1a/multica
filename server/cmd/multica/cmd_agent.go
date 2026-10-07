@@ -26,7 +26,16 @@ var agentCmd = &cobra.Command{
 var agentListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List agents in the workspace",
-	RunE:  runAgentList,
+	Long: `List agents in the workspace.
+
+With --for-issue or --for-project, each agent carries a "fit" for that work
+and the list is ordered by it, the same judgement dispatch uses:
+  match    对口 — a specialisation for the work's domain (in a generic scene, a base role)
+  generic  通用 — a base role, the fallback
+  other    其他 — a specialisation for another domain, still selectable
+The work's domain is the issue's own domain, else its project's domains,
+else generic.`,
+	RunE: runAgentList,
 }
 
 var agentGetCmd = &cobra.Command{
@@ -177,12 +186,14 @@ func init() {
 	// agent list
 	agentListCmd.Flags().String("output", "table", "Output format: table or json")
 	agentListCmd.Flags().Bool("include-archived", false, "Include archived agents")
+	agentListCmd.Flags().String("for-issue", "", "Group agents by fit for this issue (key or UUID); adds a fit field")
+	agentListCmd.Flags().String("for-project", "", "Group agents by fit for this project (UUID or prefix); adds a fit field")
 
 	// agent get
 	agentGetCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent create
-	agentCreateCmd.Flags().String("name", "", "Agent name (required)")
+	agentCreateCmd.Flags().String("name", "", "Agent name (required unless --domain is given, which names the seat base role + domain)")
 	agentCreateCmd.Flags().String("description", "", "Agent description")
 	agentCreateCmd.Flags().String("instructions", "", "Agent instructions")
 	agentCreateCmd.Flags().String("conversation-starters", "", "Conversation starters as a JSON array of {\"label\",\"prompt\"} objects (at most 3; label ≤80, prompt ≤4000). Shown above the Chat composer; selecting one fills the composer and does not start a run. Omit to default to none.")
@@ -205,6 +216,8 @@ func init() {
 	agentCreateCmd.Flags().StringSlice("public-to-member", nil, "public_to: allow the given member user id(s) to invoke this agent. Repeatable.")
 	agentCreateCmd.Flags().Int32("max-concurrent-tasks", 6, "Maximum concurrent runs (1-50)")
 	agentCreateCmd.Flags().String("parent-agent-id", "", "Base role to specialise: the new agent inherits that agent's prompt (prepended at run time), skills, and — unless --runtime-inherited=false — its runtime configuration (runtime, model, thinking level). Must be a base role itself — a specialisation cannot be specialised further. Empty = an independent base role.")
+	agentCreateCmd.Flags().String("base-role", "", "Base role to specialise, by name or id (same as --parent-agent-id, which takes an id)")
+	agentCreateCmd.Flags().String("domain", "", "Workspace domain of the new specialisation (needs --base-role). The name becomes base role + domain; a base role has one specialisation per domain. See `multica domain list`")
 	agentCreateCmd.Flags().Bool("runtime-inherited", false, "Specialisation only: follow the base role's runtime configuration (runtime_id, model, thinking_level, service_tier, runtime_config). Default for a specialisation; pass --runtime-inherited=false together with --runtime-id to give it its own. Rejected without --parent-agent-id.")
 	agentCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -575,6 +588,26 @@ func runAgentList(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetBool("include-archived"); v {
 		params.Set("include_archived", "true")
 	}
+	forIssue, _ := cmd.Flags().GetString("for-issue")
+	forProject, _ := cmd.Flags().GetString("for-project")
+	if forIssue != "" && forProject != "" {
+		return fmt.Errorf("--for-issue and --for-project are exclusive")
+	}
+	if forIssue != "" {
+		ref, err := resolveIssueRef(ctx, client, forIssue)
+		if err != nil {
+			return fmt.Errorf("resolve issue: %w", err)
+		}
+		params.Set("for_issue", ref.ID)
+	}
+	if forProject != "" {
+		ref, err := resolveProjectID(ctx, client, forProject)
+		if err != nil {
+			return fmt.Errorf("resolve project: %w", err)
+		}
+		params.Set("for_project", ref.ID)
+	}
+	withFit := forIssue != "" || forProject != ""
 	path := "/api/agents"
 	if len(params) > 0 {
 		path += "?" + params.Encode()
@@ -589,19 +622,26 @@ func runAgentList(cmd *cobra.Command, _ []string) error {
 	}
 
 	headers := []string{"ID", "NAME", "STATUS", "RUNTIME", "ARCHIVED"}
+	if withFit {
+		headers = append(headers, "FIT")
+	}
 	rows := make([][]string, 0, len(agents))
 	for _, a := range agents {
 		archived := ""
 		if v := strVal(a, "archived_at"); v != "" {
 			archived = "yes"
 		}
-		rows = append(rows, []string{
+		row := []string{
 			strVal(a, "id"),
 			strVal(a, "name"),
 			strVal(a, "status"),
 			strVal(a, "runtime_mode"),
 			archived,
-		})
+		}
+		if withFit {
+			row = append(row, strVal(a, "fit"))
+		}
+		rows = append(rows, row)
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
 	return nil
@@ -679,12 +719,29 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	name, _ := cmd.Flags().GetString("name")
-	if name == "" {
-		return fmt.Errorf("--name is required")
+	domain, _ := cmd.Flags().GetString("domain")
+	domain = strings.TrimSpace(domain)
+	if name == "" && domain == "" {
+		return fmt.Errorf("--name is required (or --base-role with --domain, which names the seat)")
 	}
 	runtimeID, _ := cmd.Flags().GetString("runtime-id")
 	parentAgentID, _ := cmd.Flags().GetString("parent-agent-id")
 	parentAgentID = strings.TrimSpace(parentAgentID)
+	if baseRole, _ := cmd.Flags().GetString("base-role"); strings.TrimSpace(baseRole) != "" {
+		if parentAgentID != "" {
+			return fmt.Errorf("--base-role and --parent-agent-id name the same thing; pass one")
+		}
+		resolveCtx, resolveCancel := cli.APIContext(context.Background())
+		id, err := resolveAgent(resolveCtx, client, strings.TrimSpace(baseRole))
+		resolveCancel()
+		if err != nil {
+			return fmt.Errorf("resolve base role: %w", err)
+		}
+		parentAgentID = id
+	}
+	if domain != "" && parentAgentID == "" {
+		return fmt.Errorf("--domain needs --base-role: only a specialisation works in a domain")
+	}
 
 	// Runtime inheritance (DENE-505). A specialisation follows its base role's
 	// runtime configuration unless the caller opts out, which is why --runtime-id
@@ -783,6 +840,9 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 	// only sent when it carries an id.
 	if parentAgentID != "" {
 		body["parent_agent_id"] = parentAgentID
+	}
+	if domain != "" {
+		body["domain_id"] = domain
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())

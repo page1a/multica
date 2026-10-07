@@ -1,6 +1,6 @@
 import type { Issue, IssueMetadata, IssueReaction } from "./issue";
 import type { IssueProperty, IssuePropertyValues } from "./property";
-import type { Agent } from "./agent";
+import type { Agent, AgentStatus } from "./agent";
 import type { InboxItem } from "./inbox";
 import type { Comment, Reaction } from "./comment";
 import type { TimelineEntry } from "./activity";
@@ -189,7 +189,10 @@ export interface IssueStatusChangedPayload {
 }
 
 export interface AgentStatusPayload {
-  agent: Agent;
+  agent?: Agent;
+  /** Present together with `status` only when the event is a pure status flip. */
+  agent_id?: string;
+  status?: AgentStatus;
 }
 
 export interface AgentCreatedPayload {

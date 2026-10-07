@@ -41,7 +41,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { BreadcrumbHeader, type BreadcrumbSegment } from "../../layout/breadcrumb-header";
+import { BreadcrumbBackButton, BreadcrumbHeader, type BreadcrumbSegment } from "../../layout/breadcrumb-header";
 import { OverflowActions, type OverflowItem } from "../../layout/overflow-actions";
 import { ResourceNotFound, WriteAction, useGuestReadOnly } from "../../layout/guest-readonly";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -94,6 +94,8 @@ import { PriorityPicker } from "./pickers/priority-picker";
 import { StagePicker, maxSiblingStage } from "./pickers/stage-picker";
 import { StartDatePicker } from "./pickers/start-date-picker";
 import { DueDatePicker } from "./pickers/due-date-picker";
+import { useAgentScene } from "@multica/core/agents";
+import { AgentSceneProvider } from "../../agents/components/agent-scene-context";
 import { AssigneePicker } from "./pickers/assignee-picker";
 import { AssigneeSourceNote } from "./assignee-source-note";
 import { ReviewerPicker } from "./pickers/reviewer-picker";
@@ -196,6 +198,8 @@ import { openGoalCompletion } from "@multica/core/modals";
 import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
+import { DomainSelect } from "../../domains/domain-select";
+import { domainListOptions } from "@multica/core/domains";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
 import { useInPageFind } from "../hooks/use-in-page-find";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
@@ -1037,6 +1041,7 @@ function SubIssueRow({
             assigneeId={child.assignee_id}
             onUpdate={handleUpdate}
             align="end"
+            sceneProjectIds={[child.project_id]}
             trigger={
               child.assignee_type && child.assignee_id ? (
                 <ActorAvatar
@@ -2176,6 +2181,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     ...projectDetailOptions(wsId, issueProjectId ?? ""),
     enabled: !!issueProjectId,
   });
+  // An issue picks one of its project's domains, or stays generic (DENE-1451).
+  const { t: tCommon } = useT("common");
+  const { data: domains = [] } = useQuery(domainListOptions(wsId));
+  const projectDomainIds = breadcrumbProject?.domain_ids ?? [];
+  const issueDomainOptions = [
+    { id: "", name: tCommon(($) => $.domain.generic) },
+    ...domains.filter((d) => projectDomainIds.includes(d.id)).map((d) => ({ id: d.id, name: d.name })),
+  ];
   const {
     data: childIssues = [],
     isSuccess: childIssuesLoaded,
@@ -2572,6 +2585,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Called before the `if (!issue)` early return so hook order stays stable.
   const actions = useIssueActions(issue);
   const handleUpdateField = actions.updateField;
+  // The issue's scene (DENE-1477): @ mentions in its editors rank agents by fit.
+  const agentScene = useAgentScene(wsId, [issue?.project_id], issue?.domain_id);
   const issueUpdate = useUpdateIssue();
   const clearTitleSuggestion = useMutation({
     mutationFn: () => api.deleteIssueMetadata(id, "title_suggestion"),
@@ -2854,7 +2869,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             />
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_assignee)}>
-            <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
+            <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" sceneProjectIds={[issue.project_id]} sceneDomainId={issue.domain_id} />
           </PropRow>
           {issue.assignee_source && issue.assignee_id && (
             <div className="col-span-2">
@@ -2869,7 +2884,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               tickets keep their decision and can clear it. */}
           {(issue.parent_issue_id == null || issue.reviewer_type != null) && (
             <PropRow label={t(($) => $.detail.prop_reviewer)}>
-              <ReviewerPicker reviewerType={issue.reviewer_type} reviewerId={issue.reviewer_id} onUpdate={handleUpdateField} align="start" />
+              <ReviewerPicker reviewerType={issue.reviewer_type} reviewerId={issue.reviewer_id} onUpdate={handleUpdateField} align="start" sceneProjectIds={[issue.project_id]} sceneDomainId={issue.domain_id} />
             </PropRow>
           )}
           <PropRow label={t(($) => $.detail.prop_project)}>
@@ -2878,6 +2893,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               onUpdate={handleUpdateField}
             />
           </PropRow>
+          {issue.project_id && (
+            <PropRow label={tCommon(($) => $.domain.label)}>
+              <DomainSelect
+                header={tCommon(($) => $.domain.issue_header)}
+                options={issueDomainOptions}
+                selected={issue.domain_id ? [issue.domain_id] : []}
+                onChange={(ids) => handleUpdateField({ domain_id: ids[0] ?? null })}
+              />
+            </PropRow>
+          )}
           <PropRow label={t(($) => $.detail.goal.title)}>
             {issueGoal ? (
               <button
@@ -3478,15 +3503,38 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     },
   ];
 
+  // The peek card and a phone are both too narrow for every header control:
+  // both keep what fits and hand the rest to the "⋯" menu.
+  const compactHeader = isPeek || isMobile;
+  const sidebarToggle = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant={sidebarOpen ? "secondary" : "ghost"}
+            size="icon-sm"
+            className={sidebarOpen ? "" : "text-muted-foreground"}
+            onClick={handleToggleSidebar}
+          >
+            <PanelRight />
+          </Button>
+        }
+      />
+      <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
+    </Tooltip>
+  );
+  const backFallback = breadcrumbSegments.at(-1)?.href;
+
   const breadcrumbLeaf = (
     <AppLink
       href={paths.issueDetail(issue.id)}
-      // In the peek the identifier is all the leaf says; it outranks the crumb
-      // before it, which truncates first.
-      className={cn("flex min-w-0 transition-opacity hover:opacity-80", isPeek && "shrink-0")}
+      // In the peek and on a phone the identifier is all the leaf says (the
+      // title is right below); it outranks the crumb before it, which
+      // truncates first.
+      className={cn("flex min-w-0 transition-opacity hover:opacity-80", compactHeader && "shrink-0")}
     >
       <span className="truncate font-medium text-foreground">
-        {isPeek ? issue.identifier : `${issue.identifier} ${issue.title}`}
+        {compactHeader ? issue.identifier : `${issue.identifier} ${issue.title}`}
       </span>
     </AppLink>
   );
@@ -3528,12 +3576,18 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             className={cn("absolute top-14 z-30", isMobile ? "right-4" : "right-10")}
           />
         )}
-        {isPeek ? (
+        {compactHeader ? (
           // The peek's controls fill what the card leaves them: the title and
           // the pinned ones (⋯, full page, close) keep their room, and the
           // bar between them hands what does not fit to the ⋯ menu — so the
           // close button can never be cut off, whatever the header grows.
-          <PageHeader leading={leadingAction} className="bg-background text-body">
+          <PageHeader
+            leading={
+              leadingAction ??
+              (!isPeek && backFallback ? <BreadcrumbBackButton fallback={backFallback} /> : undefined)
+            }
+            className="bg-background text-body"
+          >
             <div className="flex min-w-0 max-w-[55%] shrink items-center gap-1.5">
               {breadcrumbSegments.map((segment) => (
                 <Fragment key={segment.href}>
@@ -3553,7 +3607,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               renderMore={(overflow) => (
                 <div className="flex shrink-0 items-center gap-1">
                   {issueActionsMenu(overflow)}
-                  {trailingActions}
+                  {isPeek ? trailingActions : sidebarToggle}
                 </div>
               )}
             />
@@ -3569,21 +3623,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               <Fragment key={item.key}>{item.node}</Fragment>
             ))}
             {issueActionsMenu()}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant={sidebarOpen ? "secondary" : "ghost"}
-                    size="icon-sm"
-                    className={sidebarOpen ? "" : "text-muted-foreground"}
-                    onClick={handleToggleSidebar}
-                  >
-                    <PanelRight />
-                  </Button>
-                }
-              />
-              <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
-            </Tooltip>
+            {sidebarToggle}
             </>
           }
         />
@@ -4378,7 +4418,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       describeItem={describeDeliverable}
       onOpenOverview={openOverviewFromViewer}
     >
-      <AttachmentVersionsProvider files={deliverableFiles}>{layout}</AttachmentVersionsProvider>
+      <AttachmentVersionsProvider files={deliverableFiles}>
+        <AgentSceneProvider value={agentScene}>{layout}</AgentSceneProvider>
+      </AttachmentVersionsProvider>
       <DeliverablesOverview
         open={overview.open}
         onClose={closeOverview}

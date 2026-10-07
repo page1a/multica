@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/routing"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -30,6 +31,10 @@ type assignmentRuling struct {
 	Source     string
 	SourceUser pgtype.UUID
 	Quote      string
+	// Seat, when set, is the agent the pick lands on instead of the one named:
+	// a quote naming only a base role puts the issue on that role's
+	// specialisation for the issue's domain (DENE-1451).
+	Seat pgtype.UUID
 	// Reason is returned to an agent when a requested pick is rejected. It is
 	// intentionally explicit so the agent can ask the person for a real quote
 	// instead of guessing again.
@@ -55,7 +60,7 @@ func (e *heldExecutor) is(assigneeType pgtype.Text, assigneeID pgtype.UUID) bool
 func (h *Handler) rulePick(
 	r *http.Request, workspaceID, actorType, actorID string,
 	assigneeType pgtype.Text, assigneeID pgtype.UUID, quote, resultingStatus string,
-	held *heldExecutor,
+	held *heldExecutor, scene sceneRef,
 ) assignmentRuling {
 	if actorType != "agent" {
 		// A person's own hand. Whatever quote they sent is not needed.
@@ -69,7 +74,11 @@ func (h *Handler) rulePick(
 	if quote != "" {
 		if task, ok := h.liveTaskOf(r, actorID); ok {
 			if user, holds := h.quoteFromInitiator(r.Context(), task, assigneeType, assigneeID, quote); holds {
-				return assignmentRuling{Apply: true, Source: routing.SourceQuote, SourceUser: user, Quote: strings.TrimSpace(quote)}
+				ruling := assignmentRuling{Apply: true, Source: routing.SourceQuote, SourceUser: user, Quote: strings.TrimSpace(quote)}
+				if seat, ok := h.seatForQuote(r.Context(), workspaceID, assigneeType, assigneeID, quote, scene); ok {
+					ruling.Seat = seat
+				}
+				return ruling
 			}
 		}
 		if assigneeType.Valid && (assigneeType.String == "agent" || assigneeType.String == "squad") {
@@ -310,4 +319,68 @@ func (h *Handler) stampAssignee(ctx context.Context, issue db.Issue, ruling assi
 		return issue
 	}
 	return stamped
+}
+
+// sceneRef is what a pick's scene is resolved from: the issue's domain (as
+// it will be stored) and its project.
+type sceneRef struct {
+	Domain  pgtype.UUID
+	Project pgtype.UUID
+}
+
+// seatForQuote is rule 3 of DENE-1477: a quote naming only a base role puts
+// the issue on that role's specialisation that fits the issue's scene
+// (service.LoadDomainScene, then routing.DomainFit). A quote naming the
+// specialisation itself, or a generic scene, leaves the named seat standing.
+func (h *Handler) seatForQuote(ctx context.Context, workspaceID string, assigneeType pgtype.Text, assigneeID pgtype.UUID, quote string, at sceneRef) (pgtype.UUID, bool) {
+	if !assigneeType.Valid || assigneeType.String != "agent" || !assigneeID.Valid {
+		return pgtype.UUID{}, false
+	}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	scene := service.LoadDomainScene(ctx, h.Queries, wsUUID, at.Domain, at.Project)
+	if scene.Scene.Generic() {
+		return pgtype.UUID{}, false
+	}
+	named, err := h.Queries.GetAgent(ctx, assigneeID)
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	base := named
+	if named.ParentAgentID.Valid {
+		if base, err = h.Queries.GetAgent(ctx, named.ParentAgentID); err != nil {
+			return pgtype.UUID{}, false
+		}
+	}
+	children, err := h.Queries.ListAgentChildren(ctx, base.ID)
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	q := strings.ToLower(strings.Join(strings.Fields(quote), " "))
+	for _, child := range children {
+		if n := strings.ToLower(strings.Join(strings.Fields(child.Name), " ")); n != "" && strings.Contains(q, n) {
+			return pgtype.UUID{}, false
+		}
+	}
+	// The fitting specialisation, in the scene's domain order when a project
+	// in several domains has one for more than one of them.
+	var seat db.Agent
+	rank := len(scene.Scene.Domains)
+	for _, child := range children {
+		if child.ArchivedAt.Valid || service.AgentDomainFit(scene.Scene, child, scene.Names) != routing.FitMatch {
+			continue
+		}
+		domain := service.AgentDomain(child, scene.Names)
+		for i, d := range scene.Scene.Domains {
+			if d == domain && i < rank {
+				seat, rank = child, i
+			}
+		}
+	}
+	if !seat.ID.Valid || seat.ID == named.ID {
+		return pgtype.UUID{}, false
+	}
+	return seat.ID, true
 }

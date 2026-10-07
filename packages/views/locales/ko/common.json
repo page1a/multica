@@ -204,5 +204,33 @@
       "copied": "링크를 복사했습니다",
       "copy_failed": "링크를 복사하지 못했습니다"
     }
+  },
+  "domain": {
+    "label": "Domain",
+    "generic": "Generic",
+    "project_header": "Pick any; none means generic",
+    "issue_header": "Only the project's domains",
+    "spec_header": "One specialisation per domain",
+    "taken": "Taken by {{name}}",
+    "name_hint": "Generated from base role and domain",
+    "pick": "Pick a domain",
+    "settings_title": "Domains",
+    "settings_desc": "Projects and specialisations pick their domain from here.",
+    "usage_both": "{{projects}} projects · {{agents}} specialisations",
+    "usage_no_projects": "No projects · {{agents}} specialisations",
+    "usage_no_agents": "{{projects}} projects · no specialisations",
+    "usage_none": "No projects or specialisations",
+    "rename": "Rename",
+    "delete": "Delete",
+    "add": "Add domain",
+    "delete_in_use": "Still used by a project or specialisation",
+    "name_placeholder": "Domain name",
+    "save_failed": "Could not save"
+  },
+  "agent_fit": {
+    "project": "{{name}}에 적합",
+    "projects": "선택한 프로젝트에 적합",
+    "generic": "범용",
+    "other": "기타"
   }
 }

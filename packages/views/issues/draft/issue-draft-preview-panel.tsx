@@ -727,6 +727,7 @@ export function IssueDraftPreviewPanel({
                   assigneeId={value.assignee_id ?? null}
                   open={parentLocked ? false : undefined}
                   align="start"
+                  sceneProjectIds={[value.project_id]}
                   onUpdate={(updates) =>
                     (() => {
                       offeredRows.current.add(ISSUE_DRAFT_ROOT_ROW);
@@ -968,6 +969,7 @@ export function IssueDraftPreviewPanel({
                           assigneeId={child.assignee_id ?? null}
                           open={locked ? false : undefined}
                           align="start"
+                          sceneProjectIds={[value.project_id]}
                           onUpdate={(updates) =>
                             updateChild(index, {
                               assignee_type: updates.assignee_type ?? null,

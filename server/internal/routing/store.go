@@ -43,8 +43,12 @@ type Issue struct {
 
 	ProjectID   string
 	ProjectName string
-	Repository  string
-	Labels      []string
+	// ProjectDomains are the project's domains in workspace order, and Domain
+	// is the issue's own (DENE-1451; empty = generic). See IssueScene.
+	ProjectDomains []string
+	Domain         string
+	Repository     string
+	Labels         []string
 	// ParentIssueID is empty for a top-level issue. Child issues still use
 	// routing for executor dispatch, but acceptance belongs to their parent
 	// and must never be routed independently.

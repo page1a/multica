@@ -15,7 +15,7 @@ describe("agentListOptions", () => {
     const queryState = (data: Agent[]) =>
       interval({ state: { status: "success", data } } as never);
 
-    expect(queryState([{ runtime_availability: "online" } as Agent])).toBe(30_000);
+    expect(queryState([{ runtime_availability: "online" } as Agent])).toBe(300_000);
     expect(queryState([{ runtime_availability: "unstable" } as Agent])).toBe(30_000);
     expect(queryState([{ runtime_availability: "offline" } as Agent])).toBe(false);
     expect(queryState([{ runtime_availability: undefined } as Agent])).toBe(false);

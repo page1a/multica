@@ -156,6 +156,9 @@ export function useMarkChatSessionRead() {
       return api.markChatSessionRead(sessionId);
     },
     onMutate: async (sessionId) => {
+      // A refetch cancelled here would drop whatever it was fetching for
+      // (say, a new chat), so only that case re-fetches once settled.
+      const interrupted = qc.isFetching({ queryKey: chatKeys.sessions(wsId) }) > 0;
       await qc.cancelQueries({ queryKey: chatKeys.sessions(wsId) });
 
       const prevSessions = qc.getQueryData<ChatSession[]>(chatKeys.sessions(wsId));
@@ -164,14 +167,17 @@ export function useMarkChatSessionRead() {
         old?.map((s) => (s.id === sessionId ? { ...s, has_unread: false, unread_count: 0 } : s));
       qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), clear);
 
-      return { prevSessions };
+      return { prevSessions, interrupted };
     },
     onError: (err, sessionId, ctx) => {
       logger.error("markChatSessionRead.error.rollback", { sessionId, err });
       if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+    // A plain success needs no refetch: the optimistic zero is what the server
+    // now holds, and this read fires on every reply landing in an open chat
+    // (DENE-1507).
+    onSettled: (_data, error, _sessionId, ctx) => {
+      if (error || ctx?.interrupted) qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
     },
   });
 }

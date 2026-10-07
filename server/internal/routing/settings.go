@@ -110,6 +110,10 @@ type Settings struct {
 	// the shipped defaults in ladder.json and win, so classifying a project is
 	// a settings write and never a release.
 	Projects map[string]string `json:"projects,omitempty"`
+	// Domains is the workspace's domain list (DENE-1451), filled by the store
+	// from its own table and never serialised: it is the ladder's direction
+	// list, maintained in one place.
+	Domains []string `json:"-"`
 	// PolicyPrompt is the workspace's own tier-preference wording. Empty
 	// means DefaultPolicyPrompt. It constrains which tier the judge picks;
 	// it is not allowed to change status or take an action, and the judge

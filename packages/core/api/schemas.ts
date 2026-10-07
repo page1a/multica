@@ -1249,10 +1249,23 @@ export const IssueTriggerPreviewSchema = z.object({
   total_count: z.number().default(0),
 }).loose();
 
-// Metadata is primitive-only by API/DB contract. Stay lenient on shape:
-// unknown keys land as `unknown` to a caller, but the field itself defaults
-// to {} so consumers never need to nil-guard `issue.metadata`.
-const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+// Metadata is primitive-only by API contract, but server-internal writers
+// (routing's `reviewer_relay`) store objects in the same column. Drop any
+// non-primitive value instead of failing the issue: one such issue used to
+// reject a whole search index snapshot page, which every client then
+// re-downloaded every few minutes (DENE-1506). The field defaults to {} so
+// consumers never need to nil-guard `issue.metadata`.
+const IssueMetadataSchema = z.preprocess(
+  (raw) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
+    }
+    return out;
+  },
+  z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+);
 
 const IssueDriverSchema = z.object({
   kind: z.string(),

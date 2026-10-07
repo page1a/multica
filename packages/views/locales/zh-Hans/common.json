@@ -204,5 +204,33 @@
       "copied": "链接已复制",
       "copy_failed": "复制链接失败"
     }
+  },
+  "domain": {
+    "label": "领域",
+    "generic": "通用",
+    "project_header": "可多选，不选即通用",
+    "issue_header": "只能选项目的领域",
+    "spec_header": "每个领域只能有一个特化",
+    "taken": "已有 {{name}}",
+    "name_hint": "由基础角色和领域生成",
+    "pick": "选择领域",
+    "settings_title": "领域",
+    "settings_desc": "项目和特化从这里选领域。",
+    "usage_both": "{{projects}} 个项目 · {{agents}} 个特化",
+    "usage_no_projects": "没有项目 · {{agents}} 个特化",
+    "usage_no_agents": "{{projects}} 个项目 · 没有特化",
+    "usage_none": "没有项目和特化",
+    "rename": "重命名",
+    "delete": "删除",
+    "add": "添加领域",
+    "delete_in_use": "还有项目或特化在用",
+    "name_placeholder": "领域名称",
+    "save_failed": "保存失败"
+  },
+  "agent_fit": {
+    "project": "适合 {{name}}",
+    "projects": "适合所选项目",
+    "generic": "通用",
+    "other": "其他"
   }
 }

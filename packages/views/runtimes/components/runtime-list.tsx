@@ -85,8 +85,12 @@ import { useT, useTimeAgo } from "../../i18n";
 // toggles / batch selection — a machine hosts 1-5 runtimes, those would all
 // be dead weight, and batch-deleting runtimes (a cascade-confirm heavy
 // operation) is deliberately not offered.
+// The narrow template shares the row between name and health by ratio: on a
+// phone the fixed 176px health track overran the card, and an `auto` track
+// still takes its full content width before `fr` gets any, squeezing the
+// runtime name to a few letters. With both as `fr`, health truncates first.
 const GRID_COLS =
-  "grid-cols-[0.75rem_minmax(120px,1fr)_var(--rtc-health)_var(--rtc-kebab)_0.75rem] " +
+  "grid-cols-[0.75rem_minmax(96px,3fr)_minmax(64px,2fr)_var(--rtc-kebab)_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_minmax(140px,1fr)_var(--rtc-health)_var(--rtc-owner)_var(--rtc-agents)_var(--rtc-cost)_var(--rtc-limits)_var(--rtc-cli)_var(--rtc-kebab)_0.75rem]";
 
 const COLUMN_WIDTHS = {

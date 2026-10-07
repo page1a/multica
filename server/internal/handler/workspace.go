@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/permission"
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -449,6 +450,15 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	// be created before its status can be resolved. (MUL-6243)
 	if err := issuestatus.Ensure(r.Context(), qtx, ws.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses: "+err.Error())
+		return
+	}
+
+	// And the default domain list (DENE-1451), so project and specialisation
+	// pickers are not empty on day one.
+	if err := qtx.SeedWorkspaceDomains(r.Context(), db.SeedWorkspaceDomainsParams{
+		WorkspaceID: ws.ID, Names: routing.DefaultLadder.Directions,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to seed domains: "+err.Error())
 		return
 	}
 

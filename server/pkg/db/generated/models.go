@@ -63,6 +63,7 @@ type Agent struct {
 	PlanLimits            []byte      `json:"plan_limits"`
 	DoorbellEnabled       bool        `json:"doorbell_enabled"`
 	RoutingUsage          string      `json:"routing_usage"`
+	DomainID              pgtype.UUID `json:"domain_id"`
 }
 
 type AgentAccessPass struct {
@@ -1077,6 +1078,7 @@ type Issue struct {
 	ProgressAuthorID     pgtype.UUID        `json:"progress_author_id"`
 	ProgressUpdatedAt    pgtype.Timestamptz `json:"progress_updated_at"`
 	DuplicateOfIssueID   pgtype.UUID        `json:"duplicate_of_issue_id"`
+	DomainID             pgtype.UUID        `json:"domain_id"`
 }
 
 type IssueChildEvent struct {
@@ -1718,6 +1720,7 @@ type Project struct {
 	DueDate     pgtype.Date        `json:"due_date"`
 	Visibility  string             `json:"visibility"`
 	CreatedBy   pgtype.UUID        `json:"created_by"`
+	DomainIds   []pgtype.UUID      `json:"domain_ids"`
 }
 
 type ProjectMember struct {
@@ -2246,6 +2249,15 @@ type Workspace struct {
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	// When TRUE, an agent run that resolves to no precise accountable human (would be owner_fallback) is refused at enqueue instead of degrading to the agent owner (MUL-4302 §3.5). Default FALSE = owner_fallback. Never affects authorization (originator_user_id).
 	AttributionFailClosed bool `json:"attribution_fail_closed"`
+}
+
+type WorkspaceDomain struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Name        string             `json:"name"`
+	Position    int32              `json:"position"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceInvitation struct {

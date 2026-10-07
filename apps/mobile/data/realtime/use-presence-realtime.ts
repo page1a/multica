@@ -19,6 +19,11 @@
  * Reconnect: re-invalidate runtimes + agents + snapshot after missed events.
  */
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  patchAgentListStatus,
+  readAgentStatusChange,
+} from "@multica/core/agents/list-freshness";
+import type { Agent } from "@multica/core/types";
 import { useWSSubscriptions } from "@/lib/use-ws-subscriptions";
 
 export function usePresenceRealtime() {
@@ -46,7 +51,15 @@ export function usePresenceRealtime() {
 
         // Agent identity churn — visible in pickers / chat header straight
         // away, so invalidate the cached list.
-        ws.on("agent:status", invalidateAgents),
+        // A pure status flip patches the cached row; anything else refetches.
+        ws.on("agent:status", (payload) => {
+          const change = readAgentStatusChange(payload);
+          const next = change
+            ? patchAgentListStatus(queryClient.getQueryData<Agent[]>(agentsKey), change)
+            : null;
+          if (next) queryClient.setQueryData(agentsKey, next);
+          else invalidateAgents();
+        }),
         ws.on("agent:created", invalidateAgents),
         ws.on("agent:archived", invalidateAgents),
         ws.on("agent:restored", invalidateAgents),

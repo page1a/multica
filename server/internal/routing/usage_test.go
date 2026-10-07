@@ -189,11 +189,11 @@ func TestSubstitutePrefersAmple(t *testing.T) {
 		"特兰克斯": {ID: "trunks", Name: "特兰克斯", Tier: "strong", Usage: UsageAmple},
 	}
 	holder := Seat{ID: "goku", Name: "孙悟空", TierKey: "strong"}
-	got, down, ok := SubstituteSeat(DefaultLadder, holder, roster, nil, "")
+	got, down, ok := SubstituteSeat(DefaultLadder, holder, roster, nil, GenericScene)
 	if !ok || down || got.Name != "特兰克斯" {
 		t.Errorf("substitute = %+v (down=%v ok=%v), want 特兰克斯", got, down, ok)
 	}
-	got, _, _ = SubstituteSeat(DefaultLadder.WithSeatOrder(SeatOrder{IgnoreUsage: true}), holder, roster, nil, "")
+	got, _, _ = SubstituteSeat(DefaultLadder.WithSeatOrder(SeatOrder{IgnoreUsage: true}), holder, roster, nil, GenericScene)
 	if got.Name != "孙悟天" {
 		t.Errorf("with usage off = %+v, want 孙悟天 by name", got)
 	}

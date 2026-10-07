@@ -1,0 +1,4 @@
+ALTER TABLE agent DROP COLUMN IF EXISTS domain_id;
+ALTER TABLE issue DROP COLUMN IF EXISTS domain_id;
+ALTER TABLE project DROP COLUMN IF EXISTS domain_ids;
+DROP TABLE IF EXISTS workspace_domain;

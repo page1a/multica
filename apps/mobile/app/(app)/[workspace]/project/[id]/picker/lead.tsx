@@ -30,6 +30,7 @@ export default function ProjectLeadPickerRoute() {
   return (
     <ProjectLeadPickerBody
       value={value}
+      projectId={id}
       query={query}
       onChange={(next) => {
         if (next === null) {

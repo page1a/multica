@@ -807,7 +807,7 @@ func TestOpenBreakerIsSilentOnTheIssue(t *testing.T) {
 	}
 }
 
-func TestIssueWithoutAProjectRoutesGenericAndSaysTheDirectionIsUnknown(t *testing.T) {
+func TestIssueWithoutAProjectRoutesGenericAndSaysGeneric(t *testing.T) {
 	store := newFakeStore()
 	store.issue.ProjectName = ""
 	judge := &fakeJudge{verdict: confidentVerdict()}
@@ -819,8 +819,8 @@ func TestIssueWithoutAProjectRoutesGenericAndSaysTheDirectionIsUnknown(t *testin
 		t.Errorf("assigns = %v, want the generic seat [孙悟空]", store.assigns)
 	}
 	body := store.comments[KindAssignment][0]
-	if !strings.Contains(body, "未知") {
-		t.Errorf("comment does not say the direction is unknown:\n%s", body)
+	if strings.Contains(body, "未知") || !strings.Contains(body, "- **方向**：通用\n") {
+		t.Errorf("an issue without a project is generic, not unknown (DENE-1477):\n%s", body)
 	}
 }
 
@@ -1051,12 +1051,12 @@ func TestProjectMappedToGenericIsKnownNotUnknown(t *testing.T) {
 		t.Errorf("assigns = %v, want the generic seat", store.assigns)
 	}
 	body := store.comments[KindAssignment][0]
-	if strings.Contains(body, "未知") || !strings.Contains(body, "归为通用") {
+	if strings.Contains(body, "未知") || !strings.Contains(body, "- **方向**：通用\n") {
 		t.Errorf("a classified-generic project must not read as unknown:\n%s", body)
 	}
 }
 
-func TestProjectRowNamingNoDirectionIsCalledOut(t *testing.T) {
+func TestProjectRowNamingNoDirectionIsGeneric(t *testing.T) {
 	store := newFakeStore()
 	store.issue.ProjectName = "tarot"
 	store.settings.Projects = map[string]string{"tarot": "出海海"}
@@ -1067,8 +1067,8 @@ func TestProjectRowNamingNoDirectionIsCalledOut(t *testing.T) {
 	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空" {
 		t.Errorf("assigns = %v, want the generic seat", store.assigns)
 	}
-	if body := store.comments[KindAssignment][0]; !strings.Contains(body, "出海海") {
-		t.Errorf("comment hides the bad table value:\n%s", body)
+	if body := store.comments[KindAssignment][0]; strings.Contains(body, "未知") || !strings.Contains(body, "- **方向**：通用\n") {
+		t.Errorf("a bad table row is generic, not unknown (DENE-1477):\n%s", body)
 	}
 }
 

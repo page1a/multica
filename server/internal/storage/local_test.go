@@ -315,6 +315,40 @@ func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
 	}
 }
 
+// Keys are never reused, so a served object is cached for a year — privately,
+// so the CDN in front of a self-hosted instance never keeps it (DENE-1508).
+func TestLocalStorage_ServeFile_CacheControl(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
+	store := NewLocalStorageFromEnv()
+
+	key := "workspaces/ws/0199-image.png"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, key)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, key), []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	store.ServeFile(rec, httptest.NewRequest(http.MethodGet, "/uploads/"+key, nil), key)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got, want := rec.Header().Get("Cache-Control"), "private, max-age=31536000, immutable"; got != want {
+		t.Errorf("Cache-Control = %q, want %q", got, want)
+	}
+
+	rec = httptest.NewRecorder()
+	store.ServeFile(rec, httptest.NewRequest(http.MethodGet, "/uploads/missing.png", nil), "missing.png")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing status = %d, want 404", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("404 Cache-Control = %q, want empty so a miss is never cached", got)
+	}
+}
+
 // TestLocalStorage_ServeFile_RejectsSidecarSuffix verifies that the sidecar
 // JSON itself is not addressable via /uploads/*. The sidecar is an
 // implementation detail; exposing it would turn the filename + content-type

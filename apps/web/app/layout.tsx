@@ -99,6 +99,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Android: let the soft keyboard shrink the layout, so inputs pinned to the
+  // bottom of an h-svh screen stay above it. iOS ignores this and pans to the
+  // focused field itself.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
     { media: "(prefers-color-scheme: dark)", color: "#05070b" },

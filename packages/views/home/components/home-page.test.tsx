@@ -342,8 +342,20 @@ describe("HomePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "1 sub-issue" }));
 
     const childRow = screen.getByText("title 891").closest('[role="link"]');
-    expect(childRow).toHaveClass("pl-4", "sm:pl-8", "grid-cols-[auto_minmax(0,1fr)_auto]");
+    expect(childRow).toHaveClass("pl-4", "sm:pl-8", "grid-cols-[minmax(0,1fr)_auto]");
     expect(childRow?.parentElement?.parentElement?.parentElement).toHaveClass("px-4", "sm:pl-[8.75rem]");
+  });
+
+  it("gives waiting titles the full row width on narrow screens", () => {
+    renderWithI18n(<InboxBoardLanes board={board} isLoading={false} isError={false} />);
+
+    const waitingRow = screen.getByTestId("board-row-waiting").firstElementChild!;
+    expect(waitingRow).toHaveClass(
+      "grid-cols-[minmax(0,1fr)_auto]",
+      "sm:grid-cols-[auto_6.5rem_minmax(0,1fr)_auto]",
+    );
+    const titleBlock = within(waitingRow as HTMLElement).getByRole("link", { name: /title/ }).closest(".space-y-0\\.5");
+    expect(titleBlock).toHaveClass("col-span-2", "sm:col-span-1");
   });
 
   it("replies to a waiting row in place", () => {

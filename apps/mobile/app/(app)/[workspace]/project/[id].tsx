@@ -231,6 +231,13 @@ export default function ProjectDetail() {
                   params: { workspace: wsSlug, id },
                 });
             }}
+            onPressDomain={() => {
+              if (wsSlug)
+                router.push({
+                  pathname: "/[workspace]/project/[id]/picker/domain",
+                  params: { workspace: wsSlug, id },
+                });
+            }}
           />
           <ProjectResourcesSection
             projectId={id}

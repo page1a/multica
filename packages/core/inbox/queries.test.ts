@@ -32,6 +32,24 @@ function item(overrides: Partial<InboxItem>): InboxItem {
 }
 
 describe("deduplicateInboxItems", () => {
+  it("keeps the unread count of a server-grouped row", () => {
+    const [grouped] = deduplicateInboxItems([
+      item({ id: "group-row", read: false, unread_count: 3 }),
+    ]);
+    expect(grouped).toMatchObject({ id: "group-row", read: false, unread_count: 3 });
+
+    // A fresh notification on the same issue lands as a raw row on top.
+    const [merged] = deduplicateInboxItems([
+      item({ id: "group-row", read: false, unread_count: 3 }),
+      item({ id: "new-row", created_at: "2026-06-15T09:00:00Z" }),
+    ]);
+    expect(merged).toMatchObject({ id: "new-row", unread_count: 4 });
+
+    // Read and flipped-back-to-unread rows follow `read`, not the stale count.
+    expect(deduplicateInboxItems([item({ read: true, unread_count: 3 })])[0]?.unread_count).toBe(0);
+    expect(deduplicateInboxItems([item({ read: false, unread_count: 0 })])[0]?.unread_count).toBe(1);
+  });
+
   it("keeps the newest issue row while preserving an older comment anchor", () => {
     const merged = deduplicateInboxItems([
       item({

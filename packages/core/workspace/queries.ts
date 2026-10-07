@@ -1,5 +1,6 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { agentListRefetchInterval } from "../agents/list-freshness";
 import type { Agent, ModuleVisibility, Squad, Workspace } from "../types";
 
 export const workspaceKeys = {
@@ -94,17 +95,8 @@ export function agentListOptions(wsId: string) {
     queryKey: workspaceKeys.agents(wsId),
     queryFn: () =>
       api.listAgents({ workspace_id: wsId, include_archived: true }),
-    // Projected unstable can age offline without an event; polling online also
-    // covers a missed demotion. Offline recovery is event/reconnect-driven.
-    refetchInterval: (query) =>
-      query.state.data?.some(
-        (agent) =>
-          !agent.archived_at &&
-          (agent.runtime_availability === "online" ||
-            agent.runtime_availability === "unstable"),
-      )
-        ? 30_000
-        : false,
+    // Unstable ages offline without an event (30s); online is a slow safety net.
+    refetchInterval: (query) => agentListRefetchInterval(query.state.data),
   });
 }
 

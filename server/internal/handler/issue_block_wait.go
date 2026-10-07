@@ -1003,7 +1003,7 @@ func (h *Handler) coverDisabledWakeTarget(ctx context.Context, issue db.Issue, t
 	if issue.ReviewerType.Valid && issue.ReviewerType.String == "agent" && issue.ReviewerID.Valid {
 		avoid = append(avoid, uuidToString(issue.ReviewerID))
 	}
-	replacement, _, ok := h.substituteAgent(ctx, issue.WorkspaceID, agent, avoid, "")
+	replacement, _, ok := h.substituteAgent(ctx, issue.WorkspaceID, agent, avoid, service.IssueDomainScene(ctx, h.Queries, issue).Scene)
 	if !ok {
 		return issue, targetID, reason + fmt.Sprintf(" 执行人 %s 已停用，暂时没有能接手的席位，平台没有叫醒它。重新启用或改派后再继续。", agent.Name), false
 	}

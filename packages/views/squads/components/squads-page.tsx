@@ -960,7 +960,7 @@ export function SquadsPage() {
             hiddenColumns={hiddenColumns}
             onToggleColumn={toggleColumn}
           />
-          <div className="min-h-0 flex-1 overflow-auto @container">
+          <div className="min-h-0 flex-1 overflow-auto max-md:pb-chat-launcher @container">
             <ListGrid
               className={`${GRID_COLS} @2xl:min-w-[var(--sqc-minw)]`}
               style={{
@@ -1036,7 +1036,7 @@ export function SquadsPage() {
 
 function LoadingSkeleton() {
   return (
-    <div className="min-h-0 flex-1 overflow-auto @container">
+    <div className="min-h-0 flex-1 overflow-auto max-md:pb-chat-launcher @container">
       <ListGrid
         className={GRID_COLS}
         style={columnTrackVars(

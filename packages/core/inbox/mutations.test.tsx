@@ -166,7 +166,9 @@ describe("useMarkInboxRead", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(markInboxRead).toHaveBeenCalledWith("notif-1");
+    // The clicked row asks the server for its whole group; siblings an older
+    // server still lists ungrouped are read one by one as before.
+    expect(markInboxRead).toHaveBeenCalledWith("notif-1", { scope: "issue" });
     expect(markInboxRead).toHaveBeenCalledWith("notif-2");
     expect(markInboxRead).not.toHaveBeenCalledWith("other");
 

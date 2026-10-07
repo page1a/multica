@@ -24,6 +24,9 @@ export interface Project {
   resource_count: number;
   /** Resource sharing scope. Older servers omit this field. */
   visibility?: "private" | "project" | "workspace";
+  /** Domain ids this project carries, in workspace order; empty = generic
+   *  (DENE-1451). Older servers omit this field. */
+  domain_ids?: string[];
 }
 
 /** Checklist slot, without a daemon observation. Close dialogs read this. */
@@ -83,6 +86,8 @@ export interface CreateProjectRequest {
   // Resources to attach in the same transaction as the project. Server returns
   // 4xx (and rolls back) if any one is invalid or duplicate.
   resources?: CreateProjectResourceRequest[];
+  /** Domain ids (or names); empty = generic. */
+  domain_ids?: string[];
 }
 
 export interface UpdateProjectRequest {
@@ -96,6 +101,8 @@ export interface UpdateProjectRequest {
   // Omit the key to leave the date untouched; send null (or "") to clear it.
   start_date?: string | null;
   due_date?: string | null;
+  /** Replaces the project's domains; [] makes it generic. */
+  domain_ids?: string[];
 }
 
 export interface ListProjectsResponse {

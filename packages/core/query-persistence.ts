@@ -7,7 +7,10 @@ import {
 } from "@tanstack/react-query";
 import type { StorageAdapter } from "./types/storage";
 
-export const QUERY_CACHE_SCHEMA_VERSION = 1;
+// v2: v1 snapshots may hold a `Map` saved as `{}` (children-by-parents), which
+// crashes task detail on restore; bumping drops them on the next start.
+export const QUERY_CACHE_SCHEMA_VERSION = 2;
+// The key stays `v1:` so the version check above finds and removes old snapshots.
 const STORAGE_PREFIX = "multica_query_cache:v1:";
 
 /** Query families that are either sensitive, highly volatile, or contain transient work. */
@@ -51,13 +54,35 @@ function isPersistableQuery(query: Query): boolean {
   );
 }
 
-/** Binary payloads do not survive JSON; keep them out whatever their key. */
-function isBinaryData(data: unknown): boolean {
-  return (
-    (typeof Blob !== "undefined" && data instanceof Blob) ||
-    data instanceof ArrayBuffer ||
-    ArrayBuffer.isView(data)
-  );
+/**
+ * Snapshot budget in UTF-16 code units. Browsers give an origin about 5M for
+ * all of localStorage; an uncapped cache filled it and every other persisted
+ * store then failed silently.
+ */
+export const QUERY_CACHE_MAX_CHARS = 2_000_000;
+
+/**
+ * Only data JSON round-trips unchanged may be persisted. A `Map`, `Set`, `Blob`
+ * or `Date` comes back as `{}` or a string, and the page that restores it
+ * crashes on first render, before the background refetch can replace it.
+ */
+function isJsonSafe(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return true;
+    case "number":
+      return Number.isFinite(value);
+    case "object": {
+      if (Array.isArray(value)) return value.every(isJsonSafe);
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) return false;
+      return Object.values(value).every(isJsonSafe);
+    }
+    default:
+      return false;
+  }
 }
 
 export function isPersistedQueryKey(queryKey: readonly unknown[]): boolean {
@@ -118,16 +143,17 @@ export function createPersistedQueryCache(
       try {
         const state = dehydrate(queryClient, {
           shouldDehydrateQuery: (query) =>
-            query.state.status === "success" && isPersistableQuery(query) && !isBinaryData(query.state.data),
+            query.state.status === "success" && isPersistableQuery(query) && isJsonSafe(query.state.data),
         });
-        const envelope: PersistedQueryCacheEnvelope = {
-          schemaVersion: QUERY_CACHE_SCHEMA_VERSION,
-          userId,
-          state,
-        };
-        storage.setItem(key, JSON.stringify(envelope));
+        storage.setItem(key, serializeWithinBudget(userId, state));
       } catch {
         // Storage is best effort (private mode/quota must never break the app).
+        // Drop the stale snapshot so it does not keep holding the quota.
+        try {
+          storage.removeItem(key);
+        } catch {
+          // Nothing more to free.
+        }
       }
     }, 50);
   });
@@ -136,6 +162,22 @@ export function createPersistedQueryCache(
     unsubscribe();
     if (writeTimer) clearTimeout(writeTimer);
   };
+}
+
+/** Most recently updated queries first, until the snapshot hits the budget. */
+function serializeWithinBudget(userId: string, state: DehydratedState): string {
+  const head = JSON.stringify({ schemaVersion: QUERY_CACHE_SCHEMA_VERSION, userId, state: { mutations: [], queries: [] } });
+  const prefix = head.slice(0, -"]}}".length);
+  const kept: string[] = [];
+  let size = head.length;
+  const queries = [...state.queries].sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt);
+  for (const query of queries) {
+    const part = JSON.stringify(query);
+    if (size + part.length + 1 > QUERY_CACHE_MAX_CHARS) continue;
+    kept.push(part);
+    size += part.length + 1;
+  }
+  return `${prefix}${kept.join(",")}]}}`;
 }
 
 export function queryCacheStoragePrefix(): string {

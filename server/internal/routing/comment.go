@@ -18,19 +18,17 @@ func pct(v float64) string {
 	return strconv.FormatFloat(v*100, 'f', 0, 64) + "%"
 }
 
-func directionLine(issue Issue, match DirectionMatch) string {
-	switch {
-	case issue.ProjectName == "":
-		return "- **方向**：未知（本票没有所属 project），从通用档位里选"
-	case match.Invalid != "":
-		return fmt.Sprintf("- **方向**：未知（对照表把 project「%s」写成了「%s」，但没有这个方向），从通用档位里选",
-			issue.ProjectName, match.Invalid)
-	case !match.Known:
-		return fmt.Sprintf("- **方向**：未知（project「%s」不在对照表里），从通用档位里选", issue.ProjectName)
-	case match.Direction == "":
-		return fmt.Sprintf("- **方向**：%s（对照表把 project「%s」归为通用），从通用档位里选", GenericDirection, issue.ProjectName)
+func directionLine(issue Issue, scene Scene) string {
+	switch scene.Source {
+	case DirectionFromIssue:
+		return fmt.Sprintf("- **方向**：%s（任务的领域）", scene.Label())
+	case DirectionFromProject:
+		return fmt.Sprintf("- **方向**：%s（项目「%s」的领域）", scene.Label(), issue.ProjectName)
+	case DirectionFromTable:
+		return fmt.Sprintf("- **方向**：%s（来自 project「%s」）", scene.Label(), issue.ProjectName)
 	}
-	return fmt.Sprintf("- **方向**：%s（来自 project「%s」）", match.Direction, issue.ProjectName)
+	// Generic is a scene, not a gap (DENE-1477): no "unknown" line.
+	return "- **方向**：" + GenericDirection
 }
 
 // heldExecutorLine says whose decision an executor already in the slot is.
@@ -55,7 +53,7 @@ func heldExecutorLine(issue Issue) string {
 // and the verdict.
 func (r *Router) assignmentComment(
 	issue Issue,
-	match DirectionMatch,
+	scene Scene,
 	candidates []Seat,
 	v Verdict,
 	threshold float64,
@@ -148,7 +146,7 @@ func (r *Router) assignmentComment(
 		b.WriteString("- **验收席**：⚠️ 未填——这一格在本次裁决与写入之间被别人占了\n")
 	}
 
-	b.WriteString(directionLine(issue, match))
+	b.WriteString(directionLine(issue, scene))
 	b.WriteString("\n")
 	b.WriteString("- **候选**：" + seatNames(candidates) + "\n")
 	// A label that answered the only open slot means no model took part and

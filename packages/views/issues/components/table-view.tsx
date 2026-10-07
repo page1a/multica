@@ -1155,6 +1155,8 @@ function IssueTableBodyCell({
             assigneeId={issue.assignee_id}
             onUpdate={onUpdate}
             align="start"
+            sceneProjectIds={[issue.project_id]}
+            sceneDomainId={issue.domain_id}
             open={editorOpen}
             onOpenChange={setEditorOpen}
           />

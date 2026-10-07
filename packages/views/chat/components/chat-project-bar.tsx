@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronsUpDown, GripVertical, Pin } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
+import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -108,6 +109,10 @@ export function ChatProjectBar({
   const { t } = useT("chat");
   const { t: tProjects } = useT("projects");
   const projectSwitchChord = useShortcut("switchChatProject");
+  // Phones grow every button to a 44px touch target, so two rows of chips
+  // would not fit the fixed chip-area height. Compact keeps one row.
+  const isCompact = useIsCompact();
+  const rows = isCompact ? 1 : CHAT_PROJECT_BAR_ROWS;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -163,13 +168,13 @@ export function ChatProjectBar({
     widthById,
     available,
     gap: CHIP_GAP,
-    rows: CHAT_PROJECT_BAR_ROWS,
+    rows,
     lead: leadWidth,
     promotedId,
   });
   const fitAvailable =
     widths.length === measureIds.length + 1
-      ? narrowestWidthFittingAll(widths.slice(1), CHIP_GAP, CHAT_PROJECT_BAR_ROWS, leadWidth)
+      ? narrowestWidthFittingAll(widths.slice(1), CHIP_GAP, rows, leadWidth)
       : null;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -331,12 +336,18 @@ export function ChatProjectBar({
   );
 
   return (
-    <div ref={rootRef} className="relative flex items-start gap-1.5 border-b px-2 pb-2">
+    <div
+      ref={rootRef}
+      className={cn("relative flex items-start gap-1.5 border-b px-2 pb-2", isCompact && "pt-1.5")}
+    >
       <div
         ref={containerRef}
         data-slot="chat-project-chips"
-        className="flex min-w-0 flex-1 flex-wrap content-start items-center overflow-hidden"
-        style={{ gap: CHIP_GAP, maxHeight: CHIPS_MAX_HEIGHT }}
+        className={cn(
+          "flex min-w-0 flex-1 content-start items-center overflow-hidden",
+          isCompact ? "flex-nowrap" : "flex-wrap",
+        )}
+        style={{ gap: CHIP_GAP, maxHeight: isCompact ? undefined : CHIPS_MAX_HEIGHT }}
       >
         <span style={PAINTED_SLOT_STYLE}>{allChip}</span>
         {visibleIds.map((id) => (

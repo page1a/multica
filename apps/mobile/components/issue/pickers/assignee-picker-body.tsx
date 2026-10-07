@@ -4,7 +4,8 @@
  * status-picker-body.tsx for the split rationale.
  *
  * Mirrors web `packages/views/issues/components/pickers/assignee-picker.tsx`
- * (mobile skips frequency-sort; alphabetical instead).
+ * (mobile skips frequency-sort; alphabetical instead). Agents follow the
+ * shared domain-fit order (DENE-1477): 对口 → 通用 → 其他, alphabetical inside.
  *
  * Header + search bar are owned by the iOS native nav header registered in
  * `app/(app)/[workspace]/_layout.tsx` (assignee Stack.Screen sets
@@ -34,6 +35,8 @@ import { THEME } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { isAgentRuntimeBound } from "@/lib/is-agent-runtime-bound";
 import { useT } from "@/lib/i18n";
+import { useDomainScene } from "@/lib/use-domain-scene";
+import { sortAgentsByDomainFit } from "@multica/core/agents/domain-fit";
 
 const AVATAR_SIZE = 36;
 
@@ -46,6 +49,9 @@ interface Props {
   value: AssigneeValue;
   query: string;
   onChange: (next: AssigneeValue) => void;
+  /** Scene for the agent order: an existing issue, or a draft's project. */
+  issueId?: string;
+  projectId?: string | null;
 }
 
 type Row =
@@ -64,12 +70,19 @@ function isRowSelected(value: AssigneeValue, row: Row): boolean {
   return value.type === "squad" && value.id === row.squad.id;
 }
 
-export function AssigneePickerBody({ value, query, onChange }: Props) {
+export function AssigneePickerBody({
+  value,
+  query,
+  onChange,
+  issueId,
+  projectId,
+}: Props) {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const { t } = useT("issues");
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const scene = useDomainScene({ issueId, projectId });
   const runnableAgentIds = useMemo(
     () =>
       new Set(
@@ -96,10 +109,12 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
       .filter((m) => matchName(m.name))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((m) => ({ kind: "member" as const, member: m }));
-    const agentRows: Row[] = [...agents]
-      .filter((a) => matchName(a.name))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((a) => ({ kind: "agent" as const, agent: a }));
+    const agentRows: Row[] = sortAgentsByDomainFit(
+      [...agents]
+        .filter((a) => matchName(a.name))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      scene,
+    ).map((a) => ({ kind: "agent" as const, agent: a }));
     const squadRows: Row[] = [...squads]
       .filter((s) => !s.archived_at && matchName(s.name))
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -121,7 +136,7 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
       ...agentRows.filter((r) => !isRowSelected(value, r)),
       ...squadRows.filter((r) => !isRowSelected(value, r)),
     ];
-  }, [members, agents, squads, query, value]);
+  }, [members, agents, squads, query, value, scene]);
 
   const isSelected = (row: Row) => isRowSelected(value, row);
 

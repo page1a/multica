@@ -308,7 +308,7 @@ func (s *TaskService) prepareQuotaRelay(ctx context.Context, task db.AgentTaskQu
 			return s.skipQuotaRelay(ctx, qtx, locked, agent, issue, plan, handoff, "skipped_active", "这张票已经有别的进行中的任务")
 		}
 
-		choice, found, err := pickQuotaReplacement(ctx, qtx, locked, agent, issue.WorkspaceID, reviewerSeatExclusion(issue))
+		choice, found, err := pickQuotaReplacement(ctx, qtx, locked, agent, issue, reviewerSeatExclusion(issue))
 		if err != nil {
 			return err
 		}
@@ -667,14 +667,27 @@ func (s *TaskService) relayQuotaExhaustion(ctx context.Context, task db.AgentTas
 	return hold
 }
 
-func pickQuotaReplacement(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, failed db.Agent, workspaceID pgtype.UUID, exclude []string) (quotarelay.Choice, bool, error) {
-	failedSeat, roster, err := quotaRoster(ctx, qtx, task, failed, workspaceID)
+func pickQuotaReplacement(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, failed db.Agent, issue db.Issue, exclude []string) (quotarelay.Choice, bool, error) {
+	failedSeat, roster, err := quotaRoster(ctx, qtx, task, failed, issue.WorkspaceID)
 	if err != nil {
 		return quotarelay.Choice{}, false, err
 	}
 	failedSeat.Exclude = exclude
-	choice, ok := quotarelay.Pick(failedSeat, roster, routing.DefaultLadder.TierKeys())
+	choice, ok := quotaPickForIssue(ctx, qtx, failedSeat, roster, issue)
 	return choice, ok, nil
+}
+
+// quotaPickForIssue is the relay's pick for one issue: the roster ordered by
+// domain fit in the issue's scene (DENE-1477), then quotarelay.Pick. The
+// roster is shared across a batch; the fit is per issue.
+func quotaPickForIssue(ctx context.Context, qtx *db.Queries, failed quotarelay.Seat, roster []quotarelay.Seat, issue db.Issue) (quotarelay.Choice, bool) {
+	scene := IssueDomainScene(ctx, qtx, issue).Scene
+	fitted := make([]quotarelay.Seat, len(roster))
+	for i, seat := range roster {
+		seat.Fit = routing.DomainFit(scene, seat.Direction).Rank()
+		fitted[i] = seat
+	}
+	return quotarelay.Pick(failed, fitted, routing.DefaultLadder.TierKeys())
 }
 
 // quotaRoster is the failed seat and every seat the relay may pick from.
@@ -699,6 +712,7 @@ func quotaRoster(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, f
 	if ws, err := qtx.GetWorkspace(ctx, workspaceID); err == nil {
 		order = routing.ParseSettings(ws.Settings).SeatOrder()
 	}
+	domainNames := WorkspaceDomainNames(ctx, qtx, workspaceID)
 	roster := make([]quotarelay.Seat, 0, len(agents))
 	var failedSeat quotarelay.Seat
 	failedID := util.UUIDToString(failed.ID)
@@ -710,7 +724,7 @@ func quotaRoster(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, f
 			ID:        id,
 			Name:      agent.Name,
 			Tier:      tier,
-			Direction: quotaSeatDirection(agent.Name),
+			Direction: AgentDomain(agent, domainNames),
 			Provider:  provider,
 			Eligible:  agent.WorkEnabled && agent.RuntimeID.Valid && !agent.ArchivedAt.Valid && tier != "" && !broken[id],
 		}
@@ -922,8 +936,8 @@ func quotaDemotionLine(ctx context.Context, qtx *db.Queries, agent db.Agent) str
 // seat but have not started. The failing ticket itself is left to the
 // relay: it already has a failed task and its own handoff.
 func (s *TaskService) reassignUnstartedIssues(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, agent db.Agent, demotion string) ([]idleTransfer, error) {
-	choice, found, err := pickQuotaReplacement(ctx, qtx, task, agent, agent.WorkspaceID, nil)
-	if err != nil || !found {
+	failedSeat, roster, err := quotaRoster(ctx, qtx, task, agent, agent.WorkspaceID)
+	if err != nil {
 		return nil, err
 	}
 	issues, err := qtx.ListUnstartedIssuesForAgent(ctx, db.ListUnstartedIssuesForAgentParams{
@@ -943,7 +957,6 @@ func (s *TaskService) reassignUnstartedIssues(ctx context.Context, qtx *db.Queri
 	if !actor.Valid {
 		actor = task.OriginatorUserID
 	}
-	replacementID := util.MustParseUUID(choice.Seat.ID)
 	out := make([]idleTransfer, 0, len(issues))
 	for _, listed := range issues {
 		if util.UUIDToString(listed.ID) == sourceID {
@@ -959,6 +972,11 @@ func (s *TaskService) reassignUnstartedIssues(ctx context.Context, qtx *db.Queri
 		if issue.Status != "todo" && issue.Status != "in_progress" && issue.Status != "backlog" {
 			continue
 		}
+		choice, found := quotaPickForIssue(ctx, qtx, failedSeat, roster, issue)
+		if !found {
+			continue
+		}
+		replacementID := util.MustParseUUID(choice.Seat.ID)
 		reassigned, err := qtx.ReassignIssueToAgentIfCurrent(ctx, db.ReassignIssueToAgentIfCurrentParams{
 			AssigneeID:        replacementID,
 			ID:                issue.ID,
@@ -1045,7 +1063,7 @@ func (s *TaskService) transferBrokenSeatIssues(ctx context.Context, qtx *db.Quer
 		}
 		seat := failedSeat
 		seat.Exclude = reviewerSeatExclusion(issue)
-		choice, found := quotarelay.Pick(seat, roster, routing.DefaultLadder.TierKeys())
+		choice, found := quotaPickForIssue(ctx, qtx, seat, roster, issue)
 		if !found {
 			continue
 		}
@@ -1237,15 +1255,6 @@ func (s *TaskService) finishIdleTransfers(ctx context.Context, idle []idleTransf
 			)
 		}
 	}
-}
-
-func quotaSeatDirection(name string) string {
-	for _, direction := range routing.DefaultLadder.Directions {
-		if direction != "" && strings.HasSuffix(name, direction) {
-			return direction
-		}
-	}
-	return ""
 }
 
 func quotaReason(task db.AgentTaskQueue) string {

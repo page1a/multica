@@ -49,7 +49,7 @@ describe("agentListOptions", () => {
 
     expect(
       queryState([{ runtime_availability: "online" } as Agent]),
-    ).toBe(30_000);
+    ).toBe(300_000);
     expect(
       queryState([{ runtime_availability: "unstable" } as Agent]),
     ).toBe(30_000);

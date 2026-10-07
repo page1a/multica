@@ -65,6 +65,9 @@ export function useMarkInboxRead() {
     mutationFn: async (id: string) => {
       const list = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId)) ?? [];
       let target = list.find((item) => item.id === id);
+      // The main list holds one row per issue, so the server reads the rest
+      // of the group (DENE-1505). Archived rows stay item-scoped.
+      const readGroup = !!target?.issue_id;
       if (!target) {
         const archivedQueries = qc.getQueriesData<ArchivedInboxCache>({
           queryKey: inboxKeys.archived(wsId),
@@ -91,7 +94,11 @@ export function useMarkInboxRead() {
       }
 
       const results = await Promise.all(
-        idsToMark.map((itemId) => api.markInboxRead(itemId)),
+        idsToMark.map((itemId) =>
+          itemId === id && readGroup
+            ? api.markInboxRead(itemId, { scope: "issue" })
+            : api.markInboxRead(itemId),
+        ),
       );
       return results.find((r) => r?.id === id) ?? results[0]!;
     },

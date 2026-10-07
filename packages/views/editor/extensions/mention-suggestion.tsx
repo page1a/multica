@@ -18,7 +18,7 @@ import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
-import { isAgentRuntimeBound } from "@multica/core/agents";
+import { isAgentRuntimeBound, sortAgentsByDomainFit, type AgentScene } from "@multica/core/agents";
 import { searchIssues, searchProjects } from "@multica/core/search-index";
 import {
   isIssueDirectHit,
@@ -740,6 +740,30 @@ function matchesMentionQuery(item: MentionItem, query: string): boolean {
 interface MentionSuggestionOptions {
   mode?: "default" | "context";
   getContextItems?: () => MentionItem[];
+  /** The surface's scene (DENE-1477); agents rank 对口 / 通用 / 其他. */
+  getAgentScene?: () => AgentScene | null;
+}
+
+/**
+ * Reorders the agent rows by domain fit inside the slots agents already hold,
+ * so members and squads keep their recency places. Typing 「孙悟空」 in a
+ * 出海 project then lists 孙悟空出海, 孙悟空, 孙悟空游戏 — Enter takes the
+ * fitting specialisation, and picking the base role still mentions the base
+ * role. Without a scene the list is untouched.
+ */
+export function rankAgentItemsByFit(
+  items: MentionItem[],
+  agents: readonly Agent[],
+  scene: AgentScene | null,
+): MentionItem[] {
+  if (!scene) return items;
+  const domainOf = new Map(agents.map((a) => [a.id, a.domain_id]));
+  const agentRows = items
+    .filter((item) => item.type === "agent")
+    .map((item) => ({ item, domain_id: domainOf.get(item.id) }));
+  const ranked = sortAgentsByDomainFit(agentRows, scene.domains).map((row) => row.item);
+  let next = 0;
+  return items.map((item) => (item.type === "agent" ? ranked[next++]! : item));
 }
 
 export function createMentionSuggestion(
@@ -832,9 +856,10 @@ export function createMentionSuggestion(
     // targets come first regardless of type, with an alphabetical fallback
     // for everyone the user hasn't mentioned yet on this device.
     const recency = getRecencyMap(wsId);
-    const userItems = sortUserItemsByRecency(
-      [...memberItems, ...agentItems, ...squadItems],
-      recency,
+    const userItems = rankAgentItemsByFit(
+      sortUserItemsByRecency([...memberItems, ...agentItems, ...squadItems], recency),
+      agents,
+      options.getAgentScene?.() ?? null,
     );
 
     // Cached issues give an instant first paint; MentionList adds server

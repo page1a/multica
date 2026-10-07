@@ -85,7 +85,7 @@ func TestPickSameTierThenExactlyOneDown(t *testing.T) {
 	roster := []Seat{
 		failed,
 		{ID: "b", Name: "孙悟天", Tier: "strong", Direction: "游戏", Eligible: true},
-		{ID: "c", Name: "克林", Tier: "strong", Direction: "", Eligible: true},
+		{ID: "c", Name: "克林", Tier: "strong", Direction: "", Fit: 1, Eligible: true},
 		{ID: "d", Name: "贝吉塔", Tier: "medium", Eligible: true},
 		{ID: "e", Name: "布尔玛", Tier: "strongest", Eligible: true},
 		{ID: "broken", Name: "孙悟饭", Tier: "strong", Direction: "游戏", Eligible: false},
@@ -125,8 +125,8 @@ func TestPickCapacityPrefersAnotherHouseThenDropsOneTier(t *testing.T) {
 	roster := []Seat{
 		failed,
 		{ID: "gpt-same", Name: "阿A", Tier: "strong", Direction: "游戏", Provider: OpenAIHouse, Eligible: true},
-		{ID: "grok", Name: "孙悟天", Tier: "strong", Provider: "xai", Eligible: true},
-		{ID: "claude", Name: "孙悟空", Tier: "strong", Provider: AnthropicHouse, Eligible: true},
+		{ID: "grok", Name: "孙悟天", Tier: "strong", Provider: "xai", Fit: 1, Eligible: true},
+		{ID: "claude", Name: "孙悟空", Tier: "strong", Provider: AnthropicHouse, Fit: 1, Eligible: true},
 		{ID: "down-gpt", Name: "克林", Tier: "medium", Provider: OpenAIHouse, Eligible: true},
 		{ID: "two-down", Name: "比克", Tier: "weak", Provider: "deepseek", Eligible: true},
 	}

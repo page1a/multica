@@ -806,7 +806,7 @@ export default function SkillsPage() {
       )}
 
       {isLoading ? (
-        <div className="flex-1 overflow-y-auto @container">
+        <div className="flex-1 overflow-y-auto max-md:pb-chat-launcher @container">
           <LoadingSkeleton />
         </div>
       ) : showEmpty ? (
@@ -832,7 +832,7 @@ export default function SkillsPage() {
           />
           <div
             ref={listScrollRef}
-            className="min-h-0 flex-1 overflow-auto @container"
+            className="min-h-0 flex-1 overflow-auto max-md:pb-chat-launcher @container"
           >
           <ListGrid
             className={`${GRID_COLS} @2xl:min-w-[var(--lgc-minw)]`}

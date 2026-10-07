@@ -2413,6 +2413,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Workspace domains (DENE-1451). Reads are open to any member —
+			// project, issue and agent pickers all need the list. Writes are
+			// gated to workspace owner/admin inside the handlers.
+			r.Route("/api/domains", func(r chi.Router) {
+				r.Get("/", h.ListDomains)
+				r.Post("/", h.CreateDomain)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Patch("/", h.RenameDomain)
+					r.Delete("/", h.DeleteDomain)
+				})
+			})
+
 			// Issue status catalog (MUL-6243). Reads are open to any member —
 			// every client needs the catalog to render a status. Writes are
 			// gated to workspace owner/admin inside the handlers.

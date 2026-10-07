@@ -226,6 +226,38 @@ describe("createMentionSuggestion", () => {
     ]);
   });
 
+  it("ranks the fitting specialisation first, then the base role, in a domain scene (DENE-1477)", () => {
+    const agent = (id: string, name: string, domain_id?: string) =>
+      ({ id, name, archived_at: null, visibility: "workspace", owner_id: null, domain_id }) as {
+        id: string;
+        name: string;
+        archived_at: null;
+      };
+    const qc = fakeQc({
+      members: [{ user_id: "u1", name: "Alice", role: "member" }],
+      agents: [
+        agent("a-game", "孙悟空游戏", "d-game"),
+        agent("a-base", "孙悟空"),
+        agent("a-out", "孙悟空出海", "d-out"),
+      ],
+    });
+    const ids = (config: ReturnType<typeof createMentionSuggestion>) =>
+      (config.items!(itemArgs("孙悟空")) as MentionItem[]).map((i) => i.id);
+
+    // No scene: the long-standing recency / name order.
+    expect(ids(createMentionSuggestion(qc))).toEqual(["a-base", "a-out", "a-game"]);
+
+    const project = { id: "p", title: "tarot", domain_ids: ["d-out"] };
+    expect(
+      ids(createMentionSuggestion(qc, { getAgentScene: () => ({ domains: ["d-out"], projects: [project] }) })),
+    ).toEqual(["a-out", "a-base", "a-game"]);
+
+    // Generic scene: the base role fits, specialisations follow.
+    expect(
+      ids(createMentionSuggestion(qc, { getAgentScene: () => ({ domains: [], projects: [project] }) })),
+    ).toEqual(["a-base", "a-out", "a-game"]);
+  });
+
   it("returns members and agents synchronously without waiting for the server search", () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],

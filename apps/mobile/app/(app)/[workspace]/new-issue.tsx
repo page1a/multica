@@ -139,7 +139,10 @@ export default function NewIssueModal() {
         {/* Mention suggestions float above the keyboard only when the user
             types `@`. Self-hides via `if (!visible) return null` so it
             doesn't take space at rest. */}
-        <MentionSuggestionBar {...description.suggestionBar} />
+        <MentionSuggestionBar
+          {...description.suggestionBar}
+          projectId={project?.id ?? null}
+        />
       </KeyboardAvoidingView>
     </>
   );

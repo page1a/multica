@@ -296,6 +296,17 @@ func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filenam
 		w.Header().Set("Content-Disposition", ContentDisposition(meta.ContentType, meta.Filename))
 	}
 
+	// Storage keys are never reused (UUIDv7 or a per-message hash), so a
+	// served object never changes and the browser can keep it for a year
+	// without revalidating. private, not public: the route is reachable by
+	// URL alone and the object belongs to a workspace, so a shared cache (the
+	// CDN in front of a self-hosted instance) must not keep serving it after
+	// it is deleted. Only set on a real file so a 404 is never cached
+	// (DENE-1508).
+	if info, err := os.Stat(filePath); err == nil && info.Mode().IsRegular() {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	}
+
 	// Use http.ServeFile which has built-in path traversal protection
 	// It sanitizes the path and prevents access outside the directory
 	http.ServeFile(w, r, filePath)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
@@ -8,7 +8,9 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import type { Project, UpdateProjectRequest } from "@multica/core/types";
+import { agentSceneOf } from "@multica/core/agents";
 import { useT } from "../../i18n";
+import { AgentFitSections } from "../../agents/components/agent-fit-sections";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { ActorAvatar } from "../../common/actor-avatar";
 
@@ -30,6 +32,9 @@ export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align 
 
   const filteredMembers = members.filter((m) => m.name.toLowerCase().includes(leadQuery) || matchesPinyin(m.name, leadQuery));
   const filteredAgents = agents.filter((a) => !a.archived_at && (a.name.toLowerCase().includes(leadQuery) || matchesPinyin(a.name, leadQuery)));
+
+  // The project is the scene (DENE-1477): its fitting agents lead the list.
+  const scene = useMemo(() => agentSceneOf([project]), [project]);
 
   const leadId = project.lead_id;
   const leadType = project.lead_type;
@@ -73,22 +78,28 @@ export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align 
               ))}
             </>
           )}
-          {filteredAgents.length > 0 && (
-            <>
-              <div className="px-2 pt-2 pb-1 text-caption font-medium text-muted-foreground uppercase tracking-wider">{t(($) => $.lead.agents_group)}</div>
-              {filteredAgents.map((a) => (
-                <button
-                  type="button"
-                  key={a.id}
-                  onClick={() => { handleUpdate({ lead_type: "agent", lead_id: a.id }); setLeadOpen(false); }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body hover:bg-accent transition-colors"
-                >
-                  <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
-                  <span>{a.name}</span>
-                </button>
-              ))}
-            </>
-          )}
+          <AgentFitSections
+            agents={filteredAgents}
+            scene={scene}
+            label={t(($) => $.lead.agents_group)}
+            renderSection={(key, label, children) => (
+              <Fragment key={key}>
+                <div className="px-2 pt-2 pb-1 text-caption font-medium text-muted-foreground uppercase tracking-wider">{label}</div>
+                {children}
+              </Fragment>
+            )}
+            renderAgent={(a) => (
+              <button
+                type="button"
+                key={a.id}
+                onClick={() => { handleUpdate({ lead_type: "agent", lead_id: a.id }); setLeadOpen(false); }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body hover:bg-accent transition-colors"
+              >
+                <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
+                <span>{a.name}</span>
+              </button>
+            )}
+          />
           {filteredMembers.length === 0 && filteredAgents.length === 0 && leadFilter && (
             <div className="px-2 py-3 text-center text-body text-muted-foreground">{t(($) => $.lead.no_results)}</div>
           )}

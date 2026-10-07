@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "DENE-1477 domain fit: scene × agent -> group. One table, two readers:",
+    "server/internal/routing/domainfit_test.go and the client implementation.",
+    "",
+    "scene: the issue's own domain, else its project's domains, else generic",
+    "([] = 通用). Resolved by issue_domain + project_domains in `scenes`.",
+    "agent.domain: the domain a specialisation works in, \"\" for a base role.",
+    "fit: match (对口) / generic (通用) / other (其他), ordered in that rank."
+  ],
+  "scenes": [
+    { "name": "issue domain wins", "issue_domain": "自媒体", "project_domains": ["出海", "自媒体"], "want": ["自媒体"] },
+    { "name": "one project domain", "issue_domain": "", "project_domains": ["出海"], "want": ["出海"] },
+    { "name": "several project domains", "issue_domain": "", "project_domains": ["出海", "游戏"], "want": ["出海", "游戏"] },
+    { "name": "no domain anywhere is generic", "issue_domain": "", "project_domains": [], "want": [] }
+  ],
+  "cases": [
+    { "name": "generic scene, base role", "scene": [], "agent": { "name": "孙悟空", "domain": "" }, "fit": "match" },
+    { "name": "generic scene, specialisation", "scene": [], "agent": { "name": "孙悟空出海", "domain": "出海" }, "fit": "other" },
+    { "name": "domain scene, its specialisation", "scene": ["出海"], "agent": { "name": "孙悟空出海", "domain": "出海" }, "fit": "match" },
+    { "name": "domain scene, base role", "scene": ["出海"], "agent": { "name": "孙悟空", "domain": "" }, "fit": "generic" },
+    { "name": "domain scene, another domain", "scene": ["出海"], "agent": { "name": "孙悟空游戏", "domain": "游戏" }, "fit": "other" },
+    { "name": "several domains, either fits", "scene": ["出海", "游戏"], "agent": { "name": "孙悟空游戏", "domain": "游戏" }, "fit": "match" },
+    { "name": "several domains, base role", "scene": ["出海", "游戏"], "agent": { "name": "布尔玛", "domain": "" }, "fit": "generic" },
+    { "name": "several domains, outside both", "scene": ["出海", "游戏"], "agent": { "name": "布尔玛学术", "domain": "学术" }, "fit": "other" },
+    { "name": "renamed specialisation keeps its domain", "scene": ["出海"], "agent": { "name": "悟空-海外版", "domain": "出海" }, "fit": "match" }
+  ]
+}

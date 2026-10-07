@@ -641,6 +641,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
               selectedDescription={selectedAssignee?.description}
               invalid={showErrors && assigneeId.length === 0}
               errorId={assigneeErrorId}
+              projectId={projectId}
             />
 
             <OutputModeSection mode={executionMode} onChange={setExecutionMode} />
@@ -822,6 +823,7 @@ function AgentSection({
   selectedDescription,
   invalid,
   errorId,
+  projectId,
 }: {
   ref: React.Ref<HTMLButtonElement>;
   selectedType: AutopilotAssigneeType;
@@ -832,6 +834,7 @@ function AgentSection({
   /** A submit was attempted with no assignee picked. */
   invalid: boolean;
   errorId: string;
+  projectId: string | null;
 }) {
   const { t } = useT("autopilots");
   const hasSelection = selectedId.length > 0;
@@ -845,6 +848,7 @@ function AgentSection({
         assignee={hasSelection ? { type: selectedType, id: selectedId } : null}
         onChange={onChange}
         align="start"
+        sceneProjectIds={[projectId]}
         triggerRender={
           <button
             ref={ref}

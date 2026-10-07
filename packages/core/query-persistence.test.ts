@@ -4,6 +4,7 @@ import type { StorageAdapter } from "./types/storage";
 import {
   clearPersistedQueryCache,
   createPersistedQueryCache,
+  QUERY_CACHE_MAX_CHARS,
   QUERY_CACHE_SCHEMA_VERSION,
   queryCacheStoragePrefix,
 } from "./query-persistence";
@@ -115,6 +116,80 @@ describe("persisted query cache", () => {
     );
     unsubscribe();
     stopReader();
+    vi.useRealTimers();
+  });
+
+  it("skips data JSON cannot round-trip, so a restored Map never comes back as {}", async () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    const writer = new QueryClient();
+    const stop = createPersistedQueryCache(writer, storage, "user-a");
+    writer.setQueryData(["issues", "ws", "children-by-parents", ["p1"]], new Map([["p1", [{ id: "c1" }]]]));
+    writer.setQueryData(["inbox", "ws", "ids"], new Set(["a"]));
+    writer.setQueryData(["issues", "ws", "nested"], { at: new Date(0) });
+    writer.setQueryData(["projects", "ws"], [{ id: "p1", meta: { tags: ["x"], none: null } }]);
+    await vi.advanceTimersByTimeAsync(60);
+    stop();
+
+    const envelope = JSON.parse(storage.data[`${queryCacheStoragePrefix()}user-a`]!);
+    expect(envelope.state.queries.map((q: { queryKey: unknown[] }) => q.queryKey)).toEqual([["projects", "ws"]]);
+    vi.useRealTimers();
+  });
+
+  it("drops a snapshot written by an older schema", () => {
+    const storage = memoryStorage();
+    const key = `${queryCacheStoragePrefix()}user-a`;
+    storage.setItem(key, JSON.stringify({
+      schemaVersion: QUERY_CACHE_SCHEMA_VERSION - 1,
+      userId: "user-a",
+      state: {
+        mutations: [],
+        queries: [{
+          queryKey: ["issues", "ws", "children-by-parents", ["p1"]],
+          queryHash: JSON.stringify(["issues", "ws", "children-by-parents", ["p1"]]),
+          state: { data: {}, status: "success", dataUpdatedAt: 1 },
+        }],
+      },
+    }));
+    const reader = new QueryClient();
+    createPersistedQueryCache(reader, storage, "user-a");
+    expect(reader.getQueryData(["issues", "ws", "children-by-parents", ["p1"]])).toBeUndefined();
+    expect(storage.data[key]).toBeUndefined();
+  });
+
+  it("keeps the most recently updated queries within the size budget", async () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    const writer = new QueryClient();
+    const stop = createPersistedQueryCache(writer, storage, "user-a");
+    const big = "x".repeat(Math.floor(QUERY_CACHE_MAX_CHARS / 2));
+    writer.setQueryData(["projects", "old"], big, { updatedAt: 1 });
+    writer.setQueryData(["projects", "mid"], big, { updatedAt: 2 });
+    writer.setQueryData(["projects", "new"], big, { updatedAt: 3 });
+    await vi.advanceTimersByTimeAsync(60);
+    stop();
+
+    const raw = storage.data[`${queryCacheStoragePrefix()}user-a`]!;
+    expect(raw.length).toBeLessThanOrEqual(QUERY_CACHE_MAX_CHARS);
+    const reader = new QueryClient();
+    createPersistedQueryCache(reader, storage, "user-a");
+    expect(reader.getQueryData(["projects", "new"])).toBe(big);
+    expect(reader.getQueryData(["projects", "old"])).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it("frees the old snapshot when the write fails", async () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    const key = `${queryCacheStoragePrefix()}user-a`;
+    storage.data[key] = "stale";
+    storage.setItem = () => { throw new Error("QuotaExceededError"); };
+    const writer = new QueryClient();
+    const stop = createPersistedQueryCache(writer, storage, "user-a");
+    writer.setQueryData(["projects", "ws"], [{ id: "p1" }]);
+    await vi.advanceTimersByTimeAsync(60);
+    stop();
+    expect(storage.data[key]).toBeUndefined();
     vi.useRealTimers();
   });
 });

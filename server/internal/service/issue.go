@@ -79,6 +79,12 @@ type IssueCreateParams struct {
 	// takes its parent's project. An explicit empty project stays empty, so
 	// clearing the picker is not undone by that inheritance.
 	ProjectPinned bool
+	// DomainID is the domain the caller picked (DENE-1451). DomainPinned is
+	// true when the caller chose one, generic included; left out, a project
+	// with exactly one domain gives it to the issue. A domain the resolved
+	// project does not carry fails the create with ErrIssueDomainNotInProject.
+	DomainID      pgtype.UUID
+	DomainPinned  bool
 	StartDate     pgtype.Date
 	DueDate       pgtype.Date
 	OriginType    pgtype.Text
@@ -186,6 +192,10 @@ var ErrParentIssueNotFound = errors.New("parent issue not found in this workspac
 // MCP / API key callers) enforces the same workspace boundary without
 // having to remember it. Callers translate this into 400.
 var ErrProjectNotFound = errors.New("project not found in this workspace")
+
+// ErrIssueDomainNotInProject: an issue can only work in one of its project's
+// domains, and an issue with no project has none.
+var ErrIssueDomainNotInProject = errors.New("domain is not one of the issue's project domains")
 
 // ErrIssueLabelNotFound signals that one of the supplied LabelIDs does not
 // exist in the issue's workspace or is not an issue-scoped label. The whole
@@ -428,6 +438,7 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 	// independent of it (DENE-698). Joining a shared project is how work
 	// becomes visible without anyone having to re-share each issue.
 	visibility := pgtype.Text{String: string(permission.DefaultVisibility), Valid: true}
+	var domainID pgtype.UUID
 	if p.CreatorType == "agent" {
 		// 'private' means "only its creator", and an agent is not somebody who
 		// can be shown a list. An agent-created issue left private would be
@@ -447,6 +458,12 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		if permission.Visibility(project.Visibility).Valid() {
 			visibility = pgtype.Text{String: project.Visibility, Valid: true}
 		}
+		domainID, err = issueDomainInProject(project, p.DomainID, p.DomainPinned)
+		if err != nil {
+			return issueCreateTxOutcome{}, err
+		}
+	} else if p.DomainID.Valid {
+		return issueCreateTxOutcome{}, ErrIssueDomainNotInProject
 	}
 
 	// Validate labels before we increment the issue counter so a stale or
@@ -541,6 +558,12 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 			return issueCreateTxOutcome{}, ErrIssuePropertiesTooLarge
 		}
 		return issueCreateTxOutcome{}, fmt.Errorf("create issue: %w", err)
+	}
+	if domainID.Valid {
+		issue, err = qtx.SetIssueDomain(ctx, db.SetIssueDomainParams{ID: issue.ID, WorkspaceID: p.WorkspaceID, DomainID: domainID})
+		if err != nil {
+			return issueCreateTxOutcome{}, fmt.Errorf("set issue domain: %w", err)
+		}
 	}
 	if p.GoalMode {
 		if _, goalErr := qtx.CreateIssueGoal(ctx, db.CreateIssueGoalParams{IssueID: issue.ID, WorkspaceID: p.WorkspaceID, CreatedByType: p.CreatorType, CreatedByID: p.CreatorID}); goalErr != nil {
@@ -1152,4 +1175,21 @@ func (s *IssueService) enqueueSquadLeaderTask(ctx context.Context, issue db.Issu
 // assignment is attributed to the platform the same way its comments are.
 func (s *IssueService) StartAssignedAgent(ctx context.Context, issue db.Issue) {
 	s.maybeEnqueueOnAssign(ctx, issue, "system", "", time.Time{})
+}
+
+// issueDomainInProject checks a picked domain against the project's domains,
+// or, when nobody picked one, gives the issue the project's only domain.
+func issueDomainInProject(project db.Project, picked pgtype.UUID, pinned bool) (pgtype.UUID, error) {
+	if picked.Valid {
+		for _, id := range project.DomainIds {
+			if id == picked {
+				return picked, nil
+			}
+		}
+		return pgtype.UUID{}, ErrIssueDomainNotInProject
+	}
+	if !pinned && len(project.DomainIds) == 1 {
+		return project.DomainIds[0], nil
+	}
+	return pgtype.UUID{}, nil
 }

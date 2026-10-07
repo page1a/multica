@@ -71,7 +71,9 @@ type ContinuationSnapshot struct {
 	// Seats is keyed by agent id. A related executor missing here is treated
 	// as off the roster.
 	Seats map[string]ContinuationSeat
-	// Direction is the ticket's direction, "" for generic.
+	// Scene is the ticket's scene (DENE-1477). Direction is the single-domain
+	// spelling, read only when Scene is generic.
+	Scene     Scene
 	Direction string
 	// RequiredTier is the rung routing judged for this ticket; a continuation
 	// seat must sit on it or above.
@@ -143,7 +145,7 @@ func PickContinuation(s ContinuationSnapshot) ContinuationPick {
 		if name == "" {
 			name = t.ExecutorID
 		}
-		if why := continuationBlocker(seat, ok, rank, required, requiredKnown, s.Direction); why != "" {
+		if why := continuationBlocker(seat, ok, rank, required, requiredKnown, s.scene()); why != "" {
 			out.Skipped = append(out.Skipped, continuationDetail(t)+" "+name+" "+why)
 			continue
 		}
@@ -155,7 +157,7 @@ func PickContinuation(s ContinuationSnapshot) ContinuationPick {
 
 // continuationBlocker is why one related executor cannot continue, "" when it
 // can.
-func continuationBlocker(seat ContinuationSeat, known bool, rank map[string]int, required int, requiredKnown bool, direction string) string {
+func continuationBlocker(seat ContinuationSeat, known bool, rank map[string]int, required int, requiredKnown bool, scene Scene) string {
 	if !known || !seat.OnRoster {
 		return "已停用或已归档"
 	}
@@ -176,7 +178,7 @@ func continuationBlocker(seat ContinuationSeat, known bool, rank map[string]int,
 	if requiredKnown && have > required {
 		return "档位不够（" + seat.Seat.TierLabel + "档低于这张票判的档）"
 	}
-	if seat.Seat.Direction != "" && seat.Seat.Direction != direction {
+	if DomainFit(scene, seat.Seat.Direction) == FitOther {
 		return "方向不对（" + seat.Seat.Direction + "）"
 	}
 	return ""
@@ -204,4 +206,11 @@ func ContinuationLine(p ContinuationPick, enabled bool, written *Seat) string {
 		return prefix + "：按新规则也会选 " + p.Seat.Name + "（接着做：" + p.Detail() + "）。"
 	}
 	return prefix + "：按新规则会选 " + p.Seat.Name + "（接着做：" + p.Detail() + "）。"
+}
+
+func (s ContinuationSnapshot) scene() Scene {
+	if !s.Scene.Generic() {
+		return s.Scene
+	}
+	return SceneOf(s.Direction)
 }

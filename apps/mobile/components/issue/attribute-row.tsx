@@ -13,6 +13,7 @@
  *   assignee  →  issue/[id]/picker/assignee
  *   labels    →  issue/[id]/picker/label   (multi-select, stays open)
  *   project   →  issue/[id]/picker/project
+ *   domain    →  issue/[id]/picker/domain  (only once a project is set)
  *   due_date  →  issue/[id]/picker/due-date
  */
 import { useMemo } from "react";
@@ -32,6 +33,7 @@ import { ProjectIcon } from "@/components/ui/project-icon";
 import { AttributeChip } from "./attribute-chip";
 import { useActorLookup } from "@/data/use-actor-name";
 import { findProject, projectListOptions } from "@/data/queries/projects";
+import { domainListOptions } from "@/data/queries/domains";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { PRIORITY_LABEL as PRIORITY_FULL_LABEL } from "@/lib/issue-status";
 import { useIssueStatuses } from "@/lib/use-issue-statuses";
@@ -56,6 +58,7 @@ type IssuePickerField =
   | "assignee"
   | "label"
   | "project"
+  | "domain"
   | "due-date";
 
 const ISSUE_PICKER_PATHNAMES = {
@@ -64,6 +67,7 @@ const ISSUE_PICKER_PATHNAMES = {
   assignee: "/[workspace]/issue/[id]/picker/assignee",
   label: "/[workspace]/issue/[id]/picker/label",
   project: "/[workspace]/issue/[id]/picker/project",
+  domain: "/[workspace]/issue/[id]/picker/domain",
   "due-date": "/[workspace]/issue/[id]/picker/due-date",
 } as const satisfies Record<IssuePickerField, string>;
 
@@ -97,6 +101,11 @@ export function AttributeRow({ issue }: { issue: Issue }) {
     () => findProject(projects, issue.project_id),
     [projects, issue.project_id],
   );
+
+  const { data: domains = [] } = useQuery(domainListOptions(wsId));
+  const domain = issue.domain_id
+    ? domains.find((d) => d.id === issue.domain_id) ?? null
+    : null;
 
   const labels = issue.labels ?? [];
 
@@ -214,6 +223,16 @@ export function AttributeRow({ issue }: { issue: Issue }) {
           onPress={() => openPicker("project")}
         />
       )}
+
+      {/* Domain — one of the project's, or generic (DENE-1451) */}
+      {project ? (
+        <AttributeChip
+          icon={<Text className="text-xs text-muted-foreground/80">◎</Text>}
+          label={domain?.name ?? t("common:domain.generic")}
+          variant={domain ? "filled" : "dimmed"}
+          onPress={() => openPicker("domain")}
+        />
+      ) : null}
 
       {/* Due date */}
       <AttributeChip

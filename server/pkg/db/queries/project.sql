@@ -37,11 +37,12 @@ FOR UPDATE;
 INSERT INTO project (
     workspace_id, title, description, icon, status,
     lead_type, lead_id, priority, start_date, due_date,
-    created_by, visibility
+    created_by, visibility, domain_ids
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     sqlc.narg('created_by')::uuid,
-    COALESCE(sqlc.narg('visibility')::text, 'private')
+    COALESCE(sqlc.narg('visibility')::text, 'private'),
+    COALESCE(sqlc.narg('domain_ids')::uuid[], '{}'::uuid[])
 ) RETURNING *;
 
 -- name: UpdateProject :one

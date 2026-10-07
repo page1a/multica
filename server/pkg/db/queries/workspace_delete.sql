@@ -664,6 +664,9 @@ deleted_issues AS (
 deleted_labels AS (
     DELETE FROM issue_label WHERE issue_label.workspace_id = $1
 ),
+deleted_domains AS (
+    DELETE FROM workspace_domain WHERE workspace_domain.workspace_id = $1
+),
 deleted_properties AS (
     DELETE FROM issue_property WHERE issue_property.workspace_id = $1
 ),

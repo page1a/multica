@@ -17,6 +17,8 @@ import type {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -26,6 +28,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
+import { cn } from "@multica/ui/lib/utils";
 import { ProviderLogo } from "../runtimes/components/provider-logo";
 import {
   displayPlanLimits,
@@ -144,7 +148,23 @@ export function ProviderStatusBarView({
   onSelectRuntime?: (provider: string, runtimeId: string) => void;
 }) {
   const { t } = useT("runtimes");
+  const isMobile = useIsMobile();
   if (providers.length === 0) return null;
+
+  if (isMobile) {
+    return (
+      <footer
+        aria-label={t(($) => $.plan_limits.title)}
+        className="flex h-10 shrink-0 items-center border-t px-2 pe-chat-launcher"
+      >
+        <CompactProviderStatus
+          providers={providers}
+          selectedByProvider={selectedByProvider}
+          onSelectRuntime={onSelectRuntime}
+        />
+      </footer>
+    );
+  }
 
   return (
     <footer
@@ -248,6 +268,120 @@ function ProviderStatusEntry({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/**
+ * Phone layout: the full row needs ~300px per provider and scrolls sideways
+ * under the chat button, so collapse it to one logo + tightest remaining per
+ * provider. Tapping opens every window and the source switcher.
+ */
+function CompactProviderStatus({
+  providers,
+  selectedByProvider,
+  onSelectRuntime,
+}: {
+  providers: ProviderQuotaSummary[];
+  selectedByProvider: Record<string, string>;
+  onSelectRuntime?: (provider: string, runtimeId: string) => void;
+}) {
+  const { t } = useT("runtimes");
+  const locale = useLocale();
+  const entries = providers.flatMap((provider) => {
+    const selected = resolveSelectedRuntime(
+      provider.runtimes,
+      selectedByProvider[provider.provider],
+    );
+    return selected ? [{ provider, selected }] : [];
+  });
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={t(($) => $.plan_limits.title)}
+            className="flex h-8 min-w-0 items-center gap-3 overflow-hidden rounded-md px-1.5 text-caption hover:bg-muted aria-expanded:bg-muted"
+          >
+            {entries.map(({ provider, selected }) => {
+              const tightest = tightestWindow(selected.windows);
+              return (
+                <span key={provider.provider} className="flex shrink-0 items-center gap-1">
+                  <ProviderLogo provider={provider.provider} className="h-3.5 w-3.5" />
+                  <span
+                    className={cn(
+                      "tabular-nums",
+                      tightest ? remainingTone(tightest) : "text-destructive",
+                    )}
+                  >
+                    {tightest ? (remainingLabel(tightest) ?? "—") : "0%"}
+                  </span>
+                </span>
+              );
+            })}
+            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" side="top" className="min-w-60 max-w-[calc(100vw-1rem)]">
+        {entries.map(({ provider, selected }) => {
+          const name = providerDisplayName(provider.provider);
+          return (
+            <DropdownMenuGroup key={provider.provider}>
+              <DropdownMenuLabel className="space-y-0.5 font-normal">
+                <span className="flex items-center gap-2 font-medium text-foreground">
+                  <ProviderLogo provider={provider.provider} className="h-3.5 w-3.5" />
+                  {name}
+                </span>
+                {selected.windows.length === 0 ? (
+                  <span className="block text-destructive">
+                    {t(($) => $.plan_limits.limit_reached)}
+                  </span>
+                ) : (
+                  selected.windows.map((window) => (
+                    <span key={window.name} className="block">
+                      <WindowSummary window={window} locale={locale} />
+                    </span>
+                  ))
+                )}
+              </DropdownMenuLabel>
+              {provider.runtimes.length > 1 ? (
+                <DropdownMenuRadioGroup
+                  value={selected.runtimeId}
+                  onValueChange={(runtimeId) =>
+                    onSelectRuntime?.(provider.provider, runtimeId)
+                  }
+                >
+                  {provider.runtimes.map((runtime) => (
+                    <DropdownMenuRadioItem key={runtime.runtimeId} value={runtime.runtimeId}>
+                      <span className="min-w-0 flex-1 truncate">{runtime.sourceLabel}</span>
+                      <span className="ps-3 text-caption tabular-nums text-muted-foreground">
+                        {compactRemaining(runtime.windows, t)}
+                      </span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              ) : (
+                <div className="px-1.5 pb-1.5 text-caption text-muted-foreground">
+                  {selected.sourceLabel}
+                </div>
+              )}
+            </DropdownMenuGroup>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The window closest to running out; prepaid balances only when nothing has a percentage. */
+function tightestWindow(windows: PlanLimitWindow[]): PlanLimitWindow | undefined {
+  let tightest: PlanLimitWindow | undefined;
+  for (const window of windows) {
+    if (window.used_percent == null) continue;
+    if (!tightest || window.used_percent > (tightest.used_percent ?? -1)) tightest = window;
+  }
+  return tightest ?? windows[0];
 }
 
 function ProviderStatusSummary({

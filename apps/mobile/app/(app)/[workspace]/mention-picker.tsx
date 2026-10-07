@@ -12,6 +12,8 @@
  *     unintended notifications). Issues remain useful as "reference this
  *     ticket for the agent's context".
  *
+ * `?issueId=` (comment mode) orders agents by that issue's domain fit.
+ *
  * Lives at workspace level (not nested under issue/[id]) because the chat
  * tab has no per-session route to nest under; making it workspace-level
  * keeps a single route file serving both contexts.
@@ -24,7 +26,10 @@ import { useT } from "@/lib/i18n";
 type Mode = "comment" | "chat";
 
 export default function MentionPickerRoute() {
-  const { mode: rawMode } = useLocalSearchParams<{ mode?: string }>();
+  const { mode: rawMode, issueId } = useLocalSearchParams<{
+    mode?: string;
+    issueId?: string;
+  }>();
   const { t } = useT("issues");
   const mode: Mode = rawMode === "chat" ? "chat" : "comment";
   const placeholder =
@@ -32,5 +37,5 @@ export default function MentionPickerRoute() {
       ? t("picker.reference_issue")
       : t("picker.search_people_issues");
   const query = useNativeSearchBar(placeholder, { autoFocus: true });
-  return <MentionPickerBody mode={mode} query={query} />;
+  return <MentionPickerBody mode={mode} query={query} issueId={issueId} />;
 }

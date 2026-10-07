@@ -39,7 +39,7 @@ export function WorkThreadPanel({ kind, id }: Props) {
   const stateLabel = snapshot.state.replaceAll("_", " ");
   const queued = snapshot.queued_inputs.length;
   return (
-    <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1" data-testid={`work-thread-${kind}`}>
+    <div className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border bg-muted/30 px-2 py-1" data-testid={`work-thread-${kind}`}>
       <span className="text-caption text-muted-foreground" title={snapshot.thread_id}>
         {t(($) => $.work_thread.thread, { state: stateLabel })}
         {queued ? ` · ${t(($) => $.work_thread.queued_count, { count: queued })}` : ""}

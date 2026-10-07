@@ -46,6 +46,7 @@ import {
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
 import { RoutingSeatsTable } from "./routing-seats-table";
+import { RoutingDomainsSection } from "./routing-domains";
 import { RuntimePicker } from "../../agents/components/runtime-picker";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { ThinkingSettingField } from "../../agents/components/inspector/thinking-prop-row";
@@ -713,6 +714,8 @@ export function RoutingTab() {
           })}
         </SettingsCard>
       </SettingsSection>
+
+      <RoutingDomainsSection wsId={workspace?.id ?? ""} canManage={canManage} />
 
       <SettingsSection
         title={t(($) => $.routing.seats_title)}

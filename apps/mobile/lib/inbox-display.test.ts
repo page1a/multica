@@ -30,6 +30,15 @@ function item(overrides: Partial<InboxItem>): InboxItem {
 }
 
 describe("deduplicateInboxItems", () => {
+  it("keeps the unread count of a server-grouped row", () => {
+    const [grouped] = deduplicateInboxItems([
+      item({ id: "group-row", read: false, unread_count: 3 }),
+      item({ id: "new-row", read: false, created_at: "2026-06-15T09:00:00Z" }),
+    ]);
+    expect(grouped).toMatchObject({ id: "new-row", read: false, unread_count: 4 });
+    expect(deduplicateInboxItems([item({ read: true, unread_count: 3 })])[0]?.unread_count).toBe(0);
+  });
+
   it("keeps the newest issue row while preserving an older comment anchor", () => {
     const merged = deduplicateInboxItems([
       item({

@@ -25,7 +25,7 @@ export type TabMessage =
   | { type: "ping" }
   | { type: "search"; id: number; kind: "issues" | "projects"; params: IssueSearchParams }
   | { type: "fetch-result"; id: number; ok: true; data: unknown }
-  | { type: "fetch-result"; id: number; ok: false; status?: number; message: string }
+  | { type: "fetch-result"; id: number; ok: false; status?: number; malformed?: boolean; message: string }
   | { type: "wipe"; id: number }
   /** Access to the workspace ended (deleted, removed, left): destroy its copies. */
   | { type: "forget"; workspaceId: string }

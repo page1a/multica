@@ -1,23 +1,20 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
-import {
-  PickerEmpty,
-  PickerItem,
-  PickerSection,
-  PropertyPicker,
-} from "../../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { PickerItem, PropertyPicker } from "../../issues/components/pickers/property-picker";
+import { AgentPickerGroups } from "./agent-picker-groups";
 import type { ShortcutChord } from "@multica/core/shortcuts";
-import type { Agent } from "@multica/core/types";
+import type { Agent, Project } from "@multica/core/types";
 import { isAgentRuntimeBound } from "@multica/core/agents";
 import { toast } from "sonner";
 import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { useT } from "../../i18n";
+
+const NO_PROJECTS: readonly Project[] = [];
 
 function NewChatTooltipLabel({ shortcut }: { shortcut?: ShortcutChord | null }) {
   const { t } = useT("chat");
@@ -32,7 +29,7 @@ function NewChatTooltipLabel({ shortcut }: { shortcut?: ShortcutChord | null }) 
 }
 
 /**
- * Agent picker: a searchable, grouped (My agents / Others) list of agents in a
+ * Agent picker: a searchable, grouped (fits the project / My agents / Others) list of agents in a
  * PropertyPicker. The caller supplies the trigger. `currentAgentId` marks one
  * agent with a check — omit it (as "new chat" does) when there is no current
  * selection to highlight.
@@ -40,6 +37,7 @@ function NewChatTooltipLabel({ shortcut }: { shortcut?: ShortcutChord | null }) 
 export function AgentPicker({
   agents,
   userId,
+  projects = NO_PROJECTS,
   currentAgentId,
   onSelect,
   trigger,
@@ -49,6 +47,8 @@ export function AgentPicker({
 }: {
   agents: Agent[];
   userId: string | undefined;
+  /** Projects the chat is in; their domains decide which agents list first. */
+  projects?: readonly Project[];
   currentAgentId?: string;
   onSelect: (agent: Agent) => void;
   trigger: React.ReactNode;
@@ -59,22 +59,6 @@ export function AgentPicker({
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  const { mine, others } = useMemo(() => {
-    const mine: Agent[] = [];
-    const others: Agent[] = [];
-    for (const a of agents) {
-      if (a.owner_id === userId) mine.push(a);
-      else others.push(a);
-    }
-    return { mine, others };
-  }, [agents, userId]);
-
-  const query = filter.trim().toLowerCase();
-  const matches = (name: string) =>
-    !query || name.toLowerCase().includes(query) || matchesPinyin(name, query);
-  const filteredMine = mine.filter((agent) => matches(agent.name));
-  const filteredOthers = others.filter((agent) => matches(agent.name));
-
   const handlePick = (agent: Agent) => {
     onSelect(agent);
     setOpen(false);
@@ -93,41 +77,25 @@ export function AgentPicker({
       triggerRender={triggerRender}
       trigger={trigger}
     >
-      {filteredMine.length === 0 && filteredOthers.length === 0 ? (
-        <PickerEmpty />
-      ) : (
-        <>
-          {filteredMine.length > 0 && (
-            <PickerSection label={t(($) => $.window.my_agents)}>
-              {filteredMine.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === currentAgentId}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-          {filteredOthers.length > 0 && (
-            <PickerSection label={t(($) => $.window.others)}>
-              {filteredOthers.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === currentAgentId}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-        </>
-      )}
+      <AgentPickerGroups
+        agents={agents}
+        userId={userId}
+        projects={projects}
+        query={filter}
+        renderAgent={(agent) => (
+          <AgentPickerItem
+            key={agent.id}
+            agent={agent}
+            isCurrent={agent.id === currentAgentId}
+            onSelect={handlePick}
+          />
+        )}
+      />
     </PropertyPicker>
   );
 }
 
-function AgentPickerItem({
+export function AgentPickerItem({
   agent,
   isCurrent,
   onSelect,
@@ -175,12 +143,15 @@ function AgentPickerItem({
 export function NewChatButton({
   agents,
   userId,
+  projects,
   onStart,
   side = "bottom",
   shortcut = null,
 }: {
   agents: Agent[];
   userId: string | undefined;
+  /** Projects the new chat will start in; see AgentPicker. */
+  projects?: readonly Project[];
   onStart: (agent: Agent | null) => void;
   side?: "top" | "bottom";
   /**
@@ -228,6 +199,7 @@ export function NewChatButton({
     <AgentPicker
       agents={agents}
       userId={userId}
+      projects={projects}
       onSelect={(agent) => onStart(agent)}
       side={side}
       align="start"

@@ -15,6 +15,11 @@ import {
 
 const NOW = 1_800_000_000_000;
 
+const mobile = vi.hoisted(() => ({ value: false }));
+vi.mock("@multica/ui/hooks/use-mobile", () => ({
+  useIsMobile: () => mobile.value,
+}));
+
 vi.mock("../i18n", () => ({
   useT: () => ({
     t: (
@@ -49,6 +54,12 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
     DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
     DropdownMenuTrigger: ({ render }: { render?: ReactElement }) => render ?? null,
     DropdownMenuContent: ({ children }: { children: ReactNode }) => (
+      <div>{children}</div>
+    ),
+    DropdownMenuGroup: ({ children }: { children: ReactNode }) => (
+      <div>{children}</div>
+    ),
+    DropdownMenuLabel: ({ children }: { children: ReactNode }) => (
       <div>{children}</div>
     ),
     DropdownMenuRadioGroup: ({
@@ -288,5 +299,83 @@ describe("ProviderStatusBarView", () => {
 
     await user.click(screen.getByRole("button", { name: /旧机器/ }));
     expect(onSelectRuntime).toHaveBeenCalledWith("grok", "grok-old");
+  });
+});
+
+describe("ProviderStatusBarView on a phone", () => {
+  const providers = collectProviderQuotas(
+    [
+      runtime({
+        id: "claude-1",
+        provider: "claude",
+        plan_limits: {
+          provider: "claude",
+          status: "available",
+          observed_at: NOW / 1000 - 60,
+          windows: [
+            { name: "5h", used_percent: 30 },
+            { name: "7d", used_percent: 85 },
+          ],
+        },
+      }),
+      runtime({
+        id: "grok-old",
+        provider: "grok",
+        custom_name: "旧机器",
+        plan_limits: {
+          provider: "grok",
+          status: "available",
+          observed_at: NOW / 1000 - 120,
+          windows: [{ name: "credits", used_percent: 89 }],
+        },
+      }),
+      runtime({
+        id: "grok-new",
+        provider: "grok",
+        custom_name: "悟天",
+        plan_limits: {
+          provider: "grok",
+          status: "available",
+          observed_at: NOW / 1000 - 30,
+          windows: [{ name: "credits", used_percent: 1 }],
+        },
+      }),
+    ],
+    NOW,
+  );
+
+  it("collapses every provider into one trigger showing its tightest window", () => {
+    mobile.value = true;
+    try {
+      render(<ProviderStatusBarView providers={providers} />);
+      const trigger = screen.getByRole("button", { name: "Plan limits" });
+      // Claude's 7d window (15% left) is tighter than its 5h one (70%).
+      expect(trigger).toHaveTextContent("15%");
+      expect(trigger).not.toHaveTextContent("70%");
+      expect(trigger).toHaveTextContent("99%");
+      expect(
+        screen.queryByRole("button", { name: /Switch Grok quota/ }),
+      ).not.toBeInTheDocument();
+    } finally {
+      mobile.value = false;
+    }
+  });
+
+  it("keeps the source switcher inside the menu", async () => {
+    mobile.value = true;
+    try {
+      const user = userEvent.setup();
+      const onSelectRuntime = vi.fn();
+      render(
+        <ProviderStatusBarView
+          providers={providers}
+          onSelectRuntime={onSelectRuntime}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /旧机器/ }));
+      expect(onSelectRuntime).toHaveBeenCalledWith("grok", "grok-old");
+    } finally {
+      mobile.value = false;
+    }
   });
 });

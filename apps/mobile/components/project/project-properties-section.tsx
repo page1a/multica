@@ -1,5 +1,6 @@
 /**
- * Project properties section. Tappable rows for Status / Priority / Lead.
+ * Project properties section. Tappable rows for Status / Priority / Lead /
+ * Domain.
  * Each row opens a picker sheet via the corresponding `onPress*` callback.
  *
  * Layout mirrors iOS Settings rows: label on left, current value on right
@@ -20,7 +21,10 @@ import {
   projectPriorityLabel,
   projectStatusLabel,
 } from "@/lib/project-status";
+import { useQuery } from "@tanstack/react-query";
 import { useActorLookup } from "@/data/use-actor-name";
+import { domainListOptions } from "@/data/queries/domains";
+import { useWorkspaceStore } from "@/data/workspace-store";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
 import { useT } from "@/lib/i18n";
@@ -30,6 +34,7 @@ interface Props {
   onPressStatus: () => void;
   onPressPriority: () => void;
   onPressLead: () => void;
+  onPressDomain: () => void;
 }
 
 export function ProjectPropertiesSection({
@@ -37,9 +42,15 @@ export function ProjectPropertiesSection({
   onPressStatus,
   onPressPriority,
   onPressLead,
+  onPressDomain,
 }: Props) {
   const { getName } = useActorLookup();
   const { t } = useT("projects");
+  const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const { data: domains = [] } = useQuery(domainListOptions(wsId));
+  const domainNames = domains
+    .filter((d) => (project.domain_ids ?? []).includes(d.id))
+    .map((d) => d.name);
   const leadName =
     project.lead_type && project.lead_id
       ? getName(project.lead_type, project.lead_id)
@@ -93,6 +104,26 @@ export function ProjectPropertiesSection({
             }
           >
             {leadName ?? t("properties.unassigned")}
+          </Text>
+        }
+      />
+      <Separator />
+      <Row
+        label={t("common:domain.label")}
+        onPress={onPressDomain}
+        left={null}
+        right={
+          <Text
+            numberOfLines={1}
+            className={
+              domainNames.length > 0
+                ? "flex-1 text-sm text-foreground"
+                : "flex-1 text-sm text-muted-foreground"
+            }
+          >
+            {domainNames.length > 0
+              ? domainNames.join("、")
+              : t("common:domain.generic")}
           </Text>
         }
       />

@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/routing"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -74,6 +77,7 @@ func (h *Handler) SuggestIssueDraftAssignees(w http.ResponseWriter, r *http.Requ
 	}
 
 	projectName := ""
+	var projectDomains []string
 	if req.ProjectID != nil && *req.ProjectID != "" {
 		projectID, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
 		if !ok {
@@ -83,6 +87,7 @@ func (h *Handler) SuggestIssueDraftAssignees(w http.ResponseWriter, r *http.Requ
 			ID: projectID, WorkspaceID: session.WorkspaceID,
 		}); err == nil {
 			projectName = p.Title
+			projectDomains = service.LoadDomainScene(r.Context(), h.Queries, session.WorkspaceID, pgtype.UUID{}, p.ID).Project
 		}
 	}
 
@@ -96,7 +101,7 @@ func (h *Handler) SuggestIssueDraftAssignees(w http.ResponseWriter, r *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
 	defer cancel()
-	suggestions, err := h.Routing.Suggest(ctx, util.UUIDToString(session.WorkspaceID), projectName, rows)
+	suggestions, err := h.Routing.Suggest(ctx, util.UUIDToString(session.WorkspaceID), projectName, projectDomains, rows)
 	if err != nil {
 		// A suggestion is advisory: the panel works without one, so a routing
 		// failure answers with empty rows instead of failing the draft page.

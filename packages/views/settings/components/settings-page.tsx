@@ -632,7 +632,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
       <div
         ref={contentRef}
         key={`${active.value}:${location.integration ?? ""}`}
-        className="min-w-0 flex-1 overflow-y-auto overscroll-contain"
+        className="min-w-0 flex-1 overflow-y-auto max-md:pb-chat-launcher overscroll-contain"
       >
         <div
           className={cn(

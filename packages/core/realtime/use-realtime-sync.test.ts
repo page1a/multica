@@ -27,7 +27,9 @@ import {
   applyIssueInvalidatedToCache,
   applyChatCancelFinalizedToCache,
   applyChatDoneToCache,
+  applyChatDoneToSessionList,
   applyChatMessageToCache,
+  applyChatSessionReadToCache,
   applyChatQuickActionsToCache,
   applyChatSessionUpdatedToCache,
   applyWorkspaceUpdatedToCache,
@@ -207,6 +209,84 @@ describe("applyChatDoneToCache", () => {
       userMessage(),
     ]);
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
+  });
+});
+
+// DENE-1507: chat:done and chat:session_read used to refetch the whole list.
+describe("chat list in-place patches", () => {
+  const WS_ID = "ws-1";
+
+  function row(overrides: Partial<ChatSession> = {}): ChatSession {
+    return {
+      id: sessionId,
+      workspace_id: WS_ID,
+      agent_id: "agent-1",
+      creator_id: "user-1",
+      title: "Session",
+      status: "active",
+      has_unread: false,
+      unread_count: 0,
+      last_message: {
+        content: "older",
+        role: "user",
+        created_at: "2026-05-13T05:00:00Z",
+      },
+      created_at: "2026-05-13T00:00:00Z",
+      updated_at: "2026-05-13T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function rows(qc: QueryClient) {
+    return qc.getQueryData<ChatSession[]>(chatKeys.sessions(WS_ID))!;
+  }
+
+  it("turns a reply into the preview, one more unread, and the top row", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [
+      row({ id: "other", last_message: { content: "x", role: "user", created_at: "2026-05-13T05:00:01Z" } }),
+      row({ unread_count: 1, has_unread: true }),
+    ]);
+
+    expect(applyChatDoneToSessionList(qc, WS_ID, donePayload())).toBe(true);
+
+    const [top] = rows(qc);
+    expect(top!.id).toBe(sessionId);
+    expect(top!.unread_count).toBe(2);
+    expect(top!.has_unread).toBe(true);
+    expect(top!.last_message).toMatchObject({
+      content: "done",
+      role: "assistant",
+      created_at: "2026-05-13T05:00:02Z",
+      message_kind: "message",
+    });
+  });
+
+  it("keeps an archived row at zero unread", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [row({ status: "archived" })]);
+
+    expect(applyChatDoneToSessionList(qc, WS_ID, donePayload())).toBe(true);
+    expect(rows(qc)[0]!.unread_count).toBe(0);
+    expect(rows(qc)[0]!.has_unread).toBe(false);
+  });
+
+  it("asks for a refetch when it cannot patch faithfully", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [row()]);
+
+    expect(applyChatDoneToSessionList(qc, WS_ID, donePayload({ message_id: undefined }))).toBe(false);
+    expect(applyChatDoneToSessionList(qc, WS_ID, donePayload({ chat_session_id: "not-listed" }))).toBe(false);
+    expect(rows(qc)[0]!.last_message!.content).toBe("older");
+  });
+
+  it("clears unread for the reader", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [row({ unread_count: 3, has_unread: true })]);
+
+    applyChatSessionReadToCache(qc, WS_ID, sessionId);
+
+    expect(rows(qc)[0]).toMatchObject({ unread_count: 0, has_unread: false });
   });
 });
 

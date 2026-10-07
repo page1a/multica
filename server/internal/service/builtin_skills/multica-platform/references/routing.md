@@ -106,7 +106,11 @@ in that direct chat or issue thread; that message was written by the person who
 started the run (any member, not a particular one); and the quote contains the
 assigned agent's name. In a direct chat, “你来做”, “你自己做”, and “指派给你”
 are accepted as self-assignment when the target is the current agent. If it
-passes, the ticket records「按 <名字> 原话指派」and the pick stands. If it does
+passes, the ticket records「按 <名字> 原话指派」and the pick stands — with one
+domain rule: a quote that names only a base role (「交给孙悟空」) on an issue
+whose scene has a domain lands on that base role's 对口 specialisation
+(孙悟空出海 on an 出海 issue or project); a quote that names the specialisation itself is
+kept as said. If it does
 not — a made-up quote, someone else's comment, another agent's relay, or a
 quote without the name — the ticket stays unassigned and the response tells
 you why, so ask the person instead of guessing. Do not quote comments from
@@ -222,10 +226,24 @@ Consequences for how you work:
   confidence 47% < threshold 60%`. The reviewer slot falls back to one rung
   above the executor, one rung below when the executor is already the top
   rung, and 「不需要验收」 when the workspace has only one seat.
-- The project -> direction table decides which direction SEAT on a rung gets
-  the work; it never changes the rung or the confidence. It is workspace data:
-  `multica workspace routing-projects list | set <project> <direction> | unset
-  <project>` (exact name or `prefix*`; a listed direction, or `通用`).
+- The issue's **scene** decides which specialisation on a rung gets the
+  work; it never changes the rung or the confidence. The scene is the issue's
+  own domain; else all of its project's domains; else generic. Every
+  automatic pick (executor, 验收席, quota relay, re-dispatch, escalate,
+  suggest, the quoted base-name swap) groups agents the same way: **对口**
+  (`match`, a specialisation for a scene domain — in a generic scene, a base
+  role) first, **通用** (`generic`, a base role) as the fallback, **其他**
+  (`other`, a specialisation for another domain) last. A project with no
+  domain is generic and the dispatch comment says 「方向：通用」. See the
+  groups for any work with `multica agent list --for-issue <key> | --for-project
+  <id> --output json` (each agent gets `fit`, sorted by it). Domains are one
+  workspace list (`multica domain list | add | rename | delete`); a project
+  carries several (`multica project update <p> --domain 出海 --domain 自媒体`),
+  an issue picks one of its project's (`multica issue create|update --domain
+  自媒体`, filled automatically when the project has exactly one; `--domain ""`
+  clears it). A project with no domain falls back to the name table:
+  `multica workspace routing-projects list | set <project> <domain> | unset
+  <project>` (exact name or `prefix*`; a workspace domain, or `通用`).
 
 When routing is **not working** — the model was rejected, is unreachable, the
 breaker is cooling down after repeated failures, or the deployment never

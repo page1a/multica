@@ -1249,7 +1249,7 @@ export function ProjectsPage() {
             <div
               ref={restoreListScroll}
               data-tab-scroll-root="projects"
-              className="min-h-0 flex-1 overflow-auto @container"
+              className="min-h-0 flex-1 overflow-auto max-md:pb-chat-launcher @container"
             >
               <ListGrid
                 className={`${GRID_COLS} @2xl:min-w-[var(--pjc-minw)]`}
@@ -1286,7 +1286,7 @@ export function ProjectsPage() {
             <div
               ref={restoreListScroll}
               data-tab-scroll-root="projects"
-              className={cn("min-h-0 flex-1 overflow-y-auto pt-4", PAGE_GUTTER)}
+              className={cn("min-h-0 flex-1 overflow-y-auto max-md:pb-chat-launcher pt-4", PAGE_GUTTER)}
             >
               <div
                 className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
@@ -1319,7 +1319,7 @@ export function ProjectsPage() {
 function LoadingState({ isCompact }: { isCompact: boolean }) {
   if (isCompact) {
     return (
-      <div className={cn("min-h-0 flex-1 overflow-auto pt-4", PAGE_GUTTER)}>
+      <div className={cn("min-h-0 flex-1 overflow-auto max-md:pb-chat-launcher pt-4", PAGE_GUTTER)}>
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-11 w-full rounded-md" />

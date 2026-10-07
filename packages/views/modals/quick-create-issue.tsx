@@ -62,7 +62,7 @@ import { ClearablePillButton, PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
 import { DueDatePicker, PriorityIcon, PriorityPicker } from "../issues/components";
 import { canAssignAgent } from "../issues/components/pickers/assignee-picker";
-import { isAgentRuntimeBound } from "@multica/core/agents";
+import { isAgentRuntimeBound, useAgentScene, type AgentScene } from "@multica/core/agents";
 import {
   PropertyPicker,
   PickerItem,
@@ -82,6 +82,8 @@ import {
 import { useIssueCreateUploads } from "./use-issue-create-uploads";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { useT } from "../i18n";
+import { AgentFitSections } from "../agents/components/agent-fit-sections";
+import { AgentSceneProvider } from "../agents/components/agent-scene-context";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
@@ -294,6 +296,7 @@ export function AgentCreatePanel({
     setProjectTouched(true);
     setShared({ projectId: next ?? undefined });
   };
+  const agentScene = useAgentScene(wsId, [projectId]);
 
   // Parent-issue context — seeded by `openCreateSubIssue` when the modal is
   // opened from the "Add sub issue" entry on an existing issue. We carry it
@@ -672,6 +675,7 @@ export function AgentCreatePanel({
             visibleSquads={visibleSquads}
             selectedAgent={selectedAgent}
             selectedSquad={selectedSquad}
+            scene={agentScene}
             onPick={(next) => {
               setActor(next);
               setAgent({ actorType: next.type, actorId: next.id });
@@ -703,6 +707,7 @@ export function AgentCreatePanel({
           {...dropZoneProps}
           className="relative px-5 pb-3 flex flex-1 min-h-[140px] overflow-y-auto"
         >
+          <AgentSceneProvider value={agentScene}>
           <ContentEditor
             ref={editorRef}
             defaultValue={initialPrompt}
@@ -719,6 +724,7 @@ export function AgentCreatePanel({
             onSubmit={submit}
             debounceMs={150}
           />
+          </AgentSceneProvider>
           {isDragOver && <FileDropOverlay />}
         </div>
 
@@ -958,6 +964,7 @@ function ActorPicker({
   visibleSquads,
   selectedAgent,
   selectedSquad,
+  scene,
   onPick,
   t,
 }: {
@@ -966,6 +973,7 @@ function ActorPicker({
   visibleSquads: Squad[];
   selectedAgent: Agent | undefined;
   selectedSquad: Squad | undefined;
+  scene: AgentScene | null;
   onPick: (next: ActorSelection) => void;
   t: ReturnType<typeof useT<"modals">>["t"];
 }) {
@@ -1029,23 +1037,24 @@ function ActorPicker({
         )
       ) : (
         <>
-          {filteredAgents.length > 0 && (
-            <PickerSection label={t(($) => $.create_issue.agent.agents_group)}>
-              {filteredAgents.map((a) => (
-                <PickerItem
-                  key={a.id}
-                  selected={actor?.type === "agent" && actor.id === a.id}
-                  onClick={() => {
-                    onPick({ type: "agent", id: a.id });
-                    setOpen(false);
-                  }}
-                >
-                  <ActorAvatar actorType="agent" actorId={a.id} size="sm" />
-                  <span className="truncate">{a.name}</span>
-                </PickerItem>
-              ))}
-            </PickerSection>
-          )}
+          <AgentFitSections
+            agents={filteredAgents}
+            scene={scene}
+            label={t(($) => $.create_issue.agent.agents_group)}
+            renderAgent={(a) => (
+              <PickerItem
+                key={a.id}
+                selected={actor?.type === "agent" && actor.id === a.id}
+                onClick={() => {
+                  onPick({ type: "agent", id: a.id });
+                  setOpen(false);
+                }}
+              >
+                <ActorAvatar actorType="agent" actorId={a.id} size="sm" />
+                <span className="truncate">{a.name}</span>
+              </PickerItem>
+            )}
+          />
           {filteredSquads.length > 0 && (
             <PickerSection label={t(($) => $.create_issue.agent.squads_group)}>
               {filteredSquads.map((s) => (

@@ -134,6 +134,14 @@ export function getInboxNavigationTarget(
  *      is a later status/metadata event for the same issue.
  *   5. Sort the result newest-first.
  */
+// What one cached row adds to its group's unread count: the list arrives
+// grouped server-side, so a row can stand for several unread siblings via
+// `unread_count`. Mirrors inboxRowUnread in packages/core/inbox/queries.ts.
+function inboxRowUnread(item: InboxItem): number {
+  if (item.read) return 0;
+  return Math.max(1, item.unread_count ?? 1);
+}
+
 export function deduplicateInboxItems(items: InboxItem[]): InboxItem[] {
   const active = items.filter((i) => !i.archived);
   const groups = new Map<string, InboxItem[]>();
@@ -156,7 +164,7 @@ export function deduplicateInboxItems(items: InboxItem[]): InboxItem[] {
       newest.details?.comment_id ??
       group.find((item) => item.details?.comment_id)?.details?.comment_id;
 
-    const unreadCount = group.filter((item) => !item.read).length;
+    const unreadCount = group.reduce((sum, item) => sum + inboxRowUnread(item), 0);
 
     if (commentId && newest.details?.comment_id !== commentId) {
       merged.push({

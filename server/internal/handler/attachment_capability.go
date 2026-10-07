@@ -233,5 +233,5 @@ func (h *Handler) DownloadAttachmentWithCapability(w http.ResponseWriter, r *htt
 	// query out of the outbound Referer.
 	w.Header().Set("Referrer-Policy", "no-referrer")
 
-	h.proxyAttachmentDownload(w, r, att, h.Storage.KeyFromURL(att.Url), intent == attachmentCapabilityDownloadIntent)
+	h.proxyAttachmentDownload(w, r, att, h.Storage.KeyFromURL(att.Url), intent == attachmentCapabilityDownloadIntent, false)
 }

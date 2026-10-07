@@ -836,6 +836,7 @@ func init() {
 	issueCreateCmd.Flags().String("parent", "", "Parent issue ID")
 	issueCreateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) grouping this sub-issue into an ordered barrier group under its parent; omit for unstaged. The parent assignee is woken only when every sub-issue in a stage finishes.")
 	issueCreateCmd.Flags().String("project", "", "Project ID")
+	issueCreateCmd.Flags().String("domain", "", "Issue domain: one of the project's domains, or 通用 for generic (default: the project's only domain). Routing and --per-quote pick the specialisation by it")
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
@@ -860,6 +861,7 @@ func init() {
 	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueUpdateCmd.Flags().String("reviewer", "", "验收席 — who accepts this issue: a member or agent name, \"none\" for no acceptance pass, or \"\" to clear the slot")
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
+	issueUpdateCmd.Flags().String("domain", "", "Issue domain: one of the project's domains, or 通用 / \"\" for generic")
 	issueUpdateCmd.Flags().String("start-date", "", "New start date (calendar day, YYYY-MM-DD; pass empty string to clear)")
 	issueUpdateCmd.Flags().String("due-date", "", "New due date (calendar day, YYYY-MM-DD)")
 	issueUpdateCmd.Flags().String("parent", "", "Parent issue ID (use --parent \"\" to clear)")
@@ -1811,6 +1813,10 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 			body["project_id"] = project.ID
 		}
 	}
+	if cmd.Flags().Changed("domain") {
+		v, _ := cmd.Flags().GetString("domain")
+		body["domain_id"] = strings.TrimSpace(v)
+	}
 	if cmd.Flags().Changed("stage") {
 		stage, _ := cmd.Flags().GetInt("stage")
 		if stage < 1 {
@@ -2056,6 +2062,14 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("resolve project: %w", err)
 			}
 			body["project_id"] = project.ID
+		}
+	}
+	if cmd.Flags().Changed("domain") {
+		v, _ := cmd.Flags().GetString("domain")
+		if strings.TrimSpace(v) == "" {
+			body["domain_id"] = nil
+		} else {
+			body["domain_id"] = strings.TrimSpace(v)
 		}
 	}
 	if cmd.Flags().Changed("start-date") {

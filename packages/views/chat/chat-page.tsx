@@ -598,10 +598,17 @@ export function ChatPage() {
   }, [queuedPrompt, c.activeSessionId, c.activeAgent, c.agentsSettled, c.isAgentRuntimeBound]);
 
   const newChatChord = useShortcut("newChat");
+  // A new chat starts in the project the list is filtered to, so that project's
+  // domain decides which agents the picker lists first.
+  const newChatProjects = useMemo(() => {
+    const ids = draftProjectIdsForNewChat(projectFilter);
+    return (c.projects ?? []).filter((project) => ids.includes(project.id));
+  }, [c.projects, projectFilter]);
   const newChatButton = (
     <NewChatButton
       agents={c.availableAgents}
       userId={c.user?.id}
+      projects={newChatProjects}
       onStart={startNewChat}
       side="bottom"
       shortcut={newChatChord}

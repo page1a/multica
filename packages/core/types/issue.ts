@@ -271,6 +271,10 @@ export interface Issue {
    */
   duplicate_of?: IssueDuplicateOf | null;
   project_id: string | null;
+  /** The one project domain this issue works in (DENE-1451): an id, or ""
+   *  (null while an optimistic clear is in flight) for generic. Only full
+   *  issue reads carry it; absent = not loaded. */
+  domain_id?: string | null;
   /** Resource sharing scope. Older servers omit this field. */
   visibility?: "private" | "project" | "workspace";
   position: number;

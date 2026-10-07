@@ -55,7 +55,7 @@ export function InlineCommentComposer({ issueId }: { issueId: string }) {
       onSubmit={onSubmit}
       mentionPickerPath={{
         pathname: "/[workspace]/mention-picker",
-        params: { workspace: wsSlug ?? "", mode: "comment" },
+        params: { workspace: wsSlug ?? "", mode: "comment", issueId },
       }}
       uploadContext={{ issueId }}
       placeholder={t("comments.composer_placeholder")}

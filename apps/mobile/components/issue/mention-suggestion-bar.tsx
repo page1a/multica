@@ -8,7 +8,8 @@
  *   1. `@all` (single static row; visible when query matches "all"
  *      prefix or is empty)
  *   2. Members — sorted alphabetically
- *   3. Agents — sorted alphabetically
+ *   3. Agents — domain fit first (对口 → 通用 → 其他, DENE-1477), then
+ *      alphabetical
  *   4. Squads — sorted alphabetically (archived hidden). Selecting a squad
  *      emits `mention://squad/<uuid>`; backend wakes the squad's leader
  *      agent (server/internal/handler/comment.go:444).
@@ -51,6 +52,8 @@ import {
 import type { MentionMarker } from "@/lib/mention-serialize";
 import { cn } from "@/lib/utils";
 import { isAgentRuntimeBound } from "@/lib/is-agent-runtime-bound";
+import { useDomainScene } from "@/lib/use-domain-scene";
+import { sortAgentsByDomainFit } from "@multica/core/agents/domain-fit";
 
 type Mode = "comment" | "chat";
 
@@ -70,6 +73,9 @@ interface Props {
   /** Default `"comment"` to preserve existing comment-composer and
    *  new-issue behaviour. `"chat"` switches the bar to issue mode. */
   mode?: Mode;
+  /** Scene for the agent order: the issue being edited, or a draft's project. */
+  issueId?: string;
+  projectId?: string | null;
 }
 
 const RECENT_LIMIT = 5;
@@ -80,6 +86,8 @@ export function MentionSuggestionBar({
   query,
   onSelect,
   mode = "comment",
+  issueId,
+  projectId,
 }: Props) {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const isChat = mode === "chat";
@@ -87,6 +95,7 @@ export function MentionSuggestionBar({
   // status's identity here. (MUL-6243)
   const catalog = useIssueStatuses();
   const { t } = useT("issues");
+  const scene = useDomainScene({ issueId, projectId });
 
   // Comment-mode data — disabled in chat mode to avoid wasted fetches.
   const { data: members = [] } = useQuery({
@@ -179,15 +188,18 @@ export function MentionSuggestionBar({
         )
         .map((agent) => agent.id),
     );
-    const matchedAgents = [...agents]
-      .filter(
-        (a) =>
-          !a.archived_at &&
-          isAgentRuntimeBound(a) &&
-          (!q || a.name.toLowerCase().includes(q)) &&
-          canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const matchedAgents = sortAgentsByDomainFit(
+      [...agents]
+        .filter(
+          (a) =>
+            !a.archived_at &&
+            isAgentRuntimeBound(a) &&
+            (!q || a.name.toLowerCase().includes(q)) &&
+            canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
+        )
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      scene,
+    );
     // Archived squads are filtered out — matching web (mention-suggestion.tsx:428).
     // A re-activated squad re-appears on the next list refetch.
     const matchedSquads = [...squads]
@@ -215,7 +227,7 @@ export function MentionSuggestionBar({
     }
     if (out.length === 0) out.push({ kind: "empty" });
     return out;
-  }, [isChat, query, recentIssues, myIssuesAll, members, agents, squads, userId, t]);
+  }, [isChat, query, recentIssues, myIssuesAll, members, agents, squads, userId, scene, t]);
 
   if (!visible) return null;
 

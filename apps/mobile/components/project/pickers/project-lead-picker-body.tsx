@@ -25,6 +25,8 @@ import { useWorkspaceStore } from "@/data/workspace-store";
 import { useScrollToTopOnChange } from "@/lib/use-scroll-to-top-on-change";
 import { THEME } from "@/lib/theme";
 import { useT } from "@/lib/i18n";
+import { useDomainScene } from "@/lib/use-domain-scene";
+import { sortAgentsByDomainFit } from "@multica/core/agents/domain-fit";
 
 const AVATAR_SIZE = 36;
 
@@ -37,6 +39,8 @@ interface Props {
   value: LeadValue | null;
   query: string;
   onChange: (next: LeadValue | null) => void;
+  /** The project whose domains order the agents (DENE-1477). */
+  projectId?: string;
 }
 
 type Row =
@@ -52,11 +56,17 @@ function isRowSelected(value: LeadValue | null, row: Row): boolean {
   return value.type === "agent" && value.id === row.agent.id;
 }
 
-export function ProjectLeadPickerBody({ value, query, onChange }: Props) {
+export function ProjectLeadPickerBody({
+  value,
+  query,
+  onChange,
+  projectId,
+}: Props) {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const { t } = useT("issues");
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const scene = useDomainScene({ projectId });
   const listRef = useScrollToTopOnChange(query);
   const { colorScheme } = useColorScheme();
   const checkColor =
@@ -70,10 +80,12 @@ export function ProjectLeadPickerBody({ value, query, onChange }: Props) {
       .filter((m) => matchName(m.name))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((m) => ({ kind: "member" as const, member: m }));
-    const agentRows: Row[] = [...agents]
-      .filter((a) => matchName(a.name))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((a) => ({ kind: "agent" as const, agent: a }));
+    const agentRows: Row[] = sortAgentsByDomainFit(
+      [...agents]
+        .filter((a) => matchName(a.name))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      scene,
+    ).map((a) => ({ kind: "agent" as const, agent: a }));
 
     if (q) return [...memberRows, ...agentRows];
 
@@ -85,7 +97,7 @@ export function ProjectLeadPickerBody({ value, query, onChange }: Props) {
       ...memberRows.filter((r) => !isRowSelected(value, r)),
       ...agentRows.filter((r) => !isRowSelected(value, r)),
     ];
-  }, [members, agents, query, value]);
+  }, [members, agents, query, value, scene]);
 
   const select = (row: Row) => {
     if (row.kind === "unassigned") onChange(null);

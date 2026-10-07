@@ -40,11 +40,12 @@ export interface IndexFetcher {
   changes(cursor: string, limit: number): Promise<SearchIndexChanges>;
 }
 
-/** Thrown by fetchers for an HTTP error response. */
+/** Thrown by fetchers for an HTTP error response or a body that fails its schema. */
 export class IndexFetchError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly malformed = false,
   ) {
     super(message);
     this.name = "IndexFetchError";
@@ -67,7 +68,10 @@ export interface WorkspaceIndexOptions {
   maxTextBytes: number;
   /** A workspace over budget is measured again after this long. */
   tooLargeRecheckMs: number;
-  /** After losing access (or the kill switch), wait this long before trying again. */
+  /**
+   * After losing access (or the kill switch), or after a response this client
+   * cannot parse, wait this long before trying again.
+   */
   unavailableRetryMs: number;
   /** Catch up at least this often while attached. */
   pollIntervalMs: number;
@@ -364,6 +368,14 @@ export class WorkspaceIndex {
       // index off. Keep nothing on disk; try again much later.
       await this.store.reset(emptyIndexMeta()).catch(() => undefined);
       this.forgetLoaded();
+      this.setState("unavailable");
+      return;
+    }
+    if (err instanceof IndexFetchError && err.malformed) {
+      // The server sent a body this client cannot parse. Asking again soon
+      // returns the same body: a snapshot page is megabytes, and every client
+      // used to fetch the same rejected page every few minutes for days
+      // (DENE-1506). Keep the stored progress and wait for a deploy instead.
       this.setState("unavailable");
       return;
     }

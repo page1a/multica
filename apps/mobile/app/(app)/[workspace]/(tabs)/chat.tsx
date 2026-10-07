@@ -54,6 +54,7 @@ import {
 } from "@multica/core/chat/pending";
 import { api, ApiError } from "@/data/api";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { sortAgentsByDomainFit } from "@multica/core/agents/domain-fit";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { agentListOptions } from "@/data/queries/agents";
@@ -186,13 +187,19 @@ export default function ChatTab() {
   // (`canInvokeAgent`), which has no admin bypass. Shared rule, not a mobile
   // copy: a local mirror drifted from it and let admins pick a teammate's
   // personal agent only to be 403'd on send (MUL-6380 / GH #7180).
+  // Ordered by domain fit (DENE-1477). Chat carries no project on mobile,
+  // so the scene is generic: base roles first, specialisations after — the
+  // default pick (`availableAgents[0]`) is a base role.
   const availableAgents = useMemo(
     () =>
-      agents.filter(
-        (a) =>
-          !a.archived_at &&
-          canAssignAgentToIssue(a, { userId: userId ?? null, role: memberRole })
-            .allowed,
+      sortAgentsByDomainFit(
+        agents.filter(
+          (a) =>
+            !a.archived_at &&
+            canAssignAgentToIssue(a, { userId: userId ?? null, role: memberRole })
+              .allowed,
+        ),
+        [],
       ),
     [agents, userId, memberRole],
   );

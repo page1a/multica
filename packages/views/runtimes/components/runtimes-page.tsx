@@ -183,7 +183,7 @@ export function RuntimesPage({
         </div>
         )
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto max-md:pb-chat-launcher">
           <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex flex-col py-4 sm:py-6")}>
             {!agentsLoading &&
               !chatSessionsLoading &&

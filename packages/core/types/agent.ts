@@ -690,6 +690,8 @@ export interface Agent {
   /** Display name of `parent_agent_id`, served with the list and the detail so
    *  the client never needs a second request to name the base role. */
   parent_agent_name?: string;
+  /** Domain this specialisation covers (DENE-1451); absent = generic. */
+  domain_id?: string;
   /**
    * The base role's own `instructions`, verbatim. The prompt a specialisation
    * actually runs with is `parent + "\n\n" + own` (see
@@ -955,6 +957,12 @@ export interface CreateAgentRequest {
    * specialisation ("特化角色不能再派生").
    */
   parent_agent_id?: string;
+  /**
+   * Domain (id or name) for a specialisation (DENE-1451). Needs
+   * `parent_agent_id`; `name` may then be empty and is generated as base
+   * role + domain. A base role holds one specialisation per domain (409).
+   */
+  domain_id?: string;
   /**
    * Runtime inheritance (DENE-505). Omitted with a `parent_agent_id` means
    * "follow the base role's runtime" — the default for a specialisation, and

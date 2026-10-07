@@ -135,7 +135,7 @@ export class SearchIndexHost {
         clearTimeout(pending.timer);
         this.pending.delete(message.id);
         if (message.ok) pending.resolve(message.data);
-        else pending.reject(new IndexFetchError(message.message, message.status));
+        else pending.reject(new IndexFetchError(message.message, message.status, message.malformed));
         return;
       }
       case "wipe":

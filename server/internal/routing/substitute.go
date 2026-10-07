@@ -4,11 +4,11 @@ import "github.com/multica-ai/multica/server/internal/quotarelay"
 
 // SubstituteSeat chooses who can take a wake the holder cannot.
 //
-// Same tier, different provider family, preferring the direction when the
-// holder has one. Exactly one tier down when that tier has nobody eligible.
+// Same tier, different provider family, preferring the seat that fits the
+// issue's scene (AgentFit). Exactly one tier down when that tier has nobody eligible.
 // IDs in avoid are never chosen — the holder, and for an acceptance wake the
 // seat that did the work. The rule is the same one quota handoff already uses.
-func SubstituteSeat(l Ladder, holder Seat, roster map[string]Agent, avoid []string, direction string) (Seat, bool, bool) {
+func SubstituteSeat(l Ladder, holder Seat, roster map[string]Agent, avoid []string, scene Scene) (Seat, bool, bool) {
 	holderAgent, onRoster := agentByID(roster, holder.ID)
 	if holder.TierKey == "" {
 		if onRoster {
@@ -29,21 +29,17 @@ func SubstituteSeat(l Ladder, holder Seat, roster map[string]Agent, avoid []stri
 	relay := make([]quotarelay.Seat, 0, len(roster))
 	for _, agent := range roster {
 		seat := relaySeat(l, agent)
+		seat.Fit = l.AgentFit(scene, agent).Rank()
 		if blocked[agent.ID] {
 			seat.Eligible = false
 		}
 		relay = append(relay, seat)
 	}
 	provider, _ := l.ProviderFor(holder.Name, holderAgent.Model)
-	failedDir := l.seatDirection(holder.Name)
-	if failedDir == "" {
-		failedDir = direction
-	}
 	failed := quotarelay.Seat{
 		ID:         holder.ID,
 		Name:       holder.Name,
 		Tier:       holder.TierKey,
-		Direction:  failedDir,
 		Provider:   provider,
 		Eligible:   false,
 		AvoidHouse: provider,
@@ -71,7 +67,7 @@ func relaySeat(l Ladder, agent Agent) quotarelay.Seat {
 		ID:        agent.ID,
 		Name:      agent.Name,
 		Tier:      tier,
-		Direction: l.seatDirection(agent.Name),
+		Direction: l.agentDirection(agent),
 		Provider:  provider,
 		Eligible:  tier != "" && agent.ID != "",
 		UsageRank: l.usageRank(agent),

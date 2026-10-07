@@ -89,6 +89,7 @@ import { PAGE_GUTTER, PageHeader } from "../../layout/page-header";
 import { useTimeAgo } from "./inbox-list-item";
 import { InboxList } from "./inbox-list";
 import { InboxFilterMenu } from "./inbox-filter-menu";
+import { InboxLayerTabs } from "./inbox-layer-tabs";
 import { InboxContextMenuProvider } from "./inbox-context-menu";
 import {
   ACTIVITY_LAYER_PARAM,
@@ -128,7 +129,7 @@ function InboxActivityPageContent({ merged = false }: { merged?: boolean } = {})
   const showAutopilotQuotaRecoveryPrompt = useIssueLimitUpgradePrompt(
     "autopilot_quota",
   );
-  const { searchParams, replace, push } = useNavigation();
+  const { searchParams, replace } = useNavigation();
   const urlIssue = searchParams.get("issue") ?? "";
   const urlView: InboxView =
     searchParams.get("view") === ARCHIVED_VIEW_PARAM ? "archived" : "inbox";
@@ -575,19 +576,6 @@ function InboxActivityPageContent({ merged = false }: { merged?: boolean } = {})
   const listHeader = (
     <PageHeader>
       <div className="flex flex-1 items-center gap-2">
-        {/* Merged, the board is already on screen beside the list. */}
-        {!merged && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground"
-            aria-label={t(($) => $.board.back_to_board)}
-            title={t(($) => $.board.back_to_board)}
-            onClick={() => push(wsPaths.inbox())}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        )}
         <h1 className="text-body font-semibold">{t(($) => $.page.title)}</h1>
         {unreadCount > 0 && (
           <NumberFlow
@@ -712,6 +700,8 @@ function InboxActivityPageContent({ merged = false }: { merged?: boolean } = {})
   const listPanel = (
     <>
       {listHeader}
+      {/* Merged, the board is already on screen beside the list. */}
+      {!merged && <InboxLayerTabs active="activity" />}
       {isArchivedView && archivedBackRow}
       {merged && laneFilter && (
         <div
@@ -963,7 +953,7 @@ function InboxActivityPageContent({ merged = false }: { merged?: boolean } = {})
           <div className={cn("flex h-12 shrink-0 items-center border-b", PAGE_GUTTER)}>
             <Skeleton className="h-5 w-16" />
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-1 p-2">
+          <div className="flex-1 min-h-0 overflow-y-auto max-md:pb-chat-launcher space-y-1 p-2">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-3 px-2 py-2.5">
                 <Skeleton className="h-7 w-7 shrink-0 rounded-full" />
@@ -1025,7 +1015,7 @@ function InboxActivityPageContent({ merged = false }: { merged?: boolean } = {})
             <div className={cn("flex h-12 shrink-0 items-center border-b", PAGE_GUTTER)}>
               <Skeleton className="h-5 w-16" />
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-1 p-2">
+            <div className="flex-1 min-h-0 overflow-y-auto max-md:pb-chat-launcher space-y-1 p-2">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3 px-2 py-2.5">
                   <Skeleton className="h-7 w-7 shrink-0 rounded-full" />

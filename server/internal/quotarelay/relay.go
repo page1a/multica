@@ -373,6 +373,10 @@ type Seat struct {
 	// 负载 rule fills it (DENE-1203); the relay leaves it zero, which keeps
 	// its order unchanged. Fewer goes first, after demotion.
 	Running int
+	// Fit is how well the seat suits the work's domain scene, 0 best — the
+	// rank of routing's domain fit (对口 0, 通用 1, 其他 2). The caller fills
+	// it per issue; all-zero means the scene does not order the pool.
+	Fit int
 }
 
 // Choice is the replacement seat. SteppedDown is true when the same tier
@@ -424,13 +428,14 @@ func Pick(failed Seat, roster []Seat, ladder []string) (Choice, bool) {
 // BestOnTier is the same-tier choice Pick makes before it steps down, open
 // to other callers so a rung is ordered one way everywhere. failed is the
 // seat being replaced, or a seat with an empty ID when nobody is: its
-// Direction, AvoidHouse and Exclude still shape the pool.
+// AvoidHouse and Exclude still shape the pool, and the seats' Fit orders it.
 func BestOnTier(roster []Seat, failed Seat, tier string) (Seat, bool) {
 	return bestOnTier(roster, failed, tier)
 }
 
 func bestOnTier(roster []Seat, failed Seat, tier string) (Seat, bool) {
-	var sameDir, other []Seat
+	var pool []Seat
+	bestFit := -1
 	for _, seat := range roster {
 		if !seat.Eligible || seat.ID == failed.ID || seat.Tier != tier || excluded(failed.Exclude, seat.ID) {
 			continue
@@ -438,22 +443,23 @@ func bestOnTier(roster []Seat, failed Seat, tier string) (Seat, bool) {
 		if !admitsHouse(seat, failed.AvoidHouse) {
 			continue
 		}
-		if failed.Direction != "" && seat.Direction == failed.Direction {
-			sameDir = append(sameDir, seat)
-			continue
+		pool = append(pool, seat)
+		if bestFit < 0 || seat.Fit < bestFit {
+			bestFit = seat.Fit
 		}
-		other = append(other, seat)
 	}
-	var pool []Seat
-	switch {
-	case failed.AvoidHouse != "":
-		// Cross-house outranks direction: a Claude seat on another
-		// direction is the handoff this failure asked for.
-		pool = append(sameDir, other...)
-	case len(sameDir) > 0:
-		pool = sameDir
-	default:
-		pool = other
+	if failed.AvoidHouse == "" {
+		// Without a house to leave, only the best domain fit on the rung is
+		// in play. Cross-house outranks fit: a Claude seat for another domain
+		// is the handoff that failure asked for, so betterSeat weighs fit
+		// after house instead.
+		kept := pool[:0]
+		for _, seat := range pool {
+			if seat.Fit == bestFit {
+				kept = append(kept, seat)
+			}
+		}
+		pool = kept
 	}
 	if len(pool) == 0 {
 		return Seat{}, false
@@ -491,12 +497,8 @@ func betterSeat(seat, best, failed Seat) bool {
 			return seatClaude
 		}
 	}
-	if failed.AvoidHouse != "" && failed.Direction != "" {
-		seatDir := seat.Direction == failed.Direction
-		bestDir := best.Direction == failed.Direction
-		if seatDir != bestDir {
-			return seatDir
-		}
+	if seat.Fit != best.Fit {
+		return seat.Fit < best.Fit
 	}
 	if seat.Demoted != best.Demoted {
 		return !seat.Demoted

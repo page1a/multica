@@ -9,7 +9,7 @@
  * Sections (alphabetical within each):
  *   1. `@all` (pinned top, filtered by query)
  *   2. People
- *   3. Agents
+ *   3. Agents (domain fit first: 对口 → 通用 → 其他, DENE-1477)
  *   4. Squads (archived hidden)
  *   5. Issues (server-side `api.searchIssues`, debounced 200ms; empty
  *      query → no issues section, matching web's mention-suggestion.tsx)
@@ -50,6 +50,8 @@ import { THEME } from "@/lib/theme";
 import { isAgentRuntimeBound } from "@/lib/is-agent-runtime-bound";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
+import { useDomainScene } from "@/lib/use-domain-scene";
+import { sortAgentsByDomainFit } from "@multica/core/agents/domain-fit";
 
 const AVATAR_SIZE = 36;
 
@@ -69,9 +71,11 @@ interface Props {
    *  there generates unintended notifications. Only Issues remain useful
    *  in chat as "reference this ticket for context". */
   mode?: "comment" | "chat";
+  /** The issue whose comment is being written; orders the agents. */
+  issueId?: string;
 }
 
-export function MentionPickerBody({ query, mode = "comment" }: Props) {
+export function MentionPickerBody({ query, mode = "comment", issueId }: Props) {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const { t } = useT("issues");
   // Rows are icon-only here too — colour is what names a custom status.
@@ -79,6 +83,7 @@ export function MentionPickerBody({ query, mode = "comment" }: Props) {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const scene = useDomainScene({ issueId });
   const runnableAgentIds = useMemo(
     () =>
       new Set(
@@ -156,10 +161,12 @@ export function MentionPickerBody({ query, mode = "comment" }: Props) {
       if (memberRows.length > 0) {
         out.push({ kind: "section", label: t("picker.people") }, ...memberRows);
       }
-      const agentRows = [...agents]
-        .filter((a) => matchName(a.name))
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((a): Row => ({ kind: "agent", agent: a }));
+      const agentRows = sortAgentsByDomainFit(
+        [...agents]
+          .filter((a) => matchName(a.name))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        scene,
+      ).map((a): Row => ({ kind: "agent", agent: a }));
       if (agentRows.length > 0) {
         out.push({ kind: "section", label: t("picker.agents") }, ...agentRows);
       }
@@ -179,7 +186,7 @@ export function MentionPickerBody({ query, mode = "comment" }: Props) {
       }
     }
     return out;
-  }, [mode, members, agents, squads, issueResults, query, t]);
+  }, [mode, members, agents, squads, issueResults, query, scene, t]);
 
   const pick = (row: Row) => {
     let chip: MentionChipDraft | null = null;

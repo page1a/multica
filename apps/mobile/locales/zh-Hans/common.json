@@ -51,5 +51,11 @@
     "weeks_ago_other": "{{count}} 周前"
   },
   "states.empty": "暂无内容",
-  "states.error": "出现错误"
+  "states.error": "出现错误",
+  "domain": {
+    "label": "领域",
+    "generic": "通用",
+    "project_header": "可多选，不选即通用",
+    "issue_header": "只能选项目的领域"
+  }
 }

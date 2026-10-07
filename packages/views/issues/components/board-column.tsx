@@ -271,7 +271,7 @@ export const BoardColumn = memo(function BoardColumn({
           // (MUL-4741): the group id is the stable memento key, so every
           // column's offset survives tab switches/reloads independently.
           data-tab-scroll-root={scrollMementoKey}
-          className={`absolute inset-0 overflow-y-auto rounded-lg p-1 transition-colors ${
+          className={`absolute inset-0 overflow-y-auto max-md:pb-chat-launcher rounded-lg p-1 transition-colors ${
             isOver && sortLabel
               ? "ring-2 ring-brand/25 bg-accent/15"
               : isOver

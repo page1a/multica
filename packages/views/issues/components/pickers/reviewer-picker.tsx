@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
+import { useAgentScene } from "@multica/core/agents";
 import { ActorAvatar } from "../../../common/actor-avatar";
 import { DeferredPopup } from "../../../common/deferred-popup";
 import {
@@ -17,6 +18,7 @@ import {
   PICKER_TRIGGER_CLASS,
 } from "./property-picker";
 import { useT } from "../../../i18n";
+import { AgentFitSections } from "../../../agents/components/agent-fit-sections";
 import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
 
 interface ReviewerPickerProps {
@@ -30,7 +32,12 @@ interface ReviewerPickerProps {
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
+  /** Where the pick is made (DENE-1477); see AssigneePicker. */
+  sceneProjectIds?: readonly (string | null | undefined)[];
+  sceneDomainId?: string | null;
 }
+
+const NO_PROJECTS: readonly string[] = [];
 
 /**
  * 验收席 — who accepts this issue once it reaches in_review.
@@ -79,6 +86,8 @@ function ReviewerPickerImpl({
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   align,
+  sceneProjectIds = NO_PROJECTS,
+  sceneDomainId,
 }: ReviewerPickerProps) {
   const { t } = useT("issues");
   const [internalOpen, setInternalOpen] = useState(false);
@@ -89,6 +98,7 @@ function ReviewerPickerImpl({
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { getActorName } = useActorName();
+  const scene = useAgentScene(wsId, sceneProjectIds, sceneDomainId);
 
   const query = filter.trim().toLowerCase();
   const filteredMembers = members.filter(
@@ -173,20 +183,21 @@ function ReviewerPickerImpl({
         </PickerSection>
       )}
 
-      {filteredAgents.length > 0 && (
-        <PickerSection label={t(($) => $.pickers.reviewer.agents_group)}>
-          {filteredAgents.map((a) => (
-            <PickerItem
-              key={a.id}
-              selected={isSelected("agent", a.id)}
-              onClick={() => select({ reviewer_type: "agent", reviewer_id: a.id })}
-            >
-              <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
-              <span className="truncate">{a.name}</span>
-            </PickerItem>
-          ))}
-        </PickerSection>
-      )}
+      <AgentFitSections
+        agents={filteredAgents}
+        scene={scene}
+        label={t(($) => $.pickers.reviewer.agents_group)}
+        renderAgent={(a) => (
+          <PickerItem
+            key={a.id}
+            selected={isSelected("agent", a.id)}
+            onClick={() => select({ reviewer_type: "agent", reviewer_id: a.id })}
+          >
+            <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
+            <span className="truncate">{a.name}</span>
+          </PickerItem>
+        )}
+      />
 
       {filteredMembers.length === 0 && filteredAgents.length === 0 && filter && <PickerEmpty />}
     </PropertyPicker>

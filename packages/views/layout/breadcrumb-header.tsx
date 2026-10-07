@@ -46,27 +46,11 @@ interface BreadcrumbHeaderProps {
  * real containers and clicking one navigates up to it.
  */
 export function BreadcrumbHeader({ segments, leaf, actions, leading, className }: BreadcrumbHeaderProps) {
-  const backOrReplace = useBackOrReplace();
-  const { t } = useT("chat");
   const backFallback = segments.at(-1)?.href;
 
   return (
     <PageHeader
-      leading={
-        leading ??
-        (backFallback ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-            aria-label={t(($) => $.page.back)}
-            onClick={() => backOrReplace(backFallback)}
-          >
-            <ArrowLeft className="size-4" aria-hidden="true" />
-          </Button>
-        ) : undefined)
-      }
+      leading={leading ?? (backFallback ? <BreadcrumbBackButton fallback={backFallback} /> : undefined)}
       className={cn("bg-background text-body", className)}
     >
       <div className="flex flex-1 items-center gap-1.5 min-w-0">
@@ -79,7 +63,10 @@ export function BreadcrumbHeader({ segments, leaf, actions, leading, className }
               }
               className={cn(
                 "min-w-0 max-w-[28vw] truncate text-muted-foreground transition-colors hover:text-foreground sm:max-w-none",
-                segment.className ?? "sm:shrink-0",
+                // A short crumb keeps its whole word; a long one stops at 28vw
+                // with an ellipsis instead of shrinking with the leaf to a
+                // single letter on a phone.
+                segment.className ?? "shrink-0",
               )}
             >
               {segment.label}
@@ -90,10 +77,30 @@ export function BreadcrumbHeader({ segments, leaf, actions, leading, className }
         {leaf}
       </div>
       {actions ? (
-        <div className="flex max-w-[45vw] shrink-0 items-center gap-1 overflow-x-auto sm:max-w-none">
+        // Children keep their width and the row scrolls: squeezing a text
+        // chip into the 45vw cap stacked its label one character per line.
+        <div className="flex max-w-[45vw] shrink-0 items-center gap-1 overflow-x-auto sm:max-w-none [&>*]:shrink-0">
           {actions}
         </div>
       ) : null}
     </PageHeader>
+  );
+}
+
+/** The header's way back: history when there is some, else up to `fallback`. */
+export function BreadcrumbBackButton({ fallback }: { fallback: string }) {
+  const backOrReplace = useBackOrReplace();
+  const { t } = useT("chat");
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="shrink-0"
+      aria-label={t(($) => $.page.back)}
+      onClick={() => backOrReplace(fallback)}
+    >
+      <ArrowLeft className="size-4" aria-hidden="true" />
+    </Button>
   );
 }

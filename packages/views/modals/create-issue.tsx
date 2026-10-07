@@ -1,5 +1,7 @@
 "use client";
 
+import { useAgentScene } from "@multica/core/agents";
+import { AgentSceneProvider } from "../agents/components/agent-scene-context";
 import { issueStatusCategory } from "@multica/core/issues";
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -341,6 +343,8 @@ export function ManualCreatePanel({
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
   const wsId = useWorkspaceId();
+  // The chosen project is the scene (DENE-1477) for the assignee picker and @.
+  const agentScene = useAgentScene(wsId, [projectId]);
   const queryClient = useQueryClient();
   const { categoryOf: draftStatusCategory, colorOf, iconOf } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
@@ -1056,6 +1060,7 @@ export function ManualCreatePanel({
 
             {/* Description — takes remaining space */}
             <div {...descDropZoneProps} className="relative flex flex-1 min-h-0 overflow-y-auto px-5">
+              <AgentSceneProvider value={agentScene}>
               <ContentEditor
                 ref={descEditorRef}
                 defaultValue={draft.manual.description}
@@ -1067,6 +1072,7 @@ export function ManualCreatePanel({
                 debounceMs={500}
                 attachments={draftAttachments}
               />
+              </AgentSceneProvider>
               {descDragOver && <FileDropOverlay />}
             </div>
 
@@ -1125,6 +1131,7 @@ export function ManualCreatePanel({
                   )}
                   triggerRender={<PillButton />}
                   align="start"
+                  sceneProjectIds={[projectId]}
                   open={fieldPickerOpen === "assignee" ? true : undefined}
                   onOpenChange={(open) => setFieldPickerOpen(open ? "assignee" : null)}
                 />

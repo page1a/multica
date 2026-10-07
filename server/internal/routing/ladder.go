@@ -117,6 +117,50 @@ type DirectionMatch struct {
 	Invalid string
 }
 
+// DirectionSource is where a scene's domains were read from (DENE-1451): the
+// issue's own domain, its project's domains, or the legacy project-name
+// table, which only answers for a project with no domains set.
+type DirectionSource string
+
+const (
+	DirectionFromIssue   DirectionSource = "issue"
+	DirectionFromProject DirectionSource = "project"
+	DirectionFromTable   DirectionSource = "table"
+)
+
+// WithDomains replaces the ladder's directions with the workspace's domain
+// list (DENE-1451), which is where directions are maintained now. An empty
+// list keeps the shipped directions, so a workspace that never read its
+// domains still routes as before.
+func (l Ladder) WithDomains(names []string) Ladder {
+	if len(names) == 0 {
+		return l
+	}
+	l.Directions = append([]string(nil), names...)
+	return l
+}
+
+// For is the ladder one workspace routes on: its domains, its project rows,
+// and its seat order laid over the shipped defaults.
+func (l Ladder) For(settings Settings) Ladder {
+	return l.WithDomains(settings.Domains).WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
+}
+
+// IssueScene resolves the scene an issue routes in (DENE-1477): its own
+// domain, else its project's domains, else generic — ResolveScene. Only a
+// project with no domains at all still consults the legacy project-name
+// table (game-* rows), and only a row naming a declared direction counts; a
+// miss or a bad row is generic, never a third "unknown" state.
+func (l Ladder) IssueScene(issue Issue) Scene {
+	if s := ResolveScene(issue.Domain, issue.ProjectDomains); !s.Generic() {
+		return s
+	}
+	if d := l.Direction(issue.ProjectName); d != "" {
+		return Scene{Domains: []string{d}, Source: DirectionFromTable}
+	}
+	return GenericScene
+}
+
 // WithProjects returns the ladder with a workspace's own project rows laid
 // over the shipped ones. The workspace rows win, which is what makes the table
 // editable without a release: ladder.json is only the default.
@@ -221,21 +265,27 @@ func SeatName(base, direction string) string {
 // execution-only model would be inserted — a second stage appended here leaves
 // Route's shape and both call sites untouched.
 func (l Ladder) Candidates(direction string, roster map[string]Agent) []Seat {
+	return l.SceneCandidates(SceneOf(direction), roster)
+}
+
+// SceneCandidates is Candidates for a scene that may carry several domains:
+// on every rung the seat that fits the scene goes first (AgentFit).
+func (l Ladder) SceneCandidates(scene Scene, roster map[string]Agent) []Seat {
 	tagged := l.taggedByTier(roster)
 	seats := make([]Seat, 0, len(l.Tiers))
 	for i, t := range l.Tiers {
 		if i > 0 {
-			if up, ok := l.upshift(tagged[t.Key], tagged[l.Tiers[i-1].Key], direction); ok {
+			if up, ok := l.upshift(tagged[t.Key], tagged[l.Tiers[i-1].Key], scene); ok {
 				seats = append(seats, Seat{ID: up.ID, Name: up.Name, TierKey: t.Key, TierLabel: t.Label,
-					Direction: l.seatDirection(up.Name), Upshifted: true})
+					Direction: l.agentDirection(up), Upshifted: true})
 				continue
 			}
 		}
-		if a, dir, ok := l.pickTagged(tagged[t.Key], direction); ok {
+		if a, dir, ok := l.pickTagged(tagged[t.Key], scene); ok {
 			seats = append(seats, Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label, Direction: dir})
 			continue
 		}
-		if seat, ok := l.pickByName(t, direction, roster); ok {
+		if seat, ok := l.pickByName(t, scene, roster); ok {
 			seats = append(seats, seat)
 		}
 	}
@@ -247,7 +297,7 @@ func (l Ladder) Candidates(direction string, roster map[string]Agent) []Seat {
 // Seats out of quota are left out on both rungs first — the same order as
 // every other pick. Off unless the workspace turned it on, and never while
 // usage itself is switched off.
-func (l Ladder) upshift(rung, above []Agent, direction string) (Agent, bool) {
+func (l Ladder) upshift(rung, above []Agent, scene Scene) (Agent, bool) {
 	if !l.order.AllowUpshift || l.order.IgnoreUsage {
 		return Agent{}, false
 	}
@@ -258,7 +308,7 @@ func (l Ladder) upshift(rung, above []Agent, direction string) (Agent, bool) {
 		return Agent{}, false
 	}
 	pool := ampleOnly(withoutDemoted(above))
-	a, _, ok := l.pickTagged(pool, direction)
+	a, _, ok := l.pickTagged(pool, scene)
 	return a, ok
 }
 
@@ -280,12 +330,12 @@ func (l Ladder) taggedByTier(roster map[string]Agent) map[string][]Agent {
 	return out
 }
 
-// pickTagged chooses one seat out of the tagged seats on a rung: the one
-// specialised for this direction when there is one, otherwise the undirected
-// seat, otherwise the first. Seats arrive sorted by byUsage, so inside each
-// of those groups an ample seat goes before a tight one and the name breaks
-// ties (DENE-922).
-func (l Ladder) pickTagged(seats []Agent, direction string) (Agent, string, bool) {
+// pickTagged chooses one seat out of the tagged seats on a rung: the best
+// domain fit for the scene (AgentFit — the scene's specialisation, then the
+// base role, then another domain's). Seats arrive sorted by byUsage and the
+// sort is stable, so inside each fit group an ample seat goes before a tight
+// one and the name breaks ties (DENE-922).
+func (l Ladder) pickTagged(seats []Agent, scene Scene) (Agent, string, bool) {
 	if len(seats) == 0 {
 		return Agent{}, "", false
 	}
@@ -295,19 +345,13 @@ func (l Ladder) pickTagged(seats []Agent, direction string) (Agent, string, bool
 	if resting := withoutDemoted(seats); len(resting) > 0 {
 		seats = resting
 	}
-	if direction != "" {
-		for _, a := range seats {
-			if l.seatDirection(a.Name) == direction {
-				return a, direction, true
-			}
+	best := seats[0]
+	for _, a := range seats[1:] {
+		if l.AgentFit(scene, a).Rank() < l.AgentFit(scene, best).Rank() {
+			best = a
 		}
 	}
-	for _, a := range seats {
-		if l.seatDirection(a.Name) == "" {
-			return a, "", true
-		}
-	}
-	return seats[0], l.seatDirection(seats[0].Name), true
+	return best, l.agentDirection(best), true
 }
 
 func withoutDemoted(seats []Agent) []Agent {
@@ -320,8 +364,12 @@ func withoutDemoted(seats []Agent) []Agent {
 	return out
 }
 
-// seatDirection reads the direction off a seat name by the naming convention
-// (base + direction). A name matching no known direction is undirected.
+// SeatDomain and seatDirection read the direction off a seat name by the naming convention
+// (base + direction). A name matching no known direction is undirected. It is
+// the legacy fallback only: a seat's recorded domain decides (agentDirection),
+// and the name is read for an agent that has none recorded.
+func (l Ladder) SeatDomain(name string) string { return l.seatDirection(name) }
+
 func (l Ladder) seatDirection(name string) string {
 	for _, d := range l.Directions {
 		if d != "" && strings.HasSuffix(name, d) {
@@ -336,7 +384,7 @@ func (l Ladder) seatDirection(name string) string {
 // A seat that carries a tag is never placed by its name, on any rung. The tag
 // is the seat's own statement about its strength, and a name convention that
 // could still drag it onto another rung would make tagging advisory.
-func (l Ladder) pickByName(t Tier, direction string, roster map[string]Agent) (Seat, bool) {
+func (l Ladder) pickByName(t Tier, scene Scene, roster map[string]Agent) (Seat, bool) {
 	if t.Base == "" {
 		return Seat{}, false
 	}
@@ -350,20 +398,28 @@ func (l Ladder) pickByName(t Tier, direction string, roster map[string]Agent) (S
 		}
 		return a, true
 	}
-	name := SeatName(t.Base, direction)
-	a, ok := lookup(name)
-	if !ok && direction != "" {
-		// A direction with no specialised seat on this rung falls back to the
-		// generic seat rather than dropping the rung: losing a rung silently
-		// narrows the ladder the judge is choosing from.
-		if a, ok = lookup(t.Base); ok {
-			return Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label}, true
+	// The scene's specialisation on this rung, in the scene's domain order.
+	// The recorded domain decides before the name: a specialisation whose
+	// name strayed from base + domain is still this rung's seat.
+	for _, direction := range scene.Domains {
+		for _, cand := range roster {
+			if cand.Base == t.Base && cand.Direction == direction {
+				if a, ok := lookup(cand.Name); ok {
+					return Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label, Direction: direction}, true
+				}
+			}
+		}
+		if a, ok := lookup(SeatName(t.Base, direction)); ok && l.AgentFit(scene, a) == FitMatch {
+			return Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label, Direction: direction}, true
 		}
 	}
-	if !ok {
-		return Seat{}, false
+	// No specialisation for the scene: the base role, which is the fit of a
+	// generic scene and the fallback of any other. Dropping the rung instead
+	// would silently narrow the ladder the judge is choosing from.
+	if a, ok := lookup(t.Base); ok {
+		return Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label}, true
 	}
-	return Seat{ID: a.ID, Name: a.Name, TierKey: t.Key, TierLabel: t.Label, Direction: direction}, true
+	return Seat{}, false
 }
 
 // Agent is the slice of an agent record routing needs.
@@ -385,6 +441,22 @@ type Agent struct {
 	// Model is the model id configured on the seat. It decides the seat's
 	// model family; ladder.json's per-seat copy is only a fallback.
 	Model string
+	// Direction is the domain this seat is a specialisation for (DENE-1451),
+	// read from the agent record. Empty for a base role, and for a
+	// specialisation with no domain set, whose name suffix is then read.
+	Direction string
+	// Base is the name of the base role this seat specialises; empty for a
+	// base role.
+	Base string
+}
+
+// agentDirection is the direction a seat serves: its recorded domain, or by
+// the naming convention when the record carries none.
+func (l Ladder) agentDirection(a Agent) string {
+	if a.Direction != "" {
+		return a.Direction
+	}
+	return l.seatDirection(a.Name)
 }
 
 // SeatByTier finds the candidate on a named rung.
@@ -599,6 +671,12 @@ func (l Ladder) RequestedTier(labels []string) (string, bool) {
 // holder is never returned. A rung with only one family returns false: the
 // caller steps down, it does not step up.
 func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[string]Agent) (Seat, bool) {
+	return l.SceneTierAlternate(holder, SceneOf(direction), roster)
+}
+
+// SceneTierAlternate is SameTierAlternate for a scene: the alternate that
+// fits the scene best goes first (AgentFit).
+func (l Ladder) SceneTierAlternate(holder Seat, scene Scene, roster map[string]Agent) (Seat, bool) {
 	tierKey := holder.TierKey
 	if tierKey == "" {
 		if a, ok := agentByID(roster, holder.ID); ok {
@@ -646,24 +724,17 @@ func (l Ladder) SameTierAlternate(holder Seat, direction string, roster map[stri
 			Name:      agent.Name,
 			TierKey:   tier.Key,
 			TierLabel: tier.Label,
-			Direction: l.seatDirection(agent.Name),
+			Direction: l.agentDirection(agent),
 		})
 	}
 	if len(pool) == 0 {
 		return Seat{}, false
 	}
 	sort.Slice(pool, func(i, j int) bool {
-		iSame := direction != "" && pool[i].Direction == direction
-		jSame := direction != "" && pool[j].Direction == direction
-		if iSame != jSame {
-			return iSame
-		}
-		iGeneric := pool[i].Direction == ""
-		jGeneric := pool[j].Direction == ""
-		if iGeneric != jGeneric {
-			return iGeneric
-		}
 		ai, aj := agents[pool[i].ID], agents[pool[j].ID]
+		if fi, fj := l.AgentFit(scene, ai).Rank(), l.AgentFit(scene, aj).Rank(); fi != fj {
+			return fi < fj
+		}
 		if ai.Demoted != aj.Demoted {
 			return !ai.Demoted
 		}

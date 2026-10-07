@@ -10,7 +10,7 @@ func TestSuggestNamesTheDirectionSeatAndWritesNothing(t *testing.T) {
 	judge := &fakeJudge{verdict: confidentVerdict()}
 	r := newRouter(store, judge)
 
-	got, err := r.Suggest(context.Background(), "ws-1", "game", []SuggestRow{
+	got, err := r.Suggest(context.Background(), "ws-1", "game", nil, []SuggestRow{
 		{Title: "parent", HasChildren: true},
 		{Title: "child"},
 	})
@@ -57,7 +57,7 @@ func TestSuggestLeavesTheRowEmptyWhenRoutingHasNoAnswer(t *testing.T) {
 			if tc.settings != nil {
 				store.settings = *tc.settings
 			}
-			got, err := newRouter(store, tc.judge).Suggest(context.Background(), "ws-1", "game", []SuggestRow{{Title: "row"}})
+			got, err := newRouter(store, tc.judge).Suggest(context.Background(), "ws-1", "game", nil, []SuggestRow{{Title: "row"}})
 			if err != nil {
 				t.Fatalf("Suggest: %v", err)
 			}

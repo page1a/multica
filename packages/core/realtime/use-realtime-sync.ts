@@ -29,6 +29,8 @@ import {
   agentRunCountsKeys,
   agentTasksKeys,
 } from "../agents/queries";
+import { patchAgentListStatus, readAgentStatusChange } from "../agents/list-freshness";
+import type { Agent } from "../types/agent";
 import { githubKeys } from "../github/queries";
 import { vcsKeys } from "../vcs/queries";
 import { larkKeys } from "../lark/queries";
@@ -429,6 +431,76 @@ export function applyChatSessionUpdatedToCache(
     return payload.pinned === undefined && payload.status === undefined
       ? next
       : sortChatSessions(next);
+  });
+}
+
+/**
+ * Patch the sessions row for a chat:done event instead of refetching the whole
+ * list (DENE-1507): the reply becomes the row's preview, counts as one more
+ * unread (the server counts every assistant row past the read cursor; an
+ * archived row stays 0), and the list is re-sorted by the new activity time.
+ * An open chat then marks itself read off the has_unread flip, same as after
+ * a refetch.
+ *
+ * Returns false when the cache cannot be patched faithfully — an older server
+ * that omits the message, a hidden onboarding row, or a session not yet in
+ * this list (its first reply is what makes it listable) — and the caller
+ * falls back to a refetch.
+ */
+export function applyChatDoneToSessionList(
+  qc: QueryClient,
+  wsId: string,
+  payload: ChatDonePayload,
+): boolean {
+  if (!payload.message_id || payload.content === undefined || !payload.created_at) return false;
+  if (payload.message_kind === "onboarding_kickoff") return false;
+  const createdAt = payload.created_at;
+  let patched = false;
+  qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), (old) => {
+    if (!old?.some((s) => s.id === payload.chat_session_id)) return old;
+    patched = true;
+    return sortChatSessions(
+      old.map((s) => {
+        if (s.id !== payload.chat_session_id) return s;
+        const newer =
+          !s.last_message ||
+          new Date(createdAt).getTime() >= new Date(s.last_message.created_at).getTime();
+        const unread = s.status === "archived" ? 0 : (s.unread_count ?? 0) + 1;
+        return {
+          ...s,
+          ...(newer
+            ? {
+                last_message: {
+                  content: payload.content ?? "",
+                  role: "assistant" as const,
+                  created_at: createdAt,
+                  failure_reason: null,
+                  message_kind: payload.message_kind ?? "message",
+                },
+              }
+            : {}),
+          unread_count: unread,
+          has_unread: unread > 0,
+        };
+      }),
+    );
+  });
+  return patched;
+}
+
+/**
+ * Patch the sessions row for a chat:session_read event. The server delivers
+ * the frame only to the reader, so zeroing this person's unread is exactly
+ * what a refetch would return.
+ */
+export function applyChatSessionReadToCache(
+  qc: QueryClient,
+  wsId: string,
+  sessionId: string,
+): void {
+  qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), (old) => {
+    if (!old?.some((s) => s.id === sessionId && (s.unread_count || s.has_unread))) return old;
+    return old.map((s) => (s.id === sessionId ? { ...s, unread_count: 0, has_unread: false } : s));
   });
 }
 
@@ -1168,6 +1240,23 @@ export function useRealtimeSync(
       }, 1_000));
     };
 
+    const applyAgentStatusChange = (payload: unknown): boolean => {
+      const change = readAgentStatusChange(payload);
+      const wsId = getCurrentWsId();
+      if (!change || !wsId) return false;
+      const next = patchAgentListStatus(
+        qc.getQueryData<Agent[]>(workspaceKeys.agents(wsId)),
+        change,
+      );
+      if (!next) return false;
+      qc.setQueryData(workspaceKeys.agents(wsId), next);
+      qc.setQueryData<Agent>(workspaceKeys.agent(wsId, change.agentId), (current) =>
+        current ? { ...current, status: change.status } : current,
+      );
+      invalidateSquadMemberStatusQueries(qc, wsId);
+      return true;
+    };
+
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const debouncedRefresh = (prefix: string, fn: () => void) => {
       const existing = timers.get(prefix);
@@ -1217,6 +1306,10 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) scheduleWorkingAgentRefresh(wsId);
       }
+      // A pure status flip (task start/finish) patches the cached row instead
+      // of refetching the whole agent table on every open tab — that refetch
+      // was the largest share of a self-hosted instance's egress. (DENE-1504)
+      if (msg.type === "agent:status" && applyAgentStatusChange(msg.payload)) return;
       const refresh = refreshMap[prefix];
       if (refresh) debouncedRefresh(prefix, refresh);
     });
@@ -1796,8 +1889,10 @@ export function useRealtimeSync(
       // handlers (which carry the task_id needed to remove the right entry).
       // chat:done no longer invalidates it, so a chatty session doesn't refetch
       // the aggregate on every turn (MUL-4159).
-      // Assistant message just landed → has_unread may have flipped to true.
-      invalidateSessionLists();
+      // Assistant message just landed → preview, unread and order changed.
+      // Patch the row in place; refetch only when the payload can't (DENE-1507).
+      const id = getCurrentWsId();
+      if (!id || !applyChatDoneToSessionList(qc, id, payload)) invalidateSessionLists();
     });
 
     // Late quick-actions supplement from the daemon's background suggestion
@@ -1973,7 +2068,8 @@ export function useRealtimeSync(
     const unsubChatSessionRead = ws.on("chat:session_read", (p) => {
       const payload = p as { chat_session_id: string };
       chatWsLogger.info("chat:session_read (global)", payload);
-      invalidateSessionLists();
+      const id = getCurrentWsId();
+      if (id) applyChatSessionReadToCache(qc, id, payload.chat_session_id);
     });
 
     const unsubChatSessionCreated = ws.on("chat:session_created", (p) => {

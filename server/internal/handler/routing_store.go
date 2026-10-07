@@ -39,6 +39,11 @@ func (s routingStore) Settings(ctx context.Context, workspaceID string) (routing
 		return routing.Settings{}, err
 	}
 	settings := routing.ParseSettings(ws.Settings)
+	if domains, err := s.h.Queries.ListWorkspaceDomains(ctx, wsID); err == nil {
+		for _, d := range domains {
+			settings.Domains = append(settings.Domains, d.Name)
+		}
+	}
 	// Opened here, at the edge, so nothing above this line ever holds the
 	// ciphertext and nothing below ever has to know there was one. An
 	// unopenable value yields the empty string, which means "no workspace
@@ -111,11 +116,11 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 	}
 	if row.ProjectID.Valid {
 		out.ProjectID = util.UUIDToString(row.ProjectID)
-		if p, err := s.h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
-			ID: row.ProjectID, WorkspaceID: row.WorkspaceID,
-		}); err == nil {
-			out.ProjectName = p.Title
-		}
+		// The scene's inputs, read once through the shared resolver (DENE-1477).
+		scene := service.LoadDomainScene(ctx, s.h.Queries, row.WorkspaceID, row.DomainID, row.ProjectID)
+		out.ProjectName = scene.ProjectName
+		out.ProjectDomains = scene.Project
+		out.Domain = scene.Issue
 	}
 	if labels, err := s.h.Queries.ListLabelsByIssue(ctx, db.ListLabelsByIssueParams{
 		IssueID: row.ID, WorkspaceID: row.WorkspaceID,
@@ -290,6 +295,7 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 		demoted[util.UUIDToString(id)] = true
 	}
 	out := make(map[string]routing.Agent, len(agents))
+	seats := newSeatDomains(s.domainNames(ctx, wsID), agents)
 	for _, a := range agents {
 		// Disabled seats stay on the agents list but are not routing
 		// candidates (DENE-714). Archive is already excluded by ListAgents.
@@ -297,7 +303,7 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 			continue
 		}
 		id := util.UUIDToString(a.ID)
-		out[a.Name] = routing.Agent{
+		agent := routing.Agent{
 			ID:      id,
 			Name:    a.Name,
 			Tier:    a.RoutingTier.String,
@@ -305,8 +311,37 @@ func (s routingStore) Roster(ctx context.Context, workspaceID string) (map[strin
 			Usage:   a.RoutingUsage,
 			Model:   a.Model.String,
 		}
+		seats.fill(&agent, a)
+		out[a.Name] = agent
 	}
 	return out, nil
+}
+
+// domainNames maps a workspace's domain ids to their names. A failed read is
+// an empty map: routing then reads directions off seat names, as before.
+func (s routingStore) domainNames(ctx context.Context, wsID pgtype.UUID) map[pgtype.UUID]string {
+	return service.WorkspaceDomainNames(ctx, s.h.Queries, wsID)
+}
+
+// seatDomains fills the structured direction and base of routing seats.
+type seatDomains struct {
+	names map[pgtype.UUID]string
+	base  map[pgtype.UUID]string
+}
+
+func newSeatDomains(names map[pgtype.UUID]string, agents []db.Agent) seatDomains {
+	base := make(map[pgtype.UUID]string, len(agents))
+	for _, a := range agents {
+		base[a.ID] = a.Name
+	}
+	return seatDomains{names: names, base: base}
+}
+
+func (d seatDomains) fill(out *routing.Agent, a db.Agent) {
+	out.Direction = d.names[a.DomainID]
+	if a.ParentAgentID.Valid {
+		out.Base = d.base[a.ParentAgentID]
+	}
 }
 
 func (s routingStore) AssignAgentIfUnassigned(ctx context.Context, workspaceID, issueID string, seat routing.Seat, start bool) (bool, error) {
@@ -413,7 +448,14 @@ func (s routingStore) OffRosterSeat(ctx context.Context, workspaceID, agentID st
 	if agent.RoutingTier.Valid {
 		tier = agent.RoutingTier.String
 	}
-	return routing.Agent{ID: agentID, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage, Model: agent.Model.String}, true, nil
+	out := routing.Agent{ID: agentID, Name: agent.Name, Tier: tier, Usage: agent.RoutingUsage, Model: agent.Model.String}
+	out.Direction = s.domainNames(ctx, wsID)[agent.DomainID]
+	if agent.ParentAgentID.Valid {
+		if parent, err := s.h.Queries.GetAgent(ctx, agent.ParentAgentID); err == nil {
+			out.Base = parent.Name
+		}
+	}
+	return out, true, nil
 }
 
 func (s routingStore) ReplaceReviewer(ctx context.Context, workspaceID, issueID, currentID string, ref routing.ReviewerRef) (bool, error) {

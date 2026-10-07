@@ -93,6 +93,38 @@ describe("WorkspaceIndex", () => {
     expect(index.isServing()).toBe(true);
   });
 
+  it("waits out a page it cannot parse instead of fetching it again every few minutes", async () => {
+    const server = new FakeServer();
+    for (let n = 1; n <= 5; n++) server.apply({ kind: "issue", record: issueRecord(n, `Issue ${n}`) });
+    const { index, store } = makeIndex(server, undefined, { retryBaseMs: 0, unavailableRetryMs: 60_000 });
+    const originalSnapshot = server.snapshot.bind(server);
+    let malformed = true;
+    server.snapshot = async (after, limit) => {
+      if (after > 0 && malformed) {
+        server.calls.push("snapshot");
+        throw new IndexFetchError("Malformed response from GET /api/search-index/snapshot", undefined, true);
+      }
+      return originalSnapshot(after, limit);
+    };
+    await started(index);
+    expect(index.currentState).toBe("unavailable");
+    expect(store.meta?.bootstrap).toEqual({ cursor: "c5", afterNumber: 2 });
+    const fetched = server.calls.length;
+
+    // Polls inside the wait do not ask again.
+    clock += 30_000;
+    await index.sync();
+    expect(server.calls).toHaveLength(fetched);
+
+    // After the wait (a deploy fixed the body), the bootstrap resumes where it stopped.
+    malformed = false;
+    clock += 60_000;
+    await index.sync();
+    expect(server.calls.slice(fetched)).toEqual(["snapshot", "snapshot", "changes"]);
+    expect(store.issues.size).toBe(5);
+    expect(index.isServing()).toBe(true);
+  });
+
   it("declines a workspace over the memory budget and rechecks it later", async () => {
     const server = new FakeServer();
     server.apply({ kind: "issue", record: issueRecord(1, "Huge") });

@@ -24,3 +24,5 @@ export * from "./runtime-binding";
 export * from "./auto-retry";
 export * from "./work-enabled";
 export * from "./agent-access";
+export * from "./domain-fit";
+export * from "./use-agent-scene";

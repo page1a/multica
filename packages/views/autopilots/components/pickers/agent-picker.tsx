@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bot } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { isAgentRuntimeBound } from "@multica/core/agents";
+import { isAgentRuntimeBound, useAgentScene } from "@multica/core/agents";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import type { AutopilotAssigneeType } from "@multica/core/types";
 import { ActorAvatar } from "../../../common/actor-avatar";
@@ -15,6 +15,7 @@ import {
   PickerEmpty,
 } from "../../../issues/components/pickers/property-picker";
 import { useT } from "../../../i18n";
+import { AgentFitSections } from "../../../agents/components/agent-fit-sections";
 import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
 
 export interface AssigneeSelection {
@@ -22,18 +23,23 @@ export interface AssigneeSelection {
   id: string;
 }
 
+const NO_PROJECTS: readonly string[] = [];
+
 export function AgentPicker({
   assignee,
   onChange,
   trigger: customTrigger,
   triggerRender,
   align = "start",
+  sceneProjectIds = NO_PROJECTS,
 }: {
   assignee: AssigneeSelection | null;
   onChange: (next: AssigneeSelection) => void;
   trigger?: React.ReactNode;
   triggerRender?: React.ReactElement;
   align?: "start" | "center" | "end";
+  /** The autopilot's project (DENE-1477): agents group 对口 / 通用 / 其他. */
+  sceneProjectIds?: readonly (string | null | undefined)[];
 }) {
   const { t } = useT("autopilots");
   const wsId = useWorkspaceId();
@@ -41,6 +47,7 @@ export function AgentPicker({
   const [filter, setFilter] = useState("");
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const scene = useAgentScene(wsId, sceneProjectIds);
 
   const activeAgents = useMemo(() => agents.filter((a) => !a.archived_at), [agents]);
   const activeSquads = useMemo(() => squads.filter((s) => !s.archived_at), [squads]);
@@ -106,29 +113,30 @@ export function AgentPicker({
         <PickerEmpty />
       ) : (
         <>
-          {filteredAgents.length > 0 && (
-            <PickerSection label={t(($) => $.agent_picker.agents_group)}>
-              {filteredAgents.map((a) => {
-                const runtimeBound = isAgentRuntimeBound(a);
-                return (
-                  <PickerItem
-                    key={a.id}
-                    selected={isSelected("agent", a.id)}
-                    disabled={!runtimeBound}
-                    tooltip={
-                      runtimeBound
-                        ? undefined
-                        : t(($) => $.agent_picker.agent_runtime_required)
-                    }
-                    onClick={() => handlePick("agent", a.id)}
-                  >
-                    <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
-                    <span className="truncate">{a.name}</span>
-                  </PickerItem>
-                );
-              })}
-            </PickerSection>
-          )}
+          <AgentFitSections
+            agents={filteredAgents}
+            scene={scene}
+            label={t(($) => $.agent_picker.agents_group)}
+            renderAgent={(a) => {
+              const runtimeBound = isAgentRuntimeBound(a);
+              return (
+                <PickerItem
+                  key={a.id}
+                  selected={isSelected("agent", a.id)}
+                  disabled={!runtimeBound}
+                  tooltip={
+                    runtimeBound
+                      ? undefined
+                      : t(($) => $.agent_picker.agent_runtime_required)
+                  }
+                  onClick={() => handlePick("agent", a.id)}
+                >
+                  <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
+                  <span className="truncate">{a.name}</span>
+                </PickerItem>
+              );
+            }}
+          />
           {filteredSquads.length > 0 && (
             <PickerSection label={t(($) => $.agent_picker.squads_group)}>
               {filteredSquads.map((s) => {

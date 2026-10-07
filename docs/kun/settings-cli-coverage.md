@@ -40,7 +40,8 @@
 | 标签 | `/api/labels` | 界面有、接口是上游的 | 有：`label` |
 | 属性 | `/api/properties` | 界面有、接口是上游的 | 有：`property` |
 | 快捷操作 | `/api/quick-actions` | 界面有、接口是上游的 | 没有 |
-| 路由席位 | 工作区 settings 里的 routing-projects | 魔改、界面在用 | 有：`workspace routing-projects` |
+| 路由席位 | 工作区 settings 里的 routing-projects（项目没设领域时的兜底） | 魔改、界面在用 | 有：`workspace routing-projects` |
+| 领域（派票页） | `/api/domains` | 魔改、界面在用 | 有：`domain list` / `add` / `rename` / `delete` |
 
 ### 连接
 

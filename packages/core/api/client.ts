@@ -151,6 +151,8 @@ import type {
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
   Label,
+  Domain,
+  ListDomainsResponse,
   IssueProperty,
   IssuePropertyValue,
   CreatePropertyRequest,
@@ -693,9 +695,17 @@ export function mergeIncrementalChanges<T extends { id: string }>(current: T[], 
   return [...byId.values()];
 }
 
+/** A search index response failed its schema; retrying soon gets the same body. */
+export class MalformedSearchIndexResponseError extends Error {
+  constructor(endpoint: string) {
+    super(`Malformed response from ${endpoint}`);
+    this.name = "MalformedSearchIndexResponseError";
+  }
+}
+
 function parseSearchIndexResponse<T>(raw: unknown, schema: ZodType, endpoint: string): T {
   const parsed = parseWithFallback<T | null>(raw, schema, null, { endpoint });
-  if (parsed === null) throw new Error(`Malformed response from ${endpoint}`);
+  if (parsed === null) throw new MalformedSearchIndexResponseError(endpoint);
   return parsed;
 }
 
@@ -3726,8 +3736,13 @@ export class ApiClient {
   }
 
   // Inbox
+  /**
+   * One row per issue group (`?group=issue`, DENE-1505): the group's newest
+   * row with its `unread_count` and newest comment anchor — the shape
+   * `deduplicateInboxItems` builds, without shipping every sibling row.
+   */
   async listInbox(): Promise<InboxItem[]> {
-    const raw = await this.fetch<unknown>("/api/inbox");
+    const raw = await this.fetch<unknown>("/api/inbox?group=issue");
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox",
     });
@@ -3754,8 +3769,10 @@ export class ApiClient {
     });
   }
 
-  async markInboxRead(id: string): Promise<InboxItem> {
-    return this.fetch(`/api/inbox/${id}/read`, { method: "POST" });
+  /** `scope: "issue"` also reads every active row of the item's issue. */
+  async markInboxRead(id: string, options: { scope?: "issue" } = {}): Promise<InboxItem> {
+    const query = options.scope ? `?scope=${options.scope}` : "";
+    return this.fetch(`/api/inbox/${id}/read${query}`, { method: "POST" });
   }
 
   async markInboxUnread(id: string): Promise<InboxItem> {
@@ -5633,6 +5650,31 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/members/${memberId}`, {
       method: "DELETE",
     });
+  }
+
+  // Workspace domains (DENE-1451). Reads are open to any member; writes are
+  // owner/admin only.
+  async listDomains(): Promise<ListDomainsResponse> {
+    const raw = await this.fetch<ListDomainsResponse>(`/api/domains`);
+    return { domains: Array.isArray(raw?.domains) ? raw.domains : [] };
+  }
+
+  async createDomain(name: string): Promise<Domain> {
+    return this.fetch<Domain>(`/api/domains`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async renameDomain(id: string, name: string): Promise<Domain> {
+    return this.fetch<Domain>(`/api/domains/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deleteDomain(id: string): Promise<void> {
+    await this.fetch(`/api/domains/${id}`, { method: "DELETE" });
   }
 
   // Labels

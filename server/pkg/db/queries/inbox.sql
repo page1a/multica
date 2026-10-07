@@ -114,6 +114,15 @@ UPDATE inbox_item SET read = true, read_at = COALESCE(read_at, now())
 WHERE id = $1
 RETURNING *;
 
+-- name: MarkInboxReadByIssue :execrows
+-- Group-scoped read for the grouped inbox list (DENE-1505): the list ships one
+-- row per issue, so the client no longer holds the sibling ids it used to mark
+-- one by one. Same scope it marked: every active row of the issue, calls
+-- included — unlike MarkIssueInboxRead, which keeps open-call rows unread.
+UPDATE inbox_item SET read = true, read_at = COALESCE(read_at, now())
+WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3
+  AND issue_id = $4 AND archived = false AND read = false;
+
 -- name: MarkInboxUnread :one
 -- Exact inverse of MarkInboxRead, and item-level for the same reason it is:
 -- the inbox renders one row per issue carrying that group's NEWEST item, and

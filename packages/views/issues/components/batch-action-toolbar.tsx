@@ -247,6 +247,7 @@ export function BatchActionToolbar({
           assigneeId={common.assignee?.id ?? null}
           mixed={common.assignee === null}
           onUpdate={handleBatchAssignee}
+          sceneProjectIds={selectedIssues.map((i) => i.project_id)}
           open={assigneeOpen}
           onOpenChange={setAssigneeOpen}
           triggerRender={<Button variant="ghost" size="sm" disabled={loading} />}

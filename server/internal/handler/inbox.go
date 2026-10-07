@@ -31,6 +31,9 @@ type InboxItemResponse struct {
 	ActorType     *string         `json:"actor_type"`
 	ActorID       *string         `json:"actor_id"`
 	Details       json.RawMessage `json:"details"`
+	// Set only on the grouped list (?group=issue): how many of the group's
+	// active rows are unread. Absent everywhere else.
+	UnreadCount *int `json:"unread_count,omitempty"`
 }
 
 func inboxToResponse(i db.InboxItem) InboxItemResponse {
@@ -191,7 +194,93 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, inboxRowToResponse(item))
 	}
 
+	if r.URL.Query().Get("group") == "issue" {
+		resp = groupInboxResponses(resp)
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// groupInboxResponses collapses the visible inbox rows to one per issue group,
+// the way every client already renders them (deduplicateInboxItems in
+// packages/core and apps/mobile — keep the three in step).
+//
+// The ungrouped list ships every active notification a user never archived:
+// each comment on a watched issue is a row, so one busy issue costs dozens of
+// rows the client drops right after parsing (DENE-1505, ~4 MB per load). The
+// grouped list carries only what the client keeps: the group's newest row, the
+// newest comment anchor for landing on the right comment, and the unread count.
+//
+// Grouping runs after the visibility filter, so a group is built from exactly
+// the rows the ungrouped list would have shown. Input is newest-first
+// (ListInboxItems orders by created_at DESC), so a group's first row is its
+// newest and the output keeps that order.
+func groupInboxResponses(rows []InboxItemResponse) []InboxItemResponse {
+	type group struct {
+		index     int
+		unread    int
+		commentID string
+	}
+	groups := make(map[string]*group, len(rows))
+	out := make([]InboxItemResponse, 0, len(rows))
+	for _, row := range rows {
+		key := row.ID
+		if row.IssueID != nil {
+			key = *row.IssueID
+		}
+		g, seen := groups[key]
+		if !seen {
+			g = &group{index: len(out)}
+			groups[key] = g
+			out = append(out, row)
+		}
+		if !row.Read {
+			g.unread++
+		}
+		if g.commentID == "" {
+			g.commentID = inboxDetailsCommentID(row.Details)
+		}
+	}
+	for _, g := range groups {
+		row := &out[g.index]
+		unread := g.unread
+		row.UnreadCount = &unread
+		row.Read = unread == 0
+		if g.commentID != "" && inboxDetailsCommentID(row.Details) != g.commentID {
+			row.Details = withInboxCommentID(row.Details, g.commentID)
+		}
+	}
+	return out
+}
+
+// inboxDetailsCommentID reads details.comment_id; anything but a non-empty
+// string counts as absent, matching the clients' truthiness check.
+func inboxDetailsCommentID(details json.RawMessage) string {
+	if len(details) == 0 {
+		return ""
+	}
+	var d struct {
+		CommentID any `json:"comment_id"`
+	}
+	if json.Unmarshal(details, &d) != nil {
+		return ""
+	}
+	id, _ := d.CommentID.(string)
+	return id
+}
+
+func withInboxCommentID(details json.RawMessage, commentID string) json.RawMessage {
+	fields := map[string]json.RawMessage{}
+	if len(details) > 0 && string(details) != "null" {
+		if json.Unmarshal(details, &fields) != nil {
+			return details
+		}
+	}
+	fields["comment_id"], _ = json.Marshal(commentID)
+	merged, err := json.Marshal(fields)
+	if err != nil {
+		return details
+	}
+	return merged
 }
 
 // ListArchivedInbox returns the recipient's archived notifications, backing the
@@ -251,6 +340,19 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark read")
 		return
+	}
+	// ?scope=issue reads the whole active group: the grouped list no longer
+	// gives the client the sibling ids it used to mark one by one (DENE-1505).
+	if r.URL.Query().Get("scope") == "issue" && item.IssueID.Valid && !item.Archived {
+		if _, err := h.Queries.MarkInboxReadByIssue(r.Context(), db.MarkInboxReadByIssueParams{
+			WorkspaceID:   item.WorkspaceID,
+			RecipientType: item.RecipientType,
+			RecipientID:   item.RecipientID,
+			IssueID:       item.IssueID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to mark read")
+			return
+		}
 	}
 
 	userID := requestUserID(r)

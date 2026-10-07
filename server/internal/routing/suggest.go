@@ -31,7 +31,7 @@ type Suggestion struct {
 // the judge cannot place confidently comes back empty rather than on the
 // fallback rung — routeTodo falls back because an unheld ticket is invisible,
 // while a draft row is on screen in front of the person who will pick.
-func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, rows []SuggestRow) ([]Suggestion, error) {
+func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, projectDomains []string, rows []SuggestRow) ([]Suggestion, error) {
 	out := make([]Suggestion, len(rows))
 	fill := func(reason string) []Suggestion {
 		for i := range out {
@@ -54,13 +54,13 @@ func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, r
 		return fill(NotConfiguredReason), nil
 	}
 
-	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
-	direction := ladder.ResolveDirection(projectName).Direction
+	ladder := r.Ladder.For(settings)
+	scene := ladder.IssueScene(Issue{ProjectName: projectName, ProjectDomains: projectDomains})
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {
 		return fill("roster unreadable"), err
 	}
-	candidates := ladder.Candidates(direction, roster)
+	candidates := ladder.SceneCandidates(scene, roster)
 	if len(candidates) == 0 {
 		return fill("ladder has no seat in this workspace"), nil
 	}
@@ -77,7 +77,7 @@ func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, r
 				Status:             "todo",
 				ProjectName:        projectName,
 				HasChildren:        row.HasChildren,
-			}, direction, candidates)
+			}, scene, candidates)
 			v, err := r.Judge.Assign(ctx, settings.Target(), state)
 			if err != nil {
 				r.Breaker.Fail(workspaceID, err)

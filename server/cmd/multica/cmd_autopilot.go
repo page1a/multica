@@ -1045,6 +1045,13 @@ func resolveAgent(ctx context.Context, client *cli.APIClient, nameOrID string) (
 		}
 	}
 
+	// An exact name is never ambiguous: 孙悟空 is the base role even though
+	// every 孙悟空X specialisation contains it.
+	for _, m := range matches {
+		if strings.EqualFold(m.Name, nameOrID) {
+			return m.ID, nil
+		}
+	}
 	switch len(matches) {
 	case 0:
 		return "", fmt.Errorf("no agent found matching %q", nameOrID)

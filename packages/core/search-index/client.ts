@@ -1,4 +1,4 @@
-import { ApiError } from "../api/client";
+import { ApiError, MalformedSearchIndexResponseError } from "../api/client";
 import type {
   SearchIndexChanges,
   SearchIndexManifest,
@@ -249,6 +249,7 @@ export class LocalSearchIndexClient {
         id: message.id,
         ok: false,
         status: err instanceof ApiError ? err.status : undefined,
+        malformed: err instanceof MalformedSearchIndexResponseError || undefined,
         message: err instanceof Error ? err.message : String(err),
       });
     }

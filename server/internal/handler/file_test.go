@@ -548,13 +548,33 @@ func requireAttachmentDownloadHeaders(t *testing.T, header http.Header, wantFile
 	if got := header.Get("Content-Disposition"); got == "" || !strings.Contains(got, wantFilename) {
 		t.Fatalf("Content-Disposition = %q, want non-empty containing %q", got, wantFilename)
 	}
-	if got, want := header.Get("Cache-Control"), "no-store"; got != want {
+	if got, want := header.Get("Cache-Control"), "private, no-cache"; got != want {
 		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	if got := header.Get("ETag"); got == "" {
+		t.Fatal("ETag is empty, want the attachment id")
 	}
 	if got, want := header.Get("X-Content-Type-Options"), "nosniff"; got != want {
 		t.Fatalf("X-Content-Type-Options = %q, want %q", got, want)
 	}
 	requireAttachmentPreviewCSP(t, header)
+}
+
+func TestEtagMatches(t *testing.T) {
+	const etag = `"abc"`
+	for header, want := range map[string]bool{
+		``:            false,
+		`"abc"`:       true,
+		`W/"abc"`:     true,
+		`"x", "abc"`:  true,
+		`*`:           true,
+		`"abcd"`:      false,
+		`"x" , W/"y"`: false,
+	} {
+		if got := etagMatches(header, etag); got != want {
+			t.Errorf("etagMatches(%q) = %v, want %v", header, got, want)
+		}
+	}
 }
 
 func requireAttachmentPreviewCSP(t *testing.T, header http.Header, extraAncestors ...string) {
@@ -1007,6 +1027,9 @@ func TestDownloadAttachment_BareNavigationDeniesNonMemberWith404(t *testing.T) {
 	req.Header.Set("X-User-ID", testUserID)
 	w := httptest.NewRecorder()
 
+	// A cached copy's ETag must not turn the deny into a 304: revalidation
+	// runs the membership check first (DENE-1508).
+	req.Header.Set("If-None-Match", `"`+id+`"`)
 	newDownloadRouter().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -1053,13 +1076,28 @@ func TestDownloadAttachment_AutoInternalEndpointProxies(t *testing.T) {
 	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="report.txt"` {
 		t.Fatalf("Content-Disposition = %q", got)
 	}
-	if got := w.Header().Get("Cache-Control"); got != "no-store" {
-		t.Fatalf("Cache-Control = %q, want no-store", got)
+	if got := w.Header().Get("Cache-Control"); got != "private, no-cache" {
+		t.Fatalf("Cache-Control = %q, want private, no-cache", got)
+	}
+	etag := w.Header().Get("ETag")
+	if etag != `"`+id+`"` {
+		t.Fatalf("ETag = %q, want the attachment id", etag)
 	}
 	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 	requireAttachmentPreviewCSP(t, w.Header(), "https://app.example.test")
+
+	// A repeat view revalidates and gets a bodyless 304 (DENE-1508).
+	req, w = newDownloadRequest(t, id, testWorkspaceID)
+	req.Header.Set("If-None-Match", etag)
+	testHandler.DownloadAttachment(w, req)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("revalidation status = %d, want 304; body=%s", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("304 carried a body: %q", w.Body.String())
+	}
 	if len(store.presignCalls) != 0 {
 		t.Fatalf("internal endpoint should not presign, calls=%v", store.presignCalls)
 	}

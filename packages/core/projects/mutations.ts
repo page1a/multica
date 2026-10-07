@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { projectKeys } from "./queries";
 import { issueKeys } from "../issues/queries";
+import { domainKeys } from "../domains/queries";
 import { useWorkspaceId } from "../hooks";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { clearIssueSurfaceViewState } from "../issues/stores/surface-view-store";
@@ -57,6 +58,10 @@ export function useUpdateProject() {
       // refresh it — the global staleTime is Infinity.
       if ("status" in vars) {
         qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+      }
+      // The domain list counts the projects using each domain.
+      if ("domain_ids" in vars) {
+        qc.invalidateQueries({ queryKey: domainKeys.all(wsId) });
       }
     },
   });

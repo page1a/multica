@@ -94,6 +94,10 @@ type AgentResponse struct {
 	// a specialisation (DENE-301). The tree is at most two levels deep; the
 	// server enforces that, so a non-empty value here is always a base role.
 	ParentAgentID string `json:"parent_agent_id,omitempty"`
+	// DomainID is the workspace domain a specialisation works in (DENE-1451).
+	// Routing and the per-quote rule put an issue of this domain on it. Empty
+	// for a base role and for a specialisation without a domain.
+	DomainID string `json:"domain_id,omitempty"`
 	// RuntimeInherited marks this specialisation as following its base role's
 	// runtime profile (DENE-505): runtime_id, runtime_mode, runtime_config,
 	// model, thinking_level and service_tier stay equal to the base role's and
@@ -191,6 +195,10 @@ type AgentResponse struct {
 	// RoutingUsage is the headroom a person tagged this seat with (DENE-922):
 	// tight / normal / ample. Routing prefers ample inside a rung.
 	RoutingUsage string `json:"routing_usage"`
+	// Fit is the agent's group for one issue or project (DENE-1477): match
+	// (对口), generic (通用) or other (其他). Only on a list asked with
+	// for_issue / for_project, which also orders the list by it.
+	Fit string `json:"fit,omitempty"`
 	// ComposioToolkitAllowlist is the subset of Composio toolkit slugs this
 	// agent is allowed to mount as MCP at task dispatch — for ANY run that
 	// passes the agent's invocation permission, using the agent OWNER's
@@ -305,6 +313,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		SystemKey:                a.SystemKey.String,
 		SystemInstructions:       systemInstructionsFor(a),
 		ParentAgentID:            uuidToString(a.ParentAgentID),
+		DomainID:                 uuidToString(a.DomainID),
 		RuntimeInherited:         a.RuntimeInherited,
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
 		RuntimeMode:              a.RuntimeMode,
@@ -946,46 +955,46 @@ type AgentTaskResponse struct {
 	// CheckoutPaths is the issue's checkout_paths metadata: repo-relative
 	// directories this task wants on disk. Empty (and absent on old servers)
 	// checks out the whole repository.
-	CheckoutPaths            string                `json:"checkout_paths,omitempty"`
-	IssueCommentSummaries    []IssueContextComment `json:"issue_comment_summaries,omitempty"`
-	IssueTriggerThread       []IssueContextComment `json:"issue_trigger_thread,omitempty"`
-	IssueNewComments         []IssueContextComment `json:"issue_new_comments,omitempty"`
-	IssueSubIssues           []SubIssueRef         `json:"issue_sub_issues,omitempty"` // the task issue's sub-issues; non-empty tells the run it holds a coordinator (DENE-812)
-	IssueContextGeneratedAt  string                `json:"issue_context_generated_at,omitempty"`
-	IssueContextTruncated    bool                  `json:"issue_context_truncated,omitempty"`
+	CheckoutPaths           string                `json:"checkout_paths,omitempty"`
+	IssueCommentSummaries   []IssueContextComment `json:"issue_comment_summaries,omitempty"`
+	IssueTriggerThread      []IssueContextComment `json:"issue_trigger_thread,omitempty"`
+	IssueNewComments        []IssueContextComment `json:"issue_new_comments,omitempty"`
+	IssueSubIssues          []SubIssueRef         `json:"issue_sub_issues,omitempty"` // the task issue's sub-issues; non-empty tells the run it holds a coordinator (DENE-812)
+	IssueContextGeneratedAt string                `json:"issue_context_generated_at,omitempty"`
+	IssueContextTruncated   bool                  `json:"issue_context_truncated,omitempty"`
 	// IssueHandoffCard is the rendered state card for the first run of an
 	// agent the issue was just handed to (DENE-1350); empty otherwise.
-	IssueHandoffCard string `json:"issue_handoff_card,omitempty"`
-	ChatSessionID            string                `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatChannelType          string                `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
-	ChatChannelDeliversFiles bool                  `json:"chat_channel_delivers_files,omitempty"` // server capability: THIS deployment can put a file the agent produced into THIS conversation — the adapter goes back for the bound attachment AND object storage exists to go back to. Absent/false on a server predating it, which is the safe reading: the agent is told to describe its file in words. Never inferred daemon-side from chat_channel_type; see handler.Handler.channelDeliversFiles
-	ChatType                 string                `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type — "group" for a shared room, "p2p" for a 1:1 with the bot. Lets the per-turn prompt tell the agent who else can read its replies; empty for a web-only chat
-	ChatInThread             bool                  `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
-	ChatTitleRequested       bool                  `json:"chat_title_requested,omitempty"`        // workspace names chats through the runtime and this chat has no runtime title yet; the prompt asks the agent to run `multica chat title`
-	ChatMessage              string                `json:"chat_message,omitempty"`                // user message for chat tasks
-	ChatMessageAttachments   []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
-	ChatIntro                bool                  `json:"chat_intro,omitempty"`                  // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
-	AutopilotRunID           string                `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
-	AutopilotID              string                `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
-	AutopilotTitle           string                `json:"autopilot_title,omitempty"`             // autopilot title used as task context
-	AutopilotDescription     string                `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
-	AutopilotSource          string                `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
-	AutopilotTriggerPayload  json.RawMessage       `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
-	QuickCreatePrompt        string                `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
-	QuickCreatePriority      string                `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
-	QuickCreateDueDate       string                `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
-	QuickCreateGoalMode      bool                  `json:"quick_create_goal_mode,omitempty"`
-	QuickCreateAttachmentIDs []string              `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
-	QuickCreateSourceContext json.RawMessage       `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
-	WakeupID                 string                `json:"wakeup_id,omitempty"`
-	WakeupSystemRule         string                `json:"wakeup_system_rule,omitempty"`      // set when a platform rule (e.g. child_done) started the run
-	WakeupJoined             string                `json:"wakeup_joined,omitempty"`           // wakeups that fired while this run waited to start and joined it instead of queuing their own
-	HandoffNote              string                `json:"handoff_note,omitempty"`            // legacy assignment handoff instruction retained for installed clients; rendered by the daemon only in the per-turn prompt
-	SquadID                  string                `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string                `json:"squad_name,omitempty"`              // display name for the picker squad
-	ParentIssueID            string                `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string                `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
-	ProjectExplicitNone      bool                  `json:"project_explicit_none,omitempty"`   // user cleared the project; the daemon prompt must pass an empty --project
+	IssueHandoffCard         string               `json:"issue_handoff_card,omitempty"`
+	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
+	ChatChannelType          string               `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
+	ChatChannelDeliversFiles bool                 `json:"chat_channel_delivers_files,omitempty"` // server capability: THIS deployment can put a file the agent produced into THIS conversation — the adapter goes back for the bound attachment AND object storage exists to go back to. Absent/false on a server predating it, which is the safe reading: the agent is told to describe its file in words. Never inferred daemon-side from chat_channel_type; see handler.Handler.channelDeliversFiles
+	ChatType                 string               `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type — "group" for a shared room, "p2p" for a 1:1 with the bot. Lets the per-turn prompt tell the agent who else can read its replies; empty for a web-only chat
+	ChatInThread             bool                 `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
+	ChatTitleRequested       bool                 `json:"chat_title_requested,omitempty"`        // workspace names chats through the runtime and this chat has no runtime title yet; the prompt asks the agent to run `multica chat title`
+	ChatMessage              string               `json:"chat_message,omitempty"`                // user message for chat tasks
+	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
+	ChatIntro                bool                 `json:"chat_intro,omitempty"`                  // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
+	AutopilotRunID           string               `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
+	AutopilotID              string               `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
+	AutopilotTitle           string               `json:"autopilot_title,omitempty"`             // autopilot title used as task context
+	AutopilotDescription     string               `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
+	AutopilotSource          string               `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
+	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
+	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
+	QuickCreatePriority      string               `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
+	QuickCreateDueDate       string               `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
+	QuickCreateGoalMode      bool                 `json:"quick_create_goal_mode,omitempty"`
+	QuickCreateAttachmentIDs []string             `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
+	QuickCreateSourceContext json.RawMessage      `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
+	WakeupID                 string               `json:"wakeup_id,omitempty"`
+	WakeupSystemRule         string               `json:"wakeup_system_rule,omitempty"`      // set when a platform rule (e.g. child_done) started the run
+	WakeupJoined             string               `json:"wakeup_joined,omitempty"`           // wakeups that fired while this run waited to start and joined it instead of queuing their own
+	HandoffNote              string               `json:"handoff_note,omitempty"`            // legacy assignment handoff instruction retained for installed clients; rendered by the daemon only in the per-turn prompt
+	SquadID                  string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string               `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID            string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	ProjectExplicitNone      bool                 `json:"project_explicit_none,omitempty"`   // user cleared the project; the daemon prompt must pass an empty --project
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -1733,6 +1742,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := requestUserID(r)
 
+	scene, sceneAsked, ok := h.agentListScene(w, r, parseUUID(workspaceID))
+	if !ok {
+		return
+	}
+
 	var agents []db.Agent
 	var err error
 	if r.URL.Query().Get("include_archived") == "true" {
@@ -1838,7 +1852,15 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		} else if actorType == "agent" || uuidToString(a.OwnerID) != userID {
 			redactComposioToolkitAllowlist(&resp)
 		}
+		if sceneAsked {
+			resp.Fit = string(service.AgentDomainFit(scene.Scene, a, scene.Names))
+		}
 		visible = append(visible, resp)
+	}
+	if sceneAsked {
+		slices.SortStableFunc(visible, func(a, b AgentResponse) int {
+			return routing.Fit(a.Fit).Rank() - routing.Fit(b.Fit).Rank()
+		})
 	}
 
 	// Nested grouping data for the specialisation tree (DENE-301): the base
@@ -1850,6 +1872,41 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, visible)
+}
+
+// agentListScene reads for_issue / for_project off an agent list request:
+// the scene its agents are grouped by (service.LoadDomainScene, the same
+// read dispatch uses). asked is false when neither was sent.
+func (h *Handler) agentListScene(w http.ResponseWriter, r *http.Request, wsUUID pgtype.UUID) (scene service.DomainScene, asked, ok bool) {
+	issueRef := strings.TrimSpace(r.URL.Query().Get("for_issue"))
+	projectRef := strings.TrimSpace(r.URL.Query().Get("for_project"))
+	switch {
+	case issueRef != "" && projectRef != "":
+		writeError(w, http.StatusBadRequest, "for_issue and for_project are exclusive")
+		return scene, false, false
+	case issueRef != "":
+		id, ok := parseUUIDOrBadRequest(w, issueRef, "for_issue")
+		if !ok {
+			return scene, false, false
+		}
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: id, WorkspaceID: wsUUID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "issue not found")
+			return scene, false, false
+		}
+		return service.IssueDomainScene(r.Context(), h.Queries, issue), true, true
+	case projectRef != "":
+		id, ok := parseUUIDOrBadRequest(w, projectRef, "for_project")
+		if !ok {
+			return scene, false, false
+		}
+		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: id, WorkspaceID: wsUUID}); err != nil {
+			writeError(w, http.StatusNotFound, "project not found")
+			return scene, false, false
+		}
+		return service.LoadDomainScene(r.Context(), h.Queries, wsUUID, pgtype.UUID{}, id), true, true
+	}
+	return scene, false, true
 }
 
 func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
@@ -1983,6 +2040,11 @@ type CreateAgentRequest struct {
 	// (DENE-301). Empty creates a base role. The target must be a base role in
 	// the same workspace; a specialisation cannot be specialised in turn.
 	ParentAgentID string `json:"parent_agent_id"`
+	// DomainID (an id or a domain name) makes the new specialisation the base
+	// role's seat for that domain (DENE-1451). It needs parent_agent_id, the
+	// name is generated as base role + domain, and a base role has at most
+	// one specialisation per domain (409 otherwise).
+	DomainID string `json:"domain_id"`
 	// RuntimeInherited makes the new specialisation follow its base role's
 	// runtime profile (DENE-505). Omitted with a parent means "follow": that is
 	// the default for a specialisation, so runtime_id may then be omitted
@@ -2056,7 +2118,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
+	req.DomainID = strings.TrimSpace(req.DomainID)
+	if req.DomainID != "" && req.ParentAgentID == "" {
+		writeError(w, http.StatusBadRequest, "domain_id needs parent_agent_id: only a specialisation works in a domain")
+		return
+	}
+	if req.Name == "" && req.DomainID == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
@@ -2121,6 +2188,28 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		parentAgent = parent
 		parentAgentUUID = parent.ID
+	}
+
+	// A specialisation's domain (DENE-1451): one seat per base role and domain,
+	// named base role + domain so the roster reads the same everywhere.
+	var domainUUID pgtype.UUID
+	if req.DomainID != "" {
+		idx, err := h.loadDomainIndex(r.Context(), wsUUID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load domains")
+			return
+		}
+		d, found := idx.resolve(req.DomainID)
+		if !found {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown domain %q; known domains: %s", req.DomainID, strings.Join(idx.names(), ", ")))
+			return
+		}
+		if taken, err := h.Queries.GetSpecializationByDomain(r.Context(), db.GetSpecializationByDomainParams{ParentAgentID: parentAgent.ID, DomainID: d.ID}); err == nil {
+			writeError(w, http.StatusConflict, fmt.Sprintf("%s already has a %s specialisation: %s", parentAgent.Name, d.Name, taken.Name))
+			return
+		}
+		domainUUID = d.ID
+		req.Name = parentAgent.Name + d.Name
 	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -2381,6 +2470,17 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("create agent failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create agent: "+err.Error())
 		return
+	}
+	if domainUUID.Valid {
+		created, err = qtx.SetAgentDomain(r.Context(), db.SetAgentDomainParams{ID: created.ID, WorkspaceID: wsUUID, DomainID: domainUUID})
+		if err != nil {
+			if isUniqueViolation(err) {
+				writeError(w, http.StatusConflict, fmt.Sprintf("%s already has a specialisation for this domain", parentAgent.Name))
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to set agent domain")
+			return
+		}
 	}
 	if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, created.ID, parseUUID(ownerID), perm.targets); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save agent access")

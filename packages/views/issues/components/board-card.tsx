@@ -202,6 +202,7 @@ export const BoardCardContent = memo(function BoardCardContent({
           assigneeId={issue.assignee_id}
           onUpdate={handleUpdate}
           trigger={assigneeInner}
+          sceneProjectIds={[issue.project_id]}
         />
       </PickerWrapper>
     ) : (

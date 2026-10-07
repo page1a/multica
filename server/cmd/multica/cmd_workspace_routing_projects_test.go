@@ -25,6 +25,20 @@ func newRoutingProjectsTestCmd() *cobra.Command {
 func routingProjectsServer(t *testing.T, settings map[string]any, patched *map[string]any) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/domains":
+			json.NewEncoder(w).Encode(map[string]any{"domains": []map[string]any{
+				{"id": "d-game", "name": "游戏"}, {"id": "d-sea", "name": "出海"},
+				{"id": "d-media", "name": "自媒体"}, {"id": "d-relay", "name": "中转"},
+			}})
+			return
+		case "/api/projects":
+			json.NewEncoder(w).Encode(map[string]any{"projects": []map[string]any{
+				{"title": "tarot", "domain_ids": []string{"d-sea", "d-media"}},
+				{"title": "plain", "domain_ids": []string{}},
+			}})
+			return
+		}
 		if r.URL.Path != "/api/workspaces/"+routingProjectsTestWorkspace {
 			http.NotFound(w, r)
 			return
@@ -83,13 +97,13 @@ func TestRoutingProjectsSetKeepsEverythingElseInSettings(t *testing.T) {
 	}
 }
 
-func TestRoutingProjectsSetRejectsADirectionTheLadderDoesNotHave(t *testing.T) {
+func TestRoutingProjectsSetRejectsADomainTheWorkspaceDoesNotHave(t *testing.T) {
 	var patched map[string]any
 	routingProjectsServer(t, map[string]any{}, &patched)
 
 	err := runWorkspaceRoutingProjectsSet(newRoutingProjectsTestCmd(), []string{"tarot", "出海海"})
-	if err == nil || !strings.Contains(err.Error(), "unknown direction") {
-		t.Fatalf("err = %v, want an unknown-direction error", err)
+	if err == nil || !strings.Contains(err.Error(), "unknown domain") {
+		t.Fatalf("err = %v, want an unknown-domain error", err)
 	}
 	if patched != nil {
 		t.Errorf("a rejected row still reached the server: %v", patched)
@@ -123,6 +137,25 @@ func TestRoutingProjectsListMergesWorkspaceRowsOverDefaults(t *testing.T) {
 	}
 	if seen["game-relay"] != "出海/workspace" || seen["game"] != "游戏/default" {
 		t.Errorf("rows = %v", seen)
+	}
+	// DENE-1451: a project's own domains are listed and win over the table.
+	if seen["tarot"] != "出海+自媒体/project" {
+		t.Errorf("project domains not listed: %v", seen)
+	}
+	if _, listed := seen["plain"]; listed {
+		t.Errorf("a project with no domains is listed: %v", seen)
+	}
+}
+
+func TestRoutingProjectsSetAcceptsAWorkspaceDomain(t *testing.T) {
+	var patched map[string]any
+	routingProjectsServer(t, map[string]any{}, &patched)
+	// 中转 is a workspace domain, never in the old hard-coded directions.
+	if err := runWorkspaceRoutingProjectsSet(newRoutingProjectsTestCmd(), []string{"relay-*", "中转"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if patched == nil {
+		t.Fatal("row never reached the server")
 	}
 }
 

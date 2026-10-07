@@ -55,7 +55,7 @@ func (r *Router) JudgeStallCandidate(ctx context.Context, workspaceID, issueID, 
 		target = settings.AnalysisTarget()
 	}
 	return judge.Candidate(ctx, target, StallCandidateState{
-		JudgeState: r.judgeState(issue, "", nil), QuietHours: quietHours,
+		JudgeState: r.judgeState(issue, GenericScene, nil), QuietHours: quietHours,
 		ArtifactCheck: strings.TrimSpace(artifactCheck),
 	})
 }

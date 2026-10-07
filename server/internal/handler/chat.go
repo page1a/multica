@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -2602,13 +2603,33 @@ func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure p
 		return nil
 	}
 	return &ChatLastMessage{
-		Content:       content,
+		Content:       chatListPreview(content),
 		Role:          role,
 		CreatedAt:     timestampToString(at),
 		FailureReason: textToPtr(failure),
 		MessageKind:   normalizeMessageKind(kind),
 		SenderUserID:  uuidToPtr(sender),
 	}
+}
+
+// chatListPreviewRunes caps the list preview. The row shows one truncated
+// line, and the full body of every chat's last reply made the list response
+// several hundred KB on a busy workspace (DENE-1507).
+const chatListPreviewRunes = 120
+
+var chatPreviewFence = regexp.MustCompile("(?s)```.*?```")
+
+// chatListPreview cuts a last message down to what the list row can show:
+// fenced code is dropped and whitespace collapsed (the same steps the client's
+// toPreview runs first), then the text is clipped. Clipping after those steps
+// keeps a cut from leaving half a code fence for the client to render.
+func chatListPreview(content string) string {
+	text := strings.Join(strings.Fields(chatPreviewFence.ReplaceAllString(content, " ")), " ")
+	runes := []rune(text)
+	if len(runes) <= chatListPreviewRunes {
+		return text
+	}
+	return string(runes[:chatListPreviewRunes-1]) + "…"
 }
 
 type ChatMessageResponse struct {

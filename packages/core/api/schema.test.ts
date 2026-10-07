@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { ApiClient, ApiError } from "./client";
+import { ApiClient, ApiError, MalformedSearchIndexResponseError } from "./client";
 import { parseWithFallback } from "./schema";
 
 // Helper: stub fetch with a single JSON response. Status defaults to 200.
@@ -591,6 +591,47 @@ describe("ApiClient schema fallback", () => {
       const [url, init] = fetchMock.mock.calls[0]!;
       expect(String(url)).toBe("https://api.example.test/api/search-index/snapshot?after_number=0&limit=200");
       expect((init as RequestInit).headers).toMatchObject({ "X-Workspace-Slug": "acme" });
+    });
+
+    it("keeps an issue whose metadata holds a server-internal object (DENE-1506)", async () => {
+      const issue = {
+        id: "i1",
+        workspace_id: "ws",
+        number: 649,
+        identifier: "DENE-649",
+        title: "Relayed review",
+        description: null,
+        status: "done",
+        priority: "none",
+        assignee_type: null,
+        assignee_id: null,
+        creator_type: "member",
+        creator_id: "u1",
+        parent_issue_id: null,
+        project_id: null,
+        position: 0,
+        start_date: null,
+        due_date: null,
+        metadata: { pr: 42, reviewer_relay: { designated: true, original_id: "a1" }, tags: ["x"], gone: null },
+        properties: {},
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        search_updated_at: "2026-01-01T00:00:00.000001Z",
+      };
+      stubFetchJson({ issues: [issue], comments: [], projects: [], next_after_number: 649, done: false });
+      const client = new ApiClient("https://api.example.test");
+
+      const page = await client.getSearchIndexSnapshot({ workspaceSlug: "acme", afterNumber: 614 });
+
+      expect(page.issues).toHaveLength(1);
+      expect(page.issues[0]!.metadata).toEqual({ pr: 42 });
+    });
+
+    it("marks a body that fails its schema as malformed", async () => {
+      stubFetchJson({ issues: "nope", comments: [], projects: [], next_after_number: 0, done: true });
+      const client = new ApiClient("https://api.example.test");
+      const err = await client.getSearchIndexSnapshot({ workspaceSlug: "acme", afterNumber: 0 }).catch((e) => e);
+      expect(err).toBeInstanceOf(MalformedSearchIndexResponseError);
     });
 
     it("rejects malformed manifest, snapshot, and changes bodies", async () => {

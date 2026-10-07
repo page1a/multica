@@ -23,6 +23,7 @@ import type {
   InboxWorkspaceUnread,
   IssueLabelsResponse,
   Label,
+  ListDomainsResponse,
   ListLabelsResponse,
   ListProjectResourcesResponse,
   ListProjectsResponse,
@@ -147,6 +148,21 @@ export const EMPTY_LIST_LABELS_RESPONSE: ListLabelsResponse = {
   labels: [],
   total: 0,
 };
+
+// Workspace domains (DENE-1451): projects carry several, an issue one.
+const DomainSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  position: z.number().default(0),
+  project_count: z.number().default(0),
+  agent_count: z.number().default(0),
+}).loose();
+
+export const ListDomainsResponseSchema = z.object({
+  domains: z.array(DomainSchema).default([]),
+}).loose();
+
+export const EMPTY_LIST_DOMAINS_RESPONSE: ListDomainsResponse = { domains: [] };
 
 export const IssueLabelsResponseSchema = z.object({
   labels: z.array(LabelSchema).default([]),

@@ -31,9 +31,18 @@ re-parented with the same field, on `PUT /api/agents/{id}`. `parent_agent_id`
 there is a tri-state keyed on the field being present in the body — absent means
 no change, `""` detaches, an id attaches.
 
+A specialisation records the **domain** it covers (`domain_id`; see
+`multica domain list`). Create one by base role + domain and the name is
+generated (孙悟空 + 出海 = 孙悟空出海); a base role holds at most one
+specialisation per domain, and a second is refused with 409 naming the one
+that exists. Routing reads the recorded domain, not the name, so renaming a
+specialisation never moves its work; renaming a domain renames the
+specialisations still named base + old domain.
+
 From the CLI:
 
 ```bash
+multica agent create --base-role 孙悟空 --domain 出海                           # creates 孙悟空出海
 multica agent create --name "..." --parent-agent-id <base-role-id>              # follows the base role's runtime
 multica agent create --name "..." --parent-agent-id <base-role-id> \
   --runtime-id <id> --runtime-inherited=false                                  # owns its own runtime instead

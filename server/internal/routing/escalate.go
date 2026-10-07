@@ -48,8 +48,8 @@ func (r *Router) Escalate(ctx context.Context, workspaceID, issueID, reason stri
 		return esc, ErrNotEscalatable
 	}
 
-	ladder := r.Ladder.WithProjects(settings.Projects).WithSeatOrder(settings.SeatOrder())
-	direction := ladder.ResolveDirection(issue.ProjectName).Direction
+	ladder := r.Ladder.For(settings)
+	scene := ladder.IssueScene(issue)
 	roster, err := r.Store.Roster(ctx, workspaceID)
 	if err != nil {
 		return esc, err
@@ -74,8 +74,8 @@ func (r *Router) Escalate(ctx context.Context, workspaceID, issueID, reason stri
 		return esc, ErrNotEscalatable
 	}
 
-	candidates := ladder.Candidates(direction, roster)
-	eligible, state, err := r.decisionContext(ctx, workspaceID, settings, issue, direction, candidates)
+	candidates := ladder.SceneCandidates(scene, roster)
+	eligible, state, err := r.decisionContext(ctx, workspaceID, settings, issue, scene, candidates)
 	if err != nil {
 		return esc, err
 	}

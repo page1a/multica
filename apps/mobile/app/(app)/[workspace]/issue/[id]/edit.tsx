@@ -190,7 +190,7 @@ export default function EditIssue() {
         {/* Mention suggestion bar floats above the keyboard while the user
             is mid-@. Outside the ScrollView so it doesn't scroll with the
             form body. */}
-        <MentionSuggestionBar {...description.suggestionBar} />
+        <MentionSuggestionBar {...description.suggestionBar} issueId={id} />
       </KeyboardAvoidingView>
     </>
   );

@@ -1184,19 +1184,19 @@ function SquadMembersTab({
                 hoverCardVariant="live"
               />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-body font-medium">{getEntityName(m.member_type, m.member_id)}</span>
-                  <span className="text-caption text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="min-w-0 break-words text-body font-medium">{getEntityName(m.member_type, m.member_id)}</span>
+                  <span className="shrink-0 whitespace-nowrap text-caption text-muted-foreground">
                     {t(($) => $.member_type[m.member_type])}
                   </span>
                   {isLeader(m) && (
-                    <span className="inline-flex items-center gap-0.5 text-caption bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-xs">
+                    <span className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-caption bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-xs">
                       <Crown className="size-3" />
                       {t(($) => $.members_tab.leader_chip)}
                     </span>
                   )}
                   {m.member_type === "agent" && statusLabel && (
-                    <span className="inline-flex items-center gap-1 text-caption text-muted-foreground">
+                    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-caption text-muted-foreground">
                       <span className={`h-1.5 w-1.5 rounded-full ${dotClass ?? "bg-muted-foreground/40"}`} />
                       {statusLabel}
                     </span>
@@ -1239,7 +1239,7 @@ function SquadMembersTab({
                   </div>
                 )}
               </div>
-            <div className="flex items-center gap-1 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity [@media(hover:hover)]:opacity-0">
+            <div className="flex shrink-0 items-center gap-1 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity [@media(hover:hover)]:opacity-0">
               {m.member_type === "agent" && (
                 <Tooltip>
                   <TooltipTrigger

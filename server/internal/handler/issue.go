@@ -103,6 +103,10 @@ type IssueResponse struct {
 	// an endpoint that skips the filler emits null rather than a bare pointer.
 	DuplicateOf *IssueRefResponse `json:"duplicate_of"`
 	ProjectID   *string           `json:"project_id"`
+	// DomainID is the one project domain this issue works in (DENE-1451);
+	// "" is generic. Only full issue reads carry it: a list row omits the key,
+	// which reads as "not loaded", never as generic.
+	DomainID *string `json:"domain_id,omitempty"`
 	// Visibility is the issue's sharing scope (DENE-698).
 	Visibility string  `json:"visibility,omitempty"`
 	Position   float64 `json:"position"`
@@ -573,6 +577,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		ParentIssueID:      uuidToPtr(i.ParentIssueID),
 		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
 		ProjectID:          uuidToPtr(i.ProjectID),
+		DomainID:           domainIDField(i.DomainID),
 		Visibility:         i.Visibility,
 		Position:           i.Position,
 		OriginType:         textToPtr(i.OriginType),
@@ -3306,10 +3311,13 @@ type CreateIssueRequest struct {
 	// AssigneeQuote is, for an agent naming an executor, the words the person
 	// who started this run said naming that agent (DENE-1033). The server finds
 	// them in the triggering message or does not honour the pick.
-	AssigneeQuote *string  `json:"assignee_quote,omitempty"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
-	Stage         *int32   `json:"stage,omitempty"`
+	AssigneeQuote *string `json:"assignee_quote,omitempty"`
+	ParentIssueID *string `json:"parent_issue_id"`
+	ProjectID     *string `json:"project_id"`
+	Stage         *int32  `json:"stage,omitempty"`
+	// DomainID: see UpdateIssueRequest.DomainID. Left out, a project with
+	// exactly one domain gives it to the issue.
+	DomainID      *string  `json:"domain_id,omitempty"`
 	StartDate     *string  `json:"start_date"`
 	DueDate       *string  `json:"due_date"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
@@ -3672,6 +3680,40 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The issue's domain (DENE-1451). The service checks it against the
+	// project the issue finally lands in; here it is resolved to an id, and
+	// predicted for the per-quote seat rewrite below.
+	var createDomain pgtype.UUID
+	predictProject := projectID
+	if !predictProject.Valid && !projectPinned && parentIssueID.Valid {
+		if parent, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: parentIssueID, WorkspaceID: wsUUID}); err == nil {
+			predictProject = parent.ProjectID
+		}
+	}
+	domainPinned := req.DomainID != nil
+	if domainPinned {
+		ref := strings.TrimSpace(*req.DomainID)
+		if ref != "" && ref != routing.GenericDirection {
+			idx, err := h.loadDomainIndex(r.Context(), wsUUID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load domains")
+				return
+			}
+			d, found := idx.resolve(ref)
+			if !found {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown domain %q; known domains: %s", ref, strings.Join(idx.names(), ", ")))
+				return
+			}
+			createDomain = d.ID
+		}
+	} else {
+		createDomain, _ = h.issueDomainFor(r.Context(), wsUUID, predictProject, nil, pgtype.UUID{})
+	}
+	pickedDomain := pgtype.UUID{}
+	if domainPinned {
+		pickedDomain = createDomain
+	}
+
 	// Agent permissions (DENE-1271): an agent run may only create an issue
 	// when the workspace table allows it for this kind of run.
 	spawnSlots, ok := h.gateAgentIssueSpawn(w, r, wsUUID, creatorType, actualCreatorID, 1)
@@ -3687,7 +3729,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	assigneeIgnored := false
 	assigneeIgnoredReason := ""
 	if assigneeType.Valid {
-		ruling = h.rulePick(r, workspaceID, creatorType, actualCreatorID, assigneeType, assigneeID, deref(req.AssigneeQuote), status, nil)
+		ruling = h.rulePick(r, workspaceID, creatorType, actualCreatorID, assigneeType, assigneeID, deref(req.AssigneeQuote), status, nil, sceneRef{Domain: createDomain, Project: predictProject})
+		if ruling.Apply && ruling.Seat.Valid {
+			assigneeID = ruling.Seat
+		}
 		if !ruling.Apply {
 			assigneeType, assigneeID = pgtype.Text{}, pgtype.UUID{}
 			assigneeIgnored = true
@@ -3743,6 +3788,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		ParentIssueID:  parentIssueID,
 		ProjectID:      projectID,
 		ProjectPinned:  projectPinned,
+		DomainID:       pickedDomain,
+		DomainPinned:   domainPinned,
 		StartDate:      startDate,
 		DueDate:        dueDate,
 		OriginType:     originType,
@@ -3797,6 +3844,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return
+	}
+	if errors.Is(err, service.ErrIssueDomainNotInProject) {
+		writeError(w, http.StatusBadRequest, "domain is not one of the issue's project domains; an issue with no project is generic")
 		return
 	}
 	if errors.Is(err, service.ErrIssueLabelNotFound) {
@@ -3894,6 +3945,9 @@ type UpdateIssueRequest struct {
 	ParentIssueID *string  `json:"parent_issue_id"`
 	ProjectID     *string  `json:"project_id"`
 	Stage         *int32   `json:"stage"`
+	// DomainID is the issue's domain (DENE-1451): an id or a domain name, one
+	// of the project's domains; null or 通用 makes it generic.
+	DomainID *string `json:"domain_id"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -4432,6 +4486,24 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			params.Visibility = pgtype.Text{String: target.Visibility, Valid: true}
 		}
 	}
+	// The issue's domain must be one of the project it ends up in (DENE-1451).
+	domainRequest := requestedDomain(rawFields, req.DomainID)
+	targetProject := prevIssue.ProjectID
+	if _, ok := rawFields["project_id"]; ok {
+		targetProject = params.ProjectID
+	}
+	targetDomain, domainErr := h.issueDomainFor(r.Context(), prevIssue.WorkspaceID, targetProject, domainRequest, prevIssue.DomainID)
+	if domainErr != nil {
+		writeError(w, http.StatusBadRequest, domainErr.Error())
+		return
+	}
+	if domainRequest != nil {
+		resolved := ""
+		if targetDomain.Valid {
+			resolved = uuidToString(targetDomain)
+		}
+		domainRequest = &resolved
+	}
 	if _, ok := rawFields["stage"]; ok {
 		if req.Stage != nil {
 			if *req.Stage < 1 {
@@ -4471,8 +4543,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 				resulting = params.Status.String
 			}
 			ruling := h.rulePick(r, workspaceID, actorType, actorID, params.AssigneeType, params.AssigneeID, deref(req.AssigneeQuote), resulting,
-				&heldExecutor{Type: prevIssue.AssigneeType, ID: prevIssue.AssigneeID})
+				&heldExecutor{Type: prevIssue.AssigneeType, ID: prevIssue.AssigneeID}, sceneRef{Domain: targetDomain, Project: targetProject})
 			if ruling.Apply {
+				if ruling.Seat.Valid {
+					params.AssigneeID = ruling.Seat
+				}
 				stampRuling = &ruling
 			} else {
 				assigneeIgnore = true
@@ -4583,6 +4658,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue = h.finishStatusTransition(r.Context(), issue, tr)
+	if _, touched := rawFields["parent_issue_id"]; touched || domainRequest != nil || targetProject != prevIssue.ProjectID {
+		issue = h.settleIssueDomain(r.Context(), issue, domainRequest)
+	}
 	if tr.noCode != "" {
 		h.setIssueMetaString(r.Context(), issue, "close.no_code_reason", tr.noCode)
 	}
@@ -5236,7 +5314,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		req.Updates.Priority != nil ||
 		req.Updates.Position != nil
 	if !hasMutation {
-		for _, k := range []string{"assignee_type", "assignee_id", "start_date", "due_date", "parent_issue_id", "project_id", "stage"} {
+		for _, k := range []string{"assignee_type", "assignee_id", "start_date", "due_date", "parent_issue_id", "project_id", "stage", "domain_id"} {
 			if _, ok := rawUpdates[k]; ok {
 				hasMutation = true
 				break
@@ -5482,6 +5560,24 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// resolveActor still classifies the caller as an agent (MUL-6691).
 		_, batchTouchedType := rawUpdates["assignee_type"]
 		_, batchTouchedID := rawUpdates["assignee_id"]
+		// The issue's domain must be one of the project it ends up in (DENE-1451).
+		batchDomainRequest := requestedDomain(rawUpdates, req.Updates.DomainID)
+		batchTargetProject := prevIssue.ProjectID
+		if _, ok := rawUpdates["project_id"]; ok {
+			batchTargetProject = params.ProjectID
+		}
+		batchDomain, domainErr := h.issueDomainFor(r.Context(), prevIssue.WorkspaceID, batchTargetProject, batchDomainRequest, prevIssue.DomainID)
+		if domainErr != nil {
+			reject(issueID, domainErr.Error())
+			continue
+		}
+		if batchDomainRequest != nil {
+			resolved := ""
+			if batchDomain.Valid {
+				resolved = uuidToString(batchDomain)
+			}
+			batchDomainRequest = &resolved
+		}
 		// Whose pick is the executor (DENE-1033); same ruling as UpdateIssue.
 		var batchStamp *assignmentRuling
 		if batchTouchedType || batchTouchedID {
@@ -5492,8 +5588,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 					resulting = params.Status.String
 				}
 				ruling := h.rulePick(r, workspaceID, pickActorType, pickActorID, params.AssigneeType, params.AssigneeID, deref(req.Updates.AssigneeQuote), resulting,
-					&heldExecutor{Type: prevIssue.AssigneeType, ID: prevIssue.AssigneeID})
+					&heldExecutor{Type: prevIssue.AssigneeType, ID: prevIssue.AssigneeID}, sceneRef{Domain: batchDomain, Project: batchTargetProject})
 				if ruling.Apply {
+					if ruling.Seat.Valid {
+						params.AssigneeID = ruling.Seat
+					}
 					batchStamp = &ruling
 				} else {
 					params.AssigneeType, params.AssigneeID = prevIssue.AssigneeType, prevIssue.AssigneeID
@@ -5572,6 +5671,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		issue = h.finishStatusTransition(r.Context(), issue, batchTransition)
+		if _, touched := rawUpdates["parent_issue_id"]; touched || batchDomainRequest != nil || batchTargetProject != prevIssue.ProjectID {
+			issue = h.settleIssueDomain(r.Context(), issue, batchDomainRequest)
+		}
 		if batchPersistBlock {
 			h.persistBlockRecord(r.Context(), issue, batchBlock)
 		}

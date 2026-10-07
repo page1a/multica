@@ -74,7 +74,7 @@ func (s *TaskService) relaySafetyRefusal(ctx context.Context, task db.AgentTaskQ
 		seat.AvoidHouse = house
 		seat.StrictHouse = true
 		seat.Exclude = reviewerSeatExclusion(locked)
-		choice, found := quotarelay.Pick(seat, roster, routing.DefaultLadder.TierKeys())
+		choice, found := quotaPickForIssue(ctx, qtx, seat, roster, locked)
 		if !found || choice.Seat.Provider == house {
 			return nil
 		}

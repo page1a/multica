@@ -366,7 +366,7 @@ func (r *Router) staleState(issue Issue, quiet time.Duration, remarks []string) 
 		trimmed = append(trimmed, clipRunes(m, staleRemarkRunes))
 	}
 	return StaleState{
-		JudgeState:    r.judgeState(issue, "", nil),
+		JudgeState:    r.judgeState(issue, GenericScene, nil),
 		QuietHours:    int(quiet.Hours()),
 		Reviewer:      issue.Reviewer.Label(),
 		ReviewRemarks: trimmed,

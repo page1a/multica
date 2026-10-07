@@ -5,7 +5,7 @@ import { Lock, UserMinus } from "lucide-react";
 import type { Agent, IssueAssigneeType, UpdateIssueRequest } from "@multica/core/types";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { isAgentRuntimeBound } from "@multica/core/agents";
+import { isAgentRuntimeBound, useAgentScene } from "@multica/core/agents";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -20,6 +20,7 @@ import {
   PICKER_TRIGGER_CLASS,
 } from "./property-picker";
 import { useT } from "../../../i18n";
+import { AgentFitSections } from "../../../agents/components/agent-fit-sections";
 import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
 
 /**
@@ -56,7 +57,14 @@ interface AssigneePickerProps {
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
+  /** Where the pick is made (DENE-1477): the issue's project(s) and own
+   *  domain. Agents then group 对口 / 通用 / 其他; without a project they
+   *  keep one list. */
+  sceneProjectIds?: readonly (string | null | undefined)[];
+  sceneDomainId?: string | null;
 }
+
+const NO_PROJECTS: readonly string[] = [];
 
 /**
  * Mounting the real picker subscribes to members/agents/squads/frequency
@@ -99,6 +107,8 @@ function AssigneePickerImpl({
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   align,
+  sceneProjectIds = NO_PROJECTS,
+  sceneDomainId,
 }: AssigneePickerProps) {
   const { t } = useT("issues");
   const [internalOpen, setInternalOpen] = useState(false);
@@ -112,6 +122,7 @@ function AssigneePickerImpl({
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
   const { data: frequency = [] } = useQuery(assigneeFrequencyOptions(wsId));
   const { getActorName } = useActorName();
+  const scene = useAgentScene(wsId, sceneProjectIds, sceneDomainId);
 
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;
@@ -213,51 +224,52 @@ function AssigneePickerImpl({
       )}
 
       {/* Agents */}
-      {filteredAgents.length > 0 && (
-        <PickerSection label={t(($) => $.pickers.assignee.agents_group)}>
-          {filteredAgents.map((a) => {
-            const decision = canAssignAgentToIssue(a, {
-              userId: user?.id ?? null,
-              role:
-                memberRole === "owner" ||
-                memberRole === "admin" ||
-                memberRole === "member"
-                  ? memberRole
-                  : null,
-            });
-            const runtimeBound = isAgentRuntimeBound(a);
-            const allowed = decision.allowed && runtimeBound;
-            return (
-              <PickerItem
-                key={a.id}
-                selected={isSelected("agent", a.id)}
-                disabled={!allowed}
-                tooltip={
-                  !decision.allowed
-                    ? decision.message
-                    : !runtimeBound
-                      ? t(($) => $.pickers.assignee.agent_runtime_required)
-                      : undefined
-                }
-                onClick={() => {
-                  if (!allowed) return;
-                  onUpdate({
-                    assignee_type: "agent",
-                    assignee_id: a.id,
-                  });
-                  setOpen(false);
-                }}
-              >
-                <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
-                <span className={`truncate ${allowed ? "" : "text-muted-foreground"}`}>{a.name}</span>
-                {a.visibility === "private" && (
-                  <Lock className="ml-auto h-3 w-3 text-muted-foreground" />
-                )}
-              </PickerItem>
-            );
-          })}
-        </PickerSection>
-      )}
+      <AgentFitSections
+        agents={filteredAgents}
+        scene={scene}
+        label={t(($) => $.pickers.assignee.agents_group)}
+        renderAgent={(a) => {
+          const decision = canAssignAgentToIssue(a, {
+            userId: user?.id ?? null,
+            role:
+              memberRole === "owner" ||
+              memberRole === "admin" ||
+              memberRole === "member"
+                ? memberRole
+                : null,
+          });
+          const runtimeBound = isAgentRuntimeBound(a);
+          const allowed = decision.allowed && runtimeBound;
+          return (
+            <PickerItem
+              key={a.id}
+              selected={isSelected("agent", a.id)}
+              disabled={!allowed}
+              tooltip={
+                !decision.allowed
+                  ? decision.message
+                  : !runtimeBound
+                    ? t(($) => $.pickers.assignee.agent_runtime_required)
+                    : undefined
+              }
+              onClick={() => {
+                if (!allowed) return;
+                onUpdate({
+                  assignee_type: "agent",
+                  assignee_id: a.id,
+                });
+                setOpen(false);
+              }}
+            >
+              <ActorAvatar actorType="agent" actorId={a.id} size="sm" showStatusDot />
+              <span className={`truncate ${allowed ? "" : "text-muted-foreground"}`}>{a.name}</span>
+              {a.visibility === "private" && (
+                <Lock className="ml-auto h-3 w-3 text-muted-foreground" />
+              )}
+            </PickerItem>
+          );
+        }}
+      />
 
       {/* Squads — group ownership; assigning to a squad routes the issue to
           its leader agent on the backend. */}

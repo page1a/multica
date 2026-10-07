@@ -1183,7 +1183,7 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 		h.setAttachmentPreviewSecurityHeaders(w)
 		http.Redirect(w, r, signedURL, http.StatusFound)
 	case attachmentDownloadModeProxy:
-		h.proxyAttachmentDownload(w, r, att, key, false)
+		h.proxyAttachmentDownload(w, r, att, key, false, true)
 	default:
 		writeError(w, http.StatusInternalServerError, "invalid attachment download mode")
 	}
@@ -1275,7 +1275,7 @@ func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
 //     (serveProxyRange). Multi-range is not implemented on this path; per
 //     RFC 7233 it is ignored and the full body is served (200), matching the
 //     seekable path's successful outcome rather than failing with 416.
-func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request, att db.Attachment, key string, forceAttachment bool) {
+func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request, att db.Attachment, key string, forceAttachment, revalidate bool) {
 	reader, err := h.Storage.GetReader(r.Context(), key)
 	if err != nil {
 		slog.Error("failed to open attachment for download", "id", uuidToString(att.ID), "key", key, "error", err)
@@ -1296,16 +1296,33 @@ func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request
 		disposition = storage.AttachmentContentDisposition(att.Filename)
 	}
 	w.Header().Set("Content-Disposition", disposition)
-	// no-store predates Range support; keep it. Range/206 semantics are
-	// independent of caching — clients resume via Content-Range, not the cache.
-	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	h.setAttachmentPreviewSecurityHeaders(w)
+	if !revalidate {
+		// Signed capability links stay no-store: the signature is the only
+		// credential and it expires, so nothing may outlive it.
+		w.Header().Set("Cache-Control", "no-store")
+	} else {
+		// private + no-cache: the browser may keep the body but must come
+		// back for every use, so the membership check runs on each request
+		// and a revoked member gets 404, never the cached bytes. An
+		// attachment's object never changes under its id, so the id is a
+		// strong ETag and a repeat view costs a 304 instead of the whole file
+		// (DENE-1508).
+		etag := attachmentDownloadETag(att)
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("ETag", etag)
+		if etagMatches(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 
 	// Seekable backends get full standard-library Range handling. A zero
-	// modTime disables Last-Modified / If-Modified-Since (we keep no-store);
-	// ServeContent still honors Range and sets Accept-Ranges / Content-Length /
-	// Content-Range / status itself, and respects the headers we set above.
+	// modTime disables Last-Modified / If-Modified-Since (the ETag covers
+	// revalidation); ServeContent still honors Range / If-Range and sets
+	// Accept-Ranges / Content-Length / Content-Range / status itself, and
+	// respects the headers we set above.
 	if seeker, ok := reader.(io.ReadSeeker); ok {
 		http.ServeContent(w, r, att.Filename, time.Time{}, seeker)
 		return
@@ -1313,6 +1330,22 @@ func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request
 
 	// Non-seekable backend: single-range fallback.
 	h.serveProxyRange(w, r, att, reader)
+}
+
+func attachmentDownloadETag(att db.Attachment) string {
+	return `"` + uuidToString(att.ID) + `"`
+}
+
+// etagMatches implements the If-None-Match weak comparison (RFC 9110 §13.1.2)
+// for a single strong etag.
+func etagMatches(ifNoneMatch, etag string) bool {
+	for _, candidate := range strings.Split(ifNoneMatch, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // serveProxyRange streams a (possibly partial) attachment body from a

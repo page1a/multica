@@ -54,6 +54,8 @@ export function IssuePropertyPills({
         onUpdate={onUpdate}
         triggerRender={<PillButton />}
         align="start"
+        sceneProjectIds={[issue.project_id]}
+        sceneDomainId={issue.domain_id}
       />
       <ProjectPicker
         projectId={issue.project_id}

@@ -93,6 +93,7 @@ multica project create --title "<title>" --start-date 2026-03-01 --due-date 2026
 multica project update <project-id> --title "<title>" --output json
 multica project update <project-id> --due-date 2026-04-15 --output json
 multica project update <project-id> --start-date "" --output json   # clear the start date
+multica project update <project-id> --domain 出海 --domain 自媒体 --output json   # domains routing reads; --domain "" clears
 multica project status <project-id> in_progress --output json
 multica project resource list <project-id> --output json
 multica project resource add <project-id> --type github_repo --url <github-url> --output json
