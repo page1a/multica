@@ -32,3 +32,7 @@ Nothing new to remember: the card fills from the calls you already make.
 Write a decision only for something that was actually settled (a choice
 between options, a scope cut, a constraint someone confirmed). Progress and
 plans belong in `issue progress`, not here.
+
+## Brief rules live in `--help`
+
+The brief is a verb map: comment-body rules live in `multica issue comment add --help`, title and body style in `multica issue create --help`, outcomes and `--verdict pass` / `--verdict hold` in `multica issue close --help`.

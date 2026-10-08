@@ -134,9 +134,7 @@ context <id>` lists the goal, settled decisions, where it stands, the last
 handoff and the threads new since your last run; expand one with
 `--thread <thread-id> --tail 30`. A wider read scans roots first
 (`--roots-only --summary --compact`), never one unbounded pull; when the
-per-turn message hands you a `--since` delta, that read is the bounded scan. The brief is a verb map: comment-body rules live in
-`multica issue comment add --help`, title and body style in `issue create
---help`, outcomes and `--verdict pass` / `--verdict hold` in `issue close --help`.
+per-turn message hands you a `--since` delta, that read is the bounded scan. Rule locations: `references/state-card.md`.
 
 ## When behavior looks wrong
 
