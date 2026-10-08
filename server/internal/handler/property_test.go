@@ -588,12 +588,17 @@ func TestListIssuesPropertyFilterAndSort(t *testing.T) {
 	}
 
 	// "No value" filter (the "__none__" sentinel): issues without the property
-	// match, the one explicitly set to `true` does not. limit=200 so the ~55
-	// matching issues (54 pad + numLow/numHigh, all without the checkbox) fit
-	// on one page — the 50-row default would hide numLow behind windowing.
+	// match, the one explicitly set to `true` does not.
+	//
+	// ListIssues caps limit at 100 and orders by position. The target sits at
+	// position 1000, and "__none__" matches every other issue in the workspace,
+	// so a bare page stops containing the target once earlier tests have left
+	// enough lower-position rows. Pin the two seeded ids. The properties
+	// predicate still has to accept or reject each row; the id list only stops
+	// the page cap from standing in for that answer.
 	noValueQuery := func(values ...string) string {
 		buf, _ := json.Marshal(map[string][]string{box.ID: values})
-		return "?limit=200&properties=" + url.QueryEscape(string(buf))
+		return "?limit=200&properties=" + url.QueryEscape(string(buf)) + "&ids=" + target + "," + numLow
 	}
 	noneGot := ids(listIssues(noValueQuery("__none__")))
 	if _, present := noneGot[target]; present {
