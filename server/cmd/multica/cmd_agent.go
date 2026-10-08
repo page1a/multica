@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -231,6 +232,7 @@ func init() {
 	agentUpdateCmd.Flags().String("model", "", "New model identifier. Pass an empty string to clear and fall back to the runtime default.")
 	agentUpdateCmd.Flags().String("thinking-level", "", "New reasoning/effort level for the agent's runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Pass an empty string to clear and fall back to the runtime default.")
 	agentUpdateCmd.Flags().String("routing-tier", "", "New seat strength for automatic dispatch: strongest|strong|medium|weak (the Chinese labels 最强/强/中/弱 are accepted too). Pass an empty string to take the seat off the routing ladder. A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
+	agentUpdateCmd.Flags().String("dispatch-mode", "", "Whether automatic dispatch may pick this seat: auto|mention_only. mention_only seats are still reached by @mention, assignment and delegation, but routing, quota relay and seat relay never pick them. Independent of --routing-tier and --work-enabled. A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
 	agentUpdateCmd.Flags().String("routing-usage", "", "New usage tag for automatic dispatch: tight|normal|ample (the Chinese labels 紧张/常规/充足 are accepted too). A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
 	agentUpdateCmd.Flags().String("service-tier", "", "New Codex execution speed: default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast. Pass an empty string to clear and inherit local Codex configuration.")
 	agentUpdateCmd.Flags().String("custom-args", "", "New custom CLI arguments as JSON array. For model selection prefer --model; Codex-style -c key=value is rejected on runtimes that reserve -c for session continuation (Claude, CodeBuddy, OpenCode, Pi and others), and session-resume flags are always dropped because the daemon owns which session a run continues.")
@@ -338,7 +340,22 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	if taskID := os.Getenv("MULTICA_TASK_ID"); taskID != "" {
 		client.TaskID = taskID
 	}
+	client.LocalCopyURL = localCopyURL(token)
 	return client, nil
+}
+
+// localCopyURL is where uploads leave their local copy: the hosting daemon's
+// /outputs endpoint, only inside a daemon-managed task that carries its task
+// token. Anywhere else no copy is kept.
+func localCopyURL(token string) string {
+	if !inDaemonTaskIdentityContext() || !strings.HasPrefix(token, "mat_") {
+		return ""
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MULTICA_DAEMON_PORT")))
+	if err != nil || port <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d/outputs", port)
 }
 
 const (
@@ -923,6 +940,10 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetString("routing-tier")
 		body["routing_tier"] = v
 	}
+	if cmd.Flags().Changed("dispatch-mode") {
+		v, _ := cmd.Flags().GetString("dispatch-mode")
+		body["dispatch_mode"] = v
+	}
 	if cmd.Flags().Changed("routing-usage") {
 		v, _ := cmd.Flags().GetString("routing-usage")
 		body["routing_usage"] = v
@@ -973,7 +994,7 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --routing-usage, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, --runtime-inherited, or --work-enabled (env vars now live behind `multica agent env set <id>`)")
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --routing-usage, --dispatch-mode, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, --runtime-inherited, or --work-enabled (env vars now live behind `multica agent env set <id>`)")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())

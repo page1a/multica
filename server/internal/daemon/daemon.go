@@ -30,6 +30,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/localoutputs"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/sparsecheckout"
@@ -415,6 +416,10 @@ type Daemon struct {
 	// has used, which copies are busy, and the policy (off by default) that
 	// decides whether a finished one may be removed (DENE-617).
 	worktreeCleanup *worktreeCleanupState
+	// localOutputs is this machine's copy of every attachment an agent here
+	// uploaded, so the desktop app can open it in place (DENE-1549). Nil on a
+	// Daemon built field-by-field in a test.
+	localOutputs *localoutputs.Store
 	// sharedScratch owns the one session folder per workspace: which
 	// conversations a task is in, and how long an idle one stays (DENE-622).
 	// Nil on a Daemon built field-by-field in a test.
@@ -651,6 +656,17 @@ type Daemon struct {
 	// the safety delay elapses, the next claim bypasses WS once and uses HTTP so
 	// a flaky reconnecting WS cannot starve queued tasks indefinitely.
 	wsClaimHTTPFallbackAfter atomic.Int64
+	// claimRecoveryPending is set while the outcome of an earlier claim is
+	// unknown (uncertain WS result, HTTP failure in flight) and at startup. The
+	// next claim then carries recover_undelivered so the server re-sends tasks it
+	// dispatched to us but whose response was lost, instead of leaving them to the
+	// stale reclaim (DENE-1611). Cleared by the first claim that gets a response.
+	claimRecoveryPending atomic.Bool
+	// heldTasks is the set of task ids this daemon has taken from a claim and not
+	// yet finished with. It is sent with a recovery claim and used to drop a
+	// re-sent copy of a task already being prepared or run.
+	heldTasksMu sync.Mutex
+	heldTasks   map[string]struct{}
 
 	// runtimeGoneMu guards runtimeGoneInflight, reregisterNextAttempt, and
 	// reregisterLastCompletedAt. The state lets heartbeat / poller / WS-ack
@@ -825,6 +841,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		terminalReportWakeup:        make(chan struct{}, 1),
 		terminalReportNow:           time.Now,
 		terminalReportFlight:        make(map[string]struct{}),
+		heldTasks:                   make(map[string]struct{}),
 		workspaces:                  make(map[string]*workspaceState),
 		runtimeIndex:                make(map[string]Runtime),
 		profileLaunchSpecs:          make(map[string]profileLaunchSpec),
@@ -877,7 +894,11 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		d.localSharedOverrides = newLocalSharedOverrideStore("")
 	}
 	d.worktreeCleanup = newWorktreeCleanupState(cfg.Profile)
+	d.localOutputs = newLocalOutputsStore(cfg.Profile)
 	d.sharedScratch = newSharedScratchState(cfg.Profile)
+	// Tasks dispatched to a previous process of this daemon never reached this
+	// one; ask the first claim to take them back (DENE-1611).
+	d.claimRecoveryPending.Store(true)
 	return d
 }
 
@@ -5880,7 +5901,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			if pollerCtx.Err() == nil {
 				d.logger.Warn("batch claim failed", "error", err)
 			}
-			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
+			if err := sleepWithContextOrWakeup(pollerCtx, d.capForClaimRecovery(d.cfg.PollInterval), wakeup); err != nil {
 				return
 			}
 			continue
@@ -5892,11 +5913,20 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 		// sees a zero-claims / zero-active window between claim and dispatch.
 		dispatched := 0
 		for i := range tasks {
-			if i >= len(slots) || tasks[i] == nil {
+			if dispatched >= len(slots) {
+				break
+			}
+			if tasks[i] == nil {
 				break
 			}
 			t := *tasks[i]
-			slot := slots[i]
+			// A recovery claim can re-send a task this daemon is already
+			// preparing or running; one task must never run twice.
+			if !d.holdTask(t.ID) {
+				d.logger.Warn("claimed task is already held by this daemon; ignoring re-sent copy", "task", t.ID)
+				continue
+			}
+			slot := slots[dispatched]
 			taskTarget := t.IssueID
 			if taskTarget == "" && t.ChatSessionID != "" {
 				taskTarget = "chat:" + t.ChatSessionID
@@ -5915,6 +5945,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			lease := newTaskSlotLease(sem, slot, func() { signalPollerWakeup(wakeup) })
 			go func(t Task, lease *taskSlotLease) {
 				defer taskWG.Done()
+				defer d.releaseHeldTask(t.ID)
 				defer d.finishActiveTask(provider)
 				// Release local capacity before waking the poller (the lease does
 				// both). The task's terminal callback and local cleanup have both
@@ -5955,6 +5986,24 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 // jitter keeps the default below the server's 3-minute empty-claim cache TTL
 // while preventing an idle fleet from polling in lockstep.
 func (d *Daemon) taskClaimPollInterval(result claimTasksResult) time.Duration {
+	return d.capForClaimRecovery(d.baseTaskClaimPollInterval(result))
+}
+
+// claimRecoveryRetryInterval is how soon an unfinished recovery asks again: just
+// past the server's minimum age for taking a dispatch back, so the retry lands
+// as soon as it can succeed rather than after a 30s poll or a multi-minute WS
+// safety poll (DENE-1611).
+const claimRecoveryRetryInterval = 6 * time.Second
+
+// capForClaimRecovery shortens a poll wait while a recovery is pending.
+func (d *Daemon) capForClaimRecovery(wait time.Duration) time.Duration {
+	if d.claimRecoveryPending.Load() && wait > claimRecoveryRetryInterval {
+		return claimRecoveryRetryInterval
+	}
+	return wait
+}
+
+func (d *Daemon) baseTaskClaimPollInterval(result claimTasksResult) time.Duration {
 	if !d.wsRPC.supportsRPCV1() || !result.ClaimedOverWS || !result.ClaimPollHintSupported {
 		if d.cfg.PollInterval > 0 {
 			return d.cfg.PollInterval
@@ -7086,6 +7135,18 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	default:
 		return false
 	}
+}
+
+// resumedSessionHoldsBrief reports whether a resumed session already carries
+// the inline brief, so the turn need not paste it again (DENE-1331). The
+// pasting backends put the brief into the first user message, which the
+// session keeps; re-pasting it cost every resumed turn the whole brief again.
+// A resume the runtime rejects falls back to the fresh-session retry, which
+// pastes the brief anew. codebuddy is the exception: it takes the brief as
+// --append-system-prompt, which is not kept in the session and must ride
+// every turn.
+func resumedSessionHoldsBrief(provider, resumeSessionID string) bool {
+	return resumeSessionID != "" && provider != "codebuddy"
 }
 
 // sharedBriefDelivery says how a provider receives the runtime brief and its
@@ -9177,6 +9238,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				ReclaimPriorCopy: reclaimPriorCopy,
 				CanonicalBranch:  strings.TrimSpace(task.CanonicalBranch),
 			}
+			if task.DeliveryLine != nil {
+				prepParams.LocalWorktree.DeliveryBranch = strings.TrimSpace(task.DeliveryLine.Branch)
+			}
 			// Take the per-path mutex for the snapshot alone, then hand it
 			// straight back — long enough to read a consistent tree, short
 			// enough that worktree tasks still overlap for the run itself.
@@ -9897,7 +9961,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			briefInline = true
 		}
 	}
-	if briefInline {
+	if briefInline && !resumedSessionHoldsBrief(provider, execOpts.ResumeSessionID) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
 
@@ -9950,12 +10014,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
+	// One detector for the whole task, so a resume retry does not report a
+	// skill the first attempt already used.
+	skillUsage := newTaskSkillUsageDetector(skills, provider, env)
 	var runtimeConfig json.RawMessage
 	if task.Agent != nil {
 		runtimeConfig = task.Agent.RuntimeConfig
 	}
 	d.applyAgyLaunchSlot(provider, &execOpts, runtimeConfig, time.Now())
-	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+	result, tools, err := d.executeAndDrainDetectingSkills(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, skillUsage, &msgSeq)
 	if err != nil {
 		return TaskResult{}, err
 	}
@@ -9973,7 +10040,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			"to", agent.GeminiDirFromArgs(failover.Opts.CustomArgs),
 		)
 		execOpts = failover.Opts
-		result, tools, err = d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+		result, tools, err = d.executeAndDrainDetectingSkills(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, skillUsage, &msgSeq)
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -10038,7 +10105,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		freshPrompt := BuildPrompt(task, provider, promptOptions...)
 
-		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+		retryResult, retryTools, retryErr := d.executeAndDrainDetectingSkills(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, skillUsage, &msgSeq)
 		if retryErr != nil {
 			taskLog.Error("fresh session also failed to start; keeping the original poisoned result", "error", retryErr)
 		} else if retryResult.Status != "completed" && retryResult.SessionID == "" {
@@ -10550,6 +10617,12 @@ func freshSessionMayHelp(errText string) bool {
 // sequence instead of restarting at 1 — the server orders the transcript by
 // seq alone, and duplicate seqs would interleave the two attempts' rows.
 func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, prompt string, opts agent.ExecOptions, taskLog *slog.Logger, taskID, codexHome string, msgSeq *atomic.Int32) (agent.Result, int32, error) {
+	return d.executeAndDrainDetectingSkills(ctx, backend, prompt, opts, taskLog, taskID, codexHome, nil, msgSeq)
+}
+
+// executeAndDrainDetectingSkills is executeAndDrain that also appends a
+// `skill` transcript row the first time skillUsage sees a bound skill used.
+func (d *Daemon) executeAndDrainDetectingSkills(ctx context.Context, backend agent.Backend, prompt string, opts agent.ExecOptions, taskLog *slog.Logger, taskID, codexHome string, skillUsage *skillUsageDetector, msgSeq *atomic.Int32) (agent.Result, int32, error) {
 	phaseRecorder := taskPhaseRecorderFromContext(ctx)
 	// Wrap the caller's ctx so the idle watchdog (below) can interrupt both
 	// the agent subprocess (via the ctx passed to backend.Execute) AND the
@@ -10863,6 +10936,16 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						// have, so this side has to be safe on its own.
 						Input: redact.InputMap(msg.Input),
 					})
+					for _, name := range skillUsage.Observe(msg) {
+						taskLog.Info("skill used", "skill", name)
+						s := msgSeq.Add(1)
+						batch = append(batch, TaskMessageData{
+							Seq:       int(s),
+							Type:      skillUsageMessageType,
+							Tool:      name,
+							CreatedAt: observedAt,
+						})
+					}
 					mu.Unlock()
 					flushFirstVisible()
 				case agent.MessageToolResult:

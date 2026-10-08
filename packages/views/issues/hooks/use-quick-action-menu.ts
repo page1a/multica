@@ -6,6 +6,10 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { quickActionListOptions } from "@multica/core/quick-actions";
+import { issueDetailOptions } from "@multica/core/issues/queries";
+import { agentListOptions } from "@multica/core/workspace/queries";
+import type { Agent } from "@multica/core/types";
+import { skillSourceFor } from "../../editor/extensions/slash-command-suggestion";
 
 /**
  * Supplies the comment composer's `/` menu with this workspace's quick actions
@@ -24,6 +28,10 @@ import { quickActionListOptions } from "@multica/core/quick-actions";
  * than `useWorkspaceId` (throws): the comment composer also mounts outside a
  * workspace route, and an enhancement like this must degrade to "no quick
  * actions in the menu", never take the composer down with it.
+ *
+ * It also names whose skills follow the built-ins (DENE-1573): the first
+ * agent @-mentioned in the comment, else the issue's agent assignee. Both come
+ * from caches the issue page already holds, read on every keystroke.
  */
 export function useQuickActionMenu(issueId: string) {
   const workspace = useCurrentWorkspace();
@@ -45,6 +53,24 @@ export function useQuickActionMenu(issueId: string) {
   );
 
   const getQuickActions = useCallback(() => actionsRef.current, []);
+
+  const { data: agents = [] } = useQuery({ ...agentListOptions(wsId), enabled: wsId !== "" });
+  const { data: issue } = useQuery({
+    ...issueDetailOptions(wsId, issueId),
+    enabled: wsId !== "" && issueId !== "",
+  });
+  const skillContextRef = useRef<{ agents: Agent[]; assigneeAgentId: string | null }>({
+    agents: [],
+    assigneeAgentId: null,
+  });
+  skillContextRef.current = {
+    agents,
+    assigneeAgentId: issue?.assignee_type === "agent" ? issue.assignee_id : null,
+  };
+  const getSkillSource = useCallback((mentioned: string[]) => {
+    const { agents: list, assigneeAgentId } = skillContextRef.current;
+    return skillSourceFor(list, mentioned, assigneeAgentId);
+  }, []);
   const renderQuickAction = useCallback(
     (quickActionId: string) => api.renderQuickAction(issueId, quickActionId),
     [issueId],
@@ -58,7 +84,7 @@ export function useQuickActionMenu(issueId: string) {
   }, []);
 
   return useMemo(
-    () => ({ getQuickActions, renderQuickAction, onRenderError }),
-    [getQuickActions, renderQuickAction, onRenderError],
+    () => ({ getQuickActions, renderQuickAction, onRenderError, getSkillSource }),
+    [getQuickActions, renderQuickAction, onRenderError, getSkillSource],
   );
 }

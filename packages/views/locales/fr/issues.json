@@ -35,7 +35,9 @@
     "steer_resend_failed": "Impossible de l'envoyer comme nouvelle exécution.",
     "steer_step": "{{name}} a ajouté",
     "steer_step_read": "Lu",
-    "retrying": "En attente d'une nouvelle tentative."
+    "retrying": "En attente d'une nouvelle tentative.",
+    "skills_used": "Skills utilisés : {{names}}",
+    "skill_step": "Skill {{name}} utilisé"
   },
   "working_filter_error": {
     "title": "Impossible de charger les tâches en cours de traitement par les agents"
@@ -480,6 +482,9 @@
       "duration": "Durée",
       "budget_warning": "Cet objectif a utilisé au moins 80 % de son budget. Il sera mis en pause à la limite et demandera quoi faire ensuite.",
       "stopped_hint": "Cet objectif est en pause. Répondez à la question à choix dans votre boîte de réception pour ajouter du budget, modifier la ligne de réussite ou arrêter.",
+      "stopped_by": "Arrêté par {{name}}. Continue comme une tâche ordinaire.",
+      "stopped_by_for": "Arrêté par {{name}} à la demande de {{person}}. Continue comme une tâche ordinaire.",
+      "stop_reason": "« {{reason}} »",
       "evidence_item": "Preuve",
       "open_evidence": "Ouvrir la preuve",
       "status": {
@@ -547,7 +552,18 @@
     "title_suggestion_dismiss": "Dismiss",
     "title_suggestion_updated": "Title updated",
     "title_suggestion_apply_failed": "Failed to apply title suggestion",
-    "title_suggestion_dismiss_failed": "Failed to dismiss title suggestion"
+    "title_suggestion_dismiss_failed": "Failed to dismiss title suggestion",
+    "delivery_line": {
+      "section": "Branche de livraison",
+      "section_children": "Commits des sous-tâches",
+      "delivers_to": "Livré sur la branche de {{identifier}}",
+      "status_open": "Pas encore fusionné",
+      "status_merged_one": "{{count}} commit fusionné",
+      "status_merged_other": "{{count}} commits fusionnés",
+      "status_conflict": "Conflit, l'exécutant résout",
+      "show_all_one": "Tout afficher ({{count}})",
+      "show_all_other": "Tout afficher ({{count}})"
+    }
   },
   "timeline": {
     "loading": "Chargement..."

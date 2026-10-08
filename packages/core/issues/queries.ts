@@ -152,6 +152,9 @@ export const issueKeys = {
     [...issueKeys.all(wsId), "children"] as const,
   children: (wsId: string, id: string) =>
     [...issueKeys.childrenAll(wsId), id] as const,
+  /** Parent-branch delivery: the issue's own line, or its sub-issues' commits (DENE-1537). */
+  deliveryLines: (wsId: string, id: string) =>
+    [...issueKeys.all(wsId), "delivery-lines", id] as const,
   /** Prefix for invalidating all batched-children queries in a workspace. */
   childrenByParentsAll: (wsId: string) =>
     [...issueKeys.all(wsId), "children-by-parents"] as const,
@@ -579,6 +582,17 @@ export function childIssuesOptions(wsId: string, id: string) {
     // desktop tab is showing another workspace). The global Infinity
     // staleTime would otherwise reuse an incomplete children snapshot when
     // the parent is opened again, with no later event guaranteed to heal it.
+    refetchOnMount: "always",
+  });
+}
+
+export function issueDeliveryLinesOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: issueKeys.deliveryLines(wsId, id),
+    queryFn: () => api.getIssueDeliveryLines(id),
+    enabled: !!wsId && !!id,
+    // A merge-back lands through a close no realtime event describes, so a
+    // reopened page reads it fresh.
     refetchOnMount: "always",
   });
 }

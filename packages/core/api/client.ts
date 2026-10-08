@@ -2,13 +2,14 @@ import type { AgentSpawnPolicy, AgentSpawnPolicyPatch } from "../workspace/agent
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
+import type { IssueDeliveryLines } from "./schemas";
 import { WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import type { InboxBoardResponse, ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
 import type { WorkThreadSnapshot } from "../types/work_thread";
 import type { Ask, CreateAskRequest, AnswerAskRequest } from "../types/ask";
-import type { LinkedView, LinkedViewParams, ListWorkspaceLinksResponse, WorkspaceLink, WorkspaceLinkAuditEntry, WorkspaceLinkLookup } from "../types/workspace-link";
+import type { LinkedView, LinkedViewParams, ListWorkspaceLinksResponse, WorkspaceLink, WorkspaceLinkAuditEntry, WorkspaceLinkDirection, WorkspaceLinkLookup } from "../types/workspace-link";
 import { configStore } from "../config";
 import { IssueGoalSchema, type CommentSendMode, type CreateIssueGoalInput } from "../types";
 import type {
@@ -552,6 +553,8 @@ import {
   EMPTY_ISSUE_PROPERTIES_RESPONSE,
   EMPTY_ISSUE_PULL_REQUESTS_RESPONSE,
   IssuePullRequestsResponseSchema,
+  EMPTY_ISSUE_DELIVERY_LINES,
+  IssueDeliveryLinesSchema,
   ResourceLabelsResponseSchema,
   EMPTY_LABEL,
   EMPTY_LIST_LABELS_RESPONSE,
@@ -6457,6 +6460,14 @@ export class ApiClient {
     );
   }
 
+  /** The parent-branch delivery of an issue: its own line, or its sub-issues' commits (DENE-1537). */
+  async getIssueDeliveryLines(issueId: string): Promise<IssueDeliveryLines> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/delivery`);
+    return parseWithFallback(raw, IssueDeliveryLinesSchema, EMPTY_ISSUE_DELIVERY_LINES, {
+      endpoint: "GET /api/issues/:id/delivery",
+    });
+  }
+
   /** Link a PR the workspace already mirrors, by pasted URL or by id (undo). */
   async linkIssuePullRequest(
     issueId: string,
@@ -6572,7 +6583,7 @@ export class ApiClient {
     const raw = await this.fetch<Partial<ListWorkspaceLinksResponse>>("/api/workspace-links");
     return {
       links: Array.isArray(raw?.links) ? raw.links : [],
-      can: { create: false, accept: false, manage: false, audit: false, ...raw?.can },
+      can: { create: false, accept: false, pull: false, manage: false, audit: false, ...raw?.can },
     };
   }
 
@@ -6586,7 +6597,11 @@ export class ApiClient {
     return this.fetch(`/api/workspace-links/lookup?target=${encodeURIComponent(target)}`);
   }
 
-  async createWorkspaceLink(body: { target_slug: string; project_ids: string[] }): Promise<WorkspaceLink> {
+  async createWorkspaceLink(body: {
+    target_slug: string;
+    project_ids: string[];
+    direction?: WorkspaceLinkDirection;
+  }): Promise<WorkspaceLink> {
     return this.fetch("/api/workspace-links", { method: "POST", body: JSON.stringify(body) });
   }
 

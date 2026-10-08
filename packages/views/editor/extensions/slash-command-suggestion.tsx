@@ -11,6 +11,7 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 import type { SuggestionOptions } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { useAuthStore } from "@multica/core/auth";
 import { useChatStore } from "@multica/core/chat";
 import { getCurrentWsId } from "@multica/core/platform";
@@ -44,6 +45,12 @@ export interface SlashCommandItem {
    * so the visible string stays localized (the typed `/label` does not).
    */
   descriptionKey?: BuiltinCommandKey;
+  /**
+   * An agent skill offered in the issue comment menu (DENE-1573). Picking one
+   * inserts a `[/name](slash://skill/<id>)` marker instead of plain text, and
+   * the list draws these after the built-ins under the agent's heading.
+   */
+  skill?: boolean;
 }
 
 interface SlashCommandListProps {
@@ -58,6 +65,13 @@ interface SlashCommandListProps {
    * "no skills configured".
    */
   hideOnEmpty?: boolean;
+  /** Whose skills the `skill` items are — heads that group. */
+  skillAgentName?: string;
+  /**
+   * No agent to take skills from yet: say how to get some, under the
+   * built-ins. Only shown while there is a menu to show it in.
+   */
+  skillHint?: boolean;
 }
 
 export interface SlashCommandListRef {
@@ -67,7 +81,10 @@ export interface SlashCommandListRef {
 export const SlashCommandList = forwardRef<
   SlashCommandListRef,
   SlashCommandListProps
->(function SlashCommandList({ items, query, command, hideOnEmpty = false }, ref) {
+>(function SlashCommandList(
+  { items, query, command, hideOnEmpty = false, skillAgentName, skillHint = false },
+  ref,
+) {
   const { t } = useT("editor");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -137,29 +154,52 @@ export const SlashCommandList = forwardRef<
     // `--suggestion-available-height` from suggestion-popup.tsx's size
     // middleware), falling back to the design max when rendered standalone.
     // Single height authority — mirrors MentionList.
-    <div className="rounded-md border bg-popover py-1 shadow-md w-72 max-h-[min(300px,var(--suggestion-available-height,300px))] overflow-y-auto">
+    // On a phone the menu spans the composer instead of a fixed 18rem, and
+    // every row is a 44px touch target.
+    <div className="rounded-md border bg-popover py-1 shadow-md w-72 max-sm:w-[calc(100vw-1.5rem)] max-h-[min(300px,var(--suggestion-available-height,300px))] overflow-y-auto overscroll-contain">
       {items.map((item, index) => {
         const description = describe(item);
+        // Skills always follow the built-ins, so the first one opens the group.
+        const opensSkillGroup = item.skill && !items[index - 1]?.skill;
         return (
-          <button
-            key={item.id}
-            ref={(el) => {
-              itemRefs.current[index] = el;
-            }}
-            className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left text-caption transition-colors ${
-              selectedIndex === index ? "bg-accent" : "hover:bg-accent/50"
-            }`}
-            onClick={() => selectItem(index)}
-          >
-            <span className="font-medium">/{item.label}</span>
-            {description && (
-              <span className="truncate text-muted-foreground">
-                {description}
-              </span>
+          <div key={item.id}>
+            {opensSkillGroup && (
+              <>
+                {index > 0 && <div className="my-1 h-px bg-border" />}
+                {skillAgentName && (
+                  <div className="px-3 pt-1.5 pb-0.5 text-micro text-muted-foreground">
+                    {t(($) => $.slash_command.skill_group, { name: skillAgentName })}
+                  </div>
+                )}
+              </>
             )}
-          </button>
+            <button
+              ref={(el) => {
+                itemRefs.current[index] = el;
+              }}
+              className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left text-caption transition-colors max-sm:min-h-11 max-sm:justify-center ${
+                selectedIndex === index ? "bg-accent" : "hover:bg-accent/50"
+              }`}
+              onClick={() => selectItem(index)}
+            >
+              <span className="font-medium">/{item.label}</span>
+              {description && (
+                <span className="truncate text-muted-foreground">
+                  {description}
+                </span>
+              )}
+            </button>
+          </div>
         );
       })}
+      {skillHint && (
+        <>
+          <div className="my-1 h-px bg-border" />
+          <div className="px-3 pt-1 pb-1.5 text-caption text-muted-foreground">
+            {t(($) => $.slash_command.skill_hint)}
+          </div>
+        </>
+      )}
     </div>
   );
 });
@@ -318,6 +358,73 @@ export function buildBuiltinCommandItems(
     .slice(0, MAX_ITEMS);
 }
 
+/** The agent whose skills the comment menu offers, and those skills. */
+export interface SlashSkillSource {
+  agentName: string;
+  skills: { id: string; name: string; description?: string }[];
+}
+
+/**
+ * The agents @-mentioned in the document, in document order. The comment
+ * menu offers the first one's skills (DENE-1573).
+ */
+export function mentionedAgentIds(doc: ProseMirrorNode): string[] {
+  const ids: string[] = [];
+  doc.descendants((node) => {
+    if (node.type.name === "mention" && node.attrs.type === "agent" && node.attrs.id) {
+      const id = String(node.attrs.id);
+      if (!ids.includes(id)) ids.push(id);
+    }
+  });
+  return ids;
+}
+
+/**
+ * Whose skills the issue comment menu offers: the first @-mentioned agent,
+ * else the issue's agent assignee, else nobody (`null`). Archived agents are
+ * skipped — a comment cannot wake them.
+ */
+export function skillSourceFor(
+  agents: Pick<Agent, "id" | "name" | "archived_at" | "skills">[],
+  mentionedAgentIds: string[],
+  assigneeAgentId: string | null,
+): SlashSkillSource | null {
+  const pick = (id: string | null | undefined) =>
+    id ? agents.find((a) => a.id === id && !a.archived_at) : undefined;
+  const agent = pick(mentionedAgentIds[0]) ?? pick(assigneeAgentId);
+  if (!agent) return null;
+  return {
+    agentName: agent.name,
+    skills: (agent.skills ?? []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description || undefined,
+    })),
+  };
+}
+
+/** A skill's name matches by prefix first, then anywhere; descriptions never. */
+export function buildSkillCommandItems(
+  query: string,
+  skills: SlashSkillSource["skills"],
+): SlashCommandItem[] {
+  const q = query.toLowerCase();
+  const prefix: SlashCommandItem[] = [];
+  const inner: SlashCommandItem[] = [];
+  for (const s of skills) {
+    const name = s.name.toLowerCase();
+    const item: SlashCommandItem = {
+      id: s.id,
+      label: s.name,
+      description: s.description || undefined,
+      skill: true,
+    };
+    if (name.startsWith(q)) prefix.push(item);
+    else if (name.includes(q)) inner.push(item);
+  }
+  return [...prefix, ...inner].slice(0, MAX_ITEMS);
+}
+
 export interface BuiltinCommandSuggestionOptions {
   /**
    * Configured quick actions offered alongside the built-ins. Read lazily on
@@ -338,12 +445,23 @@ export interface BuiltinCommandSuggestionOptions {
    * this into a toast. Without it a failed pick is completely silent.
    */
   onRenderError?: (error: unknown) => void;
+  /**
+   * Whose skills follow the built-ins, given the agents @-mentioned so far:
+   * the first mentioned agent, else the issue's agent assignee. `null` means
+   * no agent — the menu then says how to get one. `undefined` (or leaving it
+   * unset) means this composer offers no skills at all.
+   */
+  getSkillSource?: (mentionedAgentIds: string[]) => SlashSkillSource | null | undefined;
 }
 
 export function createBuiltinCommandSuggestion(
   options: BuiltinCommandSuggestionOptions = {},
 ): Omit<SuggestionOptions<SlashCommandItem>, "editor"> {
   const pluginKey = new PluginKey("builtinCommandSuggestion");
+  // Computed in `items` and read back by `getProps` for the same keystroke,
+  // so the heading always names the agent whose skills are listed.
+  let skillAgentName: string | undefined;
+  let skillHint = false;
 
   return {
     char: "/",
@@ -351,8 +469,42 @@ export function createBuiltinCommandSuggestion(
     // Only open over a `/` the user actually typed, so a pasted path
     // (`/usr/local/bin`) never opens the command menu (MUL-5429).
     shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
-    items: ({ query }) => buildBuiltinCommandItems(query, options.getQuickActions?.() ?? []),
+    items: ({ query, editor }) => {
+      const builtins = buildBuiltinCommandItems(query, options.getQuickActions?.() ?? []);
+      skillAgentName = undefined;
+      skillHint = false;
+      if (!options.getSkillSource) return builtins;
+      const source = options.getSkillSource(mentionedAgentIds(editor.state.doc));
+      if (source === undefined) return builtins;
+      if (source === null) {
+        skillHint = builtins.length > 0;
+        return builtins;
+      }
+      const skills = buildSkillCommandItems(query, source.skills);
+      if (skills.length > 0) skillAgentName = source.agentName;
+      return [...builtins, ...skills];
+    },
     command: ({ editor, range, props }) => {
+      if (props.skill) {
+        // Same marker the chat picker inserts; the daemon reads it as an
+        // explicit skill pick for the agent this comment wakes.
+        const nodeAfter = editor.view.state.selection.$to.nodeAfter;
+        if (nodeAfter?.text?.startsWith(" ")) range.to += 1;
+        editor
+          .chain()
+          .focus()
+          .insertContentAt(range, [
+            {
+              type: "slashCommand",
+              attrs: { id: props.id, label: props.label, mentionSuggestionChar: "/" },
+            },
+            { type: "text", text: " " },
+          ])
+          .run();
+        window.getSelection()?.collapseToEnd();
+        return;
+      }
+
       if (isQuickActionItem(props)) {
         const render = options.renderQuickAction;
         if (!render) return;
@@ -424,6 +576,8 @@ export function createBuiltinCommandSuggestion(
         query: props.query,
         command: props.command,
         hideOnEmpty: true,
+        skillAgentName,
+        skillHint,
       }),
       onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
     }),

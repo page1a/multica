@@ -7,7 +7,7 @@ import (
 
 func newWorkspaceRoutingSetTestCmd() *cobra.Command {
 	cmd := newRoutingProjectsTestCmd()
-	for _, f := range []string{"source", "runtime", "model", "thinking", "continuation", "load", "usage-priority", "allow-upshift"} {
+	for _, f := range []string{"source", "runtime", "model", "thinking", "continuation", "load", "usage-priority", "allow-upshift", "confidence-threshold", "stale-review-hours"} {
 		cmd.Flags().String(f, "", "")
 	}
 	return cmd
@@ -77,6 +77,69 @@ func TestWorkspaceRoutingSetTierSwitches(t *testing.T) {
 	}
 	if got := routingView(block); got["usage_priority"] != false || got["allow_upshift"] != true {
 		t.Fatalf("view = %v", got)
+	}
+}
+
+func TestWorkspaceRoutingSetThresholdsKeepsTheRest(t *testing.T) {
+	var patched map[string]any
+	routingProjectsServer(t, map[string]any{
+		"other": "untouched",
+		"routing": map[string]any{
+			"enabled": true, "model": "jev-1", "confidence_threshold": 0.7,
+			"stale_review_hours": 24, "prefer_continuation": true,
+		},
+	}, &patched)
+
+	cmd := newWorkspaceRoutingSetTestCmd()
+	_ = cmd.Flags().Set("confidence-threshold", "0.85")
+	_ = cmd.Flags().Set("stale-review-hours", "36")
+	if err := runWorkspaceRoutingSet(cmd, nil); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	settings, _ := patched["settings"].(map[string]any)
+	if settings["other"] != "untouched" {
+		t.Errorf("unrelated settings were dropped: %v", settings)
+	}
+	block, _ := settings["routing"].(map[string]any)
+	if block["confidence_threshold"] != 0.85 || block["stale_review_hours"] != 36.0 {
+		t.Fatalf("thresholds = %v", block)
+	}
+	if block["enabled"] != true || block["model"] != "jev-1" || block["prefer_continuation"] != true {
+		t.Fatalf("existing routing settings were not carried through: %v", block)
+	}
+	view := routingView(block)
+	if view["confidence_threshold"] != 0.85 || view["stale_review_hours"] != 36.0 {
+		t.Fatalf("view = %v", view)
+	}
+}
+
+func TestRoutingViewReportsThresholdDefaults(t *testing.T) {
+	view := routingView(nil)
+	if view["confidence_threshold"] != 0.6 || view["stale_review_hours"] != 24.0 {
+		t.Fatalf("default thresholds = %v", view)
+	}
+}
+
+func TestWorkspaceRoutingSetRejectsInvalidThresholds(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flag  string
+		value string
+	}{
+		{name: "confidence zero", flag: "confidence-threshold", value: "0"},
+		{name: "confidence above one", flag: "confidence-threshold", value: "1.1"},
+		{name: "confidence not finite", flag: "confidence-threshold", value: "NaN"},
+		{name: "stale zero", flag: "stale-review-hours", value: "0"},
+		{name: "stale above cap", flag: "stale-review-hours", value: "8761"},
+		{name: "not a number", flag: "stale-review-hours", value: "tomorrow"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := newWorkspaceRoutingSetTestCmd()
+			_ = cmd.Flags().Set(test.flag, test.value)
+			if err := runWorkspaceRoutingSet(cmd, nil); err == nil {
+				t.Fatalf("want an error for --%s %s", test.flag, test.value)
+			}
+		})
 	}
 }
 

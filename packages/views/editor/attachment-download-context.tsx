@@ -4,7 +4,7 @@ import { createContext, use, useMemo, type ReactNode } from "react";
 import type { Attachment } from "@multica/core/types";
 import { matchAttachmentByURL } from "@multica/core/attachments/image-sequence";
 import { openExternal } from "../platform";
-import { useDownloadAttachment } from "./use-download-attachment";
+import { useAttachmentActions } from "./use-attachment-actions";
 
 interface ResolvedDownload {
   // Returns the attachment id for a URL referenced in the markdown, or
@@ -42,7 +42,7 @@ interface ProviderProps {
  * never got the new shape.
  */
 export function AttachmentDownloadProvider({ attachments, children }: ProviderProps) {
-  const download = useDownloadAttachment();
+  const { download } = useAttachmentActions();
   const value = useMemo<ResolvedDownload>(
     () => {
       // Shared with the gallery sequence builder (MUL-5752) so a markdown URL
@@ -53,12 +53,7 @@ export function AttachmentDownloadProvider({ attachments, children }: ProviderPr
         resolveAttachmentId: (url) => lookup(url)?.id,
         resolveAttachment: lookup,
         openByUrl: (url) => {
-          const att = lookup(url);
-          if (att) {
-            download(att.id);
-            return;
-          }
-          if (url) openExternal(url);
+          download({ attachmentId: lookup(url)?.id, url });
         },
       };
     },

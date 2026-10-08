@@ -81,6 +81,7 @@ const (
 	DefaultGCHermesMemoryTTL              = 90 * 24 * time.Hour // 90 days — reclaim per-agent Hermes memory stores untouched this long (long: reclaiming these is visible amnesia, and they are a few markdown files)
 	DefaultGCHermesSessionTTL             = 14 * 24 * time.Hour // 14 days — reclaim per-conversation Hermes session stores untouched this long (matches Codex: these hold transcripts, and losing an idle one restarts the thread rather than the agent's notes)
 	DefaultGCRepoTTL                      = 30 * 24 * time.Hour // 30 days — evict a bare repo cache no task has checked out this long
+	DefaultGCOutputsTTL                   = 14 * 24 * time.Hour // 14 days — drop the local copy of an uploaded attachment this long after the upload
 	// DefaultGCTaskTempLegacyTTL is 0 — disabled. Per-task temp dirs left by a
 	// daemon predating the temp dir execution lock carry no liveness signal at
 	// all, and age cannot supply one: a task may legitimately run for weeks
@@ -145,6 +146,7 @@ type Config struct {
 	GCArtifactPatterns             []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
 	RepoCacheGitTimeout            time.Duration         // upper bound for one git subprocess on the shared repo cache; a cold download is fetched in slices, so this bounds a slice rather than the whole repo (default: 10m)
 	RepoCacheFetchCooldown         time.Duration         // minimum time between successful fetches of one cached repo (default: 5m, set 0 to fetch every checkout)
+	GCOutputsTTL                   time.Duration         // drop a local attachment copy (<profile dir>/outputs/<attachment-id>) this long after the upload that wrote it; the desktop app opens these in place (default: 14d, set 0 to keep them)
 	GCRepoTTL                      time.Duration         // evict a cached bare repo under .repos once no task has created a worktree from it for this long, it has no worktrees left, and it is no longer attached to any watched workspace (default: 30d, set 0 to disable)
 	GCRepoMaintenanceEnabled       bool                  // run reflog expiry and git gc after stale agent refs are removed (default: true; disable independently as an operational kill switch)
 	GCCodexSessionTTL              time.Duration         // reclaim a per-issue Codex session store (~/.codex/multica-sessions/<agent>/<issue>) untouched for at least this long, so a done/abandoned issue's conversation history does not accumulate forever (default: 14d, set 0 to disable)
@@ -613,6 +615,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gcOutputsTTL, err := durationFromEnv("MULTICA_GC_OUTPUTS_TTL", DefaultGCOutputsTTL)
+	if err != nil {
+		return Config{}, err
+	}
 	repoCacheGitTimeout, err := durationFromEnv("MULTICA_REPO_CACHE_GIT_TIMEOUT", repocache.DefaultGitTimeout)
 	if err != nil {
 		return Config{}, err
@@ -683,6 +689,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		GCArtifactTTL:                   gcArtifactTTL,
 		GCArtifactPatterns:              gcArtifactPatterns,
 		GCRepoTTL:                       gcRepoTTL,
+		GCOutputsTTL:                    gcOutputsTTL,
 		RepoCacheGitTimeout:             repoCacheGitTimeout,
 		RepoCacheFetchCooldown:          repoCacheFetchCooldown,
 		GCRepoMaintenanceEnabled:        gcRepoMaintenanceEnabled,

@@ -31,6 +31,7 @@ import type {
   SharedScratchResult,
   SharedScratchSettings,
 } from "../main/shared-scratch";
+import type { LocalAttachmentActionResult } from "../main/local-attachments";
 import type {
   DaemonStatus,
   DaemonPrefs,
@@ -175,6 +176,13 @@ interface DesktopAPI {
   /** Whether `path` (or its nearest existing ancestor) is writable. Used for
    *  worktree_root, which the first task often creates. */
   validateWritablePath: (path: string) => Promise<{ ok: boolean }>;
+  /** Copies of attachments an agent on this machine uploaded, by attachment
+   *  id. The path stays in the main process (DENE-1549). */
+  localAttachment: {
+    status: (attachmentId: string) => Promise<{ available: boolean }>;
+    open: (attachmentId: string) => Promise<LocalAttachmentActionResult>;
+    reveal: (attachmentId: string) => Promise<LocalAttachmentActionResult>;
+  };
   /** Report on this machine's parallel-mode working copies and the cleanup
    *  policy in force. Served by the local daemon (DENE-617). */
   worktreeCleanupReport: () => Promise<WorktreeCleanupResult>;

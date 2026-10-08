@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
@@ -19,7 +20,9 @@ var workspaceLinkCmd = &cobra.Command{
 	Short: "Read-only links that let another workspace see chosen projects",
 	Long: "A link lets the members of another workspace (the viewer) read the status of\n" +
 		"this workspace's chosen projects without becoming members. Only the owner can\n" +
-		"offer a link; the viewer's owner or admin accepts it; either side can revoke it.\n\n" +
+		"offer a link; the viewer's owner or admin accepts it; either side can revoke it.\n" +
+		"Someone who owns both workspaces can pull from the viewer side instead:\n" +
+		"`create --from <workspace> --project <name>` links that workspace's projects in, active at once.\n\n" +
 		"Agents use `list` to find the active links of their workspace and `view` to read one.",
 }
 
@@ -32,14 +35,14 @@ var workspaceLinkListCmd = &cobra.Command{
 
 var workspaceLinkLookupCmd = &cobra.Command{
 	Use:   "lookup <workspace-link-or-slug>",
-	Short: "Show which workspace a pasted link or slug names (owner only, exact match)",
+	Short: "Show which workspace a pasted link or slug names and whether you can pull its projects (owner/admin, exact match)",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorkspaceLinkLookup,
 }
 
 var workspaceLinkCreateCmd = &cobra.Command{
-	Use:   "create --to <workspace-link-or-slug> --project <project>...",
-	Short: "Offer a read-only link to another workspace (owner only)",
+	Use:   "create (--to | --from) <workspace-link-or-slug> --project <project>...",
+	Short: "Share this workspace's projects (--to, owner) or pull another workspace's projects in (--from, owner of both)",
 	Args:  cobra.NoArgs,
 	RunE:  runWorkspaceLinkCreate,
 }
@@ -71,7 +74,8 @@ func init() {
 		workspaceLinkCmd.AddCommand(c)
 	}
 	workspaceLinkCreateCmd.Flags().String("to", "", "The workspace that will see the projects: its link (https://host/<slug>/...) or slug")
-	workspaceLinkCreateCmd.Flags().StringArray("project", nil, "Project to share (id, id prefix or exact name); repeatable")
+	workspaceLinkCreateCmd.Flags().String("from", "", "The workspace whose projects this workspace will see (you must own it): its link or slug")
+	workspaceLinkCreateCmd.Flags().StringArray("project", nil, "Project to share (id, id prefix or exact name); with --from, a project of that workspace; repeatable")
 	workspaceLinkUpdateCmd.Flags().StringArray("project", nil, "Replace the shared projects with these; repeatable")
 	workspaceLinkUpdateCmd.Flags().Bool("accept", false, "Accept a pending link offered to this workspace")
 	workspaceLinkViewCmd.Flags().String("project-id", "", "Only this shared project (an id from the view's projects)")
@@ -145,14 +149,58 @@ func runWorkspaceLinkLookup(cmd *cobra.Command, args []string) error {
 	}
 	ws, _ := resp["workspace"].(map[string]any)
 	fmt.Fprintf(os.Stdout, "%s (%s)\n", strVal(ws, "name"), strVal(ws, "slug"))
+	pull, _ := resp["pull"].(map[string]any)
+	if allowed, _ := pull["allowed"].(bool); allowed {
+		fmt.Fprintln(os.Stdout, "Projects you can pull in with `create --from`:")
+		projects, _ := pull["projects"].([]any)
+		for _, raw := range projects {
+			p, _ := raw.(map[string]any)
+			fmt.Fprintf(os.Stdout, "  %s  %s\n", strVal(p, "id"), strVal(p, "title"))
+		}
+	}
 	return nil
+}
+
+// resolvePullProjects matches --project refs (id, id prefix or exact title)
+// against the projects the lookup says can be pulled from that workspace.
+func resolvePullProjects(ctx context.Context, client *cli.APIClient, from string, refs []string) ([]string, error) {
+	var resp struct {
+		Pull struct {
+			Allowed  bool `json:"allowed"`
+			Projects []struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"projects"`
+		} `json:"pull"`
+	}
+	if err := client.GetJSON(ctx, "/api/workspace-links/lookup?target="+url.QueryEscape(from), &resp); err != nil {
+		return nil, fmt.Errorf("look up workspace: %w", err)
+	}
+	if !resp.Pull.Allowed {
+		return nil, fmt.Errorf("only an owner of that workspace can pick its projects; ask its owner to run `multica workspace link create --to` from there")
+	}
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		var match []string
+		for _, p := range resp.Pull.Projects {
+			if p.ID == ref || p.Title == ref || (len(ref) >= 4 && strings.HasPrefix(p.ID, ref)) {
+				match = append(match, p.ID)
+			}
+		}
+		if len(match) != 1 {
+			return nil, fmt.Errorf("project %q matches %d shareable projects of that workspace; run `multica workspace link lookup %s` to list them", ref, len(match), from)
+		}
+		ids = append(ids, match[0])
+	}
+	return ids, nil
 }
 
 func runWorkspaceLinkCreate(cmd *cobra.Command, _ []string) error {
 	to, _ := cmd.Flags().GetString("to")
+	from, _ := cmd.Flags().GetString("from")
 	refs, _ := cmd.Flags().GetStringArray("project")
-	if to == "" || len(refs) == 0 {
-		return fmt.Errorf("--to and at least one --project are required")
+	if (to == "") == (from == "") || len(refs) == 0 {
+		return fmt.Errorf("pass exactly one of --to or --from, and at least one --project")
 	}
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -160,12 +208,20 @@ func runWorkspaceLinkCreate(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-	ids, err := resolveLinkProjects(ctx, client, refs)
+	body := map[string]any{"target_slug": to, "direction": "offer"}
+	var ids []string
+	if from != "" {
+		body["target_slug"], body["direction"] = from, "pull"
+		ids, err = resolvePullProjects(ctx, client, from, refs)
+	} else {
+		ids, err = resolveLinkProjects(ctx, client, refs)
+	}
 	if err != nil {
 		return err
 	}
+	body["project_ids"] = ids
 	var link map[string]any
-	if err := client.PostJSON(ctx, "/api/workspace-links", map[string]any{"target_slug": to, "project_ids": ids}, &link); err != nil {
+	if err := client.PostJSON(ctx, "/api/workspace-links", body, &link); err != nil {
 		return fmt.Errorf("create workspace link: %w", err)
 	}
 	return printLink(cmd, link)

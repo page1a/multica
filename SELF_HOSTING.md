@@ -492,7 +492,7 @@ If the selected GHCR tag has not been published yet, fall back to `make selfhost
 A branch tip can move faster than anyone remembers to pull. If you run your own build from a checkout — a fork, a staging box, anything that should track `origin/<branch>` — install the autoupdate timer and let the machine notice instead of a person:
 
 ```bash
-sudo scripts/install-selfhost-autoupdate.sh            # follows origin/kun, every 15 minutes
+sudo scripts/install-selfhost-autoupdate.sh            # follows origin/kun, every 5 minutes
 sudo scripts/install-selfhost-autoupdate.sh --branch main --repo-dir /srv/multica
 ```
 
@@ -503,6 +503,8 @@ Each tick:
 3. On drift: tags the current images `:prev`, `git reset --hard origin/<branch>`, rebuilds with `COMMIT`/`VERSION`/`DATE` set to the target SHA, and recreates the backend and frontend.
 4. Waits for `/readyz` **and** checks that `/health` now reports the target SHA — a build that did not take effect is treated as a failure, not a success.
 5. On any failure: restores the `:prev` images, resets the checkout to the previous SHA, recreates, and exits non-zero.
+
+Steps 3–5 recreate the containers in place, so every update is a 30–60 second outage. Behind nginx you can set `MULTICA_AUTOUPDATE_SWITCH=nginx` instead: the new version starts on spare ports beside the old one, nginx is switched once it is ready, and the old pair is stopped afterwards. Migrations the old version cannot run against fall back to a stop-then-start deploy on their own. Setup (one nginx edit) is in [docs/kun/selfhost-autoupdate.md](docs/kun/selfhost-autoupdate.md).
 
 The last run is always machine-readable:
 

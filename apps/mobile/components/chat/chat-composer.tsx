@@ -14,8 +14,8 @@
  *     sits beside it. The main half sends in the current mode (steer when
  *     the CLI supports it, else queue); ▾ opens a bottom sheet with
  *     steer / queue / restart, each with its process line, steer disabled
- *     with the reason when the CLI can't take it. The choice lasts for
- *     this reply only.
+ *     with the reason when the CLI can't take it. Return and the main half
+ *     use the same mode; the choice lasts for this reply only.
  *   - **Mention picker mode=chat**: chat is user ↔ single agent so
  *     @member / @agent / @squad / @all are noise + would notify the
  *     wrong people. Picker route honors `?mode=chat` and surfaces only
@@ -173,6 +173,7 @@ export function ChatComposer({
       disabled={disabled}
       disabledReason={disabledReason}
       isSending={sending}
+      submitOnReturn={sendModeActive ? sendMode : undefined}
       renderStop={allowStop ? () => <StopButton onPress={handleStop} /> : undefined}
       renderRunning={
         sendModeActive

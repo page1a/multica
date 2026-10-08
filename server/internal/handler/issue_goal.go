@@ -34,6 +34,17 @@ type GoalResponse struct {
 	BudgetWarningAt        *string             `json:"budget_warning_at,omitempty"`
 	LastContinuationTaskID *string             `json:"last_continuation_task_id,omitempty"`
 	NextAction             string              `json:"next_action"`
+	// Stop record (DENE-1583): who stopped the goal, on whose word, and why.
+	// The brake stops as "system" with a reason code; a person or agent stop
+	// carries their own id and the person they acted for.
+	StoppedAt         *string            `json:"stopped_at,omitempty"`
+	StoppedBy         *GoalActorResponse `json:"stopped_by,omitempty"`
+	StoppedOnBehalfOf *string            `json:"stopped_on_behalf_of,omitempty"`
+	StopReason        string             `json:"stop_reason,omitempty"`
+}
+type GoalActorResponse struct {
+	Type string  `json:"type"`
+	ID   *string `json:"id,omitempty"`
 }
 type GoalCheckResponse struct {
 	ID          string `json:"id"`
@@ -75,6 +86,9 @@ type createGoalRequest struct {
 }
 type finishGoalRequest struct {
 	Status string `json:"status"`
+	// Reason is why the goal stopped. An agent must quote the person's words
+	// asking for the stop; it is optional for a member.
+	Reason string `json:"reason"`
 }
 
 func goalJSON(raw []byte) []any {
@@ -126,6 +140,25 @@ func makeGoalResponse(goal db.IssueGoal, checks []db.IssueGoalCheck) GoalRespons
 		Evidence: goalJSON(goal.Evidence), Checks: make([]GoalCheckResponse, 0, len(checks)),
 		NoProgressRounds: goal.NoProgressRounds, MaxNoProgressRounds: goal.MaxNoProgressRounds, BudgetWarningAt: warning,
 		LastContinuationTaskID: continuation, NextAction: nextAction,
+	}
+	if goal.Status == "stopped" {
+		if goal.StoppedAt.Valid {
+			v := goal.StoppedAt.Time.UTC().Format(time.RFC3339)
+			out.StoppedAt = &v
+		}
+		if goal.StoppedByType.Valid {
+			actor := &GoalActorResponse{Type: goal.StoppedByType.String}
+			if goal.StoppedByID.Valid {
+				v := goalUUID(goal.StoppedByID)
+				actor.ID = &v
+			}
+			out.StoppedBy = actor
+		}
+		if goal.StoppedOnBehalfOf.Valid {
+			v := goalUUID(goal.StoppedOnBehalfOf)
+			out.StoppedOnBehalfOf = &v
+		}
+		out.StopReason = goal.StopReason
 	}
 	for _, c := range checks {
 		out.Checks = append(out.Checks, GoalCheckResponse{ID: goalUUID(c.ID), Position: c.Position, Description: c.Description, Method: c.Method, Status: c.Status, Passed: c.Status == "passed", Evidence: goalJSON(c.Evidence)})
@@ -368,26 +401,34 @@ func (h *Handler) ConfirmIssueGoal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load goal checks")
 		return
 	}
-	// Goal confirmation is the single transition that releases the execution
-	// gate. Creation and assignment paths deliberately skip draft goals, so a
-	// pre-assigned agent gets its first run only after the human locks the line.
-	if h.TaskService != nil && issue.AssigneeType.Valid && issue.AssigneeID.Valid {
-		switch issue.AssigneeType.String {
-		case "agent":
-			if _, enqueueErr := h.TaskService.EnqueueTaskForIssue(r.Context(), issue); enqueueErr != nil && !errors.Is(enqueueErr, service.ErrDuplicatePendingTask) {
-				slog.Warn("confirmed goal could not enqueue assigned agent", "issue_id", uuidToString(issue.ID), "error", enqueueErr)
-			}
-		case "squad":
-			// Squad assignment resolves to its leader. Reuse the ordinary
-			// assignment path so the same access, readiness, and pending-task
-			// guards apply after the human locks the completion line.
-			userID, _ := requireUserID(w, r)
-			if !h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, "member", userID, "") {
-				slog.Warn("confirmed goal could not enqueue assigned squad leader", "issue_id", uuidToString(issue.ID), "squad_id", uuidToString(issue.AssigneeID))
-			}
+	// Goal confirmation releases the execution gate. Creation and assignment
+	// paths deliberately skip draft goals, so a pre-assigned agent gets its
+	// first run only after the human locks the line.
+	h.dispatchReleasedGoalIssue(r, issue)
+	writeJSON(w, http.StatusOK, makeGoalResponse(goal, checks))
+}
+
+// dispatchReleasedGoalIssue starts the assignee once a draft goal stops
+// gating execution — on confirm, or when the draft is stopped and the issue
+// carries on as an ordinary task. It reuses the ordinary assignment paths so
+// the same access, readiness, and pending-task guards apply.
+func (h *Handler) dispatchReleasedGoalIssue(r *http.Request, issue db.Issue) {
+	if h.TaskService == nil || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return
+	}
+	switch issue.AssigneeType.String {
+	case "agent":
+		if _, enqueueErr := h.TaskService.EnqueueTaskForIssue(r.Context(), issue); enqueueErr != nil && !errors.Is(enqueueErr, service.ErrDuplicatePendingTask) {
+			slog.Warn("released goal could not enqueue assigned agent", "issue_id", uuidToString(issue.ID), "error", enqueueErr)
+		}
+	case "squad":
+		// Squad assignment resolves to its leader.
+		userID := requestUserID(r)
+		actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+		if !h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID, "") {
+			slog.Warn("released goal could not enqueue assigned squad leader", "issue_id", uuidToString(issue.ID), "squad_id", uuidToString(issue.AssigneeID))
 		}
 	}
-	writeJSON(w, http.StatusOK, makeGoalResponse(goal, checks))
 }
 
 // AppendIssueGoalBudget adds to the limits. Once locked, only a human may do this.
@@ -447,9 +488,16 @@ func (h *Handler) AppendIssueGoalBudget(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, makeGoalResponse(goal, checks))
 }
 
-// FinishIssueGoal stops or marks a goal achieved.
+// FinishIssueGoal stops or marks a goal achieved. Stopping turns goal mode
+// off and the issue carries on as an ordinary task, so an agent may do it on
+// a person's word (DENE-1583). Achieved stays human-only: acceptance decides
+// it, and the executor cannot declare its own line met.
 func (h *Handler) FinishIssueGoal(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
@@ -461,20 +509,41 @@ func (h *Handler) FinishIssueGoal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load goal")
 		return
 	}
-	if !h.requireHumanGoalActor(w, r, issue, goal) {
-		return
-	}
 	var req finishGoalRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
+	req.Reason = strings.TrimSpace(req.Reason)
 	if req.Status != "stopped" && req.Status != "achieved" {
 		writeError(w, http.StatusBadRequest, "status must be stopped or achieved")
 		return
 	}
-	goal, err = h.Queries.FinishIssueGoal(r.Context(), db.FinishIssueGoalParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, Status: req.Status})
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	params := db.FinishIssueGoalParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, Status: req.Status}
+	if req.Status == "achieved" {
+		if actorType == "agent" {
+			writeError(w, http.StatusForbidden, "only a human can mark a goal achieved; acceptance decides it")
+			return
+		}
+	} else {
+		if actorType == "agent" && req.Reason == "" {
+			writeError(w, http.StatusBadRequest, "an agent stopping a goal must pass --reason with the person's words asking for the stop")
+			return
+		}
+		originator := h.invokeOriginatorFromRequest(r, actorType, actorID)
+		if actorType == "agent" && originator == "" {
+			writeError(w, http.StatusForbidden, "an agent can stop a goal only on behalf of an active human request")
+			return
+		}
+		params.StoppedByType = pgtype.Text{String: actorType, Valid: true}
+		params.StoppedByID, _ = util.ParseUUID(actorID)
+		params.StoppedOnBehalfOf, _ = util.ParseUUID(originator)
+		params.StopReason = req.Reason
+	}
+	wasDraft := goal.Status == "draft"
+	goal, err = h.Queries.FinishIssueGoal(r.Context(), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "goal cannot be finished in its current state")
 		return
@@ -486,6 +555,15 @@ func (h *Handler) FinishIssueGoal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load goal checks")
 		return
+	}
+	// A stopped draft no longer gates execution; start the assignee the way
+	// confirm would, unless the issue already ended.
+	if wasDraft && goal.Status == "stopped" {
+		switch issuestatus.Category(r.Context(), h.issueStatusCatalog(), issue.WorkspaceID, issue.Status) {
+		case issuestatus.CategoryDone, issuestatus.CategoryClosed:
+		default:
+			h.dispatchReleasedGoalIssue(r, issue)
+		}
 	}
 	writeJSON(w, http.StatusOK, makeGoalResponse(goal, checks))
 }

@@ -345,6 +345,16 @@ func (h *Handler) guardDoneWithOpenPull(ctx context.Context, issue db.Issue, act
 		slog.Warn("close gate: list pull requests failed", "issue_id", uuidToString(issue.ID), "error", err)
 		return holdRefusal(blockwait.HoldReadFailed, closeLead+"关单前没能读到关联的 PR。"+holdNext(blockwait.HoldReadFailed))
 	}
+	// A sub-issue on its parent's line (DENE-1537) closes by merging back,
+	// never through the parent's PR; once merged it may be marked done.
+	if line, lineErr := service.GetIssueDeliveryLine(ctx, h.Queries, issue.ID); lineErr != nil {
+		slog.Warn("close gate: delivery line lookup failed", "issue_id", uuidToString(issue.ID), "error", lineErr)
+	} else if line != nil {
+		if actorType == "agent" && line.Status != service.DeliveryLineMerged {
+			tr.refuse = "这张子票交付到父票的分支：在本票工作目录里跑 `multica issue close " + view.Ident + " --outcome done`，它会把提交并回父票分支。"
+		}
+		return tr
+	}
 	deliveryBranchCount := 0
 	if delivery, deliveryErr := service.BuildIssueDelivery(ctx, h.Queries, issue); deliveryErr != nil {
 		slog.Warn("close gate: build delivery failed", "issue_id", uuidToString(issue.ID), "error", deliveryErr)

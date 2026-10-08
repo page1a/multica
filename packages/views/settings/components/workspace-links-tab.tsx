@@ -17,7 +17,14 @@ import {
   workspaceLinkLookupOptions,
   workspaceLinksOptions,
 } from "@multica/core/workspace-links";
-import type { WorkspaceLink, WorkspaceLinkAuditEntry, WorkspaceLinkWorkspace } from "@multica/core/types";
+import type {
+  WorkspaceLink,
+  WorkspaceLinkAuditEntry,
+  WorkspaceLinkDirection,
+  WorkspaceLinkLookup,
+  WorkspaceLinkProject,
+  WorkspaceLinkWorkspace,
+} from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
@@ -57,6 +64,7 @@ export function WorkspaceLinksTab() {
       <SettingsSection title={t(($) => $.links.tab.outgoing_title)} description={t(($) => $.links.tab.outgoing_description)}>
         <CreateLinkForm
           wsId={wsId}
+          direction="offer"
           enabled={!!can?.create}
           loaded={!!can}
           linkedSlugs={outgoing.map((link) => link.target.slug)}
@@ -72,6 +80,13 @@ export function WorkspaceLinksTab() {
       </SettingsSection>
 
       <SettingsSection title={t(($) => $.links.tab.incoming_title)} description={t(($) => $.links.tab.incoming_description)}>
+        <CreateLinkForm
+          wsId={wsId}
+          direction="pull"
+          enabled={!!can?.pull}
+          loaded={!!can}
+          linkedSlugs={incoming.map((link) => link.source.slug)}
+        />
         {!isLoading && incoming.length === 0 ? (
           <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.incoming_empty)}</p>
         ) : null}
@@ -132,13 +147,40 @@ function ProjectPicker({
   const { t } = useT("workspace");
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const shareable = projects.filter((project) => (project.visibility ?? "private") !== "private");
-  if (shareable.length === 0) {
-    return <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.no_shareable_projects)}</p>;
+  return (
+    <ProjectChecklist
+      projects={shareable}
+      selected={selected}
+      onChange={onChange}
+      disabled={disabled}
+      legend={t(($) => $.links.tab.projects_label)}
+      empty={t(($) => $.links.tab.no_shareable_projects)}
+    />
+  );
+}
+
+function ProjectChecklist({
+  projects,
+  selected,
+  onChange,
+  disabled,
+  legend,
+  empty,
+}: {
+  projects: Pick<WorkspaceLinkProject, "id" | "title" | "icon">[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+  disabled: boolean;
+  legend: string;
+  empty: string;
+}) {
+  if (projects.length === 0) {
+    return <p className="text-caption text-muted-foreground">{empty}</p>;
   }
   return (
     <fieldset className="flex flex-wrap gap-2" disabled={disabled}>
-      <legend className="sr-only">{t(($) => $.links.tab.projects_label)}</legend>
-      {shareable.map((project) => {
+      <legend className="sr-only">{legend}</legend>
+      {projects.map((project) => {
         const checked = selected.includes(project.id);
         return (
           <label
@@ -159,68 +201,106 @@ function ProjectPicker({
   );
 }
 
+/**
+ * One form, two directions. "offer" shares this workspace's projects and
+ * waits for the other side to accept. "pull" reads the other workspace's
+ * projects: the server lists them, and links them in at once, only for
+ * someone who owns that workspace too (workspacelink.Pull).
+ */
 function CreateLinkForm({
   wsId,
+  direction,
   enabled,
   loaded,
   linkedSlugs,
 }: {
   wsId: string;
+  direction: WorkspaceLinkDirection;
   enabled: boolean;
   loaded: boolean;
   linkedSlugs: string[];
 }) {
   const { t } = useT("workspace");
+  const pull = direction === "pull";
   const [address, setAddress] = useState("");
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const create = useCreateWorkspaceLink(wsId);
-  const target = useLinkTarget(wsId, address, enabled);
+  const target = useLinkTarget(wsId, address, enabled, pull);
+  const theirs = pull ? (target.pull?.allowed ? target.pull.projects : null) : null;
+  // A pick made for one workspace never rides along to another.
+  const picked = pull ? projectIds.filter((id) => theirs?.some((p) => p.id === id)) : projectIds;
   const reason = !target.workspace
-    ? t(($) => $.links.tab.need_target)
-    : projectIds.length === 0
-      ? t(($) => $.links.tab.need_projects)
-      : null;
+    ? pull
+      ? t(($) => $.links.tab.pull_need_target)
+      : t(($) => $.links.tab.need_target)
+    : pull && !theirs
+      ? t(($) => $.links.tab.pull_need_owner)
+      : picked.length === 0
+        ? t(($) => $.links.tab.need_projects)
+        : null;
   const ready = enabled && reason === null && !create.isPending;
+  const hint = pull ? t(($) => $.links.tab.pull_hint) : t(($) => $.links.tab.create_hint);
+  const refusal = pull ? t(($) => $.links.tab.pull_reason) : t(($) => $.links.tab.create_reason);
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
         <TargetField
           wsId={wsId}
+          direction={direction}
           value={address}
           onChange={setAddress}
           disabled={!enabled}
           excludeSlugs={linkedSlugs}
           target={target}
         />
-        <div className="space-y-1.5">
-          <span className="text-label">{t(($) => $.links.tab.projects_label)}</span>
-          <ProjectPicker wsId={wsId} selected={projectIds} onChange={setProjectIds} disabled={!enabled} />
-        </div>
+        {pull ? (
+          theirs ? (
+            <div className="space-y-1.5">
+              <span className="text-label">{t(($) => $.links.tab.pull_projects_label)}</span>
+              <ProjectChecklist
+                projects={theirs}
+                selected={picked}
+                onChange={setProjectIds}
+                disabled={!enabled}
+                legend={t(($) => $.links.tab.pull_projects_label)}
+                empty={t(($) => $.links.tab.pull_no_projects)}
+              />
+            </div>
+          ) : null
+        ) : (
+          <div className="space-y-1.5">
+            <span className="text-label">{t(($) => $.links.tab.projects_label)}</span>
+            <ProjectPicker wsId={wsId} selected={projectIds} onChange={setProjectIds} disabled={!enabled} />
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3">
           <p className="text-caption text-muted-foreground">
             {/* Hold the refusal until the server has answered, so an owner
                 never sees it flash while the list loads. */}
-            {enabled ? (reason ?? t(($) => $.links.tab.create_hint)) : loaded ? t(($) => $.links.tab.create_reason) : null}
+            {enabled ? (reason ?? hint) : loaded ? refusal : null}
           </p>
           <Button
             size="sm"
+            className="shrink-0"
             disabled={!ready}
             onClick={() =>
               target.workspace &&
               create.mutate(
-                { target_slug: target.workspace.slug, project_ids: projectIds },
+                pull
+                  ? { target_slug: target.workspace.slug, project_ids: picked, direction: "pull" }
+                  : { target_slug: target.workspace.slug, project_ids: picked },
                 {
                   onSuccess: () => {
                     setAddress("");
                     setProjectIds([]);
-                    toast.success(t(($) => $.links.tab.created));
+                    toast.success(pull ? t(($) => $.links.tab.pull_created) : t(($) => $.links.tab.created));
                   },
                   onError: (error) => toast.error(errorMessage(error, t(($) => $.links.tab.failed))),
                 },
               )
             }
           >
-            {t(($) => $.links.tab.create)}
+            {pull ? t(($) => $.links.tab.pull_create) : t(($) => $.links.tab.create)}
           </Button>
         </div>
       </CardContent>
@@ -231,6 +311,8 @@ function CreateLinkForm({
 type LinkTarget = {
   /** The workspace the address names, once the server has confirmed it. */
   workspace: WorkspaceLinkWorkspace | null;
+  /** The server's pull answer for that workspace (pull form only). */
+  pull: WorkspaceLinkLookup["pull"] | null;
   checking: boolean;
   /** Why the address names nothing usable, in words. */
   problem: string | null;
@@ -241,17 +323,18 @@ type LinkTarget = {
  * links and slugs (workspacelink.TargetSlug); this only debounces and words
  * the answer.
  */
-function useLinkTarget(wsId: string, address: string, enabled: boolean): LinkTarget {
+function useLinkTarget(wsId: string, address: string, enabled: boolean, pull: boolean): LinkTarget {
   const { t } = useT("workspace");
   const typed = address.trim();
   const settled = useDebouncedValue(typed, 300);
-  const lookup = useQuery(workspaceLinkLookupOptions(wsId, settled, enabled));
-  if (typed === "") return { workspace: null, checking: false, problem: null };
-  if (settled !== typed || lookup.isFetching) return { workspace: null, checking: true, problem: null };
+  const lookup = useQuery(workspaceLinkLookupOptions(wsId, settled, enabled, pull));
+  if (typed === "") return { workspace: null, pull: null, checking: false, problem: null };
+  if (settled !== typed || lookup.isFetching) return { workspace: null, pull: null, checking: true, problem: null };
   if (lookup.error) {
     const status = lookup.error instanceof ApiError ? lookup.error.status : 0;
     return {
       workspace: null,
+      pull: null,
       checking: false,
       problem:
         status === 404
@@ -261,11 +344,12 @@ function useLinkTarget(wsId: string, address: string, enabled: boolean): LinkTar
             : errorMessage(lookup.error, t(($) => $.links.tab.failed)),
     };
   }
-  return { workspace: lookup.data?.workspace ?? null, checking: false, problem: null };
+  return { workspace: lookup.data?.workspace ?? null, pull: lookup.data?.pull ?? null, checking: false, problem: null };
 }
 
 function TargetField({
   wsId,
+  direction,
   value,
   onChange,
   disabled,
@@ -273,6 +357,7 @@ function TargetField({
   target,
 }: {
   wsId: string;
+  direction: WorkspaceLinkDirection;
   value: string;
   onChange: (value: string) => void;
   disabled: boolean;
@@ -280,6 +365,8 @@ function TargetField({
   target: LinkTarget;
 }) {
   const { t } = useT("workspace");
+  const pull = direction === "pull";
+  const fieldId = pull ? "workspace-link-source" : "workspace-link-target";
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const { data: workspaces = [] } = useQuery(workspaceListOptions());
@@ -295,23 +382,26 @@ function TargetField({
   const pick = (ws: { name: string; slug: string; avatar_url: string | null }) => {
     // The server would answer the same for a slug of the caller's own
     // workspace; seed it so the confirmation shows without a round trip.
-    qc.setQueryData(workspaceLinkKeys.lookup(wsId, ws.slug), {
-      workspace: { name: ws.name, slug: ws.slug, avatar_url: ws.avatar_url },
-    });
+    // The pull form needs the server's project list, so it always asks.
+    if (!pull) {
+      qc.setQueryData(workspaceLinkKeys.lookup(wsId, ws.slug), {
+        workspace: { name: ws.name, slug: ws.slug, avatar_url: ws.avatar_url },
+      });
+    }
     onChange(ws.slug);
     setOpen(false);
   };
   return (
     <div className="space-y-1.5">
-      <label htmlFor="workspace-link-target" className="text-label">
-        {t(($) => $.links.tab.target_label)}
+      <label htmlFor={fieldId} className="text-label">
+        {pull ? t(($) => $.links.tab.pull_target_label) : t(($) => $.links.tab.target_label)}
       </label>
       <div className="relative">
         <Input
-          id="workspace-link-target"
+          id={fieldId}
           role="combobox"
           aria-expanded={open && mine.length > 0}
-          aria-controls="workspace-link-target-options"
+          aria-controls={`${fieldId}-options`}
           autoComplete="off"
           value={value}
           disabled={disabled}
@@ -328,7 +418,7 @@ function TargetField({
         />
         {open && mine.length > 0 ? (
           <div
-            id="workspace-link-target-options"
+            id={`${fieldId}-options`}
             role="listbox"
             aria-label={t(($) => $.links.tab.target_mine)}
             className="absolute inset-x-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
@@ -355,7 +445,7 @@ function TargetField({
         ) : null}
       </div>
       {target.workspace ? (
-        <div className="flex min-w-0 items-center gap-2 text-body" data-testid="workspace-link-target">
+        <div className="flex min-w-0 items-center gap-2 text-body" data-testid={fieldId}>
           <WorkspaceAvatar name={target.workspace.name} avatarUrl={target.workspace.avatar_url} size="sm" className="size-5 shrink-0 rounded-xs" />
           <span className="truncate font-medium">{target.workspace.name}</span>
           <span className="truncate text-caption text-muted-foreground">{target.workspace.slug}</span>

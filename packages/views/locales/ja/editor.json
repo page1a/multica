@@ -62,6 +62,10 @@
     "close": "閉じる",
     "open_in_new_tab": "新しいタブで開く",
     "remove": "添付ファイルを削除",
+    "open_local": "開く",
+    "reveal_local_finder": "Finder で表示",
+    "reveal_local": "フォルダで表示",
+    "local_copy_gone": "このコンピュータのコピーは変更されたか見つかりません。代わりにダウンロードします。",
     "previous": "前へ",
     "next": "次へ",
     "sequence_position": "{{index}} / {{total}}",
@@ -165,6 +169,8 @@
     "no_results": "一致するスキルなし",
     "commands": {
       "note": "メモを追加 — エージェントをトリガーしません"
-    }
+    },
+    "skill_group": "{{name}} の skill",
+    "skill_hint": "エージェントを @ すると、その skill を選べます"
   }
 }

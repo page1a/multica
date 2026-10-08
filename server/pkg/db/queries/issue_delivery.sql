@@ -53,3 +53,54 @@ SET cleanup_status = sqlc.arg('cleanup_status'),
     updated_at = now()
 WHERE issue_id = sqlc.arg('issue_id') AND branch_name = sqlc.arg('branch_name')
 RETURNING *;
+
+-- Sub-issues delivering onto the parent's line (DENE-1537). See migration 638.
+
+-- name: GetIssueDeliveryLine :one
+SELECT * FROM issue_delivery_line
+WHERE issue_id = $1;
+
+-- name: InsertIssueDeliveryLine :one
+-- Opens the line the first time a capable daemon claims the sub-issue. A
+-- second claim is a no-op; the caller re-reads the existing row.
+INSERT INTO issue_delivery_line (issue_id, workspace_id, owner_issue_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (issue_id) DO NOTHING
+RETURNING *;
+
+-- name: MarkIssueDeliveryLineMerged :one
+UPDATE issue_delivery_line
+SET status = 'merged',
+    branch_name = sqlc.arg('branch_name'),
+    source_branch = sqlc.narg('source_branch'),
+    merged_tip = sqlc.arg('merged_tip'),
+    commits = sqlc.arg('commits'),
+    conflict_files = '{}',
+    merged_at = now(),
+    updated_at = now()
+WHERE issue_id = sqlc.arg('issue_id')
+RETURNING *;
+
+-- name: MarkIssueDeliveryLineConflict :one
+UPDATE issue_delivery_line
+SET status = 'conflict',
+    branch_name = sqlc.arg('branch_name'),
+    source_branch = sqlc.narg('source_branch'),
+    conflict_files = sqlc.arg('conflict_files')::text[],
+    updated_at = now()
+WHERE issue_id = sqlc.arg('issue_id')
+RETURNING *;
+
+-- name: ListIssueDeliveryLinesByOwner :many
+-- The sub-issues delivering onto an issue's line, oldest first, with what a
+-- list needs to name them.
+SELECT l.*, i.number AS issue_number, i.title AS issue_title, i.status AS issue_status
+FROM issue_delivery_line l
+JOIN issue i ON i.id = l.issue_id
+WHERE l.owner_issue_id = $1
+ORDER BY i.number ASC;
+
+-- name: ListIssueDeliveryLinesForIssues :many
+-- Delivery state for a batch of sub-issues (the children listing).
+SELECT * FROM issue_delivery_line
+WHERE issue_id = ANY(sqlc.arg('issue_ids')::uuid[]);

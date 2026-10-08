@@ -225,6 +225,9 @@
     "avatar_hint": "Affiché dans les assignations, l'activité et la discussion.",
     "prop_routing_tier": "Palier",
     "prop_routing_tier_hint": "Attribué aux tâches selon la force",
+    "prop_dispatch_mode": "Attribution",
+    "prop_dispatch_mode_hint": "Sur mention : jamais attribué automatiquement, seulement quand on le nomme",
+    "routing_inherited_hint": "Suit le rôle de base. Pour les régler ici, désactivez le suivi plus haut.",
     "prop_routing_usage": "Usage",
     "prop_routing_usage_hint": "Quota de compte disponible, en relatif"
   },
@@ -281,6 +284,8 @@
     "routing_tier_medium": "Moyen",
     "routing_tier_weak": "Léger",
     "routing_tier_none": "Hors routage",
+    "dispatch_mode_auto": "Auto",
+    "dispatch_mode_mention_only": "Sur mention",
     "routing_usage_tight": "Serré",
     "routing_usage_normal": "Normal",
     "routing_usage_ample": "Large"
@@ -1176,7 +1181,8 @@
     "source_remote_checkout": "Récupération distante",
     "source_mode_in_place": "Une exécution à la fois, dans votre copie de travail",
     "source_mode_worktree": "Un git worktree dédié par exécution",
-    "source_mode_shared": "Répertoire partagé, exécutions en parallèle"
+    "source_mode_shared": "Répertoire partagé, exécutions en parallèle",
+    "kind_skill": "Skill"
   },
   "task_failure": {
     "cancelled_by_system": "Annulée par le système",

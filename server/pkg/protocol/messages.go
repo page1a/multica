@@ -102,6 +102,12 @@ const (
 	// along the inputs of wakeup rules that waited for this run; for any other
 	// daemon those rules keep their inputs and start a run of their own.
 	DaemonCapabilityJoinedWakeupsV1 = "joined-wakeups-v1"
+	// DaemonCapabilityDeliveryLineV1 advertises that the daemon forks a
+	// sub-issue's worktree from its parent's delivery branch and that its
+	// `multica issue close` merges the sub-issue's commits back into that
+	// branch (DENE-1537). Only then does the server put a sub-issue on its
+	// parent's line; any other daemon keeps one PR per sub-issue.
+	DaemonCapabilityDeliveryLineV1 = "delivery-line-v1"
 	// DaemonCapabilityTaskSupplementV1 advertises that this provider run can accept
 	// an additional text instruction without cancelling or starting a task.
 	// It is persisted when this exact task enters running; absence always means

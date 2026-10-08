@@ -498,6 +498,50 @@ export const EMPTY_ISSUE_PULL_REQUESTS_RESPONSE: IssuePullRequestsResponse = {
   auto_complete: null,
 };
 
+// Sub-issues that deliver onto the parent's branch instead of their own PR
+// (DENE-1537). `line` is set on such a sub-issue; `contributions` lists them
+// on the parent. Everything else in the delivery payload is ignored here.
+export const DeliveryLineCommitSchema = z.object({
+  sha: z.string(),
+  subject: z.string().default(""),
+}).loose();
+
+export const IssueDeliveryLineSchema = z.object({
+  owner_issue_id: z.string(),
+  owner_identifier: z.string().default(""),
+  owner_title: z.string().optional(),
+  branch: z.string().default(""),
+  status: z.string(),
+  commits: z.array(DeliveryLineCommitSchema).default([]),
+  conflict_files: z.array(z.string()).nullable().default([]),
+  merged_at: z.string().nullable().optional(),
+}).loose();
+
+export const IssueDeliveryContributionSchema = z.object({
+  issue_id: z.string(),
+  identifier: z.string().default(""),
+  title: z.string().default(""),
+  issue_status: z.string().default(""),
+  status: z.string(),
+  commits: z.array(DeliveryLineCommitSchema).default([]),
+  conflict_files: z.array(z.string()).nullable().default([]),
+}).loose();
+
+export const IssueDeliveryLinesSchema = z.object({
+  line: IssueDeliveryLineSchema.nullable().optional().default(null).catch(null),
+  contributions: z.array(IssueDeliveryContributionSchema).nullable().default([]).catch([]),
+}).loose();
+
+export type DeliveryLineCommit = z.infer<typeof DeliveryLineCommitSchema>;
+export type IssueDeliveryLine = z.infer<typeof IssueDeliveryLineSchema>;
+export type IssueDeliveryContribution = z.infer<typeof IssueDeliveryContributionSchema>;
+export type IssueDeliveryLines = z.infer<typeof IssueDeliveryLinesSchema>;
+
+export const EMPTY_ISSUE_DELIVERY_LINES: IssueDeliveryLines = {
+  line: null,
+  contributions: [],
+};
+
 // Label responses are consumed by settings tables and resource pickers. Keep
 // the resource type lenient so newer server scopes do not break older clients,
 // while defaulting fields that predate scoped label catalogs.
@@ -2089,6 +2133,7 @@ export const AgentSchema: z.ZodType<Agent> = z.object({
   // desktop build can talk to a backend that predates the column.
   routing_tier: z.string().optional().catch(undefined),
   routing_usage: z.string().optional().catch(undefined),
+  dispatch_mode: z.string().optional().catch(undefined),
   owner_id: z.string().nullable().default(null),
   skills: z.array(z.unknown()).default([]),
   disabled_runtime_skills: z.array(z.unknown()).optional(),
@@ -2474,6 +2519,7 @@ export const AgentTaskSchema = z.object({
   // `.catch(undefined)` collapses a bad array to "no usage recorded", which
   // the UI already renders as an em dash.
   usage: z.array(TaskUsageSchema).optional().catch(undefined),
+  skills_used: z.array(z.string()).optional().catch(undefined),
 }).loose();
 
 // Outcome counts are required: every backend that serves this endpoint
@@ -2552,7 +2598,8 @@ export const TaskMessagePayloadSchema = z.object({
   issue_id: z.string().default(""),
   chat_session_id: z.string().optional(),
   seq: z.number().default(0),
-  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]).catch("text"),
+  // `skill` marks a bound skill's first use (DENE-1573); the name rides in `tool`.
+  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error", "skill"]).catch("text"),
   tool: z.string().optional(),
   content: z.string().optional(),
   input: z.record(z.string(), z.unknown()).optional(),

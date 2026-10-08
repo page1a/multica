@@ -46,6 +46,9 @@ import {
   BUILTIN_COMMANDS,
   createBuiltinCommandSuggestion,
   QUICK_ACTION_ITEM_PREFIX,
+  buildSkillCommandItems,
+  mentionedAgentIds,
+  skillSourceFor,
 } from "./slash-command-suggestion";
 
 function agent(overrides: Partial<Agent>): Agent {
@@ -709,5 +712,141 @@ describe("builtin `/` menu — async quick action rendering", () => {
     });
 
     expect(calls).toHaveLength(0);
+  });
+});
+
+// DENE-1573: the issue comment `/` menu lists an agent's skills after the
+// built-ins — the first @-mentioned agent's, else the agent assignee's — and
+// says how to get some when there is no agent at all.
+describe("issue comment `/` menu — agent skills", () => {
+  const sunAgent = agent({
+    id: "agent-sun",
+    name: "Sun",
+    skills: [
+      { id: "sk-design", name: "codebase-design", description: "Deep modules" },
+      { id: "sk-review", name: "code-review", description: "Review a change" },
+    ],
+  });
+  const bulmaAgent = agent({
+    id: "agent-bulma",
+    name: "Bulma",
+    skills: [{ id: "sk-impl", name: "implement", description: "Ship it" }],
+  });
+  const agents = [sunAgent, bulmaAgent];
+
+  // A document holding the given mention nodes, in order.
+  function editorWithMentions(mentions: { id: string; type: "agent" | "member" }[]) {
+    return {
+      state: {
+        doc: {
+          descendants: (fn: (node: { type: { name: string }; attrs: Record<string, unknown> }) => void) => {
+            for (const m of mentions) fn({ type: { name: "mention" }, attrs: { id: m.id, type: m.type, label: m.id } });
+            fn({ type: { name: "text" }, attrs: {} });
+          },
+        },
+      },
+    };
+  }
+
+  function menu(opts: { mentions?: { id: string; type: "agent" | "member" }[]; assignee: string | null; query?: string }) {
+    const suggestion = createBuiltinCommandSuggestion({
+      getSkillSource: (ids) => skillSourceFor(agents, ids, opts.assignee),
+    });
+    const items = suggestion.items!({
+      query: opts.query ?? "",
+      editor: editorWithMentions(opts.mentions ?? []),
+    } as never) as SlashCommandItem[];
+    return items;
+  }
+
+  it("with no @, lists the agent assignee's skills after the built-ins", () => {
+    const items = menu({ assignee: "agent-sun" });
+    expect(items.map((i) => i.label)).toEqual(["note", "codebase-design", "code-review"]);
+    expect(items.filter((i) => i.skill).map((i) => i.id)).toEqual(["sk-design", "sk-review"]);
+  });
+
+  it("with an @agent, lists the first mentioned agent's skills instead of the assignee's", () => {
+    const items = menu({
+      mentions: [{ id: "u-1", type: "member" }, { id: "agent-bulma", type: "agent" }, { id: "agent-sun", type: "agent" }],
+      assignee: "agent-sun",
+    });
+    expect(items.filter((i) => i.skill).map((i) => i.label)).toEqual(["implement"]);
+  });
+
+  it("with no agent at all, offers only the built-ins", () => {
+    const items = menu({ mentions: [{ id: "u-1", type: "member" }], assignee: null });
+    expect(items.map((i) => i.label)).toEqual(["note"]);
+  });
+
+  it("matches skills by name only, prefix first", () => {
+    expect(menu({ assignee: "agent-sun", query: "review" }).map((i) => i.label)).toEqual(["code-review"]);
+    expect(menu({ assignee: "agent-sun", query: "deep" })).toEqual([]);
+    expect(menu({ assignee: "agent-sun", query: "co" }).map((i) => i.label)).toEqual(["codebase-design", "code-review"]);
+  });
+
+  it("skips an archived agent and falls back to the assignee", () => {
+    const archived = agent({ id: "agent-old", name: "Old", archived_at: "2026-01-01T00:00:00Z", skills: [] });
+    expect(skillSourceFor([...agents, archived], ["agent-old"], "agent-sun")?.agentName).toBe("Sun");
+  });
+
+  it("collects agent mentions in document order without duplicates", () => {
+    const ed = editorWithMentions([
+      { id: "agent-bulma", type: "agent" },
+      { id: "u-1", type: "member" },
+      { id: "agent-bulma", type: "agent" },
+      { id: "agent-sun", type: "agent" },
+    ]);
+    expect(mentionedAgentIds(ed.state.doc as never)).toEqual(["agent-bulma", "agent-sun"]);
+  });
+
+  it("heads the skills with the agent's name, below the built-ins", () => {
+    const { getByText, container } = render(
+      <I18nWrapper>
+        <SlashCommandList
+          items={[...buildBuiltinCommandItems(""), ...buildSkillCommandItems("", skillSourceFor(agents, [], "agent-sun")!.skills)]}
+          query=""
+          command={vi.fn()}
+          hideOnEmpty
+          skillAgentName="Sun"
+        />
+      </I18nWrapper>,
+    );
+    expect(getByText("Sun's skills")).toBeInTheDocument();
+    const labels = [...container.querySelectorAll("button span.font-medium")].map((n) => n.textContent);
+    expect(labels).toEqual(["/note", "/codebase-design", "/code-review"]);
+  });
+
+  it("says how to get skills when there is no agent", () => {
+    const { getByText } = render(
+      <I18nWrapper>
+        <SlashCommandList items={buildBuiltinCommandItems("")} query="" command={vi.fn()} hideOnEmpty skillHint />
+      </I18nWrapper>,
+    );
+    expect(getByText("@ an agent to pick one of its skills")).toBeInTheDocument();
+  });
+
+  it("inserts a skill marker node, not plain text", () => {
+    const inserted: unknown[] = [];
+    const chain = {
+      focus: () => chain,
+      insertContentAt: (_range: unknown, content: unknown) => {
+        inserted.push(content);
+        return chain;
+      },
+      run: () => true,
+    };
+    const ed = { chain: () => chain, view: { state: { selection: { $to: { nodeAfter: null } } } } };
+    const suggestion = createBuiltinCommandSuggestion({ getSkillSource: () => null });
+    const sel = vi.spyOn(window, "getSelection").mockReturnValue(null);
+    suggestion.command!({
+      editor: ed,
+      range: { from: 0, to: 3 },
+      props: { id: "sk-impl", label: "implement", skill: true },
+    } as never);
+    sel.mockRestore();
+    expect(inserted).toEqual([[
+      { type: "slashCommand", attrs: { id: "sk-impl", label: "implement", mentionSuggestionChar: "/" } },
+      { type: "text", text: " " },
+    ]]);
   });
 });

@@ -37,6 +37,7 @@ func (d *Daemon) gcLoop(ctx context.Context) {
 		"orphan_ttl", d.cfg.GCOrphanTTL,
 		"artifact_ttl", d.cfg.GCArtifactTTL,
 		"repo_ttl", d.cfg.GCRepoTTL,
+		"outputs_ttl", d.cfg.GCOutputsTTL,
 		"repo_maintenance_enabled", d.cfg.GCRepoMaintenanceEnabled,
 		"shared_package_store", d.cfg.SharedPackageStoreEnabled,
 		"package_store_prune_interval", d.cfg.GCPackageStorePruneInterval,
@@ -117,6 +118,7 @@ type gcStats struct {
 	taskTempDirsReclaimed         int            // per-task temp dirs under the temp base reclaimed after their owning execution ended
 	taskRootIndexEntriesReclaimed int            // abandoned stable-root records and unpublished entries reclaimed past the orphan TTL
 	sharedScratchReclaimed        int            // idle shared-session folders reclaimed past their retention
+	outputsReclaimed              int            // local attachment copies reclaimed past their retention
 	packageStoreBytesReclaimed    int64          // bytes freed from the shared package store under .pkg-store
 	bytesReclaimed                int64          // total bytes freed in this cycle
 	byPattern                     map[string]int // configured basename or managed path label -> reclaim count
@@ -200,6 +202,16 @@ func (d *Daemon) runGC(ctx context.Context) {
 		stats.bytesReclaimed += storeBytes
 	}
 
+	// Local attachment copies the desktop app opens in place. They live under
+	// the profile dir, not WorkspacesRoot, and are keyed by attachment id, so
+	// the only clock that applies is how long ago the upload wrote them.
+	if d.localOutputs != nil {
+		if removed, reclaimed := d.localOutputs.Prune(d.cfg.GCOutputsTTL); removed > 0 {
+			stats.outputsReclaimed += removed
+			stats.bytesReclaimed += reclaimed
+		}
+	}
+
 	// Idle conversation folders under .sessions. They are not task
 	// directories, so the workspace walk above never sees them, and they are
 	// not a user's files: the pruner refuses anything outside that root,
@@ -232,7 +244,7 @@ func (d *Daemon) runGC(ctx context.Context) {
 		}
 	}
 
-	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 || stats.packageStoreBytesReclaimed > 0 || stats.sharedScratchReclaimed > 0 {
+	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 || stats.packageStoreBytesReclaimed > 0 || stats.sharedScratchReclaimed > 0 || stats.outputsReclaimed > 0 {
 		d.logger.Info("gc: cycle complete",
 			"cleaned", stats.cleaned,
 			"orphaned", stats.orphaned,
@@ -246,6 +258,7 @@ func (d *Daemon) runGC(ctx context.Context) {
 			"task_temp_dirs_reclaimed", stats.taskTempDirsReclaimed,
 			"task_root_index_entries_reclaimed", stats.taskRootIndexEntriesReclaimed,
 			"shared_scratch_reclaimed", stats.sharedScratchReclaimed,
+			"outputs_reclaimed", stats.outputsReclaimed,
 			"package_store_bytes_reclaimed", stats.packageStoreBytesReclaimed,
 			"bytes_reclaimed", stats.bytesReclaimed,
 			"by_pattern", stats.byPattern,

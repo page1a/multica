@@ -16,7 +16,8 @@ What it may do, and only when the slot is still **empty**:
   considered by the stale-review sweep. Its terminal result feeds the parent
   stage/barrier; the parent is the single issue that later enters `in_review`
   for a unified review of the full child tree.
-- **`todo`** — fill the assignee with a seat from the tier ladder. For a
+- **`todo`** — fill the assignee with a seat from the tier ladder (seats with
+  `dispatch_mode: mention_only` are never on it, whatever their tier). For a
   top-level issue, also fill the issue's 验收席 with a seat or 「不需要验收」.
   **Routing never writes a person
   into 验收席**: an issue a person holds is one routing never touches again, so
@@ -112,9 +113,20 @@ whose scene has a domain lands on that base role's 对口 specialisation
 (孙悟空出海 on an 出海 issue or project); a quote that names the specialisation itself is
 kept as said. If it does
 not — a made-up quote, someone else's comment, another agent's relay, or a
-quote without the name — the ticket stays unassigned and the response tells
-you why, so ask the person instead of guessing. Do not quote comments from
-third parties or other agents: they never count.
+quote without the name — it counts as no quote: the pick is set aside, routing
+fills the slot, and the response and stderr say so. Nobody waits on you; do
+not go back to the person for words. If the person names someone later,
+reassign with `--per-quote` then. When the person never named anyone, create
+the ticket without an executor. Do not quote comments from third parties or
+other agents: they never count.
+
+A seat routing filled is a stand-in. When a person's decision replaces it —
+their own hand, or their words through `--per-quote` — the runs that seat's
+assignment started are cancelled, so two seats never work the same ticket. Its
+other runs (a mention, a squad) are left alone, and so is the run making the
+request. A cancelled run that had started keeps its work on its
+`agent/agent/<issue>` snapshot branch. Replacing a seat a person chose cancels
+nothing.
 
 Past `todo` the rule is stricter: on a ticket that is `in_progress`,
 `in_review`, `blocked` or later, an agent cannot put a **different** agent or
@@ -169,6 +181,22 @@ multica workspace routing set --allow-upshift on
 
 Both flags write the existing `settings.routing` fields used by the web
 settings page; they do not create a CLI-only policy.
+
+The routing model's confidence floor and the stale-review sweep window are
+also part of the same settings block. `confidence_threshold` accepts a value
+in `(0, 1]`; `stale_review_hours` accepts a positive number of hours up to one
+year. The get command prints the effective defaults (`0.6` and `24`) when a
+legacy workspace has no saved value:
+
+```bash
+multica workspace routing get
+multica workspace routing set --confidence-threshold 0.75
+multica workspace routing set --stale-review-hours 48
+```
+
+These flags update `settings.routing.confidence_threshold` and
+`settings.routing.stale_review_hours`, the fields used by the settings page,
+server routing, and the stale-review sweep.
 
 So when you split work into stages, leave each child to routing: the next
 stage reaches the seat that did the previous one by itself once the switch is

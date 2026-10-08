@@ -34,7 +34,9 @@
     "steer_resend_failed": "没能作为新一轮发送。",
     "steer_step": "{{name}} 插话",
     "steer_step_read": "已读取",
-    "retrying": "正在等待重试。"
+    "retrying": "正在等待重试。",
+    "skills_used": "用到 skill：{{names}}",
+    "skill_step": "使用 skill {{name}}"
   },
   "working_filter_error": {
     "title": "无法加载智能体正在处理的任务"
@@ -535,6 +537,9 @@
       "duration": "时长",
       "budget_warning": "这个目标已用掉至少 80% 的预算。到达上限后目标会暂停，并在提问卡片里问下一步。",
       "stopped_hint": "这个目标已暂停。请在收件箱的选项提问里选择再给预算、调整完成线或结束目标。",
+      "stopped_by": "已停止 · 由 {{name}} 停，任务按普通方式继续。",
+      "stopped_by_for": "已停止 · 由 {{name}} 按 {{person}} 的话停，任务按普通方式继续。",
+      "stop_reason": "「{{reason}}」",
       "evidence_item": "证据",
       "open_evidence": "打开证据",
       "status": {
@@ -601,7 +606,16 @@
     "title_suggestion_dismiss": "忽略",
     "title_suggestion_updated": "标题已更新",
     "title_suggestion_apply_failed": "采用建议标题失败",
-    "title_suggestion_dismiss_failed": "忽略建议标题失败"
+    "title_suggestion_dismiss_failed": "忽略建议标题失败",
+    "delivery_line": {
+      "section": "交付分支",
+      "section_children": "子票提交",
+      "delivers_to": "交付到父票 {{identifier}} 的分支",
+      "status_open": "还没并回",
+      "status_merged_other": "已并回 {{count}} 个提交",
+      "status_conflict": "并回冲突，等执行人解决",
+      "show_all_other": "展开全部 {{count}} 个"
+    }
   },
   "timeline": {
     "loading": "加载中…"

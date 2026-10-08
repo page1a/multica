@@ -32,9 +32,10 @@ export interface TraceCallStep {
   durationMs?: number;
 }
 
-/** Agent prose, model thinking, or an error: one message, nothing to pair. */
+/** Agent prose, model thinking, an error, or a skill-use marker (the skill
+ *  name rides in `item.tool`): one message, nothing to pair. */
 export interface TraceMessageStep {
-  kind: "text" | "thinking" | "error";
+  kind: "text" | "thinking" | "error" | "skill";
   seq: number;
   item: TimelineItem;
   startedAt?: string;
@@ -197,7 +198,7 @@ export function groupSteps(steps: TraceStep[]): TraceRow[] {
   return rows;
 }
 
-// `TraceMessageStep` carries three kinds on one interface, so a `kind` check
+// `TraceMessageStep` carries four kinds on one interface, so a `kind` check
 // alone narrows the property without dropping the constituent. These predicates
 // are what let callers switch on a row and get a usable type back.
 export function isGroupRow(row: TraceRow): row is TraceGroupRow {
@@ -209,7 +210,7 @@ export function isCallStep(row: TraceRow): row is TraceCallStep {
 }
 
 export function isMessageStep(row: TraceRow): row is TraceMessageStep {
-  return row.kind === "text" || row.kind === "thinking" || row.kind === "error";
+  return row.kind === "text" || row.kind === "thinking" || row.kind === "error" || row.kind === "skill";
 }
 
 /** Every call inside a row, so a group and a lone call read the same way. */

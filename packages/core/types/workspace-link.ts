@@ -32,14 +32,23 @@ export interface WorkspaceLink {
 export interface WorkspaceLinkAbilities {
   create: boolean;
   accept: boolean;
+  /** May pull another workspace's projects in; the lookup adds whether the
+   * caller also owns that workspace. */
+  pull: boolean;
   manage: boolean;
   audit: boolean;
 }
 
-/** The workspace a pasted link or slug names (exact match, owner only). */
+/** The workspace a pasted link or slug names (exact match, owner/admin). */
 export interface WorkspaceLinkLookup {
   workspace: WorkspaceLinkWorkspace;
+  /** Whether the caller may pull that workspace's projects in (owns it), and
+   * its shareable projects when so. */
+  pull?: { allowed: boolean; projects: WorkspaceLinkProject[] };
 }
+
+/** "offer" shares this workspace's projects; "pull" reads the other's. */
+export type WorkspaceLinkDirection = "offer" | "pull";
 
 export interface ListWorkspaceLinksResponse {
   links: WorkspaceLink[];

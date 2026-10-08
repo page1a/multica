@@ -87,10 +87,11 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 				for _, want := range []string{
 					"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file ./reply.md --output table && rm ./reply.md",
 					// MUL-5442 cross-channel dedup: shell-hazard mechanics live in
-					// the brief's Comment Formatting; the cookbook keeps the
-					// file-first order, the command, and the pointer.
+					// `multica issue comment add --help` (moved out of the brief's
+					// Comment Formatting section in DENE-1329); the cookbook keeps
+					// the file-first order, the command, and the pointer.
 					"Write the body file first",
-					"## Comment Formatting",
+					"`multica issue comment add --help`",
 					"#4182",
 					"Keep the `&&`",
 					"do NOT reuse --parent values from previous turns",
@@ -109,6 +110,9 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 					"<<'COMMENT'",
 					"cat <<",
 					"--parent " + triggerID + " --content-stdin",
+					// DENE-1329: the brief no longer has this section, so a
+					// pointer to it would dangle.
+					"## Comment Formatting",
 				} {
 					if strings.Contains(got, banned) {
 						t.Errorf("%s reply instructions still contains %q\n---\n%s", name, banned, got)
@@ -142,8 +146,9 @@ func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 			for _, want := range []string{
 				"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file ./reply.md --output table",
 				// MUL-5442 cross-channel dedup: the $OutputEncoding trap's
-				// full mechanics live once, in the brief's Windows Comment
-				// Formatting variant; the per-turn cookbook keeps the ban,
+				// full mechanics live once, in `multica issue comment add
+				// --help` (DENE-1329 moved them out of the brief's Comment
+				// Formatting section); the per-turn cookbook keeps the ban,
 				// the one-line consequence, and the pointer.
 				"if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
 				// #8627: the host OS does not fix the agent's shell — Claude
@@ -154,7 +159,7 @@ func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 				"Write the body file first",
 				"never pipe via `--content-stdin`",
 				"PowerShell drops non-ASCII",
-				"## Comment Formatting",
+				"`multica issue comment add --help`",
 			} {
 				if !strings.Contains(got, want) {
 					t.Errorf("%s reply instructions missing %q\n---\n%s", provider, want, got)
@@ -164,6 +169,8 @@ func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 				"<<'COMMENT'",
 				"--parent " + triggerID + " --content-stdin",
 				"cat <<",
+				// DENE-1329: the brief no longer has this section.
+				"## Comment Formatting",
 			} {
 				if strings.Contains(got, banned) {
 					t.Errorf("%s/windows reply instructions should not contain %q\n---\n%s", provider, banned, got)
@@ -211,16 +218,19 @@ func TestInjectRuntimeConfigKeepsTriggerCommentOutOfBrief(t *testing.T) {
 	}
 	for _, want := range []string{
 		// MUL-6417 retired the turn-mode router: one workflow, delivery
-		// routed on what the per-turn message carries. Pin the routing RULE
-		// halves — a compression that drops either delivery case must fail
-		// here.
-		"**Every issue turn runs the same workflow.**",
-		"with the `--parent` value it gives you for THIS turn",
-		"never one from an earlier turn",
-		"With no triggering comment, post a new top-level comment",
+		// routed on what the per-turn message carries. DENE-1329 slimmed the
+		// workflow to a verb map; pin the routing RULE halves that survive —
+		// the per-turn message names the trigger and the `--parent`, a
+		// closing turn delivers through `issue close`, and a turn that does
+		// not close replies under that `--parent`. A compression that drops
+		// either delivery case must fail here.
+		"### Workflow",
+		"The per-turn message says what woke you — an assignment, or a comment with the `--parent` to reply under",
+		"multica issue close <id> --outcome <...> --evidence-file ./close.md",
+		"posts one comment instead, under the `--parent` the per-turn message gave",
 		// The no-write default that makes the un-routed workflow safe: a
 		// turn that moved nothing writes nothing (MUL-6300 → MUL-6417).
-		"questions, discussion, and acknowledgements never touch status",
+		"A turn that only answers a question or consults on work owned elsewhere writes no status at all",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("CLAUDE.md missing %q\n---\n%s", want, s)
@@ -273,10 +283,15 @@ func TestWindowsCommentReplyInstructionsHaveNoStdin(t *testing.T) {
 // `--content-stdin`. Unlike the comment-trigger path, the assignment workflow
 // has no BuildCommentReplyInstructions override, so an agent that follows the
 // "post your final results" step literally would pipe its final comment through
-// PowerShell and drop non-ASCII bytes (#2198 / #2236 / #2376). The OS-aware
-// ## Comment Formatting section (file-only on Windows) is the single source of
-// truth; the Available Commands entry and step 5 must defer to it, not re-offer
-// stdin. The flag synopsis may still *list* `--content-stdin` as available.
+// PowerShell and drop non-ASCII bytes (#2198 / #2236 / #2376).
+//
+// Since DENE-1329 the brief no longer carries an OS-aware `## Comment
+// Formatting` section: the full file-only rules (UTF-8 file in the workdir,
+// cleanup gate, `--output table` vs `--output json`, the PowerShell "?"
+// trap) live in `multica issue comment add --help`, pinned in
+// server/cmd/multica. The brief keeps the one-line contract on its command
+// map — bodies via `--content-file` — and the pointer to `--help`, and still
+// must not offer stdin anywhere.
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestInjectRuntimeConfigWindowsAssignmentBriefStaysFileOnly(t *testing.T) {
@@ -303,31 +318,28 @@ func TestInjectRuntimeConfigWindowsAssignmentBriefStaysFileOnly(t *testing.T) {
 			}
 			s := string(data)
 
-			// The Windows Comment Formatting section is file-only.
+			// The brief's comment contract is file-only and defers the
+			// details to the command's --help.
 			for _, want := range []string{
-				"## Comment Formatting",
-				"On Windows, **always write the comment body to a UTF-8 file",
-				"do NOT pipe via `--content-stdin`",
-				"use `--output table` to confirm success without echoing the body",
-				"Use `--output json` instead when you need the returned comment ID, attachment details, or other response fields",
-				"Gate the cleanup on the post succeeding",
-				"empty stdout alone does not prove success",
+				"`issue comment list | add` — read / post comments (bodies via `--content-file`)",
+				"Run `multica <command> --help` for flags.",
 			} {
 				if !strings.Contains(s, want) {
-					t.Errorf("%s missing Windows file-only guidance %q\n---\n%s", fileName, want, s)
+					t.Errorf("%s missing file-only comment guidance %q\n---\n%s", fileName, want, s)
 				}
 			}
 
-			// No prose may RECOMMEND stdin on Windows. The flag synopsis may
-			// still list `--content-stdin`; only the prescriptive "file or
-			// stdin" phrasings are banned.
+			// No prose may RECOMMEND stdin on Windows, and the retired
+			// section must not come back as a dangling pointer.
 			for _, banned := range []string{
+				"--content-stdin",
 				"or `--content-stdin`",
 				"using `--content-file` or `--content-stdin`",
 				"use `--content-file <path>` or `--content-stdin`",
+				"## Comment Formatting",
 			} {
 				if strings.Contains(s, banned) {
-					t.Errorf("%s recommends stdin on Windows: %q\n---\n%s", fileName, banned, s)
+					t.Errorf("%s recommends stdin on Windows or points at a retired section: %q\n---\n%s", fileName, banned, s)
 				}
 			}
 		})

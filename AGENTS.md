@@ -33,7 +33,7 @@ Use `Makefile`, workspace `package.json` files, and `pnpm-workspace.yaml` for cu
 - Use the checkout's managed environment: `make up`, `make status`, `make down`. `make down` preserves data; `make destroy` removes the environment and its data.
 - Worktrees share PostgreSQL but have isolated databases/ports. Use the environment scripts and `.env.worktree`; do not copy the main checkout's `.env` or manually create a database through an assumed PostgreSQL instance.
 - Regenerate sqlc with `make sqlc` after SQL changes.
-- Allocate a migration with `make migration-new NAME=...`: it takes the next number after the latest on `origin/kun` (never after your branch's local files) and creates the empty up/down pair; run `make migration-lint` before opening the PR. See `docs/kun/migration-numbering.md`.
+- Allocate a migration with `make migration-new NAME=...`: it takes the next number after the latest on `origin/kun` (never after your branch's local files) and creates the empty up/down pair; run `make migration-lint` before opening the PR. A migration must keep the previous release working against the new schema (expand, then contract); one that cannot says `-- zero-downtime: unsafe` in its up file. See `docs/kun/migration-numbering.md`.
 - Run the narrowest useful checks while iterating, then broaden when risk warrants it. Report what actually ran and any skipped checks.
 
 Run these from the repository root:

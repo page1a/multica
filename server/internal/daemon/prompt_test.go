@@ -1078,8 +1078,9 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 func TestBuildPromptDefaultScansRootsFirst(t *testing.T) {
 	out := BuildPrompt(Task{IssueID: "issue-default-1"}, "claude")
 	for _, s := range []string{
-		"multica issue comment list issue-default-1 --roots-only --summary --compact --output json",
-		"--since",
+		// DENE-1329: the state card replaces the roots scan as the catch-up
+		// read; it lists the threads that moved since the last run.
+		"multica issue context issue-default-1",
 	} {
 		if !strings.Contains(out, s) {
 			t.Errorf("default BuildPrompt missing %q\n--- output ---\n%s", s, out)
@@ -1175,8 +1176,8 @@ func TestBuildPromptNewCommentsHint(t *testing.T) {
 	if !strings.Contains(out, "multica issue comment list "+issueID+" --since "+since+" --compact --output json") {
 		t.Errorf("hint must point at the issue-wide --since delta read, got:\n%s", out)
 	}
-	if !strings.Contains(out, "reading it is the scan workflow step 2 requires") {
-		t.Errorf("hint must say the delta read answers the scan, got:\n%s", out)
+	if !strings.Contains(out, "the server computed this delta") {
+		t.Errorf("hint must say the delta is server-computed, got:\n%s", out)
 	}
 	// The full-thread read stays available for the reply itself, on --tail 30
 	// (never `--thread ... --since ...`, which drops the thread root).
@@ -1229,8 +1230,13 @@ func TestBuildPromptColdStartThreadRead(t *testing.T) {
 	// flag surface here would put reference text on every cold turn. The scan
 	// is phrased as a flag swap on the thread command, not a second full
 	// command restating the UUID (MUL-5721 OPT-1).
-	if !strings.Contains(out, "`--roots-only --summary` in place of `--thread ... --tail 30`") {
-		t.Errorf("cold start must hand over the roots scan as the wide read, got:\n%s", out)
+	// DENE-1329: the wide read is the state card, which lists the threads that
+	// moved; the roots scan is retired from the per-turn hints.
+	if !strings.Contains(out, "Other threads that moved are listed on the state card: `multica issue context "+issueID+"`") {
+		t.Errorf("cold start must hand over the state card as the wide read, got:\n%s", out)
+	}
+	if strings.Contains(out, "--roots-only") {
+		t.Errorf("cold start must not hand over the retired roots scan, got:\n%s", out)
 	}
 	if strings.Contains(out, "Need cross-thread background") {
 		t.Errorf("cold hint must not make the scan optional (MUL-6984), got:\n%s", out)
@@ -1270,7 +1276,7 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 	for _, want := range []string{
 		"triggering comment is already included above",
 		"No other new comments on this issue since your last run",
-		"issue-wide delta is empty",
+		"issue-wide delta and it is empty",
 		"if resumed memory is not enough",
 		"multica issue comment list " + issueID + " --thread thread-root-1 --tail 30 --compact --output json",
 	} {
@@ -1288,7 +1294,7 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 	if strings.Contains(out, "scoped to the triggering thread") {
 		t.Errorf("resumed/no-delta prompt must not claim the delta is thread-scoped, got:\n%s", out)
 	}
-	if strings.Contains(out, "in place of `--thread ... --tail 30`") {
+	if strings.Contains(out, "Other threads that moved are listed on the state card") {
 		t.Errorf("resumed/no-delta prompt must not render the reconstruction (cold) hint, got:\n%s", out)
 	}
 }
@@ -1315,7 +1321,7 @@ func TestBuildPromptDroppedResumeWithNewCommentsTakesFreshPath(t *testing.T) {
 	out := BuildPrompt(task, "claude")
 	for _, want := range []string{
 		"multica issue comment list " + issueID + " --thread thread-root-1 --tail 30 --compact --output json",
-		"`--roots-only --summary` in place of `--thread ... --tail 30`",
+		"Other threads that moved are listed on the state card: `multica issue context " + issueID + "`",
 		"## Session Continuity Notice",
 	} {
 		if !strings.Contains(out, want) {
@@ -1368,7 +1374,7 @@ func TestBuildPromptOlderFallbackSessionRequiresReconstruction(t *testing.T) {
 
 	for _, want := range []string{
 		"multica issue comment list " + issueID + " --thread thread-root-1 --tail 30 --compact --output json",
-		"`--roots-only --summary` in place of `--thread ... --tail 30`",
+		"Other threads that moved are listed on the state card: `multica issue context " + issueID + "`",
 		"## Session Continuity Notice",
 	} {
 		if !strings.Contains(out, want) {
@@ -1416,13 +1422,14 @@ func TestBuildPromptResumedDeltaUnavailableStillRequiresScan(t *testing.T) {
 		if !strings.Contains(out, "You're resuming the prior session") {
 			t.Errorf("resumed prompt lost the session fact\n--- output ---\n%s", out)
 		}
-		// The scan is handed over, not waived.
-		if !strings.Contains(out, "multica issue comment list "+issueID+" --roots-only --summary --compact --output json") {
-			t.Errorf("resumed prompt with no delta must hand over the scan\n--- output ---\n%s", out)
+		// The wide read is handed over, not waived: the state card lists the
+		// threads that moved (DENE-1329 replaced the roots scan).
+		if !strings.Contains(out, "the state card lists the threads that moved since your last run: `multica issue context "+issueID+"`") {
+			t.Errorf("resumed prompt with no delta must hand over the state card\n--- output ---\n%s", out)
 		}
 		for _, banned := range []string{
 			"No other new comments on this issue since your last run",
-			"which answers the scan workflow step 2 requires",
+			"issue-wide delta and it is empty",
 		} {
 			if strings.Contains(out, banned) {
 				t.Errorf("resumed prompt claims an answer it does not have (%q)\n--- output ---\n%s", banned, out)
@@ -1437,7 +1444,7 @@ func TestBuildPromptResumedDeltaUnavailableStillRequiresScan(t *testing.T) {
 
 		for _, want := range []string{
 			"No other new comments on this issue since your last run",
-			"which answers the scan workflow step 2 requires",
+			"the server computed this turn's issue-wide delta and it is empty",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("authoritative empty delta lost the waiver %q\n--- output ---\n%s", want, out)
@@ -1445,7 +1452,7 @@ func TestBuildPromptResumedDeltaUnavailableStillRequiresScan(t *testing.T) {
 		}
 		// The waiver is the whole point of this branch: it must not also hand
 		// the scan over, or the two branches are indistinguishable.
-		if strings.Contains(out, "nothing here answers the scan workflow step 2 requires") {
+		if strings.Contains(out, "This turn carries no issue-wide comment delta") {
 			t.Errorf("authoritative empty delta rendered the unknown-delta hint\n--- output ---\n%s", out)
 		}
 	})
@@ -1838,15 +1845,16 @@ func TestBuildCommentPromptCrossThreadFansOutReplies(t *testing.T) {
 	if strings.Contains(out, "always use the trigger comment ID below") {
 		t.Errorf("cross-thread prompt must not emit the single-parent reply cookbook, got:\n%s", out)
 	}
-	// MUL-5825: the fan-out block points at the brief's `## Comment
-	// Formatting` for the posting mechanism instead of restating it, so the
-	// assembled cross-thread prompt carries no `comment add` example commands
-	// at all — the `--parent` targets plus the pointer are the whole recipe.
-	if strings.Contains(out, "multica issue comment add") {
-		t.Errorf("cross-thread prompt re-grew embedded comment-add commands (mechanism lives in ## Comment Formatting — MUL-5825), got:\n%s", out)
+	// MUL-5825: the fan-out block points at the posting mechanism instead of
+	// restating it, so the assembled cross-thread prompt carries no `comment
+	// add` example commands at all — the `--parent` targets plus the pointer
+	// are the whole recipe. DENE-1329 moved the mechanism from the brief's
+	// `## Comment Formatting` into `multica issue comment add --help`.
+	if strings.Contains(out, "multica issue comment add "+task.IssueID) {
+		t.Errorf("cross-thread prompt re-grew embedded comment-add commands (mechanism lives in `--help` — MUL-5825), got:\n%s", out)
 	}
-	if !strings.Contains(out, "`## Comment Formatting`") {
-		t.Errorf("cross-thread prompt must point at the brief's Comment Formatting mechanism, got:\n%s", out)
+	if !strings.Contains(out, "(see `multica issue comment add --help`)") {
+		t.Errorf("cross-thread prompt must point at the comment add help, got:\n%s", out)
 	}
 
 	// Chronological ordering (MUL-4348 test-round-2 problem #1): replies must be
@@ -1923,7 +1931,7 @@ func TestPerTurnContextBlocksCarryMovedBriefSections(t *testing.T) {
 		// that says "could NOT be restored" and asks the agent to announce it).
 		// What this test cares about is that the section reaches the per-turn
 		// message at all, not which variant it is.
-		"could not be restored",
+		"could not continue its earlier session",
 		"## On Behalf Of",
 		"acting on behalf of **Bohan** (bohan@example.com)",
 		"credentials and access remain scoped to the runtime owner",
@@ -2061,7 +2069,9 @@ func TestBriefCarriesNoModeRouter(t *testing.T) {
 			t.Errorf("brief still references the retired turn-mode split via %q (MUL-6417)\n---\n%s", banned, brief)
 		}
 	}
-	if !strings.Contains(brief, "**Issue status — write the state the issue is in, whenever it changes**") {
+	// DENE-1329: the unified status rule is now the single conditional
+	// start write in workflow step 2; the close owns the end state.
+	if !strings.Contains(brief, "2. If this turn produces any of the issue's own deliverable, set `in_progress` first") {
 		t.Errorf("brief lost the unified status rule\n---\n%s", brief)
 	}
 }
@@ -2523,5 +2533,43 @@ func TestBuildPromptHandoffCard(t *testing.T) {
 	}
 	if strings.Contains(BuildPrompt(Task{IssueID: "issue-1", IssueTitle: "Fix", IssueContextGeneratedAt: "now"}, "claude"), "## Handoff") {
 		t.Fatal("a run without a handoff card must not render the block")
+	}
+}
+
+// DENE-1331: the card's heading says why the run opens with it, and a cold
+// run that has the card drops the full thread summary list it duplicates.
+func TestBuildPromptStateCardReasons(t *testing.T) {
+	base := Task{
+		IssueID: "issue-1", IssueTitle: "Fix", IssueContextGeneratedAt: "now",
+		IssueCommentSummaries: []IssueContextComment{{ThreadID: "t-1", Content: "一条很长的旧讨论"}},
+		IssueTriggerThread:    []IssueContextComment{{ID: "c-1", Content: "触发评论"}},
+	}
+	for reason, want := range map[string]string{
+		"":              "This issue was just handed to you",
+		"handoff":       "This issue was just handed to you",
+		"baton":         "Someone else closed or handed off this issue",
+		"wakeup":        "as the wakeup fires",
+		"fresh_session": "starts a new session in the same working directory",
+	} {
+		task := base
+		task.IssueHandoffCard, task.IssueStateCardReason = "## 状态卡 DENE-1\n上一棒交代：接着修缓存", reason
+		out := BuildPrompt(task, "claude")
+		for _, w := range []string{want, "上一棒交代：接着修缓存", "触发评论"} {
+			if !strings.Contains(out, w) {
+				t.Fatalf("reason %q: prompt missing %q:\n%s", reason, w, out)
+			}
+		}
+		if strings.Contains(out, "一条很长的旧讨论") {
+			t.Fatalf("reason %q: a run with the card still lists every thread:\n%s", reason, out)
+		}
+	}
+	if out := BuildPrompt(base, "claude"); !strings.Contains(out, "一条很长的旧讨论") {
+		t.Fatalf("a cold run without the card lost its thread summaries:\n%s", out)
+	}
+
+	wake := base
+	wake.WakeupID, wake.IssueHandoffCard, wake.IssueStateCardReason = "w-1", "上一棒交代：等 CI", "wakeup"
+	if out := BuildPrompt(wake, "claude"); !strings.Contains(out, "[WAKEUP]") || !strings.Contains(out, "上一棒交代：等 CI") {
+		t.Fatalf("a wakeup does not open with the card:\n%s", out)
 	}
 }

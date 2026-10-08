@@ -48,7 +48,10 @@ import {
   isObjectURL,
   useResignedInlineMedia,
 } from "./hooks/use-inline-media-url";
-import { useDownloadAttachment } from "./use-download-attachment";
+import {
+  useAttachmentActions,
+  useLocalAttachment,
+} from "./use-attachment-actions";
 import { AttachmentCard, AttachmentFileCard } from "./attachment-card";
 import { canOpenPreview, getPreviewKind, type PreviewKind } from "./utils/preview";
 import "./styles/attachment.css";
@@ -339,7 +342,7 @@ export function Attachment({
   const { resolveAttachment, openByUrl } = useAttachmentDownloadResolver();
   const cdnDomain = useConfigStore((s) => s.cdnDomain);
   const cdnSigned = useConfigStore((s) => s.cdnSigned);
-  const download = useDownloadAttachment();
+  const { download } = useAttachmentActions();
   const preview = useAttachmentPreview();
   const sequence = usePreviewSequence();
 
@@ -365,6 +368,11 @@ export function Attachment({
   // Object URLs are session-local, so anything that hands a URL to the user or
   // to another surface keeps the durable pick instead.
   const shareUrl = isObjectURL(mediaUrl) ? state.url : mediaUrl;
+  // Desktop: a file an agent on this computer uploaded opens in place.
+  // Images keep their inline viewer.
+  const local = useLocalAttachment(
+    kind === "image" || state.uploading ? null : state.attachmentId,
+  );
 
   // Identity this attachment has in the surrounding surface's sequence: the
   // attachment id once the URL resolves to a record, otherwise the URL exactly
@@ -405,7 +413,7 @@ export function Attachment({
 
   const handleDownload = () => {
     if (state.attachmentId) {
-      download(state.attachmentId);
+      download({ attachmentId: state.attachmentId });
       return;
     }
     if (shareUrl) openByUrl(shareUrl);
@@ -449,6 +457,7 @@ export function Attachment({
           onPreview={openPreview}
           onDownload={handleDownload}
           onDelete={editable ? onDelete : undefined}
+          local={local}
         />
         {preview.modal}
       </>
@@ -467,6 +476,7 @@ export function Attachment({
         onPreview={openPreview}
         onDownload={handleDownload}
         onDelete={editable ? onDelete : undefined}
+        local={local}
       />
       {preview.modal}
     </>

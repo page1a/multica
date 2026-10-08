@@ -5,7 +5,7 @@
 | 配置项 | Web/Desktop | 服务端读取点 | CLI | 结论 |
 | --- | --- | --- | --- | --- |
 | 路由启用、分析/判断角色、模型、来源、运行时、思考级别 | Settings → Routing；保存 `settings.routing` | `routing.Settings`、`Mode()`、`PrimaryTarget()` | `workspace routing get/set` | 一致 |
-| 置信度阈值、验收席滞留时长 | Settings → Routing | `Settings.ConfidenceThreshold`、`StaleReviewHours` | 暂无专用 CLI；服务端仍读取同一字段 | 数据源一致；CLI 长尾缺口，后续可补 |
+| 置信度阈值、验收席滞留时长 | Settings → Routing | `Settings.ConfidenceThreshold`、`StaleReviewHours` | `workspace routing get/set --confidence-threshold`、`--stale-review-hours` | 一致；CLI 显示并写回同一 `settings.routing` 字段 |
 | 用量优先 | Settings → Routing → `usage_priority` | `Settings.SeatOrder()` / `Ladder.WithSeatOrder()` | `workspace routing get/set --usage-priority on|off` | 已补齐 CLI，并覆盖默认值（缺省为 on） |
 | 允许上调一档 | Settings → Routing → `allow_upshift` | `Settings.SeatOrder()` / `Ladder` 上调逻辑 | `workspace routing get/set --allow-upshift on|off` | 已补齐 CLI |
 | 接着做、负载分流 | Settings → Routing → `prefer_continuation`、`prefer_idle` | 路由选择器读取同一开关 | `workspace routing get/set --continuation`、`--load` | 一致 |
@@ -21,4 +21,4 @@
 - 本轮发现并修复的前后端/CLI 不一致是 `workspace routing get` 不显示、`set` 不能修改 `usage_priority` 和 `allow_upshift`。
 - 旧席位档位表只用于默认阶梯；已存在的席位标签和实际模型优先。
 - 分身席位灰显不是丢失写权限：它表示 `runtime_inherited=true`。解除跟随会保留当前运行配置，之后才允许独立编辑；这是服务端的两步校验，界面已在智能体详情提供入口。
-- 置信度、滞留时长等长尾字段已有统一服务端真源，但没有专用 CLI 参数；它们不再由环境变量或 CLI 推断。后续若需要 Agent 直接编辑，应新增同一 `settings.routing` 的 CLI 参数，而不是另存一份配置。
+- 置信度、滞留时长等字段已有统一服务端真源；CLI 显示有效默认值并写回同一 `settings.routing` 字段，不另存一份配置。

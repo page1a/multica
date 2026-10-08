@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { AlertCircle, Brain, Check, ChevronRight, CirclePause, Clock3, CornerDownRight, ExternalLink, Loader2, MessageSquare, RotateCcw, ScrollText, Square, Terminal } from "lucide-react";
+import { AlertCircle, BookOpen, Brain, Check, ChevronRight, CirclePause, Clock3, CornerDownRight, ExternalLink, Loader2, MessageSquare, RotateCcw, ScrollText, Square, Terminal } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -67,7 +67,19 @@ export function PlacedInlineCommentRun({ presentation = "inline", ...props }: Pa
 
 function PlacedRunSessionCaption({ task }: { task: AgentTask }) {
   const lineage = useRunSessionLineage(task.issue_id, task.id);
-  return <RunSessionCaption lineage={lineage} className="pb-1.5" />;
+  // A run that already replied folds into the reply's header; its skills stay visible here.
+  return <>
+    <RunSessionCaption lineage={lineage} className="pb-1.5" />
+    <RunSkillsLine names={task.skills_used ?? []} className="pb-1.5" />
+  </>;
+}
+
+function RunSkillsLine({ names, className }: { names: string[]; className?: string }) {
+  const { t } = useT("issues");
+  if (names.length === 0) return null;
+  return <p className={cn("break-words text-caption text-muted-foreground", className)} data-run-skills>
+    {t(($) => $.inline_run.skills_used, { names: names.join("、") })}
+  </p>;
 }
 
 export function InlineCommentRun({ run, className, viewState, showIdentity = false, presentation = "inline", replyTo, replacesFailureNotice = false }: {
@@ -146,12 +158,14 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
     : current?.kind === "text" ? redactSecrets(formatText(current.item.content ?? ""))
     : current?.kind === "thinking" ? thinkingPreview(current.item.content, formatText) || t(($) => $.inline_run.thinking)
     : current?.kind === "error" ? t(($) => $.inline_run.error)
+    : current?.kind === "skill" ? t(($) => $.inline_run.skill_step, { name: current.item.tool ?? "" })
     : t(($) => $.inline_run.waiting_response);
   const summary = task.status === "queued" ? t(($) => $.inline_run.queued)
     : task.status === "dispatched" ? t(($) => $.inline_run.starting)
     : task.status === "waiting_local_directory" ? t(($) => $.inline_run.waiting_directory)
     : task.status === "deferred" ? t(($) => $.inline_run.retrying)
     : activitySummary;
+  const skillsUsed = useMemo(() => runSkillsUsed(task.skills_used, items), [task.skills_used, items]);
   const showProgress = active && !hasReply;
   const activityLabel = t(($) => $.inline_run.view_activity);
   const stepLabel = steps.length > 0 ? t(($) => $.inline_run.steps, { count: steps.length }) : "";
@@ -237,6 +251,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
       </div>
       <div className={cn(showIdentity && "pl-8")}>
         <RunSessionCaption lineage={sessionLineage} />
+        <RunSkillsLine names={skillsUsed} />
         {replyTo}
         {output && <div className="mt-2 text-body"><ReadonlyContent content={redactSecrets(output)} /></div>}
         {needsAction && rawError && <p title={rawError}
@@ -330,7 +345,32 @@ function InlineSteer({ steer }: { steer: DeliveredSteer }) {
   </div>;
 }
 
+/**
+ * The skills a run used (DENE-1573): what the server recorded for a finished
+ * run, joined with the `skill` markers streamed so far, so a live run shows
+ * each one as it happens. First use wins the order; names never repeat.
+ */
+export function runSkillsUsed(recorded: string[] | undefined, items: { type: string; tool?: string }[]): string[] {
+  const names = [...(recorded ?? [])];
+  for (const item of items) {
+    if (item.type === "skill" && item.tool && !names.includes(item.tool)) names.push(item.tool);
+  }
+  return names;
+}
+
 function InlineStep({ row, live, formatText }: { row: TraceRow; live: boolean; formatText: (text: string) => string }) {
+  const { t } = useT("issues");
+  if (!isGroupRow(row) && !isCallStep(row) && row.kind === "skill") {
+    // A marker, not an action: nothing to expand.
+    return <div className="flex min-w-0 items-center gap-2 py-1.5 text-caption" data-run-skill-step>
+      <BookOpen aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{t(($) => $.inline_run.skill_step, { name: row.item.tool ?? "" })}</span>
+    </div>;
+  }
+  return <InlineStepDetails row={row} live={live} formatText={formatText} />;
+}
+
+function InlineStepDetails({ row, live, formatText }: { row: TraceRow; live: boolean; formatText: (text: string) => string }) {
   const { t } = useT("issues");
   const [open, setOpen] = useState(false);
   const disclosure = useRunDisclosureMotion(open);

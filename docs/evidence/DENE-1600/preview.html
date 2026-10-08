@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1600 派单模式 预览</title>
+<style>
+body{font:14px/1.5 -apple-system,"PingFang SC",sans-serif;background:#fafafa;color:#18181b;margin:24px}
+h2{font-size:14px;margin:24px 0 8px}
+.card{background:#fff;border:1px solid #e4e4e7;border-radius:10px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 18px;border-top:1px solid #e4e4e7}
+.row:first-child{border-top:0}
+.name{font-weight:600}.hint{color:#71717a;font-size:13px}
+.seg{display:inline-flex;border:1px solid #e4e4e7;border-radius:6px;overflow:hidden;flex:none}
+.seg span{padding:4px 10px;font-size:12px;color:#71717a;white-space:nowrap}
+.seg span+span{border-left:1px solid #e4e4e7}.seg .on{background:#f4f4f5;color:#18181b;font-weight:600}
+.desk{max-width:760px}.phone{width:390px;box-sizing:border-box;padding:0 16px}
+.phone .row{flex-direction:column;align-items:flex-start;gap:10px}
+</style></head><body>
+<h2>桌面</h2>
+<div class="card desk">
+<div class="row"><div><div class="name">档位</div><div class="hint">按强度匹配任务</div></div><div class="seg"><span>不参与</span><span class="on">弱</span><span>中</span><span>强</span><span>最强</span></div></div>
+<div class="row"><div><div class="name">派单模式</div><div class="hint">仅点名：不会被自动派单，只能被人或其他智能体指名找到</div></div><div class="seg"><span>自动</span><span class="on">仅点名</span></div></div>
+<div class="row"><div><div class="name">用量</div><div class="hint">账号额度的相对多少</div></div><div class="seg"><span>紧张</span><span class="on">常规</span><span>充足</span></div></div>
+</div>
+<h2>手机 390px</h2>
+<div class="phone"><div class="card">
+<div class="row"><div><div class="name">档位</div><div class="hint">按强度匹配任务</div></div><div class="seg"><span>不参与</span><span class="on">弱</span><span>中</span><span>强</span><span>最强</span></div></div>
+<div class="row"><div><div class="name">派单模式</div><div class="hint">仅点名：不会被自动派单，只能被人或其他智能体指名找到</div></div><div class="seg"><span>自动</span><span class="on">仅点名</span></div></div>
+<div class="row"><div><div class="name">用量</div><div class="hint">账号额度的相对多少</div></div><div class="seg"><span>紧张</span><span class="on">常规</span><span>充足</span></div></div>
+</div></div>
+</body></html>

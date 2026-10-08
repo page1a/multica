@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import {
+  DISPATCH_MODE_KEYS,
   ROUTING_TIER_KEYS,
+  dispatchModeKeyOf,
   ROUTING_USAGE_KEYS,
   routingTierKeyOf,
   routingUsageKeyOf,
+  type DispatchModeKey,
   type RoutingTierKey,
   type RoutingUsageKey,
 } from "@multica/core/agents";
@@ -44,6 +47,12 @@ export function routingUsageLabel(t: AgentsT, key: RoutingUsageKey): string {
     default:
       return t(($) => $.pickers.routing_usage_normal);
   }
+}
+
+export function dispatchModeLabel(t: AgentsT, key: DispatchModeKey): string {
+  return key === "mention_only"
+    ? t(($) => $.pickers.dispatch_mode_mention_only)
+    : t(($) => $.pickers.dispatch_mode_auto);
 }
 
 /**
@@ -155,6 +164,31 @@ export function RoutingUsageSegmented({
         label: routingUsageLabel(t, key),
       }))}
       value={routingUsageKeyOf(value)}
+      canEdit={canEdit}
+      onChange={onChange}
+    />
+  );
+}
+
+/** Whether automatic dispatch may pick the seat; independent of its rung. */
+export function DispatchModeSegmented({
+  value,
+  canEdit,
+  onChange,
+}: {
+  value: string | undefined;
+  canEdit: boolean;
+  onChange: (next: DispatchModeKey) => Promise<void> | void;
+}) {
+  const { t } = useT("agents");
+  return (
+    <Segmented
+      label={t(($) => $.inspector.prop_dispatch_mode)}
+      options={DISPATCH_MODE_KEYS.map((key) => ({
+        key,
+        label: dispatchModeLabel(t, key),
+      }))}
+      value={dispatchModeKeyOf(value)}
       canEdit={canEdit}
       onChange={onChange}
     />

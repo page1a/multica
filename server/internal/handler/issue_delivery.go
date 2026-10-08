@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -109,4 +112,57 @@ func writeDeliveryError(w http.ResponseWriter, err error, fallback string) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, fallback)
+}
+
+// claimDeliveryLine returns the parent's line a claimed sub-issue delivers
+// onto, opening it when open is true and the sub-issue qualifies. Failures
+// are logged and leave the run on its own branch, as before DENE-1537.
+func (h *Handler) claimDeliveryLine(ctx context.Context, issueID pgtype.UUID, open bool) *service.DeliveryLineClaim {
+	var (
+		line *db.IssueDeliveryLine
+		err  error
+	)
+	if open {
+		issue, getErr := h.Queries.GetIssue(ctx, issueID)
+		if getErr != nil {
+			return nil
+		}
+		line, err = service.OpenIssueDeliveryLine(ctx, h.Queries, issue)
+	} else {
+		line, err = service.GetIssueDeliveryLine(ctx, h.Queries, issueID)
+	}
+	if err != nil {
+		slog.Warn("task claim: delivery line lookup failed", "issue_id", uuidToString(issueID), "error", err)
+		return nil
+	}
+	if line == nil {
+		return nil
+	}
+	claim, err := service.DeliveryLineClaimFor(ctx, h.Queries, *line)
+	if err != nil {
+		slog.Warn("task claim: delivery line target failed", "issue_id", uuidToString(issueID), "error", err)
+		return nil
+	}
+	if line.BranchName.Valid && line.BranchName.String != "" {
+		claim.Branch = line.BranchName.String
+	}
+	return claim
+}
+
+// dropLineChildPulls empties the PR list of a sub-issue that delivers onto
+// its parent's line (DENE-1537). The parent's one PR carries `Closes` for
+// every child, so it links to them all; a child passing or flipping to done
+// must never be what merges that PR.
+func (h *Handler) dropLineChildPulls(ctx context.Context, issue db.Issue, prs []db.ListPullRequestsByIssueRow) []db.ListPullRequestsByIssueRow {
+	if len(prs) == 0 {
+		return prs
+	}
+	line, err := service.GetIssueDeliveryLine(ctx, h.Queries, issue.ID)
+	if err != nil {
+		slog.Warn("delivery line: lookup failed", "issue_id", uuidToString(issue.ID), "error", err)
+	}
+	if line != nil {
+		return nil
+	}
+	return prs
 }

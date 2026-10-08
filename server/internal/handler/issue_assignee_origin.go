@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -20,9 +21,10 @@ import (
 // desktop, CLI as a member) stands. One picked by an agent stands only when the
 // person the run belongs to said it in an earlier message in the direct chat
 // or issue thread, and the server can find those words in that message.
-// Anything else an agent names is rejected; an unquoted guess may still be
-// dropped for routing, but a supplied quote that fails verification leaves the
-// ticket unassigned so the agent can ask the person.
+// Anything else an agent names is its own guess: on a ticket routing judges it
+// is dropped and routing decides. A quote that fails verification is the same
+// guess, not a reason to hold the ticket (DENE-1613): the check decides whose
+// word the executor is, never whether the ticket gets one.
 type assignmentRuling struct {
 	// Apply is false when the executor named must not be written.
 	Apply bool
@@ -35,9 +37,8 @@ type assignmentRuling struct {
 	// a quote naming only a base role puts the issue on that role's
 	// specialisation for the issue's domain (DENE-1451).
 	Seat pgtype.UUID
-	// Reason is returned to an agent when a requested pick is rejected. It is
-	// intentionally explicit so the agent can ask the person for a real quote
-	// instead of guessing again.
+	// Reason is returned to an agent when a requested pick is not applied, so
+	// it knows what happened to the slot instead of guessing again.
 	Reason string
 }
 
@@ -71,6 +72,7 @@ func (h *Handler) rulePick(
 		return ruling
 	}
 
+	quoteFailed := false
 	if quote != "" {
 		if task, ok := h.liveTaskOf(r, actorID); ok {
 			if user, holds := h.quoteFromInitiator(r.Context(), task, assigneeType, assigneeID, quote); holds {
@@ -81,14 +83,8 @@ func (h *Handler) rulePick(
 				return ruling
 			}
 		}
-		if assigneeType.Valid && (assigneeType.String == "agent" || assigneeType.String == "squad") {
-			return assignmentRuling{
-				Apply:  false,
-				Source: routing.SourceQuoteRejected,
-				Reason: "assignee quote was not found in an earlier message by the person who started this run, or did not name the requested assignee " +
-					"(naming the base role is enough, e.g. the person says 孙悟空 and you pick the direction by project; ask the person for the words if they never named one)",
-			}
-		}
+		// Not verified: from here on it is an unquoted pick (DENE-1613).
+		quoteFailed = true
 	}
 
 	ruling := assignmentRuling{Apply: true, Source: routing.SourceAgent}
@@ -100,8 +96,11 @@ func (h *Handler) rulePick(
 		return ruling
 	}
 	if resultingStatus == "todo" || resultingStatus == "backlog" {
-		// Dropped quietly: routing fills an empty slot from scratch.
+		// Dropped: routing fills an empty slot from scratch.
 		ruling.Apply = false
+		if quoteFailed {
+			ruling.Reason = routing.ReasonQuoteNotVerified
+		}
 		return ruling
 	}
 	// Past todo (DENE-1201). The executor of a ticket in flight is not an
@@ -114,7 +113,34 @@ func (h *Handler) rulePick(
 	}
 	ruling.Apply = false
 	ruling.Reason = routing.ReasonAgentReassignInFlight
+	if quoteFailed {
+		ruling.Reason = "the --per-quote words were not found in an earlier message by the person who started this run, or did not name this assignee; " + ruling.Reason
+	}
 	return ruling
+}
+
+// voidRouterSeatRuns applies service.ReassignVoidsSeatRuns to a write that just
+// landed: prev is the issue before it, issue after it, ruling whose decision
+// the new executor is. Best effort — the reassignment stands either way.
+func (h *Handler) voidRouterSeatRuns(r *http.Request, prev, issue db.Issue, ruling assignmentRuling) {
+	if !ruling.Apply || h.TaskService == nil {
+		return
+	}
+	var except pgtype.UUID
+	if task, ok := h.taskFromRequestHeader(r); ok {
+		except = task.ID
+	}
+	cancelled, err := h.TaskService.CancelRunsVoidedByReassign(r.Context(), issue.ID,
+		service.ExecutorSeat{Type: prev.AssigneeType, ID: prev.AssigneeID, Source: prev.AssigneeSource.String},
+		service.ExecutorSeat{Type: issue.AssigneeType, ID: issue.AssigneeID, Source: ruling.Source},
+		except)
+	if err != nil {
+		slog.Warn("cancel runs of replaced router seat failed", "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	if len(cancelled) > 0 {
+		slog.Info("cancelled runs of replaced router seat", "issue_id", uuidToString(issue.ID), "count", len(cancelled))
+	}
 }
 
 // liveTaskOf returns the run the request belongs to: named by the

@@ -265,6 +265,9 @@
     "cancel": "取消",
     "prop_routing_tier": "档位",
     "prop_routing_tier_hint": "按强度匹配任务",
+    "prop_dispatch_mode": "派单模式",
+    "prop_dispatch_mode_hint": "仅点名：不会被自动派单，只能被人或其他智能体指名找到",
+    "routing_inherited_hint": "跟随基础角色。要单独设置，先关闭上方的「跟随基础角色的运行时」。",
     "prop_routing_usage": "用量",
     "prop_routing_usage_hint": "账号额度的相对多少"
   },
@@ -320,6 +323,8 @@
     "routing_tier_medium": "中",
     "routing_tier_weak": "弱",
     "routing_tier_none": "不参与",
+    "dispatch_mode_auto": "自动",
+    "dispatch_mode_mention_only": "仅点名",
     "routing_usage_tight": "紧张",
     "routing_usage_normal": "常规",
     "routing_usage_ample": "充足"
@@ -1223,7 +1228,8 @@
     "source_remote_checkout": "远端拉取",
     "source_mode_in_place": "一次一个任务，在你的工作副本中修改",
     "source_mode_worktree": "每个任务独立 git worktree",
-    "source_mode_shared": "共享目录，任务并发运行"
+    "source_mode_shared": "共享目录，任务并发运行",
+    "kind_skill": "skill"
   },
   "task_failure": {
     "cancelled_by_system": "已由系统取消",

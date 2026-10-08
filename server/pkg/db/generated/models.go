@@ -64,6 +64,7 @@ type Agent struct {
 	DoorbellEnabled       bool        `json:"doorbell_enabled"`
 	RoutingUsage          string      `json:"routing_usage"`
 	DomainID              pgtype.UUID `json:"domain_id"`
+	DispatchMode          string      `json:"dispatch_mode"`
 }
 
 type AgentAccessPass struct {
@@ -1121,6 +1122,21 @@ type IssueDeliveryBranch struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type IssueDeliveryLine struct {
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	OwnerIssueID  pgtype.UUID        `json:"owner_issue_id"`
+	Status        string             `json:"status"`
+	BranchName    pgtype.Text        `json:"branch_name"`
+	SourceBranch  pgtype.Text        `json:"source_branch"`
+	MergedTip     pgtype.Text        `json:"merged_tip"`
+	Commits       []byte             `json:"commits"`
+	ConflictFiles []string           `json:"conflict_files"`
+	MergedAt      pgtype.Timestamptz `json:"merged_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IssueDependency struct {
 	ID               pgtype.UUID `json:"id"`
 	IssueID          pgtype.UUID `json:"issue_id"`
@@ -1169,6 +1185,10 @@ type IssueGoal struct {
 	MaxNoProgressRounds    int32              `json:"max_no_progress_rounds"`
 	BudgetWarningAt        pgtype.Timestamptz `json:"budget_warning_at"`
 	LastContinuationTaskID pgtype.UUID        `json:"last_continuation_task_id"`
+	StoppedByType          pgtype.Text        `json:"stopped_by_type"`
+	StoppedByID            pgtype.UUID        `json:"stopped_by_id"`
+	StoppedOnBehalfOf      pgtype.UUID        `json:"stopped_on_behalf_of"`
+	StopReason             string             `json:"stop_reason"`
 }
 
 type IssueGoalCheck struct {

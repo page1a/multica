@@ -2170,6 +2170,11 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		DaemonID   string   `json:"daemon_id"`
 		RuntimeIDs []string `json:"runtime_ids"`
 		MaxTasks   int      `json:"max_tasks"`
+		// RecoverUndelivered / HeldTaskIDs (DENE-1611): the daemon's previous
+		// claim outcome was uncertain, so re-send tasks dispatched to it that it
+		// is not holding instead of waiting for the stale reclaim.
+		RecoverUndelivered bool     `json:"recover_undelivered"`
+		HeldTaskIDs        []string `json:"held_task_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2284,7 +2289,16 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claimed, err := h.TaskService.ClaimTasksForRuntimes(r.Context(), authorized, maxTasks)
+	heldTaskIDs := make([]pgtype.UUID, 0, len(req.HeldTaskIDs))
+	for _, raw := range req.HeldTaskIDs {
+		if id, perr := util.ParseUUID(raw); perr == nil {
+			heldTaskIDs = append(heldTaskIDs, id)
+		}
+	}
+	claimed, err := h.TaskService.ClaimTasksForRuntimesWithOptions(r.Context(), authorized, maxTasks, service.ClaimBatchOptions{
+		RecoverUndelivered: req.RecoverUndelivered,
+		HeldTaskIDs:        heldTaskIDs,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to claim tasks: "+err.Error())
 		return
@@ -2386,12 +2400,27 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		out = append(out, resp)
 	}
 
+	// Recovery is only finished when nothing undelivered is left. An empty answer
+	// can also mean "too young to take yet", so say so and let the daemon ask
+	// again (DENE-1611). Tasks returned by this claim are not undelivered.
+	recoveryPending := false
+	if req.RecoverUndelivered {
+		held := heldTaskIDs
+		for i := range claimed {
+			held = append(held, claimed[i].ID)
+		}
+		recoveryPending = h.TaskService.UndeliveredDispatchPending(r.Context(), authorized, held)
+	}
+
 	if len(out) > 0 {
 		slog.Info("tasks claimed by runtime batch",
 			"runtimes", len(authorized), "requested_max", maxTasks, "claimed", len(out),
 			"total_ms", time.Since(start).Milliseconds())
 	}
 	response := map[string]any{"tasks": out}
+	if recoveryPending {
+		response["recovery_pending"] = true
+	}
 	// Only opted-in daemons understand this additive response metadata. Query
 	// after the claim so a future fire_at can shorten the long healthy-WS safety
 	// poll; a task that crossed fire_at during this request yields a bounded
@@ -3197,8 +3226,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 		}
-		resp.IssueHandoffCard = h.handoffCardForRun(r.Context(), issue, agent, *task)
-
 		// Issue-state delta (MUL-7344). Every field below already sits on the
 		// `issue` row this claim loaded, so this costs one extra read — the
 		// PREVIOUS run's snapshot — and never a second GetIssue.
@@ -3482,6 +3509,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 
 		// Resolve the prior agent session / workdir to resume.
+		freshSession := false
 		if task.RerunOfTaskID.Valid {
 			// Manual retry: resume precisely from the source task the user
 			// clicked, NOT the most-recent (agent, issue) row — a parallel task
@@ -3545,7 +3573,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,
 			}); err == nil && prior.SessionID.Valid {
-				if prior.RuntimeID == task.RuntimeID {
+				// Cold and thick (DENE-1331): the cache is gone and the
+				// context is large, so the run starts a new session in the
+				// same working directory and opens with the state card. An
+				// automatic retry continues its parent's session regardless.
+				if prior.RuntimeID == task.RuntimeID && !task.RetryOfTaskID.Valid && h.sessionTooColdAndThick(r.Context(), *task, prior.SessionID.String) {
+					freshSession = true
+				} else if prior.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = prior.SessionID.String
 					// Same rule as the rerun path: date the deltas from the run
 					// this session belongs to. GetLastTaskSession skips poisoned
@@ -3641,6 +3675,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 				}
 			}
+		}
+
+		// The state card this run opens with, now that the session is known.
+		// A run continuing its interrupted session already has everything.
+		if !(task.RetryOfTaskID.Valid && !task.ForceFreshSession && task.SessionID.Valid) {
+			resp.IssueHandoffCard, resp.IssueStateCardReason = h.stateCardForRun(r.Context(), issue, agent, *task, resp.WakeupID != "", freshSession)
 		}
 	}
 
@@ -4277,6 +4317,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			status:  http.StatusUnprocessableEntity,
 			message: reason,
 		}
+	}
+
+	// DENE-1537: a sub-issue delivers onto its parent's branch. The line is
+	// opened only on a worktree run by a daemon that can fork from it and
+	// merge back; once open it is handed to every later run of the issue.
+	if task.IssueID.Valid && requestHasClientCapability(r, protocol.DaemonCapabilityDeliveryLineV1) {
+		resp.DeliveryLine = h.claimDeliveryLine(r.Context(), task.IssueID, resp.CodeDecision != nil && resp.CodeDecision.Kind() == coderesolve.KindLocalWorktree)
 	}
 
 	// DENE-727: an automatic retry that inherited the parent's session already
@@ -6470,9 +6517,33 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	// for a column that is near-empty on runs that have not finished.
 	if !activeOnly {
 		h.hydrateTaskUsage(r.Context(), issue.ID, resp)
+		h.hydrateTaskSkills(r.Context(), issue.ID, resp)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// hydrateTaskSkills attaches the skills each run used (DENE-1573), read from
+// the `skill` transcript rows the daemon appends on first use. One query for
+// the issue, then a map join. Like usage it is display metadata: an error
+// leaves every row without the list rather than failing the log. A live run
+// shows its skills from the transcript stream, so the active path skips it.
+func (h *Handler) hydrateTaskSkills(ctx context.Context, issueID pgtype.UUID, resp []AgentTaskResponse) {
+	if len(resp) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListIssueTaskSkills(ctx, issueID)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	byTask := make(map[string][]string, len(resp))
+	for _, row := range rows {
+		id := uuidToString(row.TaskID)
+		byTask[id] = append(byTask[id], row.Skill)
+	}
+	for i := range resp {
+		resp[i].SkillsUsed = byTask[resp[i].ID]
+	}
 }
 
 // hydrateTaskUsage attaches each run's own token usage to the execution-log

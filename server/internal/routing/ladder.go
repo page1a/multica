@@ -314,10 +314,15 @@ func (l Ladder) upshift(rung, above []Agent, scene Scene) (Agent, bool) {
 
 // taggedByTier groups the roster by the tier key each seat was tagged with.
 // Untagged seats and seats carrying a tier this ladder does not declare are
-// dropped: an unknown rung is not a rung.
+// dropped: an unknown rung is not a rung. A seat automatic dispatch may not
+// pick (SeatSelectable, e.g. mention_only) is dropped here too, so the judge
+// never sees it in the candidate list.
 func (l Ladder) taggedByTier(roster map[string]Agent) map[string][]Agent {
 	out := make(map[string][]Agent, len(l.Tiers))
 	for _, a := range roster {
+		if !a.autoPickable() {
+			continue
+		}
 		key, ok := l.NormalizeTier(a.Tier)
 		if !ok || key == "" {
 			continue
@@ -390,7 +395,7 @@ func (l Ladder) pickByName(t Tier, scene Scene, roster map[string]Agent) (Seat, 
 	}
 	lookup := func(name string) (Agent, bool) {
 		a, ok := roster[name]
-		if !ok {
+		if !ok || !a.autoPickable() {
 			return Agent{}, false
 		}
 		if key, valid := l.NormalizeTier(a.Tier); valid && key != "" {
@@ -448,6 +453,11 @@ type Agent struct {
 	// Base is the name of the base role this seat specialises; empty for a
 	// base role.
 	Base string
+	// State is the seat's own record as SeatSelectable reads it. The zero
+	// value is selectable. A seat that may not be picked automatically
+	// (mention_only) stays on the roster so it can still be woken as a
+	// holder; the candidate builders drop it.
+	State SeatState
 }
 
 // agentDirection is the direction a seat serves: its recorded domain, or by
@@ -701,7 +711,7 @@ func (l Ladder) SceneTierAlternate(holder Seat, scene Scene, roster map[string]A
 		seen[holder.ID] = true
 	}
 	for _, agent := range roster {
-		if agent.ID == "" || seen[agent.ID] {
+		if agent.ID == "" || seen[agent.ID] || !agent.autoPickable() {
 			continue
 		}
 		seatTier := ""

@@ -70,7 +70,7 @@ describe("WorkspaceLinksTab", () => {
   it("disables sharing and accepting with the reason when the server says no", async () => {
     api.listWorkspaceLinks.mockResolvedValue({
       links: [pendingIncoming],
-      can: { create: false, accept: false, manage: false, audit: false },
+      can: { create: false, accept: false, pull: false, manage: false, audit: false },
     });
     renderTab();
     expect(await screen.findByText("Only the owner can share this workspace's data.")).toBeInTheDocument();
@@ -86,7 +86,7 @@ describe("WorkspaceLinksTab", () => {
   it("reads a pasted workspace link, names the workspace and offers the link", async () => {
     api.listWorkspaceLinks.mockResolvedValue({
       links: [],
-      can: { create: true, accept: true, manage: true, audit: true },
+      can: { create: true, accept: true, pull: true, manage: true, audit: true },
     });
     api.lookupWorkspaceLinkTarget.mockResolvedValue({ workspace: ws("Partner Co", "partner") });
     const user = userEvent.setup();
@@ -109,7 +109,7 @@ describe("WorkspaceLinksTab", () => {
   it("lists the caller's other workspaces to pick from", async () => {
     api.listWorkspaceLinks.mockResolvedValue({
       links: [],
-      can: { create: true, accept: true, manage: true, audit: true },
+      can: { create: true, accept: true, pull: true, manage: true, audit: true },
     });
     const user = userEvent.setup();
     renderTab();
@@ -124,10 +124,58 @@ describe("WorkspaceLinksTab", () => {
     expect(api.lookupWorkspaceLinkTarget).not.toHaveBeenCalled();
   });
 
+  it("lists the other workspace's projects and pulls them in when the caller owns it", async () => {
+    api.listWorkspaceLinks.mockResolvedValue({
+      links: [],
+      can: { create: true, accept: true, pull: true, manage: true, audit: true },
+    });
+    api.lookupWorkspaceLinkTarget.mockResolvedValue({
+      workspace: ws("Side project", "side"),
+      pull: { allowed: true, projects: [{ id: "their-1", title: "Launch", icon: null }] },
+    });
+    const user = userEvent.setup();
+    renderTab();
+    expect(await screen.findByText("Pick the workspace to read from first.")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Workspace to read from"));
+    await user.click(await screen.findByRole("option", { name: /Side project/ }));
+    expect(await screen.findByRole("checkbox", { name: /Launch/ })).toBeInTheDocument();
+    expect(api.lookupWorkspaceLinkTarget).toHaveBeenCalledWith("side");
+    // Only their projects are offered here, never this workspace's own.
+    expect(screen.getAllByRole("checkbox", { name: /Roadmap/ })).toHaveLength(1);
+    await user.click(screen.getByRole("checkbox", { name: /Launch/ }));
+    await user.click(screen.getByRole("button", { name: "Link in" }));
+    await waitFor(() =>
+      expect(api.createWorkspaceLink).toHaveBeenCalledWith({
+        target_slug: "side",
+        project_ids: ["their-1"],
+        direction: "pull",
+      }),
+    );
+  });
+
+  it("says to ask the other owner when the caller does not own that workspace", async () => {
+    api.listWorkspaceLinks.mockResolvedValue({
+      links: [],
+      can: { create: true, accept: true, pull: true, manage: true, audit: true },
+    });
+    api.lookupWorkspaceLinkTarget.mockResolvedValue({
+      workspace: ws("Partner Co", "partner"),
+      pull: { allowed: false, projects: [] },
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByText("Pick the workspace to read from first.");
+    await user.type(screen.getByLabelText("Workspace to read from"), "partner");
+    expect(
+      await screen.findByText("You don't own that workspace. Ask its owner to offer the link from there."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link in" })).toBeDisabled();
+  });
+
   it("says when an address names no workspace", async () => {
     api.listWorkspaceLinks.mockResolvedValue({
       links: [],
-      can: { create: true, accept: true, manage: true, audit: true },
+      can: { create: true, accept: true, pull: true, manage: true, audit: true },
     });
     api.lookupWorkspaceLinkTarget.mockRejectedValue(new ApiError("no workspace at that address", 404));
     const user = userEvent.setup();

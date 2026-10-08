@@ -359,7 +359,8 @@ result means are in `references/routing.md`.
 
 Do not name another agent as executor on your own: with routing on the server
 ignores it. Only the words of the person you are talking to, passed as
-`--per-quote "<原话>"`, carry a pick through; ask for a stronger seat with
+`--per-quote "<原话>"`, carry a pick through, and a quote that does not check
+out is handed to routing like no quote at all. Ask for a stronger seat with
 `multica issue escalate <id> --reason "..."`. See `references/routing.md`.
 
 ## Who else is running right now

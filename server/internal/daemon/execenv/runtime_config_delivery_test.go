@@ -62,7 +62,7 @@ func deliveryInvariantFixtures() map[string]TaskContextForEnv {
 // (MUL-7649). Surfaces the web renders carry it; surfaces that deliver plain
 // text (channel chats, autopilot results, quick-create stdout) must not, since
 // a fenced html/mermaid block does not render there.
-const inlineBlocksRule = "fenced `html` or `mermaid` code block"
+const inlineBlocksRule = "fenced `html` or `mermaid` block"
 
 func TestBriefDeliveryInvariantIsAlwaysOn(t *testing.T) {
 	t.Parallel()
@@ -70,7 +70,7 @@ func TestBriefDeliveryInvariantIsAlwaysOn(t *testing.T) {
 	// Phrases every kind must carry, whatever its surface can or cannot deliver.
 	wantAll := []string{
 		"Runtime-local paths are never deliverables",
-		"NEVER write an absolute path or a `file://` URL as a clickable link",
+		"Never write an absolute path or a `file://` URL as a link",
 		"`path/to/file.ts:42`",
 	}
 
@@ -93,11 +93,11 @@ func TestBriefSurfaceDeliveryPolicy(t *testing.T) {
 	}{
 		// Issue surfaces: files ride the comment.
 		"comment": {
-			mustHave: []string{"`--attachment <path>` to `multica issue comment add`", inlineBlocksRule},
+			mustHave: []string{"`--attachment <path>` on `issue comment add`", inlineBlocksRule},
 			mustNot:  []string{"multica attachment upload"},
 		},
 		"assignment": {
-			mustHave: []string{"`--attachment <path>` to `multica issue comment add`", inlineBlocksRule},
+			mustHave: []string{"`--attachment <path>` on `issue comment add`", inlineBlocksRule},
 			mustNot:  []string{"multica attachment upload"},
 		},
 		// Direct chat: the upload binds to the reply and the browser renders a
@@ -366,16 +366,15 @@ func TestBriefInboundAttachmentIsNotADeliverable(t *testing.T) {
 		IssueID: "i-1", TriggerCommentID: "tc-1", AgentName: "Eve", AgentID: "eve-1",
 	})
 	for _, want := range []string{
-		"private working copy",
-		"not something the reader can open",
-		"the link rules in `## Output` apply to it too",
+		"a downloaded file is a private copy",
+		"its path is no deliverable either",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("Attachments section missing %q\n---\n%s", want, out)
+			t.Errorf("Output section missing inbound-attachment rule %q\n---\n%s", want, out)
 		}
 	}
 	// The rule the pointer defers to must actually be present in the brief.
-	if !strings.Contains(out, "NEVER write an absolute path or a `file://` URL as a clickable link") {
+	if !strings.Contains(out, "Never write an absolute path or a `file://` URL as a link") {
 		t.Errorf("Attachments points at ## Output but the rule is missing\n---\n%s", out)
 	}
 }

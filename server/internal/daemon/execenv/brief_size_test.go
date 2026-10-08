@@ -18,17 +18,19 @@ import (
 // change lands, lower maxBytes to just above the new measured size, and once
 // it reaches targetBytes drop the margin. Never raise maxBytes to make a
 // failing change pass — move the content out of the brief instead (see the
-// ADR's three questions).
+// ADR's three questions). DENE-1329 brought issue and chat under their
+// targets; the ratchet below still keeps each ceiling just above the measured
+// size, so the gap to the target is not free room to grow into.
 var briefSizeBudgets = []struct {
 	name        string
 	ctx         TaskContextForEnv
 	maxBytes    int
 	targetBytes int // 0 = no target set yet
 }{
-	{"issue", TaskContextForEnv{IssueID: "i-1", AgentID: "a-1", AgentName: "Agent"}, 27000, 8 << 10},
-	{"chat", TaskContextForEnv{ChatSessionID: "c-1", AgentID: "a-1", AgentName: "Agent"}, 14600, 6 << 10},
-	{"quick-create", TaskContextForEnv{QuickCreatePrompt: "create an issue", AgentID: "a-1", AgentName: "Agent"}, 8700, 0},
-	{"autopilot", TaskContextForEnv{AutopilotRunID: "r-1", AgentID: "a-1", AgentName: "Agent"}, 13500, 0},
+	{"issue", TaskContextForEnv{IssueID: "i-1", AgentID: "a-1", AgentName: "Agent"}, 6000, 8 << 10},
+	{"chat", TaskContextForEnv{ChatSessionID: "c-1", AgentID: "a-1", AgentName: "Agent"}, 4000, 6 << 10},
+	{"quick-create", TaskContextForEnv{QuickCreatePrompt: "create an issue", AgentID: "a-1", AgentName: "Agent"}, 5200, 0},
+	{"autopilot", TaskContextForEnv{AutopilotRunID: "r-1", AgentID: "a-1", AgentName: "Agent"}, 3700, 0},
 }
 
 // TestBriefSizeBudget renders each task kind's brief from a minimal context —

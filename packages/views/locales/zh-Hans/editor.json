@@ -62,6 +62,10 @@
     "close": "关闭",
     "open_in_new_tab": "在新标签页打开",
     "remove": "移除附件",
+    "open_local": "打开",
+    "reveal_local_finder": "在 Finder 中显示",
+    "reveal_local": "在文件夹中显示",
+    "local_copy_gone": "本机副本已改动或不存在，改为下载。",
     "previous": "上一个",
     "next": "下一个",
     "sequence_position": "{{index}} / {{total}}",
@@ -115,7 +119,9 @@
     "no_results": "没有匹配的技能",
     "commands": {
       "note": "添加备注——不触发任何智能体"
-    }
+    },
+    "skill_group": "{{name}} 的 skill",
+    "skill_hint": "@ 一个智能体后，可选它的 skill"
   },
   "code_block": {
     "html_preview": "HTML 预览",

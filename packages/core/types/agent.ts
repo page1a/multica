@@ -587,6 +587,12 @@ export interface AgentTask {
    * reporting was not free, we just don't know what it cost.
    */
   usage?: TaskUsage[];
+  /**
+   * The bound skills this run used, in first-use order (DENE-1573). Only the
+   * issue execution log carries it; a live run reads its `skill` transcript
+   * messages instead.
+   */
+  skills_used?: string[];
 }
 
 /**
@@ -839,6 +845,12 @@ export interface Agent {
    * seats inside one rung; older backends omit it, which reads as `normal`.
    */
   routing_usage?: string;
+  /**
+   * `auto` or `mention_only` (DENE-1600). A mention_only seat keeps its tier
+   * but is never picked by automatic dispatch; older backends omit it, which
+   * reads as `auto`.
+   */
+  dispatch_mode?: string;
   /**
    * Platform auto-retry switch (DENE-217). When `false`, FailTask /
    * MaybeRetryFailedTask never spawn a retry child. Older backends omit
@@ -1127,6 +1139,8 @@ export interface UpdateAgentRequest {
   routing_tier?: string;
   /** Account headroom tag. Omitted preserves the saved value. */
   routing_usage?: string;
+  /** `auto` or `mention_only`. Omitted preserves the saved value. */
+  dispatch_mode?: string;
   /**
    * Platform auto-retry switch. Omitted preserves the saved value; `false`
    * turns platform auto-retry off without affecting manual rerun.

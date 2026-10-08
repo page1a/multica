@@ -78,7 +78,7 @@ func TestClient_ClaimTasksWithHints_ParsesSchedulingMetadata(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	c.SetToken("tok")
-	result, err := c.claimTasksWithHints(context.Background(), "daemon-x", []string{"rt-a"}, 1)
+	result, err := c.claimTasksWithHints(context.Background(), "daemon-x", []string{"rt-a"}, 1, claimRecovery{})
 	if err != nil {
 		t.Fatalf("claimTasksWithHints: %v", err)
 	}

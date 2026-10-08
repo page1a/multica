@@ -487,6 +487,8 @@ export const AgentTaskSchema: z.ZodType<AgentTask> = z.object({
   session_mode: z.enum(["new", "resumed"]).optional().catch(undefined),
   resumed_from_run: z.string().optional().catch(undefined),
   session_break_reason: z.string().optional().catch(undefined),
+  // DENE-1573: the bound skills this run used, in first-use order.
+  skills_used: z.array(z.string()).optional().catch(undefined),
 }).loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema).default([]);

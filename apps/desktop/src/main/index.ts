@@ -9,6 +9,7 @@ import { setupDaemonManager } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
 import { setupWorktreeCleanup } from "./worktree-cleanup";
 import { setupSharedScratch } from "./shared-scratch";
+import { setupLocalAttachments } from "./local-attachments";
 import { applyFallbackPathDirs } from "./path-fallback";
 import { setupWorkspaceTransfer } from "./workspace-transfer-ipc";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
@@ -865,6 +866,7 @@ if (!gotTheLock) {
     setupLocalDirectory(() => mainWindow);
     setupWorktreeCleanup();
     setupSharedScratch();
+    setupLocalAttachments();
     setupWorkspaceTransfer(() => mainWindow);
 
     app.on("activate", () => {

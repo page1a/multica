@@ -316,7 +316,8 @@ export interface TaskMessagePayload {
   issue_id: string;
   chat_session_id?: string;
   seq: number;
-  type: "text" | "thinking" | "tool_use" | "tool_result" | "error";
+  /** `skill` is a daemon-synthesised marker: the run used the bound skill named in `tool` (DENE-1573). */
+  type: "text" | "thinking" | "tool_use" | "tool_result" | "error" | "skill";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;

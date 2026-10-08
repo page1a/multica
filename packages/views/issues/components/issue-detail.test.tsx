@@ -165,7 +165,7 @@ vi.mock("../../editor", async () => ({
   // No-op so comment-card's AttachmentList can render without hitting the
   // real API singleton; tests that care about download wiring should write
   // dedicated specs against `use-download-attachment.test.tsx`.
-  useDownloadAttachment: () => vi.fn(),
+  useAttachmentActions: () => ({ download: vi.fn() }),
   // Inert preview hook — comment-card's AttachmentList uses it to gate the
   // Eye button. Dedicated coverage lives in attachment-preview-modal.test.tsx.
   useAttachmentPreview: () => ({

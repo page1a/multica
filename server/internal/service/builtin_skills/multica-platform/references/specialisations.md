@@ -101,7 +101,7 @@ Inherited, and read-only on the child:
   /api/agents/{id}` with `custom_args`/`mcp_config`, and `PUT
   /api/agents/{id}/env`, are 400); edit the base role, or set
   `runtime_inherited: false` first. Across owners they stay the child's own.
-- **Routing tier and usage** (DENE-1016) ride the same flag: changing a base role's `routing_tier` or `routing_usage` (`PUT /api/agents/{id}`, the seats bulk write, or `multica agent update --routing-tier` / `--routing-usage`) copies onto every specialisation that is following it, in that same write. A follower cannot set either until follow is turned off — the server answers `跟随 <父角色名>，先关掉跟随` — and turning follow on copies the base role's current tier and usage immediately.
+- **Routing tier and usage** (DENE-1016) ride the same flag: changing a base role's `routing_tier`, `routing_usage` or `dispatch_mode` (`PUT /api/agents/{id}`, the seats bulk write, or `multica agent update --routing-tier` / `--routing-usage` / `--dispatch-mode`) copies onto every specialisation that is following it, in that same write. A follower cannot set either until follow is turned off — the server answers `跟随 <父角色名>，先关掉跟随` — and turning follow on copies the base role's current tier, usage and dispatch mode immediately.
 
 Everything else stays INDEPENDENT per agent — a specialisation is the same role
 with its own configuration, not a clone. In particular `max_concurrent_tasks`

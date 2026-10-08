@@ -167,3 +167,33 @@ func decodeField(t *testing.T, rec *httptest.ResponseRecorder, key string) strin
 	}
 	return v
 }
+
+// A person who owns both workspaces picks the other one's projects from the
+// viewer side; the lookup lists them and the pull lands active (DENE-1582).
+func TestWorkspaceLinkPullFromTheViewerSide(t *testing.T) {
+	tag := uuid.NewString()[:8]
+	source := dbfx.Workspace(t, "pull-src", "pull-src-"+tag, testutil.Cols{"issue_prefix": "PS"})
+	viewer := dbfx.Workspace(t, "pull-view", "pull-view-"+tag, testutil.Cols{"issue_prefix": "PV"})
+	both := dbfx.User(t, "pull both", "pull-both-"+tag+"@wl.test")
+	dbfx.Member(t, source, both, "owner")
+	dbfx.Member(t, viewer, both, "owner")
+	project := dbfx.Project(t, "Pulled", testutil.Cols{"workspace_id": source, "visibility": "workspace"})
+	dbfx.Project(t, "Hidden", testutil.Cols{"workspace_id": source, "visibility": "private"})
+
+	call := linkCaller{ws: viewer, user: both, query: "target=pull-src-" + tag}
+	rec := call.do(t, http.MethodGet, "/api/workspace-links/lookup", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"allowed":true`) ||
+		!strings.Contains(rec.Body.String(), `"title":"Pulled"`) || strings.Contains(rec.Body.String(), "Hidden") {
+		t.Fatalf("lookup = %d %s", rec.Code, rec.Body)
+	}
+	call.query = ""
+	if rec := call.do(t, http.MethodPost, "/api/workspace-links",
+		fmt.Sprintf(`{"target_slug":"pull-src-%s","project_ids":["%s"],"direction":"sideways"}`, tag, project)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown direction = %d, want 400", rec.Code)
+	}
+	rec = call.do(t, http.MethodPost, "/api/workspace-links",
+		fmt.Sprintf(`{"target_slug":"pull-src-%s","project_ids":["%s"],"direction":"pull"}`, tag, project))
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"status":"active"`) || !strings.Contains(rec.Body.String(), `"side":"viewer"`) {
+		t.Fatalf("pull = %d %s", rec.Code, rec.Body)
+	}
+}

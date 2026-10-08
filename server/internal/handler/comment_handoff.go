@@ -98,30 +98,23 @@ func (h *Handler) recordCommentHandoff(r *http.Request, issue db.Issue, content 
 	h.recordHandoff(r, issue, HandoffIssueResponse{Target: to, TargetType: "agent", TargetName: to}, handoffSummaryFromComment(content), nil)
 }
 
-// handoffCardForRun is the state card a handed-to agent's first run after the
-// handoff opens with. Later runs of the same agent read it with
-// `multica issue context` like everyone else.
-func (h *Handler) handoffCardForRun(ctx context.Context, issue db.Issue, agent db.Agent, task db.AgentTaskQueue) string {
-	meta := issueMetaStrings(issue.Metadata)
+// handoffCardDue reports whether this run is the handed-to agent's first run
+// after the handoff (DENE-1350). Later runs of the same agent get the card
+// only for the other reasons stateCardForRun knows.
+func (h *Handler) handoffCardDue(ctx context.Context, issue db.Issue, meta map[string]string, agent db.Agent, task db.AgentTaskQueue) bool {
 	if !handoffNamesAgent(meta[statecard.KeyHandoffTo], agent) {
-		return ""
+		return false
 	}
 	at, err := time.Parse(time.RFC3339, strings.TrimSpace(meta[statecard.KeyHandoffAt]))
 	if err != nil || (task.CreatedAt.Valid && task.CreatedAt.Time.Before(at.Add(-time.Minute))) {
-		return ""
+		return false
 	}
 	var earlier bool
 	if err := h.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND id <> $3 AND created_at >= $4 AND created_at < $5)`,
 		issue.ID, agent.ID, task.ID, at.Add(-time.Minute), task.CreatedAt).Scan(&earlier); err != nil || earlier {
-		return ""
+		return false
 	}
-	card, err := h.buildStateCard(ctx, issue, statecard.Caller{Type: "agent", ID: uuidToString(agent.ID)}, task.ID, nil)
-	if err != nil {
-		slog.Warn("claim: build handoff card failed", "task_id", uuidToString(task.ID), "error", err)
-		return ""
-	}
-	text, _ := truncateUTF8(statecard.Render(card), maxHandoffCardBytes)
-	return text
+	return true
 }
 
 // handoffNamesAgent reports whether the handoff note's target list names the

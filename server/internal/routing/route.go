@@ -264,9 +264,6 @@ const (
 
 // routeTodo is the only row that fills slots.
 func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Settings, issue Issue, mode fillMode) (Outcome, error) {
-	if issue.RejectedQuote() {
-		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "assignee quote could not be verified; waiting for the agent to ask the person"}, nil
-	}
 	// Declined until a write proves otherwise: the action is derived from what
 	// was written, at the bottom of this function.
 	out := Outcome{State: StateEnabled, Action: ActionDeclined}
@@ -559,10 +556,12 @@ func (r *Router) continuation(ctx context.Context, workspaceID string, settings 
 	}
 	seats := make(map[string]ContinuationSeat, len(ids))
 	for _, id := range ids {
-		_, onRoster := agentByID(roster, id)
+		agent, onRoster := agentByID(roster, id)
+		_, unpickable := SeatSelectable(agent.State, SelectContext{})
 		seats[id] = ContinuationSeat{
 			Seat:         seatFromRoster(ladder, roster, id),
 			OnRoster:     onRoster,
+			Unpickable:   unpickable,
 			Availability: facts.Seats[id].Availability,
 		}
 	}

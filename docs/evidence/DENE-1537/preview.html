@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1537 子票交付到父票分支 · 预览</title>
+<style>
+  :root { --fg:#18181b; --muted:#71717a; --border:#e4e4e7; --accent:#f4f4f5; --destructive:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif; color:var(--fg); background:#fafafa; }
+  .row { display:flex; gap:24px; padding:24px; flex-wrap:wrap; align-items:flex-start; }
+  .frame { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .frame h2 { margin:0; padding:10px 14px; font-size:12px; font-weight:500; color:var(--muted); border-bottom:1px solid var(--border); }
+  .sidebar { width:320px; padding:12px 8px; }
+  .phone { width:390px; }
+  .phone .sidebar { width:100%; }
+  .sec-head { display:flex; align-items:center; gap:4px; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:500; margin-bottom:8px; }
+  .chev { font-size:9px; color:var(--muted); }
+  .body { padding-left:8px; font-size:12px; }
+  .body > * + * { margin-top:4px; }
+  .muted { color:var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .trunc { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .danger { color:var(--destructive); }
+  a { color:var(--fg); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  ul { list-style:none; margin:0; padding:0; }
+  .commit { display:flex; gap:6px; min-width:0; }
+  .commit .mono { flex-shrink:0; }
+  .contrib { display:flex; align-items:center; gap:6px; min-height:28px; }
+  .contrib .key { font-weight:500; flex-shrink:0; }
+  .contrib .title { flex:1; min-width:0; }
+  .contrib .state { flex-shrink:0; }
+  .toggle { width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; color:var(--muted); font-size:9px; flex-shrink:0; }
+  .nested { padding:0 0 4px 26px; }
+  .nested > * + * { margin-top:2px; }
+  .other { padding:4px 8px; color:var(--muted); font-size:12px; border-top:1px dashed var(--border); margin-top:12px; padding-top:10px; }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="frame">
+    <h2>子票 DENE-1601 · 侧栏</h2>
+    <div class="sidebar">
+      <div class="sec-head">交付分支 <span class="chev">▼</span></div>
+      <div class="body">
+        <a href="#" class="trunc" style="display:block">交付到父票 DENE-1600 的分支</a>
+        <div class="mono muted trunc">agent/delivery/dene-1600</div>
+        <div class="muted">已并回 2 个提交</div>
+        <ul>
+          <li class="commit"><span class="mono muted">3f2a9c1</span><span class="trunc">feat: 子票默认写入父票分支</span></li>
+          <li class="commit"><span class="mono muted">8be0d47</span><span class="trunc">test: 并行子票冲突点名文件</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <h2>子票 DENE-1603 · 冲突时</h2>
+    <div class="sidebar">
+      <div class="sec-head">交付分支 <span class="chev">▼</span></div>
+      <div class="body">
+        <a href="#" class="trunc" style="display:block">交付到父票 DENE-1600 的分支</a>
+        <div class="mono muted trunc">agent/delivery/dene-1600</div>
+        <div class="danger">并回冲突，等执行人解决</div>
+        <ul class="mono muted">
+          <li class="trunc">packages/views/issues/components/issue-detail.tsx</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <h2>父票 DENE-1600 · 侧栏</h2>
+    <div class="sidebar">
+      <div class="sec-head">子票提交 <span class="chev">▼</span></div>
+      <ul class="body">
+        <li>
+          <div class="contrib"><span class="toggle">▼</span><a class="key" href="#">DENE-1601</a><span class="title trunc muted">服务端：交付线与合回</span><span class="state muted">已并回 2 个提交</span></div>
+          <div class="nested">
+            <div class="commit"><span class="mono muted">3f2a9c1</span><span class="trunc">feat: 子票默认写入父票分支</span></div>
+            <div class="commit"><span class="mono muted">8be0d47</span><span class="trunc">test: 并行子票冲突点名文件</span></div>
+          </div>
+        </li>
+        <li><div class="contrib"><span class="toggle">▶</span><a class="key" href="#">DENE-1602</a><span class="title trunc muted">CLI：children 显示交付状态</span><span class="state muted">已并回 1 个提交</span></div></li>
+        <li><div class="contrib"><span class="toggle">▶</span><a class="key" href="#">DENE-1603</a><span class="title trunc muted">界面：父票看子票提交</span><span class="state danger">并回冲突，等执行人解决</span></div></li>
+        <li><div class="contrib"><span class="toggle" style="opacity:.3">▶</span><a class="key" href="#">DENE-1604</a><span class="title trunc muted">文档</span><span class="state muted">还没并回</span></div></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="frame phone">
+    <h2>手机网页 390px · 子票</h2>
+    <div class="sidebar">
+      <div class="sec-head">交付分支 <span class="chev">▼</span></div>
+      <div class="body">
+        <a href="#" class="trunc" style="display:block">交付到父票 DENE-1600 的分支</a>
+        <div class="mono muted trunc">agent/delivery/dene-1600</div>
+        <div class="muted">已并回 2 个提交</div>
+        <ul>
+          <li class="commit"><span class="mono muted">3f2a9c1</span><span class="trunc">feat: 子票默认写入父票分支，并行子票各自 worktree 再合回</span></li>
+          <li class="commit"><span class="mono muted">8be0d47</span><span class="trunc">test: 并行子票冲突点名文件</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="frame phone">
+    <h2>手机网页 390px · 父票</h2>
+    <div class="sidebar">
+      <div class="sec-head">子票提交 <span class="chev">▼</span></div>
+      <ul class="body">
+        <li><div class="contrib"><span class="toggle">▶</span><a class="key" href="#">DENE-1601</a><span class="title trunc muted">服务端：交付线与合回</span><span class="state muted">已并回 2 个提交</span></div></li>
+        <li><div class="contrib"><span class="toggle">▶</span><a class="key" href="#">DENE-1602</a><span class="title trunc muted">CLI：children 显示交付状态</span><span class="state muted">已并回 1 个提交</span></div></li>
+        <li>
+          <div class="contrib"><span class="toggle">▼</span><a class="key" href="#">DENE-1603</a><span class="title trunc muted">界面：父票看子票提交</span><span class="state danger">并回冲突，等执行人解决</span></div>
+          <div class="nested"><div class="mono danger trunc">packages/views/issues/components/issue-detail.tsx</div></div>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import type { WorkspaceLinkDirection } from "../types/workspace-link";
 import { workspaceLinkKeys } from "./queries";
 
 // Every link mutation awaits the server, then re-reads the workspace's links,
@@ -13,7 +14,7 @@ function useLinkMutation<V, R>(wsId: string, fn: (vars: V) => Promise<R>) {
 }
 
 export function useCreateWorkspaceLink(wsId: string) {
-  return useLinkMutation(wsId, (body: { target_slug: string; project_ids: string[] }) =>
+  return useLinkMutation(wsId, (body: { target_slug: string; project_ids: string[]; direction?: WorkspaceLinkDirection }) =>
     api.createWorkspaceLink(body),
   );
 }

@@ -46,7 +46,11 @@ func TestLookupRules(t *testing.T) {
 	wantStatus(t, err, 400)
 	_, err = w.svc.Lookup(ctx, w.source, owner(), "https://ai.example.test/")
 	wantStatus(t, err, 400)
-	_, err = w.svc.Lookup(ctx, w.source, admin(), w.viewerSlug)
+	// Admins may look up (they can pull a link in); members may not.
+	if _, err = w.svc.Lookup(ctx, w.source, admin(), w.viewerSlug); err != nil {
+		t.Fatalf("admin lookup: %v", err)
+	}
+	_, err = w.svc.Lookup(ctx, w.source, member(), w.viewerSlug)
 	wantStatus(t, err, 403)
 
 	// Create reads the pasted link the same way.

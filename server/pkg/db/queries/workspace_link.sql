@@ -114,3 +114,11 @@ WHERE i.workspace_id = sqlc.arg('source_workspace_id')::uuid
   )
 ORDER BY i.updated_at DESC, i.number DESC
 LIMIT sqlc.arg('page_limit')::int;
+
+-- name: ListWorkspaceShareableProjects :many
+-- Every project of the workspace a link could expose (not private). The
+-- pull form lists these for a person who owns the other workspace too.
+SELECT id, title, icon FROM project
+WHERE workspace_id = sqlc.arg('workspace_id')::uuid
+  AND visibility <> 'private'
+ORDER BY title, id;

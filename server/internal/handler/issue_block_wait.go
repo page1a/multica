@@ -334,6 +334,7 @@ func (h *Handler) releasePlan(ctx context.Context, issue db.Issue) (prs []db.Lis
 		slog.Warn("block wait: list pull requests failed", "error", err, "issue_id", uuidToString(issue.ID))
 		return nil, blockwait.Decision{}, nil, false
 	}
+	prs = h.dropLineChildPulls(ctx, issue, prs)
 	decision = blockwait.DecideRelease(h.gatePRSnapshots(ctx, prs), time.Now())
 	// The delivery aggregate (DENE-820) decides whether anything is still
 	// unaccounted for before the pass is allowed to close or merge. An

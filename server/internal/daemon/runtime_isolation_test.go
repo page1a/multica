@@ -207,6 +207,7 @@ func TestTaskClaimPollIntervalTracksWSRPCAvailability(t *testing.T) {
 	t.Parallel()
 
 	d := New(Config{PollInterval: 30 * time.Second, WSClaimPollInterval: 3 * time.Minute}, slog.Default())
+	d.claimRecoveryPending.Store(false) // startup recovery shortens the wait; not under test here
 	if got := d.taskClaimPollInterval(claimTasksResult{}); got != 30*time.Second {
 		t.Fatalf("interval without websocket = %v, want 30s", got)
 	}

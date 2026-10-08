@@ -62,6 +62,10 @@
     "close": "Close",
     "open_in_new_tab": "Open in new tab",
     "remove": "Remove attachment",
+    "open_local": "Open",
+    "reveal_local_finder": "Show in Finder",
+    "reveal_local": "Show in folder",
+    "local_copy_gone": "The copy on this computer changed or is gone — downloading instead.",
     "previous": "Previous",
     "next": "Next",
     "sequence_position": "{{index}} / {{total}}",
@@ -119,7 +123,9 @@
     "no_results": "No matching skills",
     "commands": {
       "note": "Add a note — won't trigger any agents"
-    }
+    },
+    "skill_group": "{{name}}'s skills",
+    "skill_hint": "@ an agent to pick one of its skills"
   },
   "code_block": {
     "html_preview": "HTML preview",

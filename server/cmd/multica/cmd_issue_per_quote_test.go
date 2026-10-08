@@ -49,7 +49,7 @@ func TestNoteIgnoredAssigneeOnlyFiresWhenTheServerSaidSo(t *testing.T) {
 }
 
 // DENE-1201: an in-flight reassignment refused by the server keeps the old
-// executor, and the agent must read the way out, not "remains unassigned".
+// executor, and the agent must read the way out, not "routing will pick".
 func TestNoteIgnoredAssigneeInFlightKeepsExecutorAndNamesAlternatives(t *testing.T) {
 	c := captureStderr(t)
 	noteIgnoredAssignee(map[string]any{
@@ -64,7 +64,25 @@ func TestNoteIgnoredAssigneeInFlightKeepsExecutorAndNamesAlternatives(t *testing
 			t.Errorf("stderr missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "remains unassigned") {
-		t.Errorf("an in-flight ticket is not unassigned:\n%s", got)
+	if strings.Contains(got, "routing will pick") {
+		t.Errorf("an in-flight ticket is not left to routing:\n%s", got)
+	}
+}
+
+// DENE-1613: a quote that did not check out hands the slot to routing, and
+// the agent is not sent back to the person.
+func TestNoteIgnoredAssigneeUnverifiedQuoteSaysRoutingPicks(t *testing.T) {
+	c := captureStderr(t)
+	noteIgnoredAssignee(map[string]any{
+		"identifier":              "DENE-1",
+		"assignee_ignored":        true,
+		"assignee_ignored_reason": routing.ReasonQuoteNotVerified,
+	})
+	got := c.read()
+	if !strings.Contains(got, "routing will pick the executor") || !strings.Contains(got, "reassign with --per-quote") {
+		t.Errorf("stderr does not say routing picks:\n%s", got)
+	}
+	if strings.Contains(got, "ask the person") {
+		t.Errorf("stderr still sends the agent back to the person:\n%s", got)
 	}
 }

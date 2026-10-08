@@ -129,6 +129,11 @@ interface Props {
     submit: (mode: ChatSendMode) => void;
   }) => ReactNode;
 
+  /** Mode to submit from the keyboard instead of inserting a newline.
+   *  Chat enables this only while a running reply accepts a follow-up;
+   *  comments and idle chat keep multiline editing. */
+  submitOnReturn?: ChatSendMode;
+
   /** Hard-disable. Used when chat has no usable agent. The pill shows
    *  `disabledReason` instead of `pillLabel`, and the pill is
    *  non-interactive (cannot expand). */
@@ -182,6 +187,7 @@ export function MessageComposer({
   isSending = false,
   renderStop,
   renderRunning,
+  submitOnReturn,
   disabled = false,
   disabledReason,
   manageKeyboard = true,
@@ -568,6 +574,9 @@ export function MessageComposer({
           placeholder={resolvedPlaceholder}
           placeholderTextColor={theme.mutedForeground}
           multiline
+          submitBehavior={submitOnReturn ? "submit" : "newline"}
+          returnKeyType={submitOnReturn ? "send" : undefined}
+          onSubmitEditing={submitOnReturn ? () => void handleSubmit(submitOnReturn) : undefined}
           editable={!disabled}
           className="px-4 pt-3 pb-1 text-base text-foreground"
           style={{ minHeight: 28, maxHeight: 140, textAlignVertical: "top" }}

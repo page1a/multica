@@ -126,7 +126,7 @@ func (q *Queries) AcknowledgeExhaustedDelegatedFailureRecovery(ctx context.Conte
 const archiveAgent = `-- name: ArchiveAgent :one
 UPDATE agent SET archived_at = now(), archived_by = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type ArchiveAgentParams struct {
@@ -177,6 +177,7 @@ func (q *Queries) ArchiveAgent(ctx context.Context, arg ArchiveAgentParams) (Age
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -185,7 +186,7 @@ const archiveAgentsByIDs = `-- name: ArchiveAgentsByIDs :many
 UPDATE agent
 SET archived_at = now(), archived_by = $1, updated_at = now()
 WHERE id = ANY($2::uuid[]) AND archived_at IS NULL
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type ArchiveAgentsByIDsParams struct {
@@ -250,6 +251,7 @@ func (q *Queries) ArchiveAgentsByIDs(ctx context.Context, arg ArchiveAgentsByIDs
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -266,7 +268,7 @@ UPDATE agent
 SET archived_at = now(), archived_by = $1, updated_at = now()
 WHERE runtime_id = ANY($2::uuid[]) AND archived_at IS NULL
   AND (system_key IS NULL OR system_key = '')
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type ArchiveAgentsByRuntimeParams struct {
@@ -334,6 +336,7 @@ func (q *Queries) ArchiveAgentsByRuntime(ctx context.Context, arg ArchiveAgentsB
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1020,6 +1023,120 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 // deleted version. Must run before deletion clears trigger_comment_id.
 func (q *Queries) CancelAgentTasksByTriggerComment(ctx context.Context, triggerCommentID pgtype.UUID) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, cancelAgentTasksByTriggerComment, triggerCommentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.BranchName,
+			&i.DurableWorkDir,
+			&i.ChannelContextRevision,
+			&i.CommentThreadID,
+			&i.CancelledByType,
+			&i.CancelledByID,
+			&i.CancelledByName,
+			&i.IssueSnapshot,
+			&i.CodeDecision,
+			&i.FailureInputVersion,
+			&i.FailureFingerprint,
+			&i.WorkThreadID,
+			&i.ContextGeneration,
+			&i.ContextMessageLimit,
+			&i.ContextTokenBudget,
+			&i.ContinuityBreakReason,
+			&i.SessionMode,
+			&i.ResumedFromTaskID,
+			&i.SessionBreakReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cancelAssignmentTasksByIssueAndAgent = `-- name: CancelAssignmentTasksByIssueAndAgent :many
+UPDATE agent_task_queue
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL,
+    cancelled_by_type = 'system', cancelled_by_id = NULL, cancelled_by_name = NULL
+WHERE issue_id = $1::uuid
+  AND agent_id = $2::uuid
+  AND trigger_evidence_kind = 'issue_assignment'
+  AND id IS DISTINCT FROM $3::uuid
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, code_decision, failure_input_version, failure_fingerprint, work_thread_id, context_generation, context_message_limit, context_token_budget, continuity_break_reason, session_mode, resumed_from_task_id, session_break_reason
+`
+
+type CancelAssignmentTasksByIssueAndAgentParams struct {
+	IssueID      pgtype.UUID `json:"issue_id"`
+	AgentID      pgtype.UUID `json:"agent_id"`
+	ExceptTaskID pgtype.UUID `json:"except_task_id"`
+}
+
+// DENE-1613: a seat routing filled is replaced by a person's decision, so the
+// runs that seat's assignment started lose their reason. Only those: a run the
+// seat got from a mention, a squad, or anything other than the assignment is
+// left alone, and so is the run making the request (except_task_id), which
+// must not cancel itself from inside.
+func (q *Queries) CancelAssignmentTasksByIssueAndAgent(ctx context.Context, arg CancelAssignmentTasksByIssueAndAgentParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, cancelAssignmentTasksByIssueAndAgent, arg.IssueID, arg.AgentID, arg.ExceptTaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1950,7 +2067,7 @@ func (q *Queries) ClaimChatFinalizeDeferred(ctx context.Context, id pgtype.UUID)
 const clearAgentComposioToolkitAllowlist = `-- name: ClearAgentComposioToolkitAllowlist :one
 UPDATE agent SET composio_toolkit_allowlist = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 // Explicit NULL-clear for composio_toolkit_allowlist. The COALESCE-based
@@ -2002,6 +2119,7 @@ func (q *Queries) ClearAgentComposioToolkitAllowlist(ctx context.Context, id pgt
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -2009,7 +2127,7 @@ func (q *Queries) ClearAgentComposioToolkitAllowlist(ctx context.Context, id pgt
 const clearAgentMcpConfig = `-- name: ClearAgentMcpConfig :one
 UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -2055,6 +2173,7 @@ func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agen
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -2062,7 +2181,7 @@ func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agen
 const clearAgentRoutingTier = `-- name: ClearAgentRoutingTier :one
 UPDATE agent SET routing_tier = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 // Explicit NULL-clear for routing_tier. COALESCE-based UpdateAgent cannot set
@@ -2110,6 +2229,7 @@ func (q *Queries) ClearAgentRoutingTier(ctx context.Context, id pgtype.UUID) (Ag
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -2117,7 +2237,7 @@ func (q *Queries) ClearAgentRoutingTier(ctx context.Context, id pgtype.UUID) (Ag
 const clearAgentServiceTier = `-- name: ClearAgentServiceTier :one
 UPDATE agent SET service_tier = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 // Explicit NULL-clear for service_tier. COALESCE-based UpdateAgent cannot
@@ -2165,6 +2285,7 @@ func (q *Queries) ClearAgentServiceTier(ctx context.Context, id pgtype.UUID) (Ag
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -2172,7 +2293,7 @@ func (q *Queries) ClearAgentServiceTier(ctx context.Context, id pgtype.UUID) (Ag
 const clearAgentThinkingLevel = `-- name: ClearAgentThinkingLevel :one
 UPDATE agent SET thinking_level = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 // Explicit NULL-clear for thinking_level. COALESCE-based UpdateAgent cannot
@@ -2221,6 +2342,7 @@ func (q *Queries) ClearAgentThinkingLevel(ctx context.Context, id pgtype.UUID) (
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -2487,7 +2609,7 @@ INSERT INTO agent (
     instructions, custom_env, custom_args, mcp_config, model, thinking_level,
     service_tier, routing_tier, conversation_starters,
     composio_toolkit_allowlist, permission_mode, parent_agent_id,
-    runtime_inherited, routing_usage
+    runtime_inherited, routing_usage, dispatch_mode
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
@@ -2498,9 +2620,10 @@ INSERT INTO agent (
     COALESCE($21, 'private'),
     $22::uuid,
     COALESCE($23::boolean, FALSE),
-    COALESCE($24::text, 'normal')
+    COALESCE($24::text, 'normal'),
+    COALESCE($25::text, 'auto')
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type CreateAgentParams struct {
@@ -2528,6 +2651,7 @@ type CreateAgentParams struct {
 	ParentAgentID            pgtype.UUID `json:"parent_agent_id"`
 	RuntimeInherited         pgtype.Bool `json:"runtime_inherited"`
 	RoutingUsage             pgtype.Text `json:"routing_usage"`
+	DispatchMode             pgtype.Text `json:"dispatch_mode"`
 }
 
 // parent_agent_id is NULL for a base role and points at one for a
@@ -2564,6 +2688,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.ParentAgentID,
 		arg.RuntimeInherited,
 		arg.RoutingUsage,
+		arg.DispatchMode,
 	)
 	var i Agent
 	err := row.Scan(
@@ -2606,6 +2731,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -2621,7 +2747,7 @@ INSERT INTO agent (
     '{}'::jsonb, '[]'::jsonb, $7, $8,
     'system', $9
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type CreateAgentBuilderParams struct {
@@ -2699,6 +2825,7 @@ func (q *Queries) CreateAgentBuilder(ctx context.Context, arg CreateAgentBuilder
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -3560,7 +3687,7 @@ INSERT INTO agent (
     $6, $7, $8, $9, $10,
     $11, '', '{}'::jsonb, '[]'::jsonb, 'user', $12
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type CreateSystemUserAgentParams struct {
@@ -3646,6 +3773,7 @@ func (q *Queries) CreateSystemUserAgent(ctx context.Context, arg CreateSystemUse
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -4585,7 +4713,7 @@ func (q *Queries) FailTasksOverWorkspaceTimeLimit(ctx context.Context) ([]AgentT
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE id = $1
 `
 
@@ -4632,12 +4760,13 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
 
 const getAgentBySystemKey = `-- name: GetAgentBySystemKey :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE workspace_id = $1 AND system_key = $2 AND archived_at IS NULL
 ORDER BY created_at ASC, id ASC
 LIMIT 1
@@ -4694,12 +4823,13 @@ func (q *Queries) GetAgentBySystemKey(ctx context.Context, arg GetAgentBySystemK
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
 
 const getAgentForClaimUpdate = `-- name: GetAgentForClaimUpdate :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE id = $1
 FOR UPDATE
 `
@@ -4747,12 +4877,13 @@ func (q *Queries) GetAgentForClaimUpdate(ctx context.Context, id pgtype.UUID) (A
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
 
 const getAgentForUpdate = `-- name: GetAgentForUpdate :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE id = $1
 FOR UPDATE
 `
@@ -4802,12 +4933,13 @@ func (q *Queries) GetAgentForUpdate(ctx context.Context, id pgtype.UUID) (Agent,
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
 
 const getAgentInWorkspace = `-- name: GetAgentInWorkspace :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE id = $1 AND workspace_id = $2 AND kind = 'user'
 `
 
@@ -4859,6 +4991,7 @@ func (q *Queries) GetAgentInWorkspace(ctx context.Context, arg GetAgentInWorkspa
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -5152,7 +5285,7 @@ func (q *Queries) GetAgentTaskStatus(ctx context.Context, id pgtype.UUID) (GetAg
 }
 
 const getAgentsByIDs = `-- name: GetAgentsByIDs :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE id = ANY($1::uuid[])
 `
 
@@ -5211,6 +5344,7 @@ func (q *Queries) GetAgentsByIDs(ctx context.Context, ids []pgtype.UUID) ([]Agen
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -6158,6 +6292,56 @@ func (q *Queries) HasTaskForIssue(ctx context.Context, issueID pgtype.UUID) (boo
 	return exists, err
 }
 
+const hasUndeliveredDispatchedTasksForRuntimes = `-- name: HasUndeliveredDispatchedTasksForRuntimes :one
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue atq
+    WHERE atq.runtime_id = ANY($1::uuid[])
+      AND atq.status = 'dispatched'
+      AND atq.started_at IS NULL
+      AND atq.id <> ALL($2::uuid[])
+      AND EXISTS (
+          SELECT 1
+          FROM agent a
+          JOIN agent_runtime r ON r.id = atq.runtime_id
+          WHERE a.id = atq.agent_id
+            AND a.runtime_id = atq.runtime_id
+            AND (
+                r.visibility = 'public'
+                OR (
+                    r.visibility = 'private'
+                    AND (
+                        r.owner_id IS NULL
+                        OR a.owner_id IS NULL
+                        OR r.owner_id = a.owner_id
+                    )
+                )
+            )
+            AND r.status = 'online'
+            AND COALESCE(r.last_seen_at, r.updated_at) >=
+                now() - make_interval(secs => $3::double precision)
+      )
+) AS pending
+`
+
+type HasUndeliveredDispatchedTasksForRuntimesParams struct {
+	RuntimeIds       []pgtype.UUID `json:"runtime_ids"`
+	HeldTaskIds      []pgtype.UUID `json:"held_task_ids"`
+	RuntimeStaleSecs float64       `json:"runtime_stale_secs"`
+}
+
+// Companion to RecoverUndeliveredDispatchedTasksForRuntimes (DENE-1611): true
+// while a dispatch the daemon is not holding still exists for these runtimes —
+// one the recovery just skipped because it is younger than @min_age_secs, or one
+// cut off by the batch limit. It tells the daemon the recovery is not finished,
+// so an empty answer is not read as "nothing was lost". Same eligibility as the
+// recovery; the tasks that recovery just handed back go in @held_task_ids.
+func (q *Queries) HasUndeliveredDispatchedTasksForRuntimes(ctx context.Context, arg HasUndeliveredDispatchedTasksForRuntimesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasUndeliveredDispatchedTasksForRuntimes, arg.RuntimeIds, arg.HeldTaskIds, arg.RuntimeStaleSecs)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
 const linkTaskToIssue = `-- name: LinkTaskToIssue :exec
 UPDATE agent_task_queue
 SET issue_id = $2
@@ -6185,7 +6369,7 @@ func (q *Queries) LinkTaskToIssue(ctx context.Context, arg LinkTaskToIssueParams
 }
 
 const listActiveAgentsByRuntime = `-- name: ListActiveAgentsByRuntime :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY name ASC
 `
@@ -6245,6 +6429,7 @@ func (q *Queries) ListActiveAgentsByRuntime(ctx context.Context, runtimeID pgtyp
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -6257,7 +6442,7 @@ func (q *Queries) ListActiveAgentsByRuntime(ctx context.Context, runtimeID pgtyp
 }
 
 const listActiveAgentsByRuntimeForUpdate = `-- name: ListActiveAgentsByRuntimeForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY name ASC
 FOR UPDATE
@@ -6319,6 +6504,7 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -6535,7 +6721,7 @@ func (q *Queries) ListActiveTasksByIssueFamily(ctx context.Context, arg ListActi
 }
 
 const listAgentChildren = `-- name: ListAgentChildren :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE parent_agent_id = $1 AND archived_at IS NULL
 ORDER BY created_at ASC
 `
@@ -6593,6 +6779,7 @@ func (q *Queries) ListAgentChildren(ctx context.Context, parentAgentID pgtype.UU
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -6753,7 +6940,7 @@ func (q *Queries) ListAgentTasks(ctx context.Context, arg ListAgentTasksParams) 
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE workspace_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY created_at ASC
 `
@@ -6807,6 +6994,7 @@ func (q *Queries) ListAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Ag
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -6819,7 +7007,7 @@ func (q *Queries) ListAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Ag
 }
 
 const listAllAgents = `-- name: ListAllAgents :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE workspace_id = $1 AND kind = 'user'
 ORDER BY created_at ASC
 `
@@ -6873,6 +7061,7 @@ func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -6885,7 +7074,7 @@ func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([
 }
 
 const listAllAgentsAnyKind = `-- name: ListAllAgentsAnyKind :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -6949,6 +7138,7 @@ func (q *Queries) ListAllAgentsAnyKind(ctx context.Context, workspaceID pgtype.U
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -7792,7 +7982,7 @@ func (q *Queries) ListUserAgentIDsByRuntime(ctx context.Context, runtimeID pgtyp
 }
 
 const listUserAgentsByRuntimeForUpdate = `-- name: ListUserAgentsByRuntimeForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE runtime_id = $1 AND kind = 'user'
 ORDER BY id
 FOR UPDATE
@@ -7852,6 +8042,7 @@ func (q *Queries) ListUserAgentsByRuntimeForUpdate(ctx context.Context, runtimeI
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -8177,7 +8368,7 @@ func (q *Queries) ListWorkspaceWorkingAgents(ctx context.Context, arg ListWorksp
 }
 
 const lockAgentForAutopilotAssignment = `-- name: LockAgentForAutopilotAssignment :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
 WHERE id = $1 AND workspace_id = $2 AND kind = 'user'
 FOR SHARE
 `
@@ -8239,6 +8430,7 @@ func (q *Queries) LockAgentForAutopilotAssignment(ctx context.Context, arg LockA
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -9224,7 +9416,7 @@ SET runtime_id = $1,
     model = $3,
     updated_at = now()
 WHERE id = $4 AND kind = 'system' AND system_key LIKE 'agent_builder:%'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type RebindAgentBuilderRuntimeParams struct {
@@ -9298,6 +9490,7 @@ func (q *Queries) RebindAgentBuilderRuntime(ctx context.Context, arg RebindAgent
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -9309,7 +9502,7 @@ SET runtime_id = $1,
     model = $3,
     updated_at = now()
 WHERE id = $4 AND kind = 'system' AND system_key LIKE 'issue_draft:%'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type RebindIssueDraftRuntimeParams struct {
@@ -9373,6 +9566,7 @@ func (q *Queries) RebindIssueDraftRuntime(ctx context.Context, arg RebindIssueDr
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -9775,6 +9969,162 @@ func (q *Queries) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID 
 	return items, nil
 }
 
+const recoverUndeliveredDispatchedTasksForRuntimes = `-- name: RecoverUndeliveredDispatchedTasksForRuntimes :many
+UPDATE agent_task_queue
+SET dispatched_at = now(),
+    prepare_lease_expires_at = now() + make_interval(secs => $1::double precision)
+WHERE id IN (
+    SELECT atq.id FROM agent_task_queue atq
+    WHERE atq.runtime_id = ANY($2::uuid[])
+      AND atq.status = 'dispatched'
+      AND atq.started_at IS NULL
+      AND atq.id <> ALL($3::uuid[])
+      AND atq.dispatched_at < now() - make_interval(secs => $4::double precision)
+      AND EXISTS (
+          SELECT 1
+          FROM agent a
+          JOIN agent_runtime r ON r.id = atq.runtime_id
+          WHERE a.id = atq.agent_id
+            AND a.runtime_id = atq.runtime_id
+            AND (
+                r.visibility = 'public'
+                OR (
+                    r.visibility = 'private'
+                    AND (
+                        r.owner_id IS NULL
+                        OR a.owner_id IS NULL
+                        OR r.owner_id = a.owner_id
+                    )
+                )
+            )
+            AND r.status = 'online'
+            AND COALESCE(r.last_seen_at, r.updated_at) >=
+                now() - make_interval(secs => $5::double precision)
+      )
+    ORDER BY atq.priority DESC, atq.dispatched_at ASC
+    LIMIT $6::int
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, code_decision, failure_input_version, failure_fingerprint, work_thread_id, context_generation, context_message_limit, context_token_budget, continuity_break_reason, session_mode, resumed_from_task_id, session_break_reason
+`
+
+type RecoverUndeliveredDispatchedTasksForRuntimesParams struct {
+	PrepareLeaseSecs float64       `json:"prepare_lease_secs"`
+	RuntimeIds       []pgtype.UUID `json:"runtime_ids"`
+	HeldTaskIds      []pgtype.UUID `json:"held_task_ids"`
+	MinAgeSecs       float64       `json:"min_age_secs"`
+	RuntimeStaleSecs float64       `json:"runtime_stale_secs"`
+	MaxTasks         int32         `json:"max_tasks"`
+}
+
+// Lost-claim-response recovery (DENE-1611): a daemon whose last claim outcome
+// was uncertain (response timed out / connection dropped after the request left)
+// asks for everything the server dispatched to its runtimes that it is not
+// holding, instead of waiting out the 90s recovery window. @held_task_ids is the
+// set the daemon is already preparing or running, so a task it did receive is
+// never handed out twice. @min_age_secs keeps a claim still executing server-side
+// (bounded by the claim execution budget) from being swept up as "lost". Same
+// owner fence, freshness gate and dispatched_at/lease refresh as the stale
+// reclaim above; only the recovery-window and prepare-lease conditions are
+// replaced by the daemon's own held set.
+func (q *Queries) RecoverUndeliveredDispatchedTasksForRuntimes(ctx context.Context, arg RecoverUndeliveredDispatchedTasksForRuntimesParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, recoverUndeliveredDispatchedTasksForRuntimes,
+		arg.PrepareLeaseSecs,
+		arg.RuntimeIds,
+		arg.HeldTaskIds,
+		arg.MinAgeSecs,
+		arg.RuntimeStaleSecs,
+		arg.MaxTasks,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.BranchName,
+			&i.DurableWorkDir,
+			&i.ChannelContextRevision,
+			&i.CommentThreadID,
+			&i.CancelledByType,
+			&i.CancelledByID,
+			&i.CancelledByName,
+			&i.IssueSnapshot,
+			&i.CodeDecision,
+			&i.FailureInputVersion,
+			&i.FailureFingerprint,
+			&i.WorkThreadID,
+			&i.ContextGeneration,
+			&i.ContextMessageLimit,
+			&i.ContextTokenBudget,
+			&i.ContinuityBreakReason,
+			&i.SessionMode,
+			&i.ResumedFromTaskID,
+			&i.SessionBreakReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const refreshAgentStatusFromTasks = `-- name: RefreshAgentStatusFromTasks :one
 WITH desired AS (
     SELECT CASE WHEN EXISTS (
@@ -9787,7 +10137,7 @@ SET status = desired.status,
     updated_at = now()
 FROM desired
 WHERE a.id = $1 AND a.status IS DISTINCT FROM desired.status
-RETURNING a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level, a.composio_toolkit_allowlist, a.permission_mode, a.kind, a.system_key, a.disabled_runtime_skills, a.service_tier, a.conversation_starters, a.switchable_models, a.auto_retry_enabled, a.parent_agent_id, a.runtime_inherited, a.routing_tier, a.work_enabled, a.plan_limits, a.doorbell_enabled, a.routing_usage, a.domain_id
+RETURNING a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level, a.composio_toolkit_allowlist, a.permission_mode, a.kind, a.system_key, a.disabled_runtime_skills, a.service_tier, a.conversation_starters, a.switchable_models, a.auto_retry_enabled, a.parent_agent_id, a.runtime_inherited, a.routing_tier, a.work_enabled, a.plan_limits, a.doorbell_enabled, a.routing_usage, a.domain_id, a.dispatch_mode
 `
 
 // Persisted agent.status has no queued/resource-wait bucket. Keep dispatched
@@ -9838,6 +10188,7 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -10022,7 +10373,7 @@ func (q *Queries) RequeueAgentTaskAfterClaimFailure(ctx context.Context, arg Req
 const restoreAgent = `-- name: RestoreAgent :one
 UPDATE agent SET archived_at = NULL, archived_by = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -10068,6 +10419,7 @@ func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, erro
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -10081,7 +10433,7 @@ SET parent_agent_id = $2::uuid,
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type SetAgentParentAgentParams struct {
@@ -10146,6 +10498,7 @@ func (q *Queries) SetAgentParentAgent(ctx context.Context, arg SetAgentParentAge
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -10155,7 +10508,7 @@ UPDATE agent
 SET work_enabled = $1::boolean, updated_at = now()
 WHERE parent_agent_id = $2::uuid
   AND work_enabled <> $1::boolean
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type SetAgentSpecialisationsWorkEnabledParams struct {
@@ -10216,6 +10569,7 @@ func (q *Queries) SetAgentSpecialisationsWorkEnabled(ctx context.Context, arg Se
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -10362,7 +10716,7 @@ UPDATE agent SET
 WHERE workspace_id = $4
   AND id = ANY($5::uuid[])
   AND archived_at IS NULL
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type SetAgentsRoutingParams struct {
@@ -10433,6 +10787,7 @@ func (q *Queries) SetAgentsRouting(ctx context.Context, arg SetAgentsRoutingPara
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -10728,6 +11083,7 @@ SET runtime_id = parent.runtime_id,
     service_tier = parent.service_tier,
     routing_tier = parent.routing_tier,
     routing_usage = parent.routing_usage,
+    dispatch_mode = parent.dispatch_mode,
     custom_env = CASE WHEN child.owner_id = parent.owner_id THEN parent.custom_env ELSE child.custom_env END,
     custom_args = CASE WHEN child.owner_id = parent.owner_id THEN parent.custom_args ELSE child.custom_args END,
     mcp_config = CASE WHEN child.owner_id = parent.owner_id THEN parent.mcp_config ELSE child.mcp_config END,
@@ -10745,11 +11101,12 @@ WHERE child.parent_agent_id = parent.id
     OR child.service_tier IS DISTINCT FROM parent.service_tier
     OR child.routing_tier IS DISTINCT FROM parent.routing_tier
     OR child.routing_usage IS DISTINCT FROM parent.routing_usage
+    OR child.dispatch_mode IS DISTINCT FROM parent.dispatch_mode
     OR (child.owner_id = parent.owner_id
       AND (child.custom_env IS DISTINCT FROM parent.custom_env
         OR child.custom_args IS DISTINCT FROM parent.custom_args
         OR child.mcp_config IS DISTINCT FROM parent.mcp_config)))
-RETURNING child.id, child.workspace_id, child.name, child.avatar_url, child.runtime_mode, child.runtime_config, child.visibility, child.status, child.max_concurrent_tasks, child.owner_id, child.created_at, child.updated_at, child.description, child.runtime_id, child.instructions, child.archived_at, child.archived_by, child.custom_env, child.custom_args, child.mcp_config, child.model, child.thinking_level, child.composio_toolkit_allowlist, child.permission_mode, child.kind, child.system_key, child.disabled_runtime_skills, child.service_tier, child.conversation_starters, child.switchable_models, child.auto_retry_enabled, child.parent_agent_id, child.runtime_inherited, child.routing_tier, child.work_enabled, child.plan_limits, child.doorbell_enabled, child.routing_usage, child.domain_id
+RETURNING child.id, child.workspace_id, child.name, child.avatar_url, child.runtime_mode, child.runtime_config, child.visibility, child.status, child.max_concurrent_tasks, child.owner_id, child.created_at, child.updated_at, child.description, child.runtime_id, child.instructions, child.archived_at, child.archived_by, child.custom_env, child.custom_args, child.mcp_config, child.model, child.thinking_level, child.composio_toolkit_allowlist, child.permission_mode, child.kind, child.system_key, child.disabled_runtime_skills, child.service_tier, child.conversation_starters, child.switchable_models, child.auto_retry_enabled, child.parent_agent_id, child.runtime_inherited, child.routing_tier, child.work_enabled, child.plan_limits, child.doorbell_enabled, child.routing_usage, child.domain_id, child.dispatch_mode
 `
 
 // Copies a base role's runtime profile onto every specialisation that follows
@@ -10778,7 +11135,7 @@ RETURNING child.id, child.workspace_id, child.name, child.avatar_url, child.runt
 // owners the specialisation keeps its own execution config; everything else
 // still follows.
 //
-// Routing tier and usage (DENE-1016) follow for every owner: they are not
+// Routing tier, usage (DENE-1016) and dispatch mode (DENE-1600) follow for every owner: they are not
 // secrets, and a following seat that kept its own rung would route as a
 // different person. The same statement is the copy used when a base role's
 // routing changes, so that write and this one commit together.
@@ -10831,6 +11188,7 @@ func (q *Queries) SyncInheritedAgentRuntimeProfiles(ctx context.Context, parentA
 			&i.DoorbellEnabled,
 			&i.RoutingUsage,
 			&i.DomainID,
+			&i.DispatchMode,
 		); err != nil {
 			return nil, err
 		}
@@ -10863,29 +11221,30 @@ UPDATE agent SET
     service_tier = COALESCE($18, service_tier),
     routing_tier = COALESCE($19, routing_tier),
     routing_usage = COALESCE($20, routing_usage),
-    conversation_starters = COALESCE($21, conversation_starters),
-    composio_toolkit_allowlist = COALESCE($22::text[], composio_toolkit_allowlist),
-    switchable_models = COALESCE($23, switchable_models),
+    dispatch_mode = COALESCE($21::text, dispatch_mode),
+    conversation_starters = COALESCE($22, conversation_starters),
+    composio_toolkit_allowlist = COALESCE($23::text[], composio_toolkit_allowlist),
+    switchable_models = COALESCE($24, switchable_models),
     -- Explicit false is not NULL, so COALESCE distinguishes "omitted" from
     -- "turned off" the same way thinking_level's two-query pattern does for
     -- nullable text. A bool column cannot be cleared to NULL.
-    auto_retry_enabled = COALESCE($24, auto_retry_enabled),
+    auto_retry_enabled = COALESCE($25, auto_retry_enabled),
     -- Reversible seat gate (DENE-714). Same omitted-preserves / present-sets
     -- contract as auto_retry_enabled. FALSE means the seat stays in the list
     -- but does not take new work.
-    work_enabled = COALESCE($25, work_enabled),
+    work_enabled = COALESCE($26, work_enabled),
     -- Same tri-state for runtime inheritance (DENE-505): NULL leaves the flag
     -- alone, FALSE switches a specialisation to its own runtime configuration,
     -- TRUE makes it follow its base role again. Setting it back to "not
     -- applicable" belongs to SetAgentParentAgent, which owns the detach.
-    runtime_inherited = COALESCE($26::boolean, runtime_inherited),
+    runtime_inherited = COALESCE($27::boolean, runtime_inherited),
     -- Doorbell switch (DENE-808): same omitted-preserves / present-sets
     -- contract as work_enabled. FALSE keeps the plain refusal for members
     -- outside the allow-list; TRUE turns that refusal into an approval request.
-    doorbell_enabled = COALESCE($27::boolean, doorbell_enabled),
+    doorbell_enabled = COALESCE($28::boolean, doorbell_enabled),
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type UpdateAgentParams struct {
@@ -10909,6 +11268,7 @@ type UpdateAgentParams struct {
 	ServiceTier              pgtype.Text `json:"service_tier"`
 	RoutingTier              pgtype.Text `json:"routing_tier"`
 	RoutingUsage             pgtype.Text `json:"routing_usage"`
+	DispatchMode             pgtype.Text `json:"dispatch_mode"`
 	ConversationStarters     []byte      `json:"conversation_starters"`
 	ComposioToolkitAllowlist []string    `json:"composio_toolkit_allowlist"`
 	SwitchableModels         []byte      `json:"switchable_models"`
@@ -10946,6 +11306,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.ServiceTier,
 		arg.RoutingTier,
 		arg.RoutingUsage,
+		arg.DispatchMode,
 		arg.ConversationStarters,
 		arg.ComposioToolkitAllowlist,
 		arg.SwitchableModels,
@@ -10995,6 +11356,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -11003,7 +11365,7 @@ const updateAgentCustomEnv = `-- name: UpdateAgentCustomEnv :one
 UPDATE agent
 SET custom_env = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type UpdateAgentCustomEnvParams struct {
@@ -11059,6 +11421,7 @@ func (q *Queries) UpdateAgentCustomEnv(ctx context.Context, arg UpdateAgentCusto
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -11067,7 +11430,7 @@ const updateAgentDisabledRuntimeSkills = `-- name: UpdateAgentDisabledRuntimeSki
 UPDATE agent
 SET disabled_runtime_skills = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type UpdateAgentDisabledRuntimeSkillsParams struct {
@@ -11118,6 +11481,7 @@ func (q *Queries) UpdateAgentDisabledRuntimeSkills(ctx context.Context, arg Upda
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -11153,7 +11517,7 @@ func (q *Queries) UpdateAgentPlanLimits(ctx context.Context, arg UpdateAgentPlan
 const updateAgentStatus = `-- name: UpdateAgentStatus :one
 UPDATE agent SET status = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type UpdateAgentStatusParams struct {
@@ -11204,6 +11568,7 @@ func (q *Queries) UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusPa
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }
@@ -11248,7 +11613,7 @@ UPDATE agent
 SET instructions = $1,
     updated_at = now()
 WHERE id = $2 AND kind = 'system' AND system_key LIKE 'issue_draft:%'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
 `
 
 type UpdateIssueDraftCarrierInstructionsParams struct {
@@ -11309,6 +11674,7 @@ func (q *Queries) UpdateIssueDraftCarrierInstructions(ctx context.Context, arg U
 		&i.DoorbellEnabled,
 		&i.RoutingUsage,
 		&i.DomainID,
+		&i.DispatchMode,
 	)
 	return i, err
 }

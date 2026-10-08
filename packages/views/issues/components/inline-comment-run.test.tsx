@@ -51,6 +51,32 @@ function setup(initialTask: AgentTask, hasReply = false, presentation: "inline" 
 }
 
 describe("InlineCommentRun", () => {
+  it("lists the skills a finished run used without fetching its transcript", () => {
+    setup(task({ status: "completed", completed_at: "2026-09-07T00:05:00Z", skills_used: ["codebase-design", "implement"] }), true);
+    expect(screen.getByText("Skills used: codebase-design、implement")).toBeInTheDocument();
+    expect(api.listTaskMessages).not.toHaveBeenCalled();
+  });
+
+  it("shows a live run's skills as they stream, and gives each use its own step", async () => {
+    vi.mocked(api.listTaskMessages).mockResolvedValue([
+      { task_id: id, issue_id: "issue", seq: 1, type: "tool_use", tool: "Skill", input: { skill: "codebase-design" } },
+      { task_id: id, issue_id: "issue", seq: 2, type: "skill", tool: "codebase-design" },
+      { task_id: id, issue_id: "issue", seq: 3, type: "tool_result", tool: "Skill", output: "loaded" },
+    ]);
+    setup(task());
+    expect(await screen.findByText("Skills used: codebase-design")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /View activity/ }));
+    // The header's live summary names it too; the step row is the other one.
+    const step = screen.getAllByText("Used skill codebase-design").find((node) => node.closest("[data-run-skill-step]"));
+    expect(step).toBeDefined();
+    expect(step!.closest("summary")).toBeNull();
+  });
+
+  it("draws no skills line for a run that used none", () => {
+    setup(task({ status: "completed", completed_at: "2026-09-07T00:05:00Z" }), true);
+    expect(document.querySelector("[data-run-skills]")).toBeNull();
+  });
+
   it("places a delivered steer between the steps it arrived between", async () => {
     vi.mocked(api.listTaskMessages).mockResolvedValue([
       { task_id: id, issue_id: "issue", seq: 1, type: "tool_use", tool: "exec_command", input: { command: "cat login.tsx" }, created_at: "2026-09-07T00:00:05Z" },

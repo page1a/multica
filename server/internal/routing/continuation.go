@@ -59,8 +59,11 @@ type RelatedTicket struct {
 // time. OnRoster false means the roster does not list it: work switched off,
 // or archived.
 type ContinuationSeat struct {
-	Seat         Seat
-	OnRoster     bool
+	Seat     Seat
+	OnRoster bool
+	// Unpickable is SeatSelectable's refusal for the seat's own record,
+	// e.g. mention_only: it takes work when named, never by this rule.
+	Unpickable   string
 	Availability string
 }
 
@@ -160,6 +163,12 @@ func PickContinuation(s ContinuationSnapshot) ContinuationPick {
 func continuationBlocker(seat ContinuationSeat, known bool, rank map[string]int, required int, requiredKnown bool, scene Scene) string {
 	if !known || !seat.OnRoster {
 		return "已停用或已归档"
+	}
+	if seat.Unpickable == ReasonMentionOnly {
+		return "仅点名，不自动派单"
+	}
+	if seat.Unpickable != "" {
+		return "不能自动派单"
 	}
 	switch seat.Availability {
 	case AvailabilityDisabled:

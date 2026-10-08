@@ -62,6 +62,10 @@
     "close": "Fermer",
     "open_in_new_tab": "Ouvrir dans un nouvel onglet",
     "remove": "Supprimer la pièce jointe",
+    "open_local": "Ouvrir",
+    "reveal_local_finder": "Afficher dans le Finder",
+    "reveal_local": "Afficher dans le dossier",
+    "local_copy_gone": "La copie sur cet ordinateur a changé ou n’existe plus — téléchargement à la place.",
     "previous": "Précédent",
     "next": "Suivant",
     "sequence_position": "{{index}} / {{total}}",
@@ -119,7 +123,9 @@
     "no_results": "Aucun skill correspondant",
     "commands": {
       "note": "Ajouter une note — ne déclenchera aucun agent"
-    }
+    },
+    "skill_group": "Skills de {{name}}",
+    "skill_hint": "@ un agent pour choisir un de ses skills"
   },
   "code_block": {
     "html_preview": "Aperçu HTML",

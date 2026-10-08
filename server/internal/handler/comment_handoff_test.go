@@ -68,12 +68,14 @@ func TestCreateCommentModeHandoff(t *testing.T) {
 		}
 		agentB, _ := testHandler.Queries.GetAgent(t.Context(), parseUUID(f.agentB))
 		task, _ := testHandler.Queries.GetAgentTask(t.Context(), parseUUID(bTask))
-		if card := testHandler.handoffCardForRun(t.Context(), issue, agentB, task); !strings.Contains(card, "接着把前端做完") {
-			t.Fatalf("B's first run gets no handoff card: %q", card)
+		if card, reason := testHandler.stateCardForRun(t.Context(), issue, agentB, task, false, false); reason != stateCardReasonHandoff || !strings.Contains(card, "接着把前端做完") {
+			t.Fatalf("B's first run gets no handoff card: %q (%s)", card, reason)
 		}
+		// A is not named by the handoff; it was stopped by it, so its next
+		// run opens with the card as a baton, not as the one handed to.
 		agentA, _ := testHandler.Queries.GetAgent(t.Context(), parseUUID(f.agentID))
-		if card := testHandler.handoffCardForRun(t.Context(), issue, agentA, task); card != "" {
-			t.Fatal("an agent the handoff does not name gets no card")
+		if _, reason := testHandler.stateCardForRun(t.Context(), issue, agentA, task, false, false); reason == stateCardReasonHandoff {
+			t.Fatal("an agent the handoff does not name is not the one handed to")
 		}
 	})
 

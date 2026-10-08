@@ -38,14 +38,16 @@ func TestCheckRequestOrderAndMessages(t *testing.T) {
 	}
 }
 
-// The outcome table is written out in the runtime brief, the multica-platform
-// skill and the kun scheduling doc. This test pins each copy to Outcomes so a
-// new, renamed or dropped outcome fails here instead of drifting (DENE-1183).
+// The outcome table is written out in `multica issue close --help`, the
+// multica-platform skill and the kun scheduling doc. This test pins each copy
+// to Outcomes so a new, renamed or dropped outcome fails here instead of
+// drifting (DENE-1183). DENE-1329 moved the table out of the runtime brief,
+// which now names only `--outcome <...>` and leaves the list to `--help`.
 func TestOutcomeTableMatchesWrittenCopies(t *testing.T) {
 	enumeration := regexp.MustCompile(`--outcome <([a-z_|]+)>`)
 	mention := regexp.MustCompile(`--outcome[ =]+([a-z_]+(?:\|[a-z_]+)*)`)
 	for _, rel := range []string{
-		"../daemon/execenv/runtime_config_sections.go",
+		"../../cmd/multica/cmd_issue.go",
 		"../service/builtin_skills/multica-platform/references/close-protocol.md",
 		"../../../docs/kun/scheduling-close-protocol.md",
 	} {

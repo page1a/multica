@@ -62,6 +62,12 @@ export function RunRow({ task, issueId, lineage }: Props) {
           </Text>
         </View>
         <SessionCaption lineage={lineage} />
+        {task.skills_used?.length ? (
+          // Wraps rather than truncating: every skill name stays readable.
+          <Text className="text-xs text-muted-foreground">
+            {t("runs.skills_used", { names: task.skills_used.join("、") })}
+          </Text>
+        ) : null}
       </View>
       {isActive ? <CancelButton taskId={task.id} issueId={issueId} /> : null}
     </View>

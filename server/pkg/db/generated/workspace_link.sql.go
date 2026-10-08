@@ -502,3 +502,38 @@ func (q *Queries) ListWorkspaceLinksForWorkspace(ctx context.Context, workspaceI
 	}
 	return items, nil
 }
+
+const listWorkspaceShareableProjects = `-- name: ListWorkspaceShareableProjects :many
+SELECT id, title, icon FROM project
+WHERE workspace_id = $1::uuid
+  AND visibility <> 'private'
+ORDER BY title, id
+`
+
+type ListWorkspaceShareableProjectsRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Title string      `json:"title"`
+	Icon  pgtype.Text `json:"icon"`
+}
+
+// Every project of the workspace a link could expose (not private). The
+// pull form lists these for a person who owns the other workspace too.
+func (q *Queries) ListWorkspaceShareableProjects(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceShareableProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceShareableProjects, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceShareableProjectsRow{}
+	for rows.Next() {
+		var i ListWorkspaceShareableProjectsRow
+		if err := rows.Scan(&i.ID, &i.Title, &i.Icon); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

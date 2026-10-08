@@ -298,7 +298,8 @@ export const CHAT_DEFAULT_H = 600;
  */
 export interface ChatTimelineItem {
   seq: number;
-  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
+  /** `skill` marks a bound skill's first use (DENE-1573); chat draws no row for it. */
+  type: "tool_use" | "tool_result" | "thinking" | "text" | "error" | "skill";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;

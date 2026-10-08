@@ -218,6 +218,7 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityPlatformSkillV1,
 		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 		protocol.DaemonCapabilityJoinedWakeupsV1,
+		protocol.DaemonCapabilityDeliveryLineV1,
 	}
 }
 
@@ -265,17 +266,26 @@ func (c *Client) ResolveRemoteMCPCredential(ctx context.Context, daemonToken, ta
 	return headers, nil
 }
 
-// batchClaimRequestTimeout is the short, request-scoped deadline for the
+// batchClaimRequestTimeout is the server-side execution budget of the
 // machine-level batch claim (MUL-4257). Unlike the per-runtime claim — which
 // gets the full 30s control-plane timeout because a stall there only blocks
 // that one runtime's goroutine — the batch call covers every runtime the
 // daemon hosts in a single request, so a slow claim would delay ALL of them
 // (the head-of-line coupling the per-runtime pollers were split to avoid,
-// MUL-1744). Bounding the batch to a few seconds caps that worst-case
-// starvation; a claim that commits server-side after the client gives up is
-// recovered by ReclaimStaleDispatchedTasksForRuntimes on the next poll. Kept
-// comfortably above p99 claim latency so recovery stays the exception.
+// MUL-1744). Bounding the server's work to a few seconds caps that worst-case
+// starvation. It budgets the claim's DB work only: delivering the response is
+// bounded separately (batchClaimResponseWait) because a batch of tasks with long
+// chat context is megabytes and a lossy link needs far longer than the DB does
+// (DENE-1611).
 const batchClaimRequestTimeout = 5 * time.Second
+
+// batchClaimResponseWait is how long the daemon waits for a batch claim's
+// response to arrive, covering transfer as well as execution. A response that
+// misses it is dropped client-side while the tasks stay dispatched on the
+// server, so too short a value turns a slow link into a loss loop (DENE-1611:
+// 5s against ~70 KB/s with 3% loss). 30s matches the control-plane timeout; a
+// loss past it is recovered by the claim-recovery request, not by waiting.
+const batchClaimResponseWait = 30 * time.Second
 
 // claimTasksResult carries optional scheduling metadata understood only by
 // daemons advertising claim-poll-hints-v1. A zero-value result is deliberately
@@ -286,6 +296,11 @@ type claimTasksResult struct {
 	ClaimPollHintSupported      bool    `json:"claim_poll_hint_supported,omitempty"`
 	NextDeferredTaskAfterMillis int64   `json:"next_deferred_task_after_ms,omitempty"`
 	ClaimedOverWS               bool    `json:"-"`
+	// RecoveryPending is the server saying a recovery claim is not finished:
+	// undelivered dispatches remain that it could not hand back yet (DENE-1611).
+	// An answer without it — including every answer from an older server — ends
+	// the recovery.
+	RecoveryPending bool `json:"recovery_pending,omitempty"`
 }
 
 // ClaimTasks is the machine-level (MUL-4257) batch counterpart of ClaimTask:
@@ -294,24 +309,47 @@ type claimTasksResult struct {
 // the server rejects any runtime_id whose runtime.daemon_id doesn't match, so a
 // stale/crossed runtime set can't claim another machine's tasks. Each returned
 // Task carries its own RuntimeID so the daemon routes it to the matching
-// runtime locally. The request runs under a short, request-scoped deadline
-// (batchClaimRequestTimeout) rather than the shared 30s control-plane timeout so
-// one slow claim cannot stall the whole batch; the deadline propagates to the
-// server and cancels the in-flight query there too.
+// runtime locally. The request runs under a request-scoped deadline
+// (batchClaimResponseWait); the deadline propagates to the server and cancels
+// the in-flight query there too.
 func (c *Client) ClaimTasks(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int) ([]*Task, error) {
-	result, err := c.claimTasksWithHints(ctx, daemonID, runtimeIDs, maxTasks)
+	result, err := c.claimTasksWithHints(ctx, daemonID, runtimeIDs, maxTasks, claimRecovery{})
 	return result.Tasks, err
 }
 
-func (c *Client) claimTasksWithHints(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int) (claimTasksResult, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, batchClaimRequestTimeout)
-	defer cancel()
-	var resp claimTasksResult
-	if err := c.postJSON(reqCtx, "/api/daemon/tasks/claim", map[string]any{
+// claimRecovery is the lost-response recovery request a batch claim may carry
+// (DENE-1611). Active asks the server to re-send tasks it dispatched to this
+// daemon that the daemon never received; HeldTaskIDs are the tasks it is
+// already preparing or running, which the server must not send again.
+type claimRecovery struct {
+	Active      bool
+	HeldTaskIDs []string
+}
+
+// claimBody is the request body shared by the HTTP claim and the tasks.claim
+// WS RPC, so both transports ask the same question.
+func claimBody(daemonID string, runtimeIDs []string, maxTasks int, rec claimRecovery) map[string]any {
+	body := map[string]any{
 		"daemon_id":   daemonID,
 		"runtime_ids": runtimeIDs,
 		"max_tasks":   maxTasks,
-	}, &resp); err != nil {
+	}
+	if rec.Active {
+		body["recover_undelivered"] = true
+		held := rec.HeldTaskIDs
+		if held == nil {
+			held = []string{}
+		}
+		body["held_task_ids"] = held
+	}
+	return body
+}
+
+func (c *Client) claimTasksWithHints(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int, rec claimRecovery) (claimTasksResult, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, batchClaimResponseWait)
+	defer cancel()
+	var resp claimTasksResult
+	if err := c.postJSON(reqCtx, "/api/daemon/tasks/claim", claimBody(daemonID, runtimeIDs, maxTasks, rec), &resp); err != nil {
 		return claimTasksResult{}, err
 	}
 	return resp, nil

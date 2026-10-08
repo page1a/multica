@@ -273,7 +273,8 @@
       "reason_runtime_changed": "last session is on another machine",
       "reason_session_lost": "session could not be restored",
       "reason_fresh_requested": "fresh session requested"
-    }
+    },
+    "skills_used": "Skills used: {{names}}"
   },
   "header_filter": "Filter",
   "new_badge": "New",

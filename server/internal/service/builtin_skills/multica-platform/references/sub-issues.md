@@ -65,6 +65,26 @@ Read each sub-issue's description before promoting and only promote items whose
 stated dependencies are met; if a description conflicts with the parent's
 breakdown, leave it `backlog` and comment to confirm first.
 
+## One branch, one PR: sub-issues deliver onto the parent's line
+
+A sub-issue created after DENE-1537 has a `delivery_line` in `issue get` /
+`issue children` JSON and opens **no PR of its own**. Its worktree starts from
+the tip of the parent's delivery branch, so it sees every earlier stage's
+commits; parallel siblings each get their own worktree from that tip.
+
+- Commit your work; do not push, open a PR, or switch branches.
+- `multica issue close <child> --outcome done`, run in the sub-issue's working
+  directory, merges its commits into the parent's branch and posts the commit
+  list as evidence. Nothing reaches the base branch.
+- A real conflict closes the child `blocked` with the files named. Run
+  `git merge <parent-branch>` on your branch, resolve, commit, close done again.
+- The parent continues that branch and opens the one PR, with
+  `Closes DENE-N` for every sub-issue; CI, review and merge happen there.
+  `--verdict pass` on a line child is refused; accept on the parent.
+
+`multica issue delivery <parent>` lists each sub-issue's merged commits.
+Sub-issues that already had their own branch or PR keep the old flow.
+
 ## Incorrect to correct
 
 Serial / phased sub-issues (don't start the whole chain at once):

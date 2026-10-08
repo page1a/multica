@@ -256,6 +256,41 @@ func TestQuotaRelayDropsOneTierWhenSameTierIsUnavailable(t *testing.T) {
 	}
 }
 
+// ADR-0008: a mention_only seat keeps its tier but is never the relay's pick.
+// The same-tier seat is still tagged strong; only its dispatch mode changes,
+// and the relay must step past it exactly as if it were off the rung.
+func TestQuotaRelaySkipsMentionOnlySeat(t *testing.T) {
+	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderQuotaLimit), "Weekly usage limit reached", true)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `UPDATE agent SET dispatch_mode = 'mention_only' WHERE id = $1`, w.sameID); err != nil {
+		t.Fatalf("mark same-tier seat mention_only: %v", err)
+	}
+	if _, err := w.service().RelayQuotaFailure(ctx, w.task(t)); err != nil {
+		t.Fatalf("relay: %v", err)
+	}
+	var assignee string
+	if err := w.pool.QueryRow(ctx, `SELECT assignee_id::text FROM issue WHERE id = $1`, w.issueID).Scan(&assignee); err != nil {
+		t.Fatalf("read assignee: %v", err)
+	}
+	if assignee == w.sameID {
+		t.Fatal("quota relay handed the ticket to a mention_only seat")
+	}
+	if assignee != w.mediumID {
+		t.Fatalf("assignee = %s, want the one-tier-down auto seat %s", assignee, w.mediumID)
+	}
+}
+
+func TestQuotaSeatSelectableRefusesMentionOnly(t *testing.T) {
+	agent := db.Agent{WorkEnabled: true, RuntimeID: util.MustParseUUID("00000000-0000-0000-0000-000000000001"), DispatchMode: "auto"}
+	if !quotaSeatSelectable(agent, "weak", false) {
+		t.Fatal("an auto seat on a rung must be selectable")
+	}
+	agent.DispatchMode = "mention_only"
+	if quotaSeatSelectable(agent, "weak", false) {
+		t.Fatal("a mention_only seat must not be selectable by the quota relay")
+	}
+}
+
 func TestInheritedModelQuotaDoesNotBreakTheSharedModel(t *testing.T) {
 	w := seedQuotaWorld(t, string(taskfailure.ReasonAgentProviderQuotaLimit), "model quota exceeded for gpt-special", false)
 	ctx := context.Background()

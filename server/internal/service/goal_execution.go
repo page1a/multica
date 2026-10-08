@@ -174,7 +174,7 @@ func (s *TaskService) reconcileGoalAfterCompletion(ctx context.Context, task db.
 }
 
 func (s *TaskService) stopGoalForBudget(ctx context.Context, issue db.Issue, task db.AgentTaskQueue, goal db.IssueGoal) {
-	stopped, err := s.Queries.StopIssueGoalForBudget(ctx, db.StopIssueGoalForBudgetParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	stopped, err := s.Queries.StopIssueGoalForBudget(ctx, db.StopIssueGoalForBudgetParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, StopReason: "budget_exhausted"})
 	if err != nil {
 		return
 	}
@@ -187,7 +187,7 @@ func (s *TaskService) stopGoalForBudget(ctx context.Context, issue db.Issue, tas
 }
 
 func (s *TaskService) stopGoalForNoProgress(ctx context.Context, issue db.Issue, task db.AgentTaskQueue, goal db.IssueGoal, rounds int32, passed, total int) {
-	_, err := s.Queries.StopIssueGoalForBudget(ctx, db.StopIssueGoalForBudgetParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	_, err := s.Queries.StopIssueGoalForBudget(ctx, db.StopIssueGoalForBudgetParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, StopReason: "no_progress"})
 	if err != nil {
 		return
 	}

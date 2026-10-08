@@ -3,8 +3,8 @@
 import { useCallback } from "react";
 import type { Attachment } from "@multica/core/types";
 import {
+  useAttachmentActions,
   useAttachmentPreview,
-  useDownloadAttachment,
   usePreviewSequence,
 } from "../../../editor";
 
@@ -16,14 +16,14 @@ import {
 export function useOpenAttachment() {
   const sequence = usePreviewSequence();
   const preview = useAttachmentPreview();
-  const download = useDownloadAttachment();
+  const { download } = useAttachmentActions();
   const { openAt } = sequence;
   const { tryOpen } = preview;
   const open = useCallback(
     (attachment: Attachment) => {
       if (openAt(attachment.id)) return;
       if (tryOpen({ kind: "full", attachment })) return;
-      download(attachment.id);
+      download({ attachmentId: attachment.id });
     },
     [openAt, tryOpen, download],
   );

@@ -53,7 +53,13 @@ var goalBudgetCmd = &cobra.Command{
 var goalFinishCmd = &cobra.Command{
 	Use:   "finish <issue>",
 	Short: "Stop or mark a goal achieved",
-	Args:  exactArgs(1),
+	Long: "Stop turns goal mode off: the completion line stops driving runs and the " +
+		"issue carries on as an ordinary task. An agent may stop a draft or locked " +
+		"goal when a person asks, and must pass --reason with that person's words; " +
+		"the goal records who stopped it and on whose word. Only a human can mark a " +
+		"goal achieved.",
+	Example: "  multica goal finish DENE-12 --status stopped --reason \"把这张票的目标模式去掉\"",
+	Args:    exactArgs(1),
 	RunE:  runGoalFinish,
 }
 
@@ -77,7 +83,8 @@ func init() {
 	goalBudgetCmd.Flags().Int64("tokens", 0, "Additional token budget")
 	goalBudgetCmd.Flags().Int64("runs", 0, "Additional run budget")
 	goalBudgetCmd.Flags().Int64("duration", 0, "Additional duration budget in seconds")
-	goalFinishCmd.Flags().String("status", "achieved", "End state: achieved or stopped")
+	goalFinishCmd.Flags().String("status", "achieved", "End state: achieved (human only) or stopped")
+	goalFinishCmd.Flags().String("reason", "", "Why the goal stops; an agent must quote the person's words asking for the stop")
 	goalCheckCmd.Flags().String("status", "passed", "Check state: pending, passed, or failed")
 	goalCheckCmd.Flags().String("evidence", "", "Evidence detail to attach")
 
@@ -184,7 +191,11 @@ func runGoalFinish(cmd *cobra.Command, args []string) error {
 	if status != "achieved" && status != "stopped" {
 		return fmt.Errorf("--status must be achieved or stopped")
 	}
-	return runGoalAction(cmd, args[0], "finish", map[string]any{"status": status})
+	body := map[string]any{"status": status}
+	if reason, _ := cmd.Flags().GetString("reason"); strings.TrimSpace(reason) != "" {
+		body["reason"] = strings.TrimSpace(reason)
+	}
+	return runGoalAction(cmd, args[0], "finish", body)
 }
 
 func runGoalCheck(cmd *cobra.Command, args []string) error {
@@ -259,5 +270,18 @@ func printGoal(raw any) {
 	}
 	if rounds, ok := out["no_progress_rounds"]; ok {
 		fmt.Printf("No progress rounds: %v/%v\n", rounds, out["max_no_progress_rounds"])
+	}
+	if by, ok := out["stopped_by"].(map[string]any); ok {
+		fmt.Printf("Stopped by: %v", by["type"])
+		if id, ok := by["id"]; ok && id != nil {
+			fmt.Printf(" %v", id)
+		}
+		if onBehalf, ok := out["stopped_on_behalf_of"]; ok && onBehalf != nil {
+			fmt.Printf(" (for %v)", onBehalf)
+		}
+		fmt.Println()
+	}
+	if reason, ok := out["stop_reason"].(string); ok && reason != "" {
+		fmt.Printf("Stop reason: %s\n", reason)
 	}
 }

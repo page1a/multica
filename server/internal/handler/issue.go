@@ -70,7 +70,7 @@ type IssueResponse struct {
 	AssigneeType *string `json:"assignee_type"`
 	AssigneeID   *string `json:"assignee_id"`
 	// AssigneeSource is whose decision the executor is: human / automation /
-	// quote / agent / quote_rejected / router (DENE-1033). Omitted for a ticket that predates
+	// quote / agent / router (DENE-1033). Omitted for a ticket that predates
 	// the record and by the list endpoints, which do not select it, so a
 	// client merging a list row keeps what the detail read told it.
 	// AssigneeSourceUserID is the person behind "quote" and AssigneeQuote the
@@ -82,9 +82,9 @@ type IssueResponse struct {
 	// named an executor the server did not apply, so the caller sees it now
 	// instead of finding the slot empty later.
 	AssigneeIgnored bool `json:"assignee_ignored,omitempty"`
-	// AssigneeIgnoredReason explains a rejected per-quote proof so an agent can
-	// ask the person for an actual quote instead of guessing again, or a
-	// refused in-flight reassignment with the commands to use instead.
+	// AssigneeIgnoredReason explains an unverified per-quote proof (the slot
+	// went to routing), or a refused in-flight reassignment with the commands
+	// to use instead.
 	AssigneeIgnoredReason string `json:"assignee_ignored_reason,omitempty"`
 	// ReviewerType / ReviewerID are the acceptance slot, shaped exactly like
 	// the assignee pair: a REFERENCE to an agent or a member, not a copy of a
@@ -143,6 +143,10 @@ type IssueResponse struct {
 	Properties  map[string]any          `json:"properties"`
 	Reactions   []IssueReactionResponse `json:"reactions,omitempty"`
 	Attachments []AttachmentResponse    `json:"attachments,omitempty"`
+	// DeliveryLine is set on a sub-issue that delivers onto its parent's
+	// branch instead of opening its own PR (DENE-1537). Detail and children
+	// reads fill it; other paths leave it off.
+	DeliveryLine *service.IssueDeliveryLineSummary `json:"delivery_line,omitempty"`
 	// Labels are bulk-attached by list/detail endpoints so the client can render
 	// chips without an N+1 round-trip per row. Pointer + omitempty so paths that
 	// don't load labels (e.g. UpdateIssue, batch UpdateIssues, the issue:updated
@@ -2699,6 +2703,11 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	if driver, ok := h.issueDriver(r.Context(), issue); ok {
 		resp.Driver = driverResponse(driver)
 	}
+	if lines, err := service.DeliveryLineSummaries(r.Context(), h.Queries, []pgtype.UUID{issue.ID}); err == nil {
+		if line, ok := lines[resp.ID]; ok {
+			resp.DeliveryLine = &line
+		}
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -2735,9 +2744,16 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 	// costs one catalog read rather than one per row.
 	statusResolver := issuestatus.NewResolver(issue.WorkspaceID)
 	drivers := h.issueDrivers(r.Context(), issue.WorkspaceID, children)
+	lines, linesErr := service.DeliveryLineSummaries(r.Context(), h.Queries, ids)
+	if linesErr != nil {
+		slog.Warn("list child issues: delivery lines failed", "issue_id", uuidToString(issue.ID), "error", linesErr)
+	}
 	resp := make([]IssueResponse, len(children))
 	for i, child := range children {
 		resp[i] = issueToResponse(child, prefix)
+		if line, ok := lines[uuidToString(child.ID)]; ok {
+			resp[i].DeliveryLine = &line
+		}
 		if driver, ok := drivers[uuidToString(child.ID)]; ok {
 			resp[i].Driver = driverResponse(driver)
 		}
@@ -4666,6 +4682,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if stampRuling != nil {
 		issue = h.stampAssignee(r.Context(), issue, *stampRuling)
+		h.voidRouterSeatRuns(r, prevIssue, issue, *stampRuling)
 	}
 
 	// Determine actor identity: agent (via X-Agent-ID header) or member.
@@ -5685,6 +5702,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		if batchStamp != nil {
 			issue = h.stampAssignee(r.Context(), issue, *batchStamp)
+			h.voidRouterSeatRuns(r, prevIssue, issue, *batchStamp)
 		}
 
 		prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)

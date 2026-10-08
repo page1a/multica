@@ -4,6 +4,7 @@ import { issueGoalOptions } from "@multica/core/issues/queries";
 import type { IssueGoal, IssueGoalCheck, IssueGoalEvidence } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
+import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 
 type GoalSectionProps = { wsId: string; issueId: string };
@@ -16,6 +17,9 @@ type GoalLabelKey =
   | "duration"
   | "budget_warning"
   | "stopped_hint"
+  | "stopped_by"
+  | "stopped_by_for"
+  | "stop_reason"
   | "evidence_item"
   | "open_evidence"
   | "status.draft"
@@ -26,7 +30,7 @@ type GoalLabelKey =
 function goalLabel(
   t: ReturnType<typeof useT<"issues">>["t"],
   key: GoalLabelKey,
-  options?: { completed?: number; total?: number },
+  options?: { completed?: number; total?: number; name?: string; person?: string; reason?: string },
 ): string {
   switch (key) {
     case "title": return t(($) => $.detail.goal.title);
@@ -37,6 +41,9 @@ function goalLabel(
     case "duration": return t(($) => $.detail.goal.duration);
     case "budget_warning": return t(($) => $.detail.goal.budget_warning);
     case "stopped_hint": return t(($) => $.detail.goal.stopped_hint);
+    case "stopped_by": return t(($) => $.detail.goal.stopped_by, options);
+    case "stopped_by_for": return t(($) => $.detail.goal.stopped_by_for, options);
+    case "stop_reason": return t(($) => $.detail.goal.stop_reason, options);
     case "evidence_item": return t(($) => $.detail.goal.evidence_item);
     case "open_evidence": return t(($) => $.detail.goal.open_evidence);
     case "status.draft": return t(($) => $.detail.goal.status.draft);
@@ -141,6 +148,27 @@ function CheckRow({ check, t }: { check: IssueGoalCheck; t: ReturnType<typeof us
   );
 }
 
+// A deliberate stop (a person, or an agent on a person's word) names who
+// stopped it and quotes why; a brake pause keeps the next-step hint.
+function StoppedNote({ goal, t }: { goal: IssueGoal; t: ReturnType<typeof useT<"issues">>["t"] }) {
+  const { getMemberName, getAgentName } = useActorName();
+  const by = goal.stopped_by;
+  if (!by || (by.type !== "member" && by.type !== "agent") || !by.id) {
+    return <>{goalLabel(t, "stopped_hint")}</>;
+  }
+  const name = by.type === "agent" ? getAgentName(by.id) : getMemberName(by.id);
+  const onBehalf = goal.stopped_on_behalf_of;
+  const line = by.type === "agent" && onBehalf
+    ? goalLabel(t, "stopped_by_for", { name, person: getMemberName(onBehalf) })
+    : goalLabel(t, "stopped_by", { name });
+  return (
+    <>
+      <p>{line}</p>
+      {goal.stop_reason && <p className="mt-0.5 break-words">{goalLabel(t, "stop_reason", { reason: goal.stop_reason })}</p>}
+    </>
+  );
+}
+
 export function GoalSection({ wsId, issueId }: GoalSectionProps) {
   const { t } = useT("issues");
   const { data: goal, isLoading } = useQuery(issueGoalOptions(wsId, issueId));
@@ -191,7 +219,7 @@ export function GoalSection({ wsId, issueId }: GoalSectionProps) {
       )}
       {goal.status === "stopped" && (
         <div role="status" className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-caption text-muted-foreground">
-          {goalLabel(t, "stopped_hint")}
+          <StoppedNote goal={goal} t={t} />
         </div>
       )}
 

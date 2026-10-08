@@ -34,7 +34,9 @@
     "steer_resend_failed": "新しい実行として送信できませんでした。",
     "steer_step": "{{name}} が追加",
     "steer_step_read": "既読",
-    "retrying": "再試行を待っています。"
+    "retrying": "再試行を待っています。",
+    "skills_used": "使用した skill：{{names}}",
+    "skill_step": "skill {{name}} を使用"
   },
   "working_filter_error": {
     "title": "エージェントが作業中のタスクを読み込めませんでした"
@@ -535,6 +537,9 @@
       "duration": "時間",
       "budget_warning": "この目標は予算の 80% 以上を使用しています。上限に達すると一時停止し、次の対応を確認します。",
       "stopped_hint": "この目標は一時停止中です。受信トレイの選択式質問に回答して、予算の追加、達成ラインの変更、終了を選択してください。",
+      "stopped_by": "{{name}} が停止しました。通常のタスクとして続行します。",
+      "stopped_by_for": "{{person}} の依頼で {{name}} が停止しました。通常のタスクとして続行します。",
+      "stop_reason": "「{{reason}}」",
       "evidence_item": "証拠",
       "open_evidence": "証拠を開く",
       "status": {
@@ -601,7 +606,16 @@
     "title_suggestion_dismiss": "Dismiss",
     "title_suggestion_updated": "Title updated",
     "title_suggestion_apply_failed": "Failed to apply title suggestion",
-    "title_suggestion_dismiss_failed": "Failed to dismiss title suggestion"
+    "title_suggestion_dismiss_failed": "Failed to dismiss title suggestion",
+    "delivery_line": {
+      "section": "納品ブランチ",
+      "section_children": "サブ課題のコミット",
+      "delivers_to": "{{identifier}} のブランチに納品",
+      "status_open": "まだ統合されていません",
+      "status_merged_other": "{{count}} 件のコミットを統合済み",
+      "status_conflict": "競合あり、担当者が解決",
+      "show_all_other": "全 {{count}} 件を表示"
+    }
   },
   "timeline": {
     "loading": "読み込み中..."

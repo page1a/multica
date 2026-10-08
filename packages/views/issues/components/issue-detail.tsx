@@ -134,6 +134,7 @@ import { WakeupsSection } from "./wakeups-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
 import { PullRequestsSection } from "./pull-requests-section";
+import { DeliveryLineSection } from "./delivery-line-section";
 import { useGitHubSettings } from "@multica/core/github";
 import { DeliverablesSection } from "./deliverables/deliverables-section";
 import { DeliverablesOverview } from "./deliverables/deliverables-overview";
@@ -3178,6 +3179,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           }}
         />
       )}
+
+      {/* Parent-branch delivery (DENE-1537): which parent's branch a
+          sub-issue delivers to, or the parent's sub-issue commits. Hidden
+          on every other issue. */}
+      <DeliveryLineSection wsId={issue.workspace_id} issueId={id} />
 
       {/* Deliverables — the files this issue's comments delivered. Hidden
           while there are none. */}

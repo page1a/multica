@@ -57,10 +57,12 @@ func TargetSlug(input string) string {
 // Lookup resolves an address to the workspace a link from actorWS would
 // target, exactly as Create would, so the form can show who it is before
 // anything is sent. Only an exact slug matches; there is no search, which
-// would hand out the deployment's workspace list.
+// would hand out the deployment's workspace list. Whoever may set up a link
+// in either direction may look an address up: the owner offering one, an
+// owner or admin pulling one in (pull.go).
 func (s *Service) Lookup(ctx context.Context, actorWS pgtype.UUID, actor Actor, input string) (WorkspaceRef, error) {
-	if !Decide(OpCreate, SideSource, actor) {
-		return WorkspaceRef{}, forbidden("only the workspace owner can link data out of the workspace")
+	if !Decide(OpCreate, SideSource, actor) && !Decide(OpAccept, SideViewer, actor) {
+		return WorkspaceRef{}, forbidden("only owners and admins can set up a workspace link")
 	}
 	target, err := s.target(ctx, s.q, actorWS, input)
 	if err != nil {

@@ -84,7 +84,7 @@ INSERT INTO agent (
     instructions, custom_env, custom_args, mcp_config, model, thinking_level,
     service_tier, routing_tier, conversation_starters,
     composio_toolkit_allowlist, permission_mode, parent_agent_id,
-    runtime_inherited, routing_usage
+    runtime_inherited, routing_usage, dispatch_mode
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
@@ -95,7 +95,8 @@ INSERT INTO agent (
     COALESCE(sqlc.narg('permission_mode'), 'private'),
     sqlc.narg('parent_agent_id')::uuid,
     COALESCE(sqlc.narg('runtime_inherited')::boolean, FALSE),
-    COALESCE(sqlc.narg('routing_usage')::text, 'normal')
+    COALESCE(sqlc.narg('routing_usage')::text, 'normal'),
+    COALESCE(sqlc.narg('dispatch_mode')::text, 'auto')
 )
 RETURNING *;
 
@@ -217,6 +218,7 @@ UPDATE agent SET
     service_tier = COALESCE(sqlc.narg('service_tier'), service_tier),
     routing_tier = COALESCE(sqlc.narg('routing_tier'), routing_tier),
     routing_usage = COALESCE(sqlc.narg('routing_usage'), routing_usage),
+    dispatch_mode = COALESCE(sqlc.narg('dispatch_mode')::text, dispatch_mode),
     conversation_starters = COALESCE(sqlc.narg('conversation_starters'), conversation_starters),
     composio_toolkit_allowlist = COALESCE(sqlc.narg('composio_toolkit_allowlist')::text[], composio_toolkit_allowlist),
     switchable_models = COALESCE(sqlc.narg('switchable_models'), switchable_models),
@@ -303,7 +305,7 @@ RETURNING *;
 -- owners the specialisation keeps its own execution config; everything else
 -- still follows.
 --
--- Routing tier and usage (DENE-1016) follow for every owner: they are not
+-- Routing tier, usage (DENE-1016) and dispatch mode (DENE-1600) follow for every owner: they are not
 -- secrets, and a following seat that kept its own rung would route as a
 -- different person. The same statement is the copy used when a base role's
 -- routing changes, so that write and this one commit together.
@@ -316,6 +318,7 @@ SET runtime_id = parent.runtime_id,
     service_tier = parent.service_tier,
     routing_tier = parent.routing_tier,
     routing_usage = parent.routing_usage,
+    dispatch_mode = parent.dispatch_mode,
     custom_env = CASE WHEN child.owner_id = parent.owner_id THEN parent.custom_env ELSE child.custom_env END,
     custom_args = CASE WHEN child.owner_id = parent.owner_id THEN parent.custom_args ELSE child.custom_args END,
     mcp_config = CASE WHEN child.owner_id = parent.owner_id THEN parent.mcp_config ELSE child.mcp_config END,
@@ -333,6 +336,7 @@ WHERE child.parent_agent_id = parent.id
     OR child.service_tier IS DISTINCT FROM parent.service_tier
     OR child.routing_tier IS DISTINCT FROM parent.routing_tier
     OR child.routing_usage IS DISTINCT FROM parent.routing_usage
+    OR child.dispatch_mode IS DISTINCT FROM parent.dispatch_mode
     OR (child.owner_id = parent.owner_id
       AND (child.custom_env IS DISTINCT FROM parent.custom_env
         OR child.custom_args IS DISTINCT FROM parent.custom_args
@@ -927,6 +931,22 @@ WHERE issue_id = $1 AND agent_id = $2
   AND status IN ('queued', 'dispatched', 'deferred')
 RETURNING *;
 
+-- name: CancelAssignmentTasksByIssueAndAgent :many
+-- DENE-1613: a seat routing filled is replaced by a person's decision, so the
+-- runs that seat's assignment started lose their reason. Only those: a run the
+-- seat got from a mention, a squad, or anything other than the assignment is
+-- left alone, and so is the run making the request (except_task_id), which
+-- must not cancel itself from inside.
+UPDATE agent_task_queue
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL,
+    cancelled_by_type = 'system', cancelled_by_id = NULL, cancelled_by_name = NULL
+WHERE issue_id = sqlc.arg('issue_id')::uuid
+  AND agent_id = sqlc.arg('agent_id')::uuid
+  AND trigger_evidence_kind = 'issue_assignment'
+  AND id IS DISTINCT FROM sqlc.narg('except_task_id')::uuid
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+RETURNING *;
+
 -- name: CancelPendingTasksByIssueAndAgentInThread :many
 -- Cancel only the not-yet-started plan in the selected thread. Other threads
 -- retain their queues; running tasks are stopped explicitly through CancelTask.
@@ -1235,6 +1255,90 @@ WHERE id IN (
     FOR UPDATE SKIP LOCKED
 )
 RETURNING *;
+
+-- name: RecoverUndeliveredDispatchedTasksForRuntimes :many
+-- Lost-claim-response recovery (DENE-1611): a daemon whose last claim outcome
+-- was uncertain (response timed out / connection dropped after the request left)
+-- asks for everything the server dispatched to its runtimes that it is not
+-- holding, instead of waiting out the 90s recovery window. @held_task_ids is the
+-- set the daemon is already preparing or running, so a task it did receive is
+-- never handed out twice. @min_age_secs keeps a claim still executing server-side
+-- (bounded by the claim execution budget) from being swept up as "lost". Same
+-- owner fence, freshness gate and dispatched_at/lease refresh as the stale
+-- reclaim above; only the recovery-window and prepare-lease conditions are
+-- replaced by the daemon's own held set.
+UPDATE agent_task_queue
+SET dispatched_at = now(),
+    prepare_lease_expires_at = now() + make_interval(secs => @prepare_lease_secs::double precision)
+WHERE id IN (
+    SELECT atq.id FROM agent_task_queue atq
+    WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
+      AND atq.status = 'dispatched'
+      AND atq.started_at IS NULL
+      AND atq.id <> ALL(@held_task_ids::uuid[])
+      AND atq.dispatched_at < now() - make_interval(secs => @min_age_secs::double precision)
+      AND EXISTS (
+          SELECT 1
+          FROM agent a
+          JOIN agent_runtime r ON r.id = atq.runtime_id
+          WHERE a.id = atq.agent_id
+            AND a.runtime_id = atq.runtime_id
+            AND (
+                r.visibility = 'public'
+                OR (
+                    r.visibility = 'private'
+                    AND (
+                        r.owner_id IS NULL
+                        OR a.owner_id IS NULL
+                        OR r.owner_id = a.owner_id
+                    )
+                )
+            )
+            AND r.status = 'online'
+            AND COALESCE(r.last_seen_at, r.updated_at) >=
+                now() - make_interval(secs => @runtime_stale_secs::double precision)
+      )
+    ORDER BY atq.priority DESC, atq.dispatched_at ASC
+    LIMIT @max_tasks::int
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
+-- name: HasUndeliveredDispatchedTasksForRuntimes :one
+-- Companion to RecoverUndeliveredDispatchedTasksForRuntimes (DENE-1611): true
+-- while a dispatch the daemon is not holding still exists for these runtimes —
+-- one the recovery just skipped because it is younger than @min_age_secs, or one
+-- cut off by the batch limit. It tells the daemon the recovery is not finished,
+-- so an empty answer is not read as "nothing was lost". Same eligibility as the
+-- recovery; the tasks that recovery just handed back go in @held_task_ids.
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue atq
+    WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
+      AND atq.status = 'dispatched'
+      AND atq.started_at IS NULL
+      AND atq.id <> ALL(@held_task_ids::uuid[])
+      AND EXISTS (
+          SELECT 1
+          FROM agent a
+          JOIN agent_runtime r ON r.id = atq.runtime_id
+          WHERE a.id = atq.agent_id
+            AND a.runtime_id = atq.runtime_id
+            AND (
+                r.visibility = 'public'
+                OR (
+                    r.visibility = 'private'
+                    AND (
+                        r.owner_id IS NULL
+                        OR a.owner_id IS NULL
+                        OR r.owner_id = a.owner_id
+                    )
+                )
+            )
+            AND r.status = 'online'
+            AND COALESCE(r.last_seen_at, r.updated_at) >=
+                now() - make_interval(secs => @runtime_stale_secs::double precision)
+      )
+) AS pending;
 
 -- name: ExtendAgentTaskPrepareLease :one
 -- Keeps a dispatched task protected while the daemon resolves/cache/materializes

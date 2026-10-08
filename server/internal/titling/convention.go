@@ -28,10 +28,13 @@ Status keys (todo, in_progress, in_review, done, blocked, cancelled) are identif
 
 // IssueTitleBriefSection is the agent-brief section for titles an agent
 // chooses. Quick-create's per-turn field line points here; it must not
-// restate a different shape.
-const IssueTitleBriefSection = `## Title Style
+// restate a different shape. Every other task kind reads the same rules from
+// `multica issue create --help` (IssueTitleRules, DENE-1329).
+const IssueTitleBriefSection = "## Title Style\n\n" + IssueTitleRules
 
-When you create an issue and nobody has handed you the exact title string, write a title a list can scan: which project, then what the work is. This is a prompt rule, not a server check. A title the user dictated stays as they wrote it.
+// IssueTitleRules is the title convention without its brief heading, shared
+// by the quick-create brief and `multica issue create --help`.
+const IssueTitleRules = `When you create an issue and nobody has handed you the exact title string, write a title a list can scan: which project, then what the work is. This is a prompt rule, not a server check. A title the user dictated stays as they wrote it.
 
 Shape: ` + "`{Project}: {what}`" + `
 

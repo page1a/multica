@@ -15,12 +15,16 @@ const appendIssueGoalBudget = `-- name: AppendIssueGoalBudget :one
 UPDATE issue_goal
 SET status = CASE WHEN status = 'stopped' THEN 'active' ELSE status END,
     stopped_at = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_at END,
+    stopped_by_type = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_by_type END,
+    stopped_by_id = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_by_id END,
+    stopped_on_behalf_of = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_on_behalf_of END,
+    stop_reason = CASE WHEN status = 'stopped' THEN '' ELSE stop_reason END,
     token_limit = token_limit + $3,
     run_limit = run_limit + $4,
     duration_seconds = duration_seconds + $5,
     updated_at = now()
 WHERE issue_id = $1 AND workspace_id = $2 AND status IN ('draft', 'active', 'stopped')
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type AppendIssueGoalBudgetParams struct {
@@ -64,6 +68,10 @@ func (q *Queries) AppendIssueGoalBudget(ctx context.Context, arg AppendIssueGoal
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -72,7 +80,7 @@ const confirmIssueGoal = `-- name: ConfirmIssueGoal :one
 UPDATE issue_goal
 SET status = 'active', locked_at = COALESCE(locked_at, now()), updated_at = now(), round = GREATEST(round, 1)
 WHERE issue_id = $1 AND workspace_id = $2 AND status = 'draft'
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type ConfirmIssueGoalParams struct {
@@ -107,6 +115,10 @@ func (q *Queries) ConfirmIssueGoal(ctx context.Context, arg ConfirmIssueGoalPara
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -141,7 +153,7 @@ func (q *Queries) CreateGoalBudgetAsk(ctx context.Context, arg CreateGoalBudgetA
 const createIssueGoal = `-- name: CreateIssueGoal :one
 INSERT INTO issue_goal (issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, created_by_type, created_by_id)
 VALUES ($1, $2, 'draft', 0, $3, $4, $5, $6, $7)
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type CreateIssueGoalParams struct {
@@ -189,6 +201,10 @@ func (q *Queries) CreateIssueGoal(ctx context.Context, arg CreateIssueGoalParams
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -242,22 +258,43 @@ func (q *Queries) DeleteDraftIssueGoalChecks(ctx context.Context, id pgtype.UUID
 
 const finishIssueGoal = `-- name: FinishIssueGoal :one
 UPDATE issue_goal
-SET status = $3,
-    stopped_at = CASE WHEN $3 = 'stopped' THEN now() ELSE stopped_at END,
-    achieved_at = CASE WHEN $3 = 'achieved' THEN now() ELSE achieved_at END,
+SET status = $1::text,
+    stopped_at = CASE WHEN $1::text = 'stopped' THEN now() ELSE stopped_at END,
+    achieved_at = CASE WHEN $1::text = 'achieved' THEN now() ELSE achieved_at END,
+    stopped_by_type = CASE WHEN $1::text = 'stopped' THEN $2::text ELSE stopped_by_type END,
+    stopped_by_id = CASE WHEN $1::text = 'stopped' THEN $3::uuid ELSE stopped_by_id END,
+    stopped_on_behalf_of = CASE WHEN $1::text = 'stopped' THEN $4::uuid ELSE stopped_on_behalf_of END,
+    stop_reason = CASE WHEN $1::text = 'stopped' THEN $5::text ELSE stop_reason END,
     updated_at = now()
-WHERE issue_id = $1 AND workspace_id = $2 AND status IN ('draft', 'active')
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+WHERE issue_id = $6 AND workspace_id = $7
+  AND (status IN ('draft', 'active')
+       OR ($1::text = 'stopped' AND status = 'stopped' AND COALESCE(stopped_by_type, 'system') = 'system'))
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type FinishIssueGoalParams struct {
-	IssueID     pgtype.UUID `json:"issue_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Status      string      `json:"status"`
+	Status            string      `json:"status"`
+	StoppedByType     pgtype.Text `json:"stopped_by_type"`
+	StoppedByID       pgtype.UUID `json:"stopped_by_id"`
+	StoppedOnBehalfOf pgtype.UUID `json:"stopped_on_behalf_of"`
+	StopReason        string      `json:"stop_reason"`
+	IssueID           pgtype.UUID `json:"issue_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
 }
 
+// A stop records its stopper. A goal the brake paused (or one stopped before
+// stoppers were recorded) can be stopped again on purpose to record who
+// turned goal mode off; achieved stays reachable only from draft or active.
 func (q *Queries) FinishIssueGoal(ctx context.Context, arg FinishIssueGoalParams) (IssueGoal, error) {
-	row := q.db.QueryRow(ctx, finishIssueGoal, arg.IssueID, arg.WorkspaceID, arg.Status)
+	row := q.db.QueryRow(ctx, finishIssueGoal,
+		arg.Status,
+		arg.StoppedByType,
+		arg.StoppedByID,
+		arg.StoppedOnBehalfOf,
+		arg.StopReason,
+		arg.IssueID,
+		arg.WorkspaceID,
+	)
 	var i IssueGoal
 	err := row.Scan(
 		&i.ID,
@@ -283,12 +320,16 @@ func (q *Queries) FinishIssueGoal(ctx context.Context, arg FinishIssueGoalParams
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
 
 const getIssueGoal = `-- name: GetIssueGoal :one
-SELECT id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id FROM issue_goal WHERE issue_id = $1 AND workspace_id = $2
+SELECT id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason FROM issue_goal WHERE issue_id = $1 AND workspace_id = $2
 `
 
 type GetIssueGoalParams struct {
@@ -323,6 +364,10 @@ func (q *Queries) GetIssueGoal(ctx context.Context, arg GetIssueGoalParams) (Iss
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -407,7 +452,7 @@ const markIssueGoalBudgetWarning = `-- name: MarkIssueGoalBudgetWarning :one
 UPDATE issue_goal
 SET budget_warning_at = COALESCE(budget_warning_at, now()), updated_at = now()
 WHERE issue_id = $1 AND workspace_id = $2 AND status = 'active'
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type MarkIssueGoalBudgetWarningParams struct {
@@ -442,24 +487,30 @@ func (q *Queries) MarkIssueGoalBudgetWarning(ctx context.Context, arg MarkIssueG
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
 
 const stopIssueGoalForBudget = `-- name: StopIssueGoalForBudget :one
 UPDATE issue_goal
-SET status = 'stopped', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
+SET status = 'stopped', stopped_at = COALESCE(stopped_at, now()), updated_at = now(),
+    stopped_by_type = 'system', stopped_by_id = NULL, stopped_on_behalf_of = NULL, stop_reason = $3
 WHERE issue_id = $1 AND workspace_id = $2 AND status = 'active'
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type StopIssueGoalForBudgetParams struct {
 	IssueID     pgtype.UUID `json:"issue_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	StopReason  string      `json:"stop_reason"`
 }
 
 func (q *Queries) StopIssueGoalForBudget(ctx context.Context, arg StopIssueGoalForBudgetParams) (IssueGoal, error) {
-	row := q.db.QueryRow(ctx, stopIssueGoalForBudget, arg.IssueID, arg.WorkspaceID)
+	row := q.db.QueryRow(ctx, stopIssueGoalForBudget, arg.IssueID, arg.WorkspaceID, arg.StopReason)
 	var i IssueGoal
 	err := row.Scan(
 		&i.ID,
@@ -485,6 +536,10 @@ func (q *Queries) StopIssueGoalForBudget(ctx context.Context, arg StopIssueGoalF
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -534,7 +589,7 @@ SET no_progress_rounds = $3,
     last_continuation_task_id = COALESCE($5::uuid, last_continuation_task_id),
     updated_at = now()
 WHERE issue_id = $1 AND workspace_id = $2 AND status = 'active'
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type UpdateIssueGoalProgressParams struct {
@@ -578,6 +633,10 @@ func (q *Queries) UpdateIssueGoalProgress(ctx context.Context, arg UpdateIssueGo
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -590,7 +649,7 @@ SET tokens_used = tokens_used + $3,
     round = GREATEST(round, $6),
     updated_at = now()
 WHERE issue_id = $1 AND workspace_id = $2
-RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id
+RETURNING id, issue_id, workspace_id, status, round, token_limit, run_limit, duration_seconds, tokens_used, runs_used, duration_seconds_used, evidence, created_by_type, created_by_id, locked_at, stopped_at, achieved_at, created_at, updated_at, no_progress_rounds, max_no_progress_rounds, budget_warning_at, last_continuation_task_id, stopped_by_type, stopped_by_id, stopped_on_behalf_of, stop_reason
 `
 
 type UpdateIssueGoalUsageParams struct {
@@ -636,6 +695,10 @@ func (q *Queries) UpdateIssueGoalUsage(ctx context.Context, arg UpdateIssueGoalU
 		&i.MaxNoProgressRounds,
 		&i.BudgetWarningAt,
 		&i.LastContinuationTaskID,
+		&i.StoppedByType,
+		&i.StoppedByID,
+		&i.StoppedOnBehalfOf,
+		&i.StopReason,
 	)
 	return i, err
 }

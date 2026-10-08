@@ -269,7 +269,8 @@
       "reason_runtime_changed": "上次的会话在另一台机器上",
       "reason_session_lost": "会话没能恢复",
       "reason_fresh_requested": "按要求新开"
-    }
+    },
+    "skills_used": "用到 skill：{{names}}"
   },
   "header_filter": "筛选",
   "new_badge": "新",

@@ -17,7 +17,7 @@ multica goal get DENE-123 --output json
 multica goal confirm DENE-123
 multica goal budget DENE-123 --tokens 10000 --runs 1 --duration 900
 multica goal check DENE-123 1 --status passed --evidence 'verification passed'
-multica goal finish DENE-123 --status achieved
+multica goal finish DENE-123 --status stopped --reason '把这张票的目标模式去掉'
 ```
 
 `draft` is the single opening action used by all product entry points. It
@@ -27,6 +27,15 @@ checks or budgets. Only a human can edit a locked goal through the product's
 human confirmation flow. `budget` appends to the three limits, and `finish`
 sets the goal to `achieved` or `stopped` after the server checks the request.
 Appending budget to a stopped goal resumes it and queues the next round.
+
+When a person asks to drop goal mode, an agent stops the goal with
+`finish --status stopped --reason '<their words>'`. This works on a draft or a
+locked goal, including one the brake paused; the issue then carries on as an
+ordinary task, and a stopped draft starts its assignee like `confirm` would.
+The goal records who stopped it, the person the run acts for, and the reason.
+Stopping does not lower the bar: an agent still cannot confirm, rewrite the
+line, add budget to a locked goal, or mark it `achieved` — acceptance decides
+that.
 
 Every command accepts `--output json` for automation. The server is the source
 of truth for validation, permissions, cumulative usage, and evidence; clients

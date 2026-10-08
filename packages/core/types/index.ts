@@ -463,4 +463,5 @@ export type {
   LinkedViewStatus,
   LinkedViewParams,
   WorkspaceLinkLookup,
+  WorkspaceLinkDirection,
 } from "./workspace-link";

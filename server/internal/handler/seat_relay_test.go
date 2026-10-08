@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
@@ -186,4 +187,40 @@ func dbfxInsertIssue(t *testing.T, number int) string {
 		"title":        "disabled mention relay",
 		"number":       number,
 	})
+}
+
+// ADR-0008: the seat relay asks routing.SeatSelectable, so a mention_only
+// seat on the right rung and family is passed over, while the same seat in
+// auto mode is the pick.
+func TestSeatRelaySkipsMentionOnlySeat(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	off := createHandlerTestAgent(t, "孙悟饭", nil)
+	cover := createHandlerTestAgent(t, "布尔玛", nil)
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET work_enabled = false, routing_tier = 'strongest' WHERE id = $1`, off); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET routing_tier = 'strongest', dispatch_mode = 'auto' WHERE id = $1`, cover); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := testHandler.Queries.GetAgent(ctx, parseUUID(off))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsID := parseUUID(testWorkspaceID)
+
+	got, _, ok := testHandler.substituteAgent(ctx, wsID, failed, nil, routing.GenericScene)
+	if !ok || uuidToString(got.ID) != cover {
+		t.Fatalf("auto control: substitute = %s ok=%v, want 布尔玛 %s", uuidToString(got.ID), ok, cover)
+	}
+
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET dispatch_mode = 'mention_only' WHERE id = $1`, cover); err != nil {
+		t.Fatal(err)
+	}
+	got, _, ok = testHandler.substituteAgent(ctx, wsID, failed, nil, routing.GenericScene)
+	if ok && uuidToString(got.ID) == cover {
+		t.Fatal("seat relay picked a mention_only seat")
+	}
 }

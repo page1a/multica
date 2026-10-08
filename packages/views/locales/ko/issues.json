@@ -34,7 +34,9 @@
     "steer_resend_failed": "새 실행으로 보내지 못했습니다.",
     "steer_step": "{{name}}이(가) 추가",
     "steer_step_read": "읽음",
-    "retrying": "재시도를 기다리는 중입니다."
+    "retrying": "재시도를 기다리는 중입니다.",
+    "skills_used": "사용한 skill: {{names}}",
+    "skill_step": "skill {{name}} 사용"
   },
   "working_filter_error": {
     "title": "에이전트가 작업 중인 태스크를 불러오지 못했습니다"
@@ -535,6 +537,9 @@
       "duration": "시간",
       "budget_warning": "이 목표는 예산의 80% 이상을 사용했습니다. 한도에 도달하면 일시 중지되고 다음 작업을 묻습니다.",
       "stopped_hint": "이 목표는 일시 중지되었습니다. 받은 편지함의 선택 질문에 답해 예산 추가, 완료 기준 변경 또는 종료를 선택하세요.",
+      "stopped_by": "{{name}}님이 중지했습니다. 일반 작업으로 계속됩니다.",
+      "stopped_by_for": "{{person}}님의 요청으로 {{name}}님이 중지했습니다. 일반 작업으로 계속됩니다.",
+      "stop_reason": "“{{reason}}”",
       "evidence_item": "증거",
       "open_evidence": "증거 열기",
       "status": {
@@ -601,7 +606,16 @@
     "title_suggestion_dismiss": "Dismiss",
     "title_suggestion_updated": "Title updated",
     "title_suggestion_apply_failed": "Failed to apply title suggestion",
-    "title_suggestion_dismiss_failed": "Failed to dismiss title suggestion"
+    "title_suggestion_dismiss_failed": "Failed to dismiss title suggestion",
+    "delivery_line": {
+      "section": "전달 브랜치",
+      "section_children": "하위 이슈 커밋",
+      "delivers_to": "{{identifier}}의 브랜치로 전달",
+      "status_open": "아직 병합되지 않음",
+      "status_merged_other": "커밋 {{count}}개 병합됨",
+      "status_conflict": "충돌, 실행자가 해결",
+      "show_all_other": "{{count}}개 모두 보기"
+    }
   },
   "timeline": {
     "loading": "불러오는 중..."

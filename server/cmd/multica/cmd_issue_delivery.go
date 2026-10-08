@@ -263,6 +263,20 @@ func printIssueDelivery(cmd *cobra.Command, d *service.IssueDelivery) error {
 		rows = append(rows, []string{b.Branch, b.Role, b.Resolution, b.CleanupStatus, pr, fmt.Sprintf("%d", len(b.Tasks)), strings.Join(agents, ",")})
 	}
 	cli.PrintTable(os.Stdout, []string{"BRANCH", "ROLE", "RESOLUTION", "CLEANUP", "PR", "TASKS", "AGENTS"}, rows)
+	if l := d.Line; l != nil {
+		fmt.Printf("\nDelivers onto parent %s's branch %s (%s, %d commits)\n", l.OwnerIdentifier, l.Branch, l.Status, len(l.Commits))
+		if len(l.ConflictFiles) > 0 {
+			fmt.Println("  conflict: " + strings.Join(l.ConflictFiles, ", "))
+		}
+	}
+	if len(d.Contributions) > 0 {
+		fmt.Println("\nSub-issues delivering onto this issue's branch:")
+		rows := make([][]string, 0, len(d.Contributions))
+		for _, c := range d.Contributions {
+			rows = append(rows, []string{c.Identifier, c.Status, fmt.Sprintf("%d", len(c.Commits)), c.IssueStatus, strings.Join(c.ConflictFiles, ",")})
+		}
+		cli.PrintTable(os.Stdout, []string{"ISSUE", "LINE", "COMMITS", "STATUS", "CONFLICT"}, rows)
+	}
 	if len(d.Problems) > 0 {
 		fmt.Println("\nProblems:")
 		for _, p := range d.Problems {
@@ -289,4 +303,49 @@ func printDeliveryCleanupPlan(d *service.IssueDelivery) {
 		rows = append(rows, []string{item.Branch, item.Role, item.CleanupStatus, verdict, strings.Join(item.WorkDirs, ",")})
 	}
 	cli.PrintTable(os.Stdout, []string{"BRANCH", "ROLE", "CLEANUP", "VERDICT", "WORKDIRS"}, rows)
+}
+
+// mergeIntoParentLine is the delivery step of a sub-issue on its parent's
+// line (DENE-1537): it merges the commits of the current checkout's branch
+// into the parent's delivery branch and returns the report the close sends.
+// nil means the issue delivers on its own and nothing was done.
+func mergeIntoParentLine(ctx context.Context, client *cli.APIClient, issueID string) (*service.DeliveryMergeReport, error) {
+	var d service.IssueDelivery
+	if err := client.GetJSON(ctx, deliveryPath(issueID, ""), &d); err != nil {
+		return nil, fmt.Errorf("get issue delivery: %w", err)
+	}
+	if d.Line == nil {
+		return nil, nil
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	res, err := execenv.MergeIntoDeliveryLine(execenv.DeliveryMergeParams{
+		Dir:          dir,
+		Branch:       d.Line.Branch,
+		OwnerIssueID: d.Line.OwnerIssueID,
+		WorkspaceID:  client.WorkspaceID,
+		IssueID:      issueID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("这张子票交付到父票 %s 的分支 %s，并回去之前停下了，票没动：%w", d.Line.OwnerIdentifier, d.Line.Branch, err)
+	}
+	report := &service.DeliveryMergeReport{
+		Status:        res.Status,
+		Branch:        res.Branch,
+		SourceBranch:  res.SourceBranch,
+		Tip:           res.Tip,
+		Commits:       make([]service.DeliveryLineCommit, 0, len(res.Commits)),
+		ConflictFiles: res.ConflictFiles,
+	}
+	for _, c := range res.Commits {
+		report.Commits = append(report.Commits, service.DeliveryLineCommit{SHA: c.SHA, Subject: c.Subject})
+	}
+	if res.Status == execenv.DeliveryConflict {
+		fmt.Fprintf(os.Stderr, "并回父票 %s 的分支 %s 冲突：%s；这次 close 会落 blocked\n", d.Line.OwnerIdentifier, d.Line.Branch, strings.Join(res.ConflictFiles, ", "))
+	} else {
+		fmt.Fprintf(os.Stderr, "已把 %d 个提交并进父票 %s 的分支 %s\n", len(res.Commits), d.Line.OwnerIdentifier, d.Line.Branch)
+	}
+	return report, nil
 }

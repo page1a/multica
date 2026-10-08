@@ -40,6 +40,10 @@ RETURNING *;
 UPDATE issue_goal
 SET status = CASE WHEN status = 'stopped' THEN 'active' ELSE status END,
     stopped_at = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_at END,
+    stopped_by_type = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_by_type END,
+    stopped_by_id = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_by_id END,
+    stopped_on_behalf_of = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_on_behalf_of END,
+    stop_reason = CASE WHEN status = 'stopped' THEN '' ELSE stop_reason END,
     token_limit = token_limit + $3,
     run_limit = run_limit + $4,
     duration_seconds = duration_seconds + $5,
@@ -48,12 +52,21 @@ WHERE issue_id = $1 AND workspace_id = $2 AND status IN ('draft', 'active', 'sto
 RETURNING *;
 
 -- name: FinishIssueGoal :one
+-- A stop records its stopper. A goal the brake paused (or one stopped before
+-- stoppers were recorded) can be stopped again on purpose to record who
+-- turned goal mode off; achieved stays reachable only from draft or active.
 UPDATE issue_goal
-SET status = $3,
-    stopped_at = CASE WHEN $3 = 'stopped' THEN now() ELSE stopped_at END,
-    achieved_at = CASE WHEN $3 = 'achieved' THEN now() ELSE achieved_at END,
+SET status = @status::text,
+    stopped_at = CASE WHEN @status::text = 'stopped' THEN now() ELSE stopped_at END,
+    achieved_at = CASE WHEN @status::text = 'achieved' THEN now() ELSE achieved_at END,
+    stopped_by_type = CASE WHEN @status::text = 'stopped' THEN sqlc.narg('stopped_by_type')::text ELSE stopped_by_type END,
+    stopped_by_id = CASE WHEN @status::text = 'stopped' THEN sqlc.narg('stopped_by_id')::uuid ELSE stopped_by_id END,
+    stopped_on_behalf_of = CASE WHEN @status::text = 'stopped' THEN sqlc.narg('stopped_on_behalf_of')::uuid ELSE stopped_on_behalf_of END,
+    stop_reason = CASE WHEN @status::text = 'stopped' THEN @stop_reason::text ELSE stop_reason END,
     updated_at = now()
-WHERE issue_id = $1 AND workspace_id = $2 AND status IN ('draft', 'active')
+WHERE issue_id = @issue_id AND workspace_id = @workspace_id
+  AND (status IN ('draft', 'active')
+       OR (@status::text = 'stopped' AND status = 'stopped' AND COALESCE(stopped_by_type, 'system') = 'system'))
 RETURNING *;
 
 -- name: UpdateIssueGoalUsage :one
@@ -82,7 +95,8 @@ RETURNING *;
 
 -- name: StopIssueGoalForBudget :one
 UPDATE issue_goal
-SET status = 'stopped', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
+SET status = 'stopped', stopped_at = COALESCE(stopped_at, now()), updated_at = now(),
+    stopped_by_type = 'system', stopped_by_id = NULL, stopped_on_behalf_of = NULL, stop_reason = $3
 WHERE issue_id = $1 AND workspace_id = $2 AND status = 'active'
 RETURNING *;
 

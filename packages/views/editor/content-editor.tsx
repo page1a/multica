@@ -626,6 +626,8 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             quickActionMenuRef.current?.renderQuickAction?.(id) ?? Promise.resolve(""),
           onRenderError: (error: unknown) =>
             quickActionMenuRef.current?.onRenderError?.(error),
+          getSkillSource: (ids: string[]) =>
+            quickActionMenuRef.current?.getSkillSource?.(ids),
         },
         resolveIssueIdentifierRef,
       }),

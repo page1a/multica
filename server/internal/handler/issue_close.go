@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/progress"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/statecard"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -60,6 +61,10 @@ type CloseIssueRequest struct {
 	// Decisions are `issue close --decision`: settled points written to the
 	// state card's 已拍板 list in the same transaction (DENE-1328).
 	Decisions []string `json:"decisions,omitempty"`
+	// DeliveryMerge is what `issue close` did on a sub-issue that delivers
+	// onto its parent's branch (DENE-1537): the commits it merged back, or
+	// the files that conflicted. Required for such a sub-issue's done.
+	DeliveryMerge *service.DeliveryMergeReport `json:"delivery_merge,omitempty"`
 }
 
 // CloseIssueResponse reports what actually happened, not what was asked for:
@@ -83,6 +88,44 @@ type CloseIssueResponse struct {
 	// merged yet (DENE-1219): the ticket stays in review and Hold says what
 	// clears it.
 	Hold *CloseHold `json:"hold,omitempty"`
+	// DeliveryMerge echoes the merge-back a sub-issue on its parent's line
+	// recorded with this close.
+	DeliveryMerge *service.DeliveryMergeReport `json:"delivery_merge,omitempty"`
+}
+
+// deliveryLineMerge is a validated merge-back report plus whose line it is.
+type deliveryLineMerge struct {
+	service.DeliveryMergeReport
+	OwnerIdentifier string
+}
+
+// prepareDeliveryLineClose checks the merge-back a sub-issue's done carries.
+// It returns the report and the outcome the close actually writes: done for
+// a merge, blocked for a conflict. A done without a report is refused unless
+// an earlier close already merged the line.
+func (h *Handler) prepareDeliveryLineClose(ctx context.Context, issue db.Issue, line db.IssueDeliveryLine, req CloseIssueRequest) (*deliveryLineMerge, string, string) {
+	claim, err := service.DeliveryLineClaimFor(ctx, h.Queries, line)
+	if err != nil {
+		return nil, "", "读不到父票的交付分支：" + err.Error()
+	}
+	if req.DeliveryMerge == nil {
+		if line.Status == service.DeliveryLineMerged {
+			return nil, issuestatus.Done, ""
+		}
+		return nil, "", fmt.Sprintf("这张子票交付到父票 %s 的分支 %s：在本票的工作目录里跑 `multica issue close --outcome done`，它会先把提交并进那个分支再收口；不要开 PR", claim.OwnerIdentifier, claim.Branch)
+	}
+	expect := claim.Branch
+	if line.BranchName.Valid && line.BranchName.String != "" {
+		expect = line.BranchName.String
+	}
+	if err := service.ValidateDeliveryMergeReport(*req.DeliveryMerge, expect); err != nil {
+		return nil, "", err.Error()
+	}
+	out := &deliveryLineMerge{DeliveryMergeReport: *req.DeliveryMerge, OwnerIdentifier: claim.OwnerIdentifier}
+	if out.Status == service.DeliveryLineConflict {
+		return out, issuestatus.Blocked, ""
+	}
+	return out, issuestatus.Done, ""
 }
 
 // CloseHold is a pass kept in review: the hold kind (checks_pending,
@@ -182,6 +225,36 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	line, err := service.GetIssueDeliveryLine(ctx, h.Queries, issue.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load delivery line")
+		return
+	}
+	var lineMerge *deliveryLineMerge
+	if line != nil {
+		if verdict == "pass" {
+			writeError(w, http.StatusBadRequest, "这张子票交付到父票的分支，没有自己的 PR 可合；验收在父票上做，父票的 PR 合进去时一起验")
+			return
+		}
+		if outcome == issuestatus.Done {
+			report, rewritten, rejection := h.prepareDeliveryLineClose(ctx, issue, *line, req)
+			if rejection != "" {
+				writeError(w, http.StatusBadRequest, rejection)
+				return
+			}
+			if report != nil {
+				lineMerge = report
+				outcome = rewritten
+				if outcome == issuestatus.Blocked && req.WaitCondition == nil && req.BlockedBy == nil && req.WakeAt == nil && req.NeedsHuman == nil {
+					cond := "并回父票分支 " + report.Branch + " 冲突：" + strings.Join(report.ConflictFiles, ", ") + "；在本票分支 merge 该分支、解掉冲突后重新 close done"
+					timeout := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+					req.WaitCondition, req.WaitTimeout = &cond, &timeout
+				}
+				body += "\n\n" + service.DeliveryMergeEvidence(report.DeliveryMergeReport, report.OwnerIdentifier)
+			}
+		}
+	}
+
 	if verdict == "pass" {
 		h.closeIssueByVerdict(w, r, issue, outcome, body, parentID, parentComment, actorType, actorID, req.KnowledgeAudit, decisions)
 		return
@@ -219,7 +292,10 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	// and an empty reviewer slot gets a different-family acceptance seat or
 	// is refused. The close reports whichever of those actually happened.
 	var tr statusTransition
-	if outcome == issuestatus.Done || outcome == issuestatus.InReview {
+	// A sub-issue on its parent's line has no PR of its own to merge: its
+	// commits are already on the parent's branch, and the parent's PR is
+	// what ships them.
+	if (outcome == issuestatus.Done || outcome == issuestatus.InReview) && line == nil {
 		tr = h.guardSilentStall(ctx, issue, statusKey, actorType, actorID, req.NoCodeReason, issue.AssigneeType, issue.AssigneeID, issue.ReviewerType, issue.ReviewerID, false)
 		if tr.refuse != "" {
 			writeTransitionRefusal(w, tr)
@@ -313,6 +389,11 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := insertDecisions(ctx, qtx, updated, decisions, statecard.SourceClose, actorType, actorID); err != nil {
 			return err
+		}
+		if lineMerge != nil {
+			if _, err := service.RecordDeliveryMerge(ctx, qtx, *line, lineMerge.DeliveryMergeReport); err != nil {
+				return err
+			}
 		}
 		if outcome != issuestatus.Blocked {
 			// A record left from an earlier blocked close must not survive a
@@ -427,6 +508,14 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if tr.merged {
 		resp.Woken = append([]string{"关联 PR 已先合并（" + tr.prURL + "），再写 done"}, resp.Woken...)
+	}
+	if lineMerge != nil {
+		resp.DeliveryMerge = &lineMerge.DeliveryMergeReport
+		if lineMerge.Status == service.DeliveryLineConflict {
+			resp.Warnings = append(resp.Warnings, "并回父票 "+lineMerge.OwnerIdentifier+" 的分支 "+lineMerge.Branch+" 时冲突，平台没有自动解，票落 blocked："+strings.Join(lineMerge.ConflictFiles, ", "))
+		} else {
+			resp.Woken = append([]string{"已提交到父票 " + lineMerge.OwnerIdentifier + " 的分支 " + lineMerge.Branch + "，没有开 PR，也没有合进 kun"}, resp.Woken...)
+		}
 	}
 	if tr.status != "" && tr.status != strings.ToLower(strings.TrimSpace(req.Outcome)) {
 		resp.Warnings = append(resp.Warnings, "你要的是 "+strings.ToLower(strings.TrimSpace(req.Outcome))+"，平台实际落的是 "+updated.Status+"："+strings.TrimSpace(tr.note))

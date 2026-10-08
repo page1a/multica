@@ -22,6 +22,8 @@ export { FileDropOverlay } from "./file-drop-overlay";
 export { useLazyEditor, type LazyEditorHandle, type LazyFocusTarget } from "./use-lazy-editor";
 export { anchorFromPoint, type TextAnchor } from "./text-anchor";
 export { useDownloadAttachment } from "./use-download-attachment";
+export { useAttachmentActions } from "./use-attachment-actions";
+export type { AttachmentActions, AttachmentTarget } from "./use-attachment-actions";
 export { AttachmentDownloadProvider } from "./attachment-download-context";
 export {
   AttachmentPreviewModal,

@@ -97,3 +97,45 @@ func skillDisablesModelInvocation(content string) bool {
 		return false
 	}
 }
+
+// SkillDirSlugs returns the directory name each named skill is written under,
+// in order — the same batch dedupe writeSkillFiles applies. A slug can still
+// gain a `-multica` suffix on disk when a user-installed skill already holds
+// the bare name; SkillDirMatchesSlug accepts those forms too.
+func SkillDirSlugs(names []string) []string {
+	skills := make([]SkillContextForEnv, len(names))
+	for i, name := range names {
+		skills[i] = SkillContextForEnv{Name: name}
+	}
+	return resolveSkillSlugs(skills)
+}
+
+// SkillDirMatchesSlug reports whether dir is one of the names
+// allocateCollisionFreeSkillDir could have chosen for slug.
+func SkillDirMatchesSlug(dir, slug string) bool {
+	if dir == slug {
+		return true
+	}
+	rest, ok := strings.CutPrefix(dir, slug+"-multica")
+	if !ok {
+		return false
+	}
+	if rest == "" {
+		return true
+	}
+	digits, ok := strings.CutPrefix(rest, "-")
+	if !ok || digits == "" {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// SanitizeSkillName is sanitizeSkillName for callers outside the package.
+func SanitizeSkillName(name string) string {
+	return sanitizeSkillName(name)
+}

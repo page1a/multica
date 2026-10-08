@@ -11,6 +11,7 @@ export const workspaceLinkKeys = {
   list: (wsId: string) => [...workspaceLinkKeys.all(wsId), "list"] as const,
   audit: (wsId: string) => [...workspaceLinkKeys.all(wsId), "audit"] as const,
   lookup: (wsId: string, target: string) => [...workspaceLinkKeys.all(wsId), "lookup", target] as const,
+  pullLookup: (wsId: string, target: string) => [...workspaceLinkKeys.all(wsId), "pull-lookup", target] as const,
   view: (wsId: string, linkId: string, projectId: string | null) =>
     [...workspaceLinkKeys.all(wsId), "view", linkId, projectId ?? "all"] as const,
 };
@@ -29,10 +30,14 @@ export const workspaceLinkAuditOptions = (wsId: string, enabled: boolean) =>
     enabled: !!wsId && enabled,
   });
 
-/** Which workspace an address names. A miss is an answer, not a retry. */
-export const workspaceLinkLookupOptions = (wsId: string, target: string, enabled: boolean) =>
+/**
+ * Which workspace an address names. A miss is an answer, not a retry. The
+ * pull form keys its own entry: it needs the `pull` answer, which the offer
+ * form's seeded pick does not carry.
+ */
+export const workspaceLinkLookupOptions = (wsId: string, target: string, enabled: boolean, pull = false) =>
   queryOptions({
-    queryKey: workspaceLinkKeys.lookup(wsId, target),
+    queryKey: pull ? workspaceLinkKeys.pullLookup(wsId, target) : workspaceLinkKeys.lookup(wsId, target),
     queryFn: () => api.lookupWorkspaceLinkTarget(target),
     enabled: !!wsId && enabled && target !== "",
     retry: false,

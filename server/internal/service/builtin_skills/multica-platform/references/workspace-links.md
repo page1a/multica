@@ -31,3 +31,6 @@ Creating, changing projects, accepting and revoking (`create`, `update`,
 When the user wants one, tell them where it lives: 设置 → 连通工作区. The source workspace's owner offers the link and
 picks the projects (the target can be pasted as the other workspace's link or
 its slug); the viewer's owner or admin accepts it; either side can revoke.
+Someone who owns both workspaces can instead pull from the viewer side (设置 →
+连通工作区 → 连进来的, or `create --from <workspace>`); that link is active at
+once. Anyone else must ask the source's owner to offer it.

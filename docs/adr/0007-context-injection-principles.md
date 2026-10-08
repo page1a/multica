@@ -41,5 +41,6 @@
 ## 后果
 
 - 上下文注入做减法这一组改动（状态卡、简报瘦身、续跑只带状态卡）按这份原则取舍，每一步合入后收紧体积上限。
+- DENE-1329 落地后实测：issue 约 5.5KB、chat 约 3.5KB、quick-create 约 4.8KB、autopilot 约 3.2KB，都低于目标；上限仍贴着实测值，目标与实测之间的差额不是可以长回去的空间。评论写法搬进 `multica issue comment add --help`，标题和正文格式搬进 `multica issue create --help`，验收席的通过/打回写进 `multica issue close --help`。
 - 新增魔改命令要自己写清报错和 `--help`，不能指望在简报里补一段。
 - 体积闸门只量平台固定文字，不量项目描述、用户画像、技能清单这些随任务而来的必要上下文。

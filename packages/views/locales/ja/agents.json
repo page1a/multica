@@ -257,6 +257,9 @@
     "cancel": "キャンセル",
     "prop_routing_tier": "ティア",
     "prop_routing_tier_hint": "強さでタスクに割り当てます",
+    "prop_dispatch_mode": "割り当て",
+    "prop_dispatch_mode_hint": "指名のみ：自動割り当てされず、人やエージェントが指名した時だけ受ける",
+    "routing_inherited_hint": "基本ロールに従っています。個別に設定するには、上で追従をオフにしてください。",
     "prop_routing_usage": "使用量",
     "prop_routing_usage_hint": "アカウント枠の相対的な余裕"
   },
@@ -312,6 +315,8 @@
     "routing_tier_medium": "中",
     "routing_tier_weak": "軽量",
     "routing_tier_none": "対象外",
+    "dispatch_mode_auto": "自動",
+    "dispatch_mode_mention_only": "指名のみ",
     "routing_usage_tight": "逼迫",
     "routing_usage_normal": "通常",
     "routing_usage_ample": "十分"
@@ -1117,7 +1122,8 @@
     "source_remote_checkout": "リモートから取得",
     "source_mode_in_place": "1 回に 1 タスク、作業コピーを直接編集",
     "source_mode_worktree": "タスクごとに専用の git worktree",
-    "source_mode_shared": "共有ディレクトリ、タスクは並行実行"
+    "source_mode_shared": "共有ディレクトリ、タスクは並行実行",
+    "kind_skill": "skill"
   },
   "task_failure": {
     "cancelled_by_system": "システムによってキャンセルされました",

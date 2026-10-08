@@ -82,6 +82,33 @@ func (q *Queries) GetIssueDeliveryBranch(ctx context.Context, arg GetIssueDelive
 	return i, err
 }
 
+const getIssueDeliveryLine = `-- name: GetIssueDeliveryLine :one
+
+SELECT issue_id, workspace_id, owner_issue_id, status, branch_name, source_branch, merged_tip, commits, conflict_files, merged_at, created_at, updated_at FROM issue_delivery_line
+WHERE issue_id = $1
+`
+
+// Sub-issues delivering onto the parent's line (DENE-1537). See migration 638.
+func (q *Queries) GetIssueDeliveryLine(ctx context.Context, issueID pgtype.UUID) (IssueDeliveryLine, error) {
+	row := q.db.QueryRow(ctx, getIssueDeliveryLine, issueID)
+	var i IssueDeliveryLine
+	err := row.Scan(
+		&i.IssueID,
+		&i.WorkspaceID,
+		&i.OwnerIssueID,
+		&i.Status,
+		&i.BranchName,
+		&i.SourceBranch,
+		&i.MergedTip,
+		&i.Commits,
+		&i.ConflictFiles,
+		&i.MergedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertIssueDeliveryBranch = `-- name: InsertIssueDeliveryBranch :one
 INSERT INTO issue_delivery_branch (
     issue_id, workspace_id, branch_name, role, first_task_id, agent_id
@@ -135,6 +162,41 @@ func (q *Queries) InsertIssueDeliveryBranch(ctx context.Context, arg InsertIssue
 	return i, err
 }
 
+const insertIssueDeliveryLine = `-- name: InsertIssueDeliveryLine :one
+INSERT INTO issue_delivery_line (issue_id, workspace_id, owner_issue_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (issue_id) DO NOTHING
+RETURNING issue_id, workspace_id, owner_issue_id, status, branch_name, source_branch, merged_tip, commits, conflict_files, merged_at, created_at, updated_at
+`
+
+type InsertIssueDeliveryLineParams struct {
+	IssueID      pgtype.UUID `json:"issue_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	OwnerIssueID pgtype.UUID `json:"owner_issue_id"`
+}
+
+// Opens the line the first time a capable daemon claims the sub-issue. A
+// second claim is a no-op; the caller re-reads the existing row.
+func (q *Queries) InsertIssueDeliveryLine(ctx context.Context, arg InsertIssueDeliveryLineParams) (IssueDeliveryLine, error) {
+	row := q.db.QueryRow(ctx, insertIssueDeliveryLine, arg.IssueID, arg.WorkspaceID, arg.OwnerIssueID)
+	var i IssueDeliveryLine
+	err := row.Scan(
+		&i.IssueID,
+		&i.WorkspaceID,
+		&i.OwnerIssueID,
+		&i.Status,
+		&i.BranchName,
+		&i.SourceBranch,
+		&i.MergedTip,
+		&i.Commits,
+		&i.ConflictFiles,
+		&i.MergedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listIssueDeliveryBranches = `-- name: ListIssueDeliveryBranches :many
 
 SELECT issue_id, workspace_id, branch_name, role, resolution, resolved_at, cleanup_status, cleanup_note, cleaned_at, first_task_id, agent_id, created_at, updated_at FROM issue_delivery_branch
@@ -175,6 +237,200 @@ func (q *Queries) ListIssueDeliveryBranches(ctx context.Context, issueID pgtype.
 		return nil, err
 	}
 	return items, nil
+}
+
+const listIssueDeliveryLinesByOwner = `-- name: ListIssueDeliveryLinesByOwner :many
+SELECT l.issue_id, l.workspace_id, l.owner_issue_id, l.status, l.branch_name, l.source_branch, l.merged_tip, l.commits, l.conflict_files, l.merged_at, l.created_at, l.updated_at, i.number AS issue_number, i.title AS issue_title, i.status AS issue_status
+FROM issue_delivery_line l
+JOIN issue i ON i.id = l.issue_id
+WHERE l.owner_issue_id = $1
+ORDER BY i.number ASC
+`
+
+type ListIssueDeliveryLinesByOwnerRow struct {
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	OwnerIssueID  pgtype.UUID        `json:"owner_issue_id"`
+	Status        string             `json:"status"`
+	BranchName    pgtype.Text        `json:"branch_name"`
+	SourceBranch  pgtype.Text        `json:"source_branch"`
+	MergedTip     pgtype.Text        `json:"merged_tip"`
+	Commits       []byte             `json:"commits"`
+	ConflictFiles []string           `json:"conflict_files"`
+	MergedAt      pgtype.Timestamptz `json:"merged_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	IssueNumber   int32              `json:"issue_number"`
+	IssueTitle    string             `json:"issue_title"`
+	IssueStatus   string             `json:"issue_status"`
+}
+
+// The sub-issues delivering onto an issue's line, oldest first, with what a
+// list needs to name them.
+func (q *Queries) ListIssueDeliveryLinesByOwner(ctx context.Context, ownerIssueID pgtype.UUID) ([]ListIssueDeliveryLinesByOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listIssueDeliveryLinesByOwner, ownerIssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueDeliveryLinesByOwnerRow{}
+	for rows.Next() {
+		var i ListIssueDeliveryLinesByOwnerRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.WorkspaceID,
+			&i.OwnerIssueID,
+			&i.Status,
+			&i.BranchName,
+			&i.SourceBranch,
+			&i.MergedTip,
+			&i.Commits,
+			&i.ConflictFiles,
+			&i.MergedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IssueNumber,
+			&i.IssueTitle,
+			&i.IssueStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueDeliveryLinesForIssues = `-- name: ListIssueDeliveryLinesForIssues :many
+SELECT issue_id, workspace_id, owner_issue_id, status, branch_name, source_branch, merged_tip, commits, conflict_files, merged_at, created_at, updated_at FROM issue_delivery_line
+WHERE issue_id = ANY($1::uuid[])
+`
+
+// Delivery state for a batch of sub-issues (the children listing).
+func (q *Queries) ListIssueDeliveryLinesForIssues(ctx context.Context, issueIds []pgtype.UUID) ([]IssueDeliveryLine, error) {
+	rows, err := q.db.Query(ctx, listIssueDeliveryLinesForIssues, issueIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueDeliveryLine{}
+	for rows.Next() {
+		var i IssueDeliveryLine
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.WorkspaceID,
+			&i.OwnerIssueID,
+			&i.Status,
+			&i.BranchName,
+			&i.SourceBranch,
+			&i.MergedTip,
+			&i.Commits,
+			&i.ConflictFiles,
+			&i.MergedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markIssueDeliveryLineConflict = `-- name: MarkIssueDeliveryLineConflict :one
+UPDATE issue_delivery_line
+SET status = 'conflict',
+    branch_name = $1,
+    source_branch = $2,
+    conflict_files = $3::text[],
+    updated_at = now()
+WHERE issue_id = $4
+RETURNING issue_id, workspace_id, owner_issue_id, status, branch_name, source_branch, merged_tip, commits, conflict_files, merged_at, created_at, updated_at
+`
+
+type MarkIssueDeliveryLineConflictParams struct {
+	BranchName    pgtype.Text `json:"branch_name"`
+	SourceBranch  pgtype.Text `json:"source_branch"`
+	ConflictFiles []string    `json:"conflict_files"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) MarkIssueDeliveryLineConflict(ctx context.Context, arg MarkIssueDeliveryLineConflictParams) (IssueDeliveryLine, error) {
+	row := q.db.QueryRow(ctx, markIssueDeliveryLineConflict,
+		arg.BranchName,
+		arg.SourceBranch,
+		arg.ConflictFiles,
+		arg.IssueID,
+	)
+	var i IssueDeliveryLine
+	err := row.Scan(
+		&i.IssueID,
+		&i.WorkspaceID,
+		&i.OwnerIssueID,
+		&i.Status,
+		&i.BranchName,
+		&i.SourceBranch,
+		&i.MergedTip,
+		&i.Commits,
+		&i.ConflictFiles,
+		&i.MergedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markIssueDeliveryLineMerged = `-- name: MarkIssueDeliveryLineMerged :one
+UPDATE issue_delivery_line
+SET status = 'merged',
+    branch_name = $1,
+    source_branch = $2,
+    merged_tip = $3,
+    commits = $4,
+    conflict_files = '{}',
+    merged_at = now(),
+    updated_at = now()
+WHERE issue_id = $5
+RETURNING issue_id, workspace_id, owner_issue_id, status, branch_name, source_branch, merged_tip, commits, conflict_files, merged_at, created_at, updated_at
+`
+
+type MarkIssueDeliveryLineMergedParams struct {
+	BranchName   pgtype.Text `json:"branch_name"`
+	SourceBranch pgtype.Text `json:"source_branch"`
+	MergedTip    pgtype.Text `json:"merged_tip"`
+	Commits      []byte      `json:"commits"`
+	IssueID      pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) MarkIssueDeliveryLineMerged(ctx context.Context, arg MarkIssueDeliveryLineMergedParams) (IssueDeliveryLine, error) {
+	row := q.db.QueryRow(ctx, markIssueDeliveryLineMerged,
+		arg.BranchName,
+		arg.SourceBranch,
+		arg.MergedTip,
+		arg.Commits,
+		arg.IssueID,
+	)
+	var i IssueDeliveryLine
+	err := row.Scan(
+		&i.IssueID,
+		&i.WorkspaceID,
+		&i.OwnerIssueID,
+		&i.Status,
+		&i.BranchName,
+		&i.SourceBranch,
+		&i.MergedTip,
+		&i.Commits,
+		&i.ConflictFiles,
+		&i.MergedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const setIssueDeliveryBranchCleanup = `-- name: SetIssueDeliveryBranchCleanup :one

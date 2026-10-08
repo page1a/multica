@@ -26,7 +26,9 @@ vi.mock("../../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
 vi.mock("../../../editor", () => ({
   usePreviewSequence: () => ({ openAt: openAtMock }),
   useAttachmentPreview: () => ({ open: vi.fn(), tryOpen: tryOpenMock, modal: null }),
-  useDownloadAttachment: () => downloadMock,
+  useAttachmentActions: () => ({
+    download: ({ attachmentId }: { attachmentId?: string }) => downloadMock(attachmentId),
+  }),
 }));
 
 vi.mock("../../../editor/hooks/use-inline-media-url", () => ({

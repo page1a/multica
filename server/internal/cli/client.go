@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,13 @@ type APIClient struct {
 	AgentID    string
 	TaskID     string
 	HTTPClient *http.Client
+
+	// LocalCopyURL is the hosting daemon's local-outputs endpoint
+	// (http://127.0.0.1:<port>/outputs), set only inside a daemon-managed task.
+	// Every successful upload then leaves a copy there, keyed by attachment id,
+	// so the desktop app on this machine can open the file in place. Empty
+	// means no copy is kept.
+	LocalCopyURL string
 
 	// Identity overrides. Empty values fall back to the package-level
 	// ClientPlatform / ClientVersion / ClientOS.
@@ -822,12 +830,72 @@ func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename st
 // call binds it via `attachment_ids`. Files over 2 MiB go through the
 // resumable chunked upload instead.
 func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, filename string, issueID string) (AttachmentResponse, error) {
-	if len(fileData) > 2<<20 {
-		fields := map[string]string{}
-		if issueID != "" {
-			fields["issue_id"] = issueID
+	result, err := c.uploadAttachment(ctx, fileData, filename, map[string]string{"issue_id": issueID})
+	if err != nil {
+		return AttachmentResponse{}, err
+	}
+	if result.ID == "" && len(fileData) <= chunkedUploadThreshold {
+		return AttachmentResponse{}, fmt.Errorf("upload response missing attachment id")
+	}
+	return result, nil
+}
+
+// UploadChatAttachment uploads a file via multipart form to /api/upload-file
+// tagged with a chat task (task_id). The server binds the row to the assistant
+// reply that task produces on completion. Returns the full AttachmentResponse
+// (id + markdown_url) so the agent can embed the image inline in its reply.
+func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
+	result, err := c.uploadAttachment(ctx, fileData, filename, map[string]string{"task_id": taskID})
+	if err != nil {
+		return AttachmentResponse{}, err
+	}
+	if result.ID == "" && len(fileData) <= chunkedUploadThreshold {
+		return AttachmentResponse{}, fmt.Errorf("upload response missing attachment id")
+	}
+	return result, nil
+}
+
+// UploadFileWithURL uploads a file via multipart form to /api/upload-file
+// without associating it with an issue or comment. It decodes the full
+// AttachmentResponse and returns the attachment ID and URL.
+func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, filename string) (string, string, error) {
+	result, err := c.uploadAttachment(ctx, fileData, filename, nil)
+	if err != nil {
+		return "", "", err
+	}
+	// The chunked path never checked the URL; only the single-request path does.
+	if result.URL == "" && len(fileData) <= chunkedUploadThreshold {
+		return "", "", fmt.Errorf("upload response missing attachment url")
+	}
+	// Allow empty ID: the server returns id="" in the fallback path where
+	// S3 upload succeeded but the attachment DB record failed. The file
+	// is still usable via its URL.
+	return result.ID, result.URL, nil
+}
+
+// chunkedUploadThreshold is the size above which uploads go through the
+// resumable chunked endpoint instead of one multipart request.
+const chunkedUploadThreshold = 2 << 20
+
+// uploadAttachment is the one road every CLI attachment upload takes to
+// /api/upload-file. fields carries the binding (issue_id / task_id); empty
+// values are not sent. Files over 2 MiB go through the resumable chunked
+// upload. A successful upload inside a daemon task also leaves a local copy
+// (keepLocalCopy). Callers own the shape checks on the response.
+func (c *APIClient) uploadAttachment(ctx context.Context, fileData []byte, filename string, fields map[string]string) (AttachmentResponse, error) {
+	sent := map[string]string{}
+	for k, v := range fields {
+		if v != "" {
+			sent[k] = v
 		}
-		return c.uploadChunked(ctx, fileData, filename, fields)
+	}
+	fields = sent
+	if len(fileData) > chunkedUploadThreshold {
+		result, err := c.uploadChunked(ctx, fileData, filename, fields)
+		if err == nil {
+			c.keepLocalCopy(ctx, result.ID, filename, fileData)
+		}
+		return result, err
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -839,13 +907,16 @@ func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, 
 	if _, err := part.Write(fileData); err != nil {
 		return AttachmentResponse{}, fmt.Errorf("write file data: %w", err)
 	}
-
-	if issueID != "" {
-		if err := writer.WriteField("issue_id", issueID); err != nil {
-			return AttachmentResponse{}, fmt.Errorf("write issue_id field: %w", err)
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := writer.WriteField(k, fields[k]); err != nil {
+			return AttachmentResponse{}, fmt.Errorf("write %s field: %w", k, err)
 		}
 	}
-
 	if err := writer.Close(); err != nil {
 		return AttachmentResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
@@ -859,7 +930,6 @@ func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, 
 
 	// Honor a longer context deadline for large files: callers widen the
 	// context for uploads, which the default client timeout would shadow.
-	// Same shape as UploadChatAttachment / UploadFileWithURL.
 	httpClient := c.HTTPClient
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
@@ -885,143 +955,36 @@ func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return AttachmentResponse{}, fmt.Errorf("decode upload response: %w", err)
 	}
-	if result.ID == "" {
-		return AttachmentResponse{}, fmt.Errorf("upload response missing attachment id")
-	}
+	c.keepLocalCopy(ctx, result.ID, filename, fileData)
 	return result, nil
 }
 
-// UploadChatAttachment uploads a file via multipart form to /api/upload-file
-// tagged with a chat task (task_id). The server binds the row to the assistant
-// reply that task produces on completion. Returns the full AttachmentResponse
-// (id + markdown_url) so the agent can embed the image inline in its reply.
-func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
-	if len(fileData) > 2<<20 {
-		return c.uploadChunked(ctx, fileData, filename, map[string]string{"task_id": taskID})
-	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
+// keepLocalCopyTimeout bounds handing the bytes to the daemon on 127.0.0.1.
+const keepLocalCopyTimeout = 30 * time.Second
 
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+// keepLocalCopy hands an uploaded file to the hosting daemon's copy library.
+// Best effort and silent: the upload already succeeded, and an older daemon
+// without the endpoint, or no daemon at all, only means the desktop app
+// downloads the file instead of opening it in place.
+func (c *APIClient) keepLocalCopy(ctx context.Context, attachmentID, filename string, fileData []byte) {
+	if c.LocalCopyURL == "" || attachmentID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keepLocalCopyTimeout)
+	defer cancel()
+	q := url.Values{"attachment_id": {attachmentID}, "filename": {filepath.Base(filename)}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.LocalCopyURL+"?"+q.Encode(), bytes.NewReader(fileData))
 	if err != nil {
-		return AttachmentResponse{}, fmt.Errorf("create form file: %w", err)
+		return
 	}
-	if _, err := part.Write(fileData); err != nil {
-		return AttachmentResponse{}, fmt.Errorf("write file data: %w", err)
-	}
-	if taskID != "" {
-		if err := writer.WriteField("task_id", taskID); err != nil {
-			return AttachmentResponse{}, fmt.Errorf("write task_id field: %w", err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return AttachmentResponse{}, fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := (&http.Client{Timeout: keepLocalCopyTimeout}).Do(req)
 	if err != nil {
-		return AttachmentResponse{}, err
+		return
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	// Honor a longer context deadline for large images, same as UploadFileWithURL.
-	httpClient := c.HTTPClient
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining > httpClient.Timeout {
-			clientCopy := *httpClient
-			clientCopy.Timeout = remaining
-			httpClient = &clientCopy
-		}
-	}
-
-	resp, err := httpClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return AttachmentResponse{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return AttachmentResponse{}, newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result AttachmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return AttachmentResponse{}, fmt.Errorf("decode upload response: %w", err)
-	}
-	if result.ID == "" {
-		return AttachmentResponse{}, fmt.Errorf("upload response missing attachment id")
-	}
-	return result, nil
-}
-
-// UploadFileWithURL uploads a file via multipart form to /api/upload-file
-// without associating it with an issue or comment. It decodes the full
-// AttachmentResponse and returns the attachment ID and URL.
-func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, filename string) (string, string, error) {
-	if len(fileData) > 2<<20 {
-		out, err := c.uploadChunked(ctx, fileData, filename, nil)
-		return out.ID, out.URL, err
-	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
-	if err != nil {
-		return "", "", fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := part.Write(fileData); err != nil {
-		return "", "", fmt.Errorf("write file data: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", "", fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	// Use a client that respects the context deadline for slow uploads
-	// (e.g. avatar uploads with 5MB files). The default HTTP client timeout
-	// shadows any longer context deadline.
-	httpClient := c.HTTPClient
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining > httpClient.Timeout {
-			clientCopy := *httpClient
-			clientCopy.Timeout = remaining
-			httpClient = &clientCopy
-		}
-	}
-
-	resp, err := httpClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return "", "", newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result AttachmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", fmt.Errorf("decode upload response: %w", err)
-	}
-	if result.URL == "" {
-		return "", "", fmt.Errorf("upload response missing attachment url")
-	}
-	// Allow empty ID: the server returns id="" in the fallback path where
-	// S3 upload succeeded but the attachment DB record failed. The file
-	// is still usable via its URL.
-	return result.ID, result.URL, nil
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
 }
 
 // ImportSkillFile imports a skill from a local archive (.skill / .zip) by

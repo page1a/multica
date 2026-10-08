@@ -2702,6 +2702,13 @@ describe("TaskMessageListSchema", () => {
     expect(parsed.every((m) => m.output === "ok")).toBe(true);
   });
 
+  // DENE-1573: the daemon's skill-use marker must survive parsing, or the
+  // catch-all turns it into an empty text row the timeline drops.
+  it("keeps skill markers with their skill name", () => {
+    const parsed = TaskMessageListSchema.parse([{ task_id: "task-1", seq: 2, type: "skill", tool: "jev" }]);
+    expect(parsed[0]).toMatchObject({ type: "skill", tool: "jev" });
+  });
+
   const row = { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "tool_result", output: "log line" };
 
   // The whole point of the field: a server that never sends it is saying

@@ -185,7 +185,7 @@ func DemotionFootnote(ladder Ladder, roster map[string]Agent, chosen *Seat) stri
 	var skipped []string
 	chosenDemoted := false
 	for _, agent := range roster {
-		if !agent.Demoted || agentTierKey(ladder, agent) != chosen.TierKey {
+		if !agent.Demoted || !agent.autoPickable() || agentTierKey(ladder, agent) != chosen.TierKey {
 			continue
 		}
 		if agent.ID == chosen.ID {

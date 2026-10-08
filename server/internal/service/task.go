@@ -206,6 +206,11 @@ const (
 	// stretching this global crash-recovery window.
 	claimResponseRecoveryWindow = 90 * time.Second
 	prepareLeaseDuration        = 45 * time.Second
+	// undeliveredRecoveryMinAge is the youngest dispatch a daemon-requested
+	// recovery may take back. It matches the daemon's claim execution budget
+	// (batchClaimRequestTimeout), after which the originating request can no
+	// longer be mid-flight on the server and so cannot still commit a dispatch.
+	undeliveredRecoveryMinAge = 5 * time.Second
 )
 
 func (s *TaskService) trackTaskForReclaim(task db.AgentTaskQueue, checkAfter time.Time) {
@@ -4256,6 +4261,23 @@ func (s *TaskService) RequeueTaskAfterClaimFailure(ctx context.Context, task db.
 // already carrying its runtime_id so the daemon routes it to the matching
 // runtime locally.
 func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int) ([]db.AgentTaskQueue, error) {
+	return s.ClaimTasksForRuntimesWithOptions(ctx, runtimeIDs, maxTasks, ClaimBatchOptions{})
+}
+
+// ClaimBatchOptions carries the optional lost-response recovery request of a
+// batch claim (DENE-1611).
+type ClaimBatchOptions struct {
+	// RecoverUndelivered re-sends tasks already dispatched to these runtimes that
+	// the daemon says it never received, instead of leaving them for the 90s
+	// stale reclaim. HeldTaskIDs is what the daemon IS holding (preparing or
+	// running) and is never re-sent.
+	RecoverUndelivered bool
+	HeldTaskIDs        []pgtype.UUID
+}
+
+// ClaimTasksForRuntimesWithOptions is ClaimTasksForRuntimes plus the opt-in
+// recovery of tasks whose dispatch response was lost on the way to the daemon.
+func (s *TaskService) ClaimTasksForRuntimesWithOptions(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int, opts ClaimBatchOptions) ([]db.AgentTaskQueue, error) {
 	if len(runtimeIDs) == 0 || maxTasks <= 0 {
 		return nil, nil
 	}
@@ -4308,6 +4330,41 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 		s.NotifyTaskEnqueued(ctx, task)
+	}
+
+	// 1b. The daemon reports a lost claim response (DENE-1611): hand back what
+	// was dispatched to it but never arrived, now rather than after the recovery
+	// window. Bypasses the reclaim-check cache — this is an explicit request.
+	if opts.RecoverUndelivered {
+		held := opts.HeldTaskIDs
+		if held == nil {
+			// A NULL array makes `<> ALL` match nothing; an empty one matches all.
+			held = []pgtype.UUID{}
+		}
+		recovered, rerr := s.Queries.RecoverUndeliveredDispatchedTasksForRuntimes(ctx, db.RecoverUndeliveredDispatchedTasksForRuntimesParams{
+			RuntimeIds:       uniqueIDs,
+			HeldTaskIds:      held,
+			MinAgeSecs:       undeliveredRecoveryMinAge.Seconds(),
+			PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
+			RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
+			MaxTasks:         int32(maxTasks),
+		})
+		if rerr != nil {
+			return nil, fmt.Errorf("recover undelivered dispatched tasks: %w", rerr)
+		}
+		recoveryCheckAfter := time.Now().Add(claimResponseRecoveryWindow + ReclaimCheckHintSafetyMargin)
+		for i := range recovered {
+			s.trackTaskForReclaim(recovered[i], recoveryCheckAfter)
+			claimed = append(claimed, recovered[i])
+			slog.Info("undelivered dispatched task recovered (batch)",
+				"task_id", util.UUIDToString(recovered[i].ID),
+				"runtime_id", util.UUIDToString(recovered[i].RuntimeID),
+				"agent_id", util.UUIDToString(recovered[i].AgentID),
+			)
+		}
+		if len(claimed) >= maxTasks {
+			return claimed[:maxTasks], nil
+		}
 	}
 
 	// 2. Reclaim lost-response dispatched tasks when any runtime's task schedule
@@ -4447,6 +4504,29 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 	}
 
 	return claimed, nil
+}
+
+// UndeliveredDispatchPending reports whether a dispatch the daemon is not holding
+// still exists on these runtimes after a recovery claim (DENE-1611): one too
+// young for the recovery to take yet, or cut off by the batch limit. The daemon
+// keeps asking for recovery while this is true instead of treating an empty
+// answer as "nothing was lost". heldTaskIDs must include the tasks the claim just
+// returned. A failed lookup reports true — recovery is only ever asked for again,
+// never skipped.
+func (s *TaskService) UndeliveredDispatchPending(ctx context.Context, runtimeIDs, heldTaskIDs []pgtype.UUID) bool {
+	if heldTaskIDs == nil {
+		heldTaskIDs = []pgtype.UUID{}
+	}
+	pending, err := s.Queries.HasUndeliveredDispatchedTasksForRuntimes(ctx, db.HasUndeliveredDispatchedTasksForRuntimesParams{
+		RuntimeIds:       runtimeIDs,
+		HeldTaskIds:      heldTaskIDs,
+		RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
+	})
+	if err != nil {
+		slog.Warn("undelivered dispatch lookup failed; keeping recovery pending", "error", err)
+		return true
+	}
+	return pending
 }
 
 // cancelSupersededDeferredRetries drops deferred auto-retry rows that an active

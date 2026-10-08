@@ -44,6 +44,11 @@ export interface IssueGoal {
   budget_warning_at?: string | null;
   last_continuation_task_id?: string | null;
   next_action?: string | null;
+  /** Stop record: the brake stops as "system"; a person or agent stops on purpose. */
+  stopped_at?: string | null;
+  stopped_by?: { type: "member" | "agent" | "system" | (string & {}); id?: string | null } | null;
+  stopped_on_behalf_of?: string | null;
+  stop_reason?: string | null;
   [key: string]: unknown;
 }
 
@@ -84,4 +89,8 @@ export const IssueGoalSchema = z.object({
   budget_warning_at: z.string().nullable().optional(),
   last_continuation_task_id: z.string().nullable().optional(),
   next_action: z.string().nullable().optional(),
+  stopped_at: z.string().nullable().optional(),
+  stopped_by: z.object({ type: z.string(), id: z.string().nullable().optional() }).nullable().optional(),
+  stopped_on_behalf_of: z.string().nullable().optional(),
+  stop_reason: z.string().nullable().optional(),
 }).passthrough() satisfies z.ZodType<IssueGoal>;

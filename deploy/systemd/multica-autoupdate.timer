@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the Multica self-host autoupdate every 15 minutes
+Description=Run the Multica self-host autoupdate every 5 minutes
 Documentation=https://github.com/jeff-kunkun/multica/blob/kun/docs/kun/selfhost-autoupdate.md
 
 [Timer]
@@ -7,7 +7,10 @@ Documentation=https://github.com/jeff-kunkun/multica/blob/kun/docs/kun/selfhost-
 # timer on a box that has been up for days fires an upgrade the moment the
 # timer starts. This waits a fixed five minutes after activation instead.
 OnActiveSec=5min
-OnUnitActiveSec=15min
+# Five, not fifteen (DENE-1617): with the blue/green cutover an update no
+# longer costs an outage, so the only thing a long interval buys is lag.
+# Bursts of merges are coalesced by MULTICA_AUTOUPDATE_QUIET_SECONDS instead.
+OnUnitActiveSec=5min
 # No Persistent=: it only applies to OnCalendar= timers, and the monotonic
 # pair above already covers a reboot — the timer re-activates at boot and
 # fires five minutes later.

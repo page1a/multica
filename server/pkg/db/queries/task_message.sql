@@ -96,3 +96,14 @@ ORDER BY seq ASC;
 -- name: DeleteTaskMessages :exec
 DELETE FROM task_message
 WHERE task_id = $1;
+
+-- name: ListIssueTaskSkills :many
+-- The skills each of an issue's runs used, one row per (run, skill) in
+-- first-use order. The daemon appends a `skill` transcript row the first time a
+-- run uses a bound skill (DENE-1573); runs from older daemons have none.
+SELECT tm.task_id, tm.tool::text AS skill, MIN(tm.seq)::int4 AS first_seq
+FROM task_message tm
+JOIN agent_task_queue t ON t.id = tm.task_id
+WHERE t.issue_id = $1 AND tm.type = 'skill' AND tm.tool IS NOT NULL
+GROUP BY tm.task_id, tm.tool
+ORDER BY tm.task_id, first_seq;

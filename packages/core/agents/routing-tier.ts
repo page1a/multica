@@ -55,3 +55,24 @@ export function routingUsageKeyOf(value: string | undefined | null): RoutingUsag
     ? (raw as RoutingUsageKey)
     : DEFAULT_ROUTING_USAGE;
 }
+
+/**
+ * Whether automatic dispatch may pick a seat at all (DENE-1600, ADR-0008).
+ * Orthogonal to the rung: `mention_only` keeps its tier and still takes work
+ * by @mention, assignment and delegation, but routing never selects it.
+ *
+ * Order is the default first, which is the order the options are rendered in.
+ */
+export const DISPATCH_MODE_KEYS = ["auto", "mention_only"] as const;
+
+export type DispatchModeKey = (typeof DISPATCH_MODE_KEYS)[number];
+
+export const DEFAULT_DISPATCH_MODE: DispatchModeKey = "auto";
+
+/** Resolves what the server sent; unknown or missing reads as the default. */
+export function dispatchModeKeyOf(value: string | undefined | null): DispatchModeKey {
+  const raw = (value ?? "").trim();
+  return (DISPATCH_MODE_KEYS as readonly string[]).includes(raw)
+    ? (raw as DispatchModeKey)
+    : DEFAULT_DISPATCH_MODE;
+}

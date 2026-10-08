@@ -268,6 +268,16 @@ const desktopAPI = {
     ipcRenderer.invoke("worktree-cleanup:save-settings", settings),
   removeWorktreeCopy: (path: string) =>
     ipcRenderer.invoke("worktree-cleanup:remove", path),
+  /** Attachments an agent on this machine uploaded: the renderer passes an
+   *  attachment id only, never a path (DENE-1549). */
+  localAttachment: {
+    status: (attachmentId: string) =>
+      ipcRenderer.invoke("local-attachment:status", attachmentId),
+    open: (attachmentId: string) =>
+      ipcRenderer.invoke("local-attachment:open", attachmentId),
+    reveal: (attachmentId: string) =>
+      ipcRenderer.invoke("local-attachment:reveal", attachmentId),
+  },
   /** This machine's shared session folder: where questions with no code land. */
   sharedScratchReport: () => ipcRenderer.invoke("shared-scratch:report"),
   saveSharedScratchSettings: (settings: unknown) =>

@@ -489,6 +489,12 @@ deleted_issue_delivery_branches AS (
     WHERE workspace_id = $1
        OR issue_id IN (SELECT id FROM ws_issues)
 ),
+deleted_issue_delivery_lines AS (
+    DELETE FROM issue_delivery_line
+    WHERE workspace_id = $1
+       OR issue_id IN (SELECT id FROM ws_issues)
+       OR owner_issue_id IN (SELECT id FROM ws_issues)
+),
 deleted_issue_pr_automation AS (
     DELETE FROM issue_pr_automation WHERE workspace_id = $1
 ),

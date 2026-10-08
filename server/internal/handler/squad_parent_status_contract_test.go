@@ -69,7 +69,7 @@ func TestSquadAssignedLeaderCanWrapUpOnCommentTurn(t *testing.T) {
 		// MUL-6417: the brief's status rule is a fact judgment, and the
 		// leader bullet must point the same way as the briefing's grant —
 		// in_review is reached on the confirming turn, not on dispatch.
-		"dispatching members is not delivery",
+		"Dispatching members is not delivery",
 		"a dispatch turn leaves the parent `in_progress`",
 		"where you confirm the overall goal is met",
 	} {

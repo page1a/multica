@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/projectmemory"
+	"github.com/multica-ai/multica/server/internal/titling"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
@@ -263,14 +264,35 @@ var issueChildrenCmd = &cobra.Command{
 	Use:     "children <id>",
 	Aliases: []string{"subissues"},
 	Short:   "List an issue's sub-issues grouped by stage",
-	Args:    exactArgs(1),
-	RunE:    runIssueChildren,
+	Long: "List an issue's sub-issues grouped by stage. A sub-issue created after\n" +
+		"DENE-1537 delivers onto its parent's branch instead of opening its own PR;\n" +
+		"its delivery_line (JSON) or DELIVERY column (table) says whether its commits\n" +
+		"are merged back (merged, with commit_count), still open, or in conflict.\n" +
+		"`multica issue delivery <parent>` lists every sub-issue's commits.",
+	Args: exactArgs(1),
+	RunE: runIssueChildren,
 }
 
 var issueCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new issue",
+	Long:  issueCreateLong(),
 	RunE:  runIssueCreate,
+}
+
+// issueCreateLong carries the title and body rules that used to sit in every
+// agent brief (DENE-1329, ADR-0007): they are needed only when an issue is
+// created, so they live where that action is looked up.
+func issueCreateLong() string {
+	return "Create a new issue.\n\n" +
+		"Body: write a multi-line or rich description to a file inside the working\n" +
+		"directory and pass --description-file ./description.md; inline --description\n" +
+		"is for one short line (the shell rewrites quotes, backticks and $() first).\n" +
+		"The title already serves as the H1, so start the body with prose or ##\n" +
+		"subheadings; add a # H1 only when the user asks for one.\n\n" +
+		"Sub-issues: --parent <issue>; --status todo starts an agent-assigned child\n" +
+		"at once, --status backlog parks it, --stage <N> orders children in stages.\n\n" +
+		"Title style\n\n" + strings.TrimRight(titling.IssueTitleRules, "\n")
 }
 
 var issueUpdateCmd = &cobra.Command{
@@ -383,6 +405,12 @@ func issueCloseLong() string {
 		"                        comes back without anyone @-ing it\n" +
 		"  --verdict pass        acceptance seat only, with --outcome done: the platform\n" +
 		"                        merges the open PR and sets done, or blocks with the reason\n\n" +
+		"A sub-issue on its parent's delivery line (`delivery_line` in `issue get`) opens\n" +
+		"no PR: --outcome done, run in the sub-issue's working directory, merges its\n" +
+		"commits into the parent's branch and uses the commit list as evidence. A real\n" +
+		"conflict closes blocked with the files named; merge that branch into yours,\n" +
+		"resolve, and close done again. The parent opens the one PR, with Closes for\n" +
+		"every sub-issue, and --verdict pass on such a sub-issue is refused.\n\n" +
 		"--evidence is mandatory (PR link, test conclusion). Agent-authored bodies should\n" +
 		"use --evidence-file <path> inside the working directory. --pr <url> registers that\n" +
 		"pull or merge request with the close; an unverifiable link still closes and is\n" +
@@ -397,7 +425,14 @@ func issueCloseLong() string {
 		"this close wrote. Keys: " + strings.Join(projectmemory.LocationKeys(), ", ") + ".\n\n" +
 		"Repeat --decision \"...\" for each decision this round settled; it joins the\n" +
 		"state card's 已拍板 list that `multica issue context <id>` shows the next owner.\n" +
-		"--summary becomes the card's 上一棒交代."
+		"--summary becomes the card's 上一棒交代.\n\n" +
+		"Acceptance seat: pass with --outcome done --verdict pass when the checks this\n" +
+		"change owns are green and no named person still owes a decision\n" +
+		"(close.conclusion=awaiting_human). A check already red on the base branch is\n" +
+		"not such a wait: merge with `gh pr merge --squash <url>` and pass again. A\n" +
+		"failing ticket is not a close: `multica issue comment add <id> --verdict hold\n" +
+		"--content-file ./review.md` wakes the executor. Words like 通过 in a body are\n" +
+		"not a verdict, and a passed ticket is never left in_review for a person."
 }
 
 var issueDisposeCmd = &cobra.Command{
@@ -476,6 +511,16 @@ var issueCommentAddCmd = &cobra.Command{
 	Use:   "add <issue-id>",
 	Short: "Add a comment to an issue",
 	Long: `Add a comment to an issue.
+
+Agent-authored bodies: write the body to a UTF-8 file inside the working
+directory first (never /tmp or a shared path; MUL-4252), then post it with
+--content-file ./reply.md. Inline --content
+and --content-stdin heredocs get mangled by the shell (MUL-2904, #4182), and on
+Windows PowerShell piping can replace non-ASCII with "?". Delete the file only
+after the post succeeded (` + "`&&`" + ` in bash, a $LASTEXITCODE check in PowerShell).
+Use --output table to confirm a final result without echoing the body, --output
+json when you need the comment id. One reply per thread: a distinct body file
+for each.
 
 --mode decides what happens to agents the comment wakes that are still
 replying on this issue (omit it for the usual behaviour):
@@ -585,7 +630,9 @@ var issueRunsCmd = &cobra.Command{
 		"Defaults to this issue's full execution history, newest first. Narrow it to " +
 		"work in flight with --active, or widen it across the sub-issue family with " +
 		"--siblings when you need to know whether another agent is already working " +
-		"next to you.",
+		"next to you.\n\n" +
+		"Each run in the history carries skills_used: the bound skills it used, in " +
+		"first-use order (the SKILLS column in the table).",
 	Args: exactArgs(1),
 	RunE: runIssueRuns,
 }
@@ -831,7 +878,7 @@ func init() {
 	issueCreateCmd.Flags().String("status", "", "Issue status")
 	issueCreateCmd.Flags().String("priority", "", "Issue priority")
 	issueCreateCmd.Flags().String("assignee", "", "Assignee name (member, agent, or squad; fuzzy match)")
-	issueCreateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
+	issueCreateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; a quote that does not check out is set aside and routing picks the executor")
 	issueCreateCmd.Flags().String("assignee-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueCreateCmd.Flags().String("parent", "", "Parent issue ID")
 	issueCreateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) grouping this sub-issue into an ordered barrier group under its parent; omit for unstaged. The parent assignee is woken only when every sub-issue in a stage finishes.")
@@ -857,7 +904,7 @@ func init() {
 	issueUpdateCmd.Flags().String("status", "", "New status")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
-	issueUpdateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
+	issueUpdateCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; a quote that does not check out is set aside and routing picks the executor")
 	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueUpdateCmd.Flags().String("reviewer", "", "验收席 — who accepts this issue: a member or agent name, \"none\" for no acceptance pass, or \"\" to clear the slot")
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
@@ -898,7 +945,7 @@ func init() {
 	issueAssignCmd.Flags().String("to", "", "Assignee name (member, agent, or squad; fuzzy match)")
 	issueAssignCmd.Flags().String("to-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --to)")
 	issueAssignCmd.Flags().Bool("unassign", false, "Remove current assignee")
-	issueAssignCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; an unverifiable quote stays unassigned and is not rerouted")
+	issueAssignCmd.Flags().String("per-quote", "", "Only when you are an agent: the person's exact words naming this assignee; naming the base role (e.g. 孙悟空) is enough, you pick the direction by project. The server checks earlier messages in the direct chat or issue thread; a quote that does not check out is set aside and routing picks the executor")
 	issueAssignCmd.Flags().Bool("no-start", false, "Assign ownership without starting an agent run")
 	issueAssignCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -1503,7 +1550,7 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		actors := loadActorDisplayLookup(ctx, client)
-		headers := []string{"STAGE", "KEY", "TITLE", "STATUS", "PRIORITY", "ASSIGNEE", "DRIVER"}
+		headers := []string{"STAGE", "KEY", "TITLE", "STATUS", "PRIORITY", "ASSIGNEE", "DRIVER", "DELIVERY"}
 		rows := make([][]string, 0, len(children))
 		for _, c := range children {
 			stageCell := "-"
@@ -1518,6 +1565,7 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 				strVal(c, "priority"),
 				formatAssignee(c, actors),
 				driverCell(c),
+				deliveryLineCell(c),
 			})
 		}
 		cli.PrintTable(os.Stdout, headers, rows)
@@ -1558,6 +1606,28 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 		"stages":   stages,
 		"unstaged": unstaged,
 	})
+}
+
+// deliveryLineCell summarizes a child that delivers onto its parent's branch
+// (DENE-1537): merged with its commit count, open, or in conflict.
+func deliveryLineCell(c map[string]any) string {
+	line, ok := c["delivery_line"].(map[string]any)
+	if !ok {
+		return "-"
+	}
+	status := strVal(line, "status")
+	if status == "merged" {
+		if n, ok := line["commit_count"].(float64); ok {
+			return fmt.Sprintf("父票分支 · %d 提交", int(n))
+		}
+	}
+	switch status {
+	case "conflict":
+		return "父票分支 · 冲突"
+	case "merged":
+		return "父票分支 · 已并回"
+	}
+	return "父票分支 · 未并回"
 }
 
 // isTerminalChildIssue reports whether a child issue counts as finished for
@@ -2534,8 +2604,23 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("close issue: %w", err)
 		}
 	}
+	// A sub-issue on its parent's line (DENE-1537) delivers by merging its
+	// commits into the parent's branch, not through a PR of its own. The
+	// merge runs after the shape check above so a refused close moves
+	// nothing, and the server records what it did.
+	onLine := false
+	if outcome == "done" && verdict == "" {
+		merge, err := mergeIntoParentLine(ctx, client, issueRef.ID)
+		if err != nil {
+			return fmt.Errorf("close issue: %w", err)
+		}
+		if merge != nil {
+			onLine = true
+			body["delivery_merge"] = merge
+		}
+	}
 	declaredPR, _ := cmd.Flags().GetString("pr")
-	if strings.TrimSpace(declaredPR) == "" {
+	if strings.TrimSpace(declaredPR) == "" && !onLine {
 		declaredPR = pullURLFromText(evidence)
 	}
 	// A PR whose checks are still running is waited out here (DENE-1219):
@@ -2545,7 +2630,7 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 	var result map[string]any
 	deadline := closeNow().Add(closeWaitLimit)
 	for {
-		result, err = postIssueClose(client, issueRef, body, outcome, verdict, declaredPR)
+		result, err = postIssueClose(client, issueRef, body, outcome, verdict, declaredPR, !onLine)
 		if err == nil {
 			break
 		}
@@ -2591,10 +2676,10 @@ var (
 
 // postIssueClose refreshes the issue's PR snapshot and sends one close. Each
 // attempt gets its own request deadline, since the checks wait spans many.
-func postIssueClose(client *cli.APIClient, issueRef resolvedID, body map[string]any, outcome, verdict, declaredPR string) (map[string]any, error) {
+func postIssueClose(client *cli.APIClient, issueRef resolvedID, body map[string]any, outcome, verdict, declaredPR string, refreshPRs bool) (map[string]any, error) {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-	if outcome == "done" || outcome == "in_review" {
+	if refreshPRs && (outcome == "done" || outcome == "in_review") {
 		refreshIssuePullRequestsWithURL(ctx, client, issueRef.ID, issueRef.Display, declaredPR, outcome == "done" && verdict == "pass", outcome == "done" && verdict == "")
 	}
 	var result map[string]any
@@ -3501,7 +3586,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "SESSION", "ERROR"}
+	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "SESSION", "SKILLS", "ERROR"}
 	rows := make([][]string, 0, len(runs))
 	for _, r := range runs {
 		started := strVal(r, "started_at")
@@ -3524,11 +3609,25 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 			started,
 			completed,
 			runSessionLabel(r, fullID),
+			runSkillsLabel(r),
 			errMsg,
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
 	return nil
+}
+
+// runSkillsLabel lists the skills a run used (DENE-1573), comma-separated;
+// empty when it used none or the server predates the field.
+func runSkillsLabel(r map[string]any) string {
+	raw, _ := r["skills_used"].([]any)
+	names := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			names = append(names, s)
+		}
+	}
+	return strings.Join(names, ",")
 }
 
 func runIssueUsage(cmd *cobra.Command, args []string) error {
@@ -4417,11 +4516,11 @@ func noteIgnoredAssignee(result map[string]any) bool {
 	}
 	reason, _ := result["assignee_ignored_reason"].(string)
 	if reason == "" {
-		reason = "the person did not provide a verifiable quote"
+		reason = "no quote from the person naming it"
 	}
 	// An in-flight ticket keeps the executor it had (DENE-1201); only an empty
-	// slot is left for routing.
-	kept := "the issue remains unassigned"
+	// slot is left for routing, which fills it (DENE-1613).
+	kept := "routing will pick the executor"
 	if strVal(result, "assignee_id") != "" {
 		kept = "the issue keeps its current assignee"
 	}

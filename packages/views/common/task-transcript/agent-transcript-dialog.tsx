@@ -27,6 +27,7 @@ import {
   Info,
   Coins,
   GitBranch,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -198,7 +199,7 @@ function stepFilterKey(step: TraceStep): TranscriptFilterKey {
 /** Lowercased haystack for the in-run search. Outputs are clipped: a match
  *  past 4KB of command output is not one anybody is scanning for. */
 function stepHaystack(step: TraceStep): string {
-  if (step.kind !== "call") return (step.item.content ?? "").toLowerCase();
+  if (step.kind !== "call") return `${step.item.tool ?? ""} ${step.item.content ?? ""}`.toLowerCase();
   const input = step.call?.input ? JSON.stringify(step.call.input) : "";
   return `${step.tool} ${input} ${(step.result?.output ?? "").slice(0, 4000)}`.toLowerCase();
 }
@@ -207,6 +208,7 @@ function StepIcon({ step, className }: { step: TraceStep; className?: string }) 
   if (!isCallStep(step)) {
     if (step.kind === "thinking") return <Brain className={className} />;
     if (step.kind === "error") return <CircleAlert className={className} />;
+    if (step.kind === "skill") return <BookOpen className={className} />;
     return <Bot className={className} />;
   }
 
@@ -1561,10 +1563,14 @@ function StepRow({
     ? call.tool || t(($) => $.transcript.kind_tool)
     : row.kind === "thinking"
       ? t(($) => $.transcript.kind_thinking)
-      : t(($) => $.transcript.kind_error);
+      : row.kind === "skill"
+        ? t(($) => $.transcript.kind_skill)
+        : t(($) => $.transcript.kind_error);
   const summary = call
     ? callSummary(call, summaryLabels)
-    : firstLineOf((row as TraceMessageStep).item.content);
+    : row.kind === "skill"
+      ? (row.item.tool ?? "")
+      : firstLineOf((row as TraceMessageStep).item.content);
   const pending = call !== null && isLive && !call.result;
   const selected = selectedSeq === row.seq;
 
@@ -1765,7 +1771,9 @@ function StepInspector({
       ? call.tool || t(($) => $.transcript.kind_tool)
       : step.kind === "thinking"
         ? t(($) => $.transcript.kind_thinking)
-        : t(($) => $.transcript.kind_error);
+        : step.kind === "skill"
+          ? t(($) => $.transcript.kind_skill)
+          : t(($) => $.transcript.kind_error);
 
   return (
     <aside className="flex w-[26rem] shrink-0 flex-col border-l bg-muted/25">

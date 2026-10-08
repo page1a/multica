@@ -59,6 +59,21 @@ seat back on (by hand or when a quota breaker expires) also requeues the
 ones. Distinct from archive — archive is the delete path. Disabled is
 orthogonal to unbound and archived.
 
+A seat can be **mention only** (`dispatch_mode: mention_only`, DENE-1600,
+ADR-0008): it keeps its routing tier and still takes work by @mention,
+assignment and delegation, but routing, quota relay and seat relay never pick
+it — it is not in the candidate list the judge sees. Tagging a tier does not
+put a seat into the automatic pool; this flag decides that. Unlike
+`work_enabled=false`, a mention-only seat still runs what it is pointed at.
+
+```bash
+multica agent update <agent-id> --dispatch-mode mention_only --output json   # only when named
+multica agent update <agent-id> --dispatch-mode auto --output json           # back in the pool
+multica agent list --output json                                             # each agent carries dispatch_mode
+```
+
+A following specialisation inherits it with the tier and usage.
+
 A full model is not a closed seat (DENE-1093). A run that fails with
 `agent_error.provider_capacity_or_rate_limit` keeps the seat open and retries
 in place on the same agent, resuming the same session, after 30s, 1m, 2m, 5m
@@ -187,6 +202,7 @@ the child own its runtime instead of following the base role's.
 | `visibility` | `visibility` | — | access control; defaults to `private`; gates who can read/route a private agent (e.g. a private squad leader) — NOT the runtime prompt |
 | `max_concurrent_tasks` | `max_concurrent_tasks` | integer from 1 through 50; out-of-range values return 400 | scheduler task cap; defaults to `6` |
 | `work_enabled` | `work_enabled` | boolean; omitted on update preserves | reversible seat gate (DENE-714). Default `true`. `false` keeps the seat in the list but routing will not pick it, assignment will not wake it, and claim will not take a new run. Running tasks are not cancelled. A base role sets its direct specialisations to the same value, both off and on. Turning a seat on requeues its stranded `todo` / `in_progress` issues. CLI: `agent update --work-enabled=true\|false`. Distinct from archive |
+| `dispatch_mode` | `dispatch_mode` | `auto` (default) or `mention_only`; omitted on update preserves; anything else returns 400 | automatic-dispatch gate (DENE-1600). `mention_only` keeps the tier but routing, quota relay and seat relay never select it; @mention, assignment and delegation still run it. Followers inherit it. CLI: `agent update --dispatch-mode auto\|mention_only` |
 
 Defaults when omitted or explicitly `null`: `max_concurrent_tasks` → `6`.
 Other defaults when omitted: `runtime_config` → `{}`, `custom_env` → `{}`,

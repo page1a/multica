@@ -316,3 +316,100 @@ func TestClaimTaskUsesCurrentAgentRuntimeWhenRuntimeIDIsOmitted(t *testing.T) {
 		t.Fatalf("claimed task = %s, want %s", util.UUIDToString(claimed.ID), fixture.taskID)
 	}
 }
+
+// TestClaimTasksForRuntimesRecoversUndeliveredDispatch is the DENE-1611
+// scenario: the server dispatched a task, the response never reached the
+// daemon, and the dispatch is far too young for the 90s stale reclaim. A plain
+// claim leaves it alone; a recovery claim hands it back at once, exactly once,
+// and never a task the daemon says it is holding.
+func TestClaimTasksForRuntimesRecoversUndeliveredDispatch(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRuntimeClaimAccessFixture(t, "public", true, true, "dispatched")
+	// A dispatch from ~10s ago whose prepare lease is still live: invisible to
+	// the stale reclaim (90s window + lease), which is exactly the loss window.
+	if _, err := fixture.pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET dispatched_at = now() - interval '10 seconds',
+		    prepare_lease_expires_at = now() + interval '30 seconds'
+		WHERE id = $1`, fixture.taskID); err != nil {
+		t.Fatalf("age dispatch: %v", err)
+	}
+	svc := NewTaskService(db.New(fixture.pool), fixture.pool, nil, events.New())
+	runtimes := []pgtype.UUID{fixture.runtimeID}
+
+	plain, err := svc.ClaimTasksForRuntimes(ctx, runtimes, 3)
+	if err != nil {
+		t.Fatalf("plain claim: %v", err)
+	}
+	if len(plain) != 0 {
+		t.Fatalf("plain claim returned %d tasks; the stale reclaim must still wait out its window", len(plain))
+	}
+
+	held, err := svc.ClaimTasksForRuntimesWithOptions(ctx, runtimes, 3, ClaimBatchOptions{
+		RecoverUndelivered: true,
+		HeldTaskIDs:        []pgtype.UUID{util.MustParseUUID(fixture.taskID)},
+	})
+	if err != nil {
+		t.Fatalf("recovery claim with held task: %v", err)
+	}
+	if len(held) != 0 {
+		t.Fatalf("recovery claim re-sent a task the daemon holds: %+v", held)
+	}
+
+	recovered, err := svc.ClaimTasksForRuntimesWithOptions(ctx, runtimes, 3, ClaimBatchOptions{RecoverUndelivered: true})
+	if err != nil {
+		t.Fatalf("recovery claim: %v", err)
+	}
+	if len(recovered) != 1 || util.UUIDToString(recovered[0].ID) != fixture.taskID {
+		t.Fatalf("recovered = %+v, want task %s", recovered, fixture.taskID)
+	}
+
+	// The re-send refreshed dispatched_at, so an immediate repeat finds nothing:
+	// the same task is not handed out twice in a row.
+	again, err := svc.ClaimTasksForRuntimesWithOptions(ctx, runtimes, 3, ClaimBatchOptions{RecoverUndelivered: true})
+	if err != nil {
+		t.Fatalf("repeat recovery claim: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("repeat recovery claim returned %+v, want none", again)
+	}
+}
+
+// A dispatch younger than the claim execution budget may still be committing on
+// the server; recovery must not take it.
+func TestClaimTasksForRuntimesRecoveryLeavesFreshDispatchAlone(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRuntimeClaimAccessFixture(t, "public", true, true, "dispatched")
+	if _, err := fixture.pool.Exec(ctx, `
+		UPDATE agent_task_queue SET dispatched_at = now() WHERE id = $1`, fixture.taskID); err != nil {
+		t.Fatalf("fresh dispatch: %v", err)
+	}
+	svc := NewTaskService(db.New(fixture.pool), fixture.pool, nil, events.New())
+
+	got, err := svc.ClaimTasksForRuntimesWithOptions(ctx, []pgtype.UUID{fixture.runtimeID}, 3, ClaimBatchOptions{RecoverUndelivered: true})
+	if err != nil {
+		t.Fatalf("recovery claim: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("recovery took a dispatch younger than the claim budget: %+v", got)
+	}
+}
+
+// A started task is the daemon's, whatever it reports as held.
+func TestClaimTasksForRuntimesRecoverySkipsStartedTask(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRuntimeClaimAccessFixture(t, "public", true, true, "dispatched")
+	if _, err := fixture.pool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, fixture.taskID); err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	svc := NewTaskService(db.New(fixture.pool), fixture.pool, nil, events.New())
+
+	got, err := svc.ClaimTasksForRuntimesWithOptions(ctx, []pgtype.UUID{fixture.runtimeID}, 3, ClaimBatchOptions{RecoverUndelivered: true})
+	if err != nil {
+		t.Fatalf("recovery claim: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("recovery re-sent a running task: %+v", got)
+	}
+}

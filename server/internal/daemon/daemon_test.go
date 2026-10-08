@@ -706,6 +706,22 @@ func TestNewTaskSlotSemaphoreReturnsStableSlotIndexes(t *testing.T) {
 	}
 }
 
+// DENE-1331: a resumed session already holds the pasted brief; only a new
+// session, and codebuddy's per-turn system prompt, need it again.
+func TestResumedSessionHoldsBrief(t *testing.T) {
+	for _, p := range []string{"kimi", "openclaw", "traecli", "qwenpaw", "cursor", "dsh"} {
+		if !resumedSessionHoldsBrief(p, "sess-1") {
+			t.Errorf("%s: a resumed session re-pastes the brief", p)
+		}
+		if resumedSessionHoldsBrief(p, "") {
+			t.Errorf("%s: a new session goes without the brief", p)
+		}
+	}
+	if resumedSessionHoldsBrief("codebuddy", "sess-1") {
+		t.Error("codebuddy takes the brief as a system prompt and needs it every turn")
+	}
+}
+
 func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -868,10 +884,10 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 		wantMentions string
 	}{
 		{
-			name:         "issue rebuilds from comments",
+			name:         "issue rebuilds from the state card",
 			task:         Task{IssueID: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"},
 			tellUser:     false,
-			wantMentions: "comment history",
+			wantMentions: "multica issue context",
 		},
 		{
 			// Slack has a history reader, so the conversation is recoverable —
@@ -922,7 +938,7 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			notice := sessionContinuityNoticeFor(tc.task)
-			if got := strings.Contains(notice, "tell the user up front"); got != tc.tellUser {
+			if got := strings.Contains(strings.ToLower(notice), "tell the user up front"); got != tc.tellUser {
 				t.Errorf("tells the user = %v, want %v:\n%s", got, tc.tellUser, notice)
 			}
 			if !strings.Contains(notice, tc.wantMentions) {
@@ -933,7 +949,7 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 			// it still remembers work it no longer has. Where nothing survives
 			// that distinction is meaningless — everything is gone — so the
 			// requirement applies to the recoverable surfaces only.
-			if !tc.tellUser && !strings.Contains(notice, "your own working memory") {
+			if !tc.tellUser && !strings.Contains(notice, "your memory of the turns that did not come back is gone") {
 				t.Errorf("recoverable surface must name the real loss:\n%s", notice)
 			}
 		})

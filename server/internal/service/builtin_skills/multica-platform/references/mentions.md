@@ -74,6 +74,16 @@ A `member` mention therefore does NOT make a person "run", and no notification
 is delivered through the comment path. What IS guaranteed is the contract above:
 only `agent` and `squad` mentions enqueue work.
 
+## Pointing the woken agent at one of its skills
+
+A comment can name a skill for the run it wakes: `[/name](slash://skill/<skill-id>)`,
+the marker the `/` menu inserts. The skill id comes from that agent's bound
+skills (`multica agent get <agent> --output json` → `skills[].id`). The woken
+run's prompt lists it under "Explicitly selected skills"; a skill the agent is
+not bound to is dropped, and nothing forces the run to use it. Which skills a
+run actually used comes back as `skills_used` on `multica issue runs
+<issue-id> --output json` (the table's SKILLS column).
+
 ## Preview and per-comment suppression
 
 Newer clients can call `POST /api/issues/{id}/comments/trigger-preview` before

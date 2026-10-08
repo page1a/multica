@@ -92,7 +92,7 @@ node scripts/dsh-vision-probe.mjs --apply
 
 ## 自建实例自动跟随 `kun`
 
-自建实例（`ai.ferryway.cc`）曾经落后 `kun` 70 个提交才被发现。现在用 systemd timer 每 15 分钟比一次 `/health` 自报的 commit 和 `origin/kun`，有漂移就重建、失败就回滚：
+自建实例（`ai.ferryway.cc`）曾经落后 `kun` 70 个提交才被发现。现在用 systemd timer 每 5 分钟比一次 `/health` 自报的 commit 和 `origin/kun`，有漂移就在旁边起新版本、就绪后切 nginx 再停旧版本（DENE-1617），失败就回滚：
 
 ```bash
 sudo scripts/install-selfhost-autoupdate.sh

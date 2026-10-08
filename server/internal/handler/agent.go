@@ -195,6 +195,10 @@ type AgentResponse struct {
 	// RoutingUsage is the headroom a person tagged this seat with (DENE-922):
 	// tight / normal / ample. Routing prefers ample inside a rung.
 	RoutingUsage string `json:"routing_usage"`
+	// DispatchMode is whether automatic dispatch may pick this seat
+	// (DENE-1600, ADR-0008): auto, or mention_only for a seat that takes
+	// work only when named. Independent of RoutingTier and WorkEnabled.
+	DispatchMode string `json:"dispatch_mode"`
 	// Fit is the agent's group for one issue or project (DENE-1477): match
 	// (对口), generic (通用) or other (其他). Only on a list asked with
 	// for_issue / for_project, which also orders the list by it.
@@ -336,6 +340,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		ServiceTier:              a.ServiceTier.String,
 		RoutingTier:              a.RoutingTier.String,
 		RoutingUsage:             a.RoutingUsage,
+		DispatchMode:             a.DispatchMode,
 		ComposioToolkitAllowlist: composioAllowlist,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
@@ -798,8 +803,12 @@ type AgentTaskResponse struct {
 	// CanonicalBranch is the issue's canonical delivery branch (DENE-820).
 	// A worktree-mode daemon continues it even when another seat created
 	// it, so a rerun never opens a second delivery line by accident.
-	CanonicalBranch      string                 `json:"canonical_branch,omitempty"`
-	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
+	CanonicalBranch string `json:"canonical_branch,omitempty"`
+	// DeliveryLine is set on a sub-issue that delivers onto its parent's
+	// branch (DENE-1537): the worktree forks from that branch and the close
+	// merges back into it instead of opening a PR.
+	DeliveryLine         *service.DeliveryLineClaim `json:"delivery_line,omitempty"`
+	RemoteMCPConnections []remotemcp.Connection     `json:"remote_mcp_connections,omitempty"`
 	// PluginHookTools are the workspace's agent-trigger plugin hooks, which the
 	// daemon renders as MCP tools for this task. Resolved at claim time so
 	// disabling or uninstalling a plugin takes effect on the next task rather
@@ -962,9 +971,13 @@ type AgentTaskResponse struct {
 	IssueSubIssues          []SubIssueRef         `json:"issue_sub_issues,omitempty"` // the task issue's sub-issues; non-empty tells the run it holds a coordinator (DENE-812)
 	IssueContextGeneratedAt string                `json:"issue_context_generated_at,omitempty"`
 	IssueContextTruncated   bool                  `json:"issue_context_truncated,omitempty"`
-	// IssueHandoffCard is the rendered state card for the first run of an
-	// agent the issue was just handed to (DENE-1350); empty otherwise.
+	// IssueHandoffCard is the rendered state card a run opens with: the first
+	// run of an agent the issue was just handed to (DENE-1350), a run after
+	// someone else closed or handed off, a wakeup, or a run whose old session
+	// was set aside (DENE-1331); empty otherwise. IssueStateCardReason says
+	// which; empty reads as a handoff, the only reason older servers send.
 	IssueHandoffCard         string               `json:"issue_handoff_card,omitempty"`
+	IssueStateCardReason     string               `json:"issue_state_card_reason,omitempty"`
 	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
 	ChatChannelType          string               `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
 	ChatChannelDeliversFiles bool                 `json:"chat_channel_delivers_files,omitempty"` // server capability: THIS deployment can put a file the agent produced into THIS conversation — the adapter goes back for the bound attachment AND object storage exists to go back to. Absent/false on a server predating it, which is the safe reading: the agent is told to describe its file in words. Never inferred daemon-side from chat_channel_type; see handler.Handler.channelDeliversFiles
@@ -1031,6 +1044,10 @@ type AgentTaskResponse struct {
 	// model call, genuinely has no number, and showing 0 would assert it was
 	// free. omitempty keeps both off the wire.
 	Usage []TaskUsageData `json:"usage,omitempty"`
+	// SkillsUsed lists the bound skills this run used, in first-use order
+	// (DENE-1573). Only the issue execution log fills it; empty means none
+	// were detected, or the daemon predates detection.
+	SkillsUsed []string `json:"skills_used,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -2407,9 +2424,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Usage is the account's headroom, and a specialisation runs on its base
 	// role's account, so it starts with the same tag (DENE-922).
-	var createdRoutingUsage pgtype.Text
+	// Dispatch mode rides with the rung (ADR-0008): a mention_only base
+	// role's specialisation is not auto-dispatched either.
+	var createdRoutingUsage, createdDispatchMode pgtype.Text
 	if parentAgent.ID.Valid {
 		createdRoutingUsage = pgtype.Text{String: parentAgent.RoutingUsage, Valid: true}
+		createdDispatchMode = pgtype.Text{String: parentAgent.DispatchMode, Valid: parentAgent.DispatchMode != ""}
 	}
 	if inheritRuntime {
 		createdRuntimeMode = parentAgent.RuntimeMode
@@ -2454,6 +2474,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ServiceTier:              createdServiceTier,
 		RoutingTier:              createdRoutingTier,
 		RoutingUsage:             createdRoutingUsage,
+		DispatchMode:             createdDispatchMode,
 		ConversationStarters:     sp,
 		ComposioToolkitAllowlist: allowlist,
 		ParentAgentID:            parentAgentUUID,
@@ -2605,6 +2626,10 @@ type UpdateAgentRequest struct {
 	// RoutingUsage is omitted-preserves / present-sets. There is no clear:
 	// every seat has a usage, and 常规 is the neutral one (DENE-922).
 	RoutingUsage *string `json:"routing_usage"`
+	// DispatchMode is omitted-preserves / present-sets: auto or
+	// mention_only (DENE-1600). It belongs to the routing set, so a
+	// following specialisation takes its base role's value.
+	DispatchMode *string `json:"dispatch_mode"`
 	// ComposioToolkitAllowlist is a tri-state, same pattern as
 	// thinking_level, mcp_config:
 	//   - field omitted → no change (column preserved as-is)
@@ -3264,10 +3289,20 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		params.RoutingUsage = pgtype.Text{String: key, Valid: true}
 	}
+	if req.DispatchMode != nil {
+		key, ok := routing.NormalizeDispatchMode(*req.DispatchMode)
+		if !ok || strings.TrimSpace(*req.DispatchMode) == "" {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"dispatch_mode %q is not a known value; expected one of %s",
+				*req.DispatchMode, strings.Join(routing.DispatchModeKeys(), ", ")))
+			return
+		}
+		params.DispatchMode = pgtype.Text{String: key, Valid: true}
+	}
 	// A following specialisation does not own its rung or its usage
 	// (DENE-1016). Turning follow off in this same request is the opt-out, so
 	// inheritRuntime is already false there and the write is the child's own.
-	routingTouched := req.RoutingTier != nil || req.RoutingUsage != nil
+	routingTouched := req.RoutingTier != nil || req.RoutingUsage != nil || req.DispatchMode != nil
 	if routingTouched && inheritRuntime && parentAfter.Valid {
 		parent, parentErr := h.Queries.GetAgent(r.Context(), parentAfter)
 		parentName := ""

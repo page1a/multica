@@ -105,6 +105,12 @@ type IssueDelivery struct {
 	// the aggregate is consistent.
 	Problems    []string                   `json:"problems"`
 	CleanupPlan []IssueDeliveryCleanupItem `json:"cleanup_plan"`
+	// Line is set on a sub-issue that delivers onto its parent's branch
+	// instead of opening a PR of its own (DENE-1537).
+	Line *IssueDeliveryLine `json:"line,omitempty"`
+	// Contributions lists the sub-issues delivering onto this issue's
+	// branch; its one PR carries all of them.
+	Contributions []IssueDeliveryContribution `json:"contributions"`
 }
 
 // RecordIssueDeliveryBranch files the branch a task reported under its
@@ -415,6 +421,12 @@ func BuildIssueDelivery(ctx context.Context, q *db.Queries, issue db.Issue) (*Is
 		}
 		out.CleanupPlan = append(out.CleanupPlan, item)
 	}
+	if out.Line, err = BuildIssueDeliveryLine(ctx, q, issue); err != nil {
+		return nil, err
+	}
+	if out.Contributions, err = BuildIssueDeliveryContributions(ctx, q, issue); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -424,6 +436,9 @@ func BuildIssueDelivery(ctx context.Context, q *db.Queries, issue db.Issue) (*Is
 func DeliveryMergeBlocker(d *IssueDelivery, openPRBranches []string) string {
 	if d == nil {
 		return ""
+	}
+	if reason := contributionMergeBlocker(d.Contributions); reason != "" {
+		return reason
 	}
 	for _, b := range d.Branches {
 		switch {

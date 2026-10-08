@@ -24,12 +24,18 @@ var errWSRPCUnavailable = errors.New("ws rpc: no active connection")
 var errWSRPCUncertain = errors.New("ws rpc: sent but outcome unknown (connection lost)")
 
 // wsRPCResponseGrace is how much longer the daemon waits for an RPC response
-// beyond the server-side execution budget it requested, so a claim that
-// committed just before the server deadline still reports back before the
-// daemon gives up (MUL-4257).
-const wsRPCResponseGrace = 2 * time.Second
+// beyond the server-side execution budget it requested. It has to absorb the
+// response's transfer time, not just a claim that committed right before the
+// server deadline: a multi-task claim response is megabytes, and on a slow lossy
+// link 2s lost it and left the tasks dispatched but undelivered (MUL-4257,
+// DENE-1611). budget + grace equals batchClaimResponseWait.
+const wsRPCResponseGrace = batchClaimResponseWait - batchClaimRequestTimeout
 
-var wsClaimUncertainFallbackDelay = batchClaimRequestTimeout + wsRPCResponseGrace
+// wsClaimUncertainFallbackDelay is the pause after an uncertain WS claim before
+// the recovery claim goes out: the server-side execution budget plus a margin,
+// after which the lost request can no longer be mid-flight on the server. It is
+// not the response wait — a long wait here would only postpone recovery.
+var wsClaimUncertainFallbackDelay = batchClaimRequestTimeout + 2*time.Second
 
 // errWSRPCWriteBufferFull is returned when the connection's write buffer is
 // saturated; the caller falls back to HTTP rather than blocking the socket.
@@ -339,38 +345,44 @@ func (d *Daemon) claimTasksWSFirst(ctx context.Context, daemonID string, runtime
 			d.logger.Debug("previous ws claim outcome uncertain; using http fallback for this claim cycle")
 		}
 	}
+	// A previous claim whose outcome we never learned may have left tasks
+	// dispatched to us on the server. Ask for them back, naming what we already
+	// hold so the server skips those (DENE-1611).
+	rec := d.claimRecoveryRequest()
 	if !bypassWSOnce && d.wsRPC.supportsRPCV1() {
 		var resp claimTasksResult
 		// batchClaimRequestTimeout is the server-side execution budget; the
 		// daemon waits that plus the client's grace margin for the response.
-		_, err := d.wsRPC.CallIfRPCV1Supported(ctx, "tasks.claim", batchClaimRequestTimeout, map[string]any{
-			"daemon_id":   daemonID,
-			"runtime_ids": runtimeIDs,
-			"max_tasks":   maxTasks,
-		}, &resp)
+		_, err := d.wsRPC.CallIfRPCV1Supported(ctx, "tasks.claim", batchClaimRequestTimeout,
+			claimBody(daemonID, runtimeIDs, maxTasks, rec), &resp)
 		if err == nil {
 			resp.ClaimedOverWS = true
+			d.claimRecoveryPending.Store(resp.RecoveryPending)
 			return resp, nil
 		}
 		if errors.Is(err, errWSRPCUncertain) {
 			// The WS claim may have committed server-side; claiming the same
 			// free slots again over HTTP immediately would double-claim. Skip
 			// this cycle, then force one HTTP batch claim after the server-side
-			// execution budget plus response grace has elapsed. If the WS claim
-			// committed, the task is already dispatched and stale reclaim owns
-			// recovery; if it did not, HTTP regains liveness for the queued task.
+			// execution budget has elapsed. If the WS claim committed, its
+			// tasks are dispatched but never reached us: the recovery request on
+			// that claim takes them back right away instead of waiting out the
+			// stale reclaim. If it did not commit, the same claim regains
+			// liveness for the queued task.
 			delay := wsClaimUncertainFallbackDelay
 			if delay < 0 {
 				delay = 0
 			}
+			d.claimRecoveryPending.Store(true)
 			d.wsClaimHTTPFallbackAfter.Store(time.Now().Add(delay).UnixNano())
 			d.logger.Debug("ws claim outcome uncertain after disconnect; delaying http fallback", "retry_after", delay)
 			return claimTasksResult{}, nil
 		}
 		d.logger.Debug("ws claim failed; falling back to http", "error", err)
 	}
-	result, err := d.client.claimTasksWithHints(ctx, daemonID, runtimeIDs, maxTasks)
+	result, err := d.client.claimTasksWithHints(ctx, daemonID, runtimeIDs, maxTasks, rec)
 	if err == nil {
+		d.claimRecoveryPending.Store(result.RecoveryPending)
 		return result, nil
 	}
 	// Server has no batch route (404): freeze the old API contract by falling
@@ -382,5 +394,48 @@ func (d *Daemon) claimTasksWSFirst(ctx context.Context, daemonID string, runtime
 		tasks, legacyErr := d.client.claimTasksLegacy(ctx, runtimeIDs, maxTasks)
 		return claimTasksResult{Tasks: tasks}, legacyErr
 	}
+	// The request may have reached the server before failing (a timeout while
+	// the response was in flight): tasks could be dispatched that we never saw.
+	d.claimRecoveryPending.Store(true)
 	return claimTasksResult{}, err
+}
+
+// claimRecoveryRequest builds the recovery part of the next claim: active while
+// a prior claim's outcome is unknown, always carrying the tasks this daemon
+// currently holds. A fresh daemon starts active, since tasks dispatched to its
+// previous process never reached this one.
+func (d *Daemon) claimRecoveryRequest() claimRecovery {
+	if !d.claimRecoveryPending.Load() {
+		return claimRecovery{}
+	}
+	return claimRecovery{Active: true, HeldTaskIDs: d.heldTaskIDs()}
+}
+
+// holdTask records that this daemon owns a task from claim through handleTask's
+// return. It reports false when the task is already held, which is how a
+// recovery re-send of a task still being prepared is told apart from new work.
+func (d *Daemon) holdTask(taskID string) bool {
+	d.heldTasksMu.Lock()
+	defer d.heldTasksMu.Unlock()
+	if _, held := d.heldTasks[taskID]; held {
+		return false
+	}
+	d.heldTasks[taskID] = struct{}{}
+	return true
+}
+
+func (d *Daemon) releaseHeldTask(taskID string) {
+	d.heldTasksMu.Lock()
+	delete(d.heldTasks, taskID)
+	d.heldTasksMu.Unlock()
+}
+
+func (d *Daemon) heldTaskIDs() []string {
+	d.heldTasksMu.Lock()
+	defer d.heldTasksMu.Unlock()
+	ids := make([]string, 0, len(d.heldTasks))
+	for id := range d.heldTasks {
+		ids = append(ids, id)
+	}
+	return ids
 }

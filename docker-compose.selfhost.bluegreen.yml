@@ -1,0 +1,40 @@
+# Blue/green override for zero-downtime self-host updates (DENE-1617).
+#
+# Load it after docker-compose.selfhost.yml and docker-compose.selfhost.build.yml.
+# The existing backend/frontend services are the "blue" pair; this file adds a
+# "green" pair on the next host ports, so scripts/selfhost-autoupdate.sh can
+# start the new version beside the one that is serving, wait for /readyz, flip
+# the nginx upstream and only then stop the old pair.
+#
+# Only the autoupdate script should start the green services. A plain
+# `docker compose up -d` keeps touching blue alone, exactly as before.
+#
+# The green ports must match what the autoupdate script writes into the nginx
+# upstream file; the script exports both variables, so set them in
+# /etc/multica/autoupdate.env rather than in .env.
+
+services:
+  backend-green:
+    extends:
+      file: docker-compose.selfhost.yml
+      service: backend
+    image: multica-backend:dev
+    ports: !override
+      - "127.0.0.1:${MULTICA_GREEN_BACKEND_PORT:-8081}:8080"
+    # The frontend reaches the API as http://backend:8080. Both colours answer
+    # to that name, so whichever pair is running is the one it finds.
+    networks:
+      default:
+        aliases:
+          - backend
+
+  frontend-green:
+    extends:
+      file: docker-compose.selfhost.yml
+      service: frontend
+    image: multica-web:dev
+    # Not tied to backend-green: the API behind the alias above can be either
+    # colour, and a dependency would drag the other backend along on `up`.
+    depends_on: !reset []
+    ports: !override
+      - "127.0.0.1:${MULTICA_GREEN_FRONTEND_PORT:-3001}:3000"

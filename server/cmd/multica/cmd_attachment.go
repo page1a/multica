@@ -45,7 +45,13 @@ own line to place the item: files use !file[name](url) (a card), images use
 ![name](url) (inline).
 
 The task id is read from MULTICA_TASK_ID (set by the daemon inside a task);
-override it with --task when needed.`,
+override it with --task when needed.
+
+Inside a daemon task the uploaded file also stays on this machine: the daemon
+keeps a copy under <profile>/outputs/<attachment-id>/ so the desktop app here
+can open it, or show it in Finder, without downloading it. Comment and issue
+--attachment uploads do the same. Copies are removed after
+MULTICA_GC_OUTPUTS_TTL (default 14d); the server is not told about them.`,
 	Example: `  # Attach an image to the current chat reply
   $ multica attachment upload ./chart.png`,
 	Args: exactArgs(1),

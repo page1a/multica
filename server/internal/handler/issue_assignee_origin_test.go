@@ -176,7 +176,7 @@ func TestQuoteFromSomeoneElseOrAnAgentDoesNotCount(t *testing.T) {
 	}
 }
 
-func TestFabricatedQuoteIsRejectedAndCannotBeRerouted(t *testing.T) {
+func TestFabricatedQuoteIsNotAppliedAndGoesToRouting(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -191,8 +191,8 @@ func TestFabricatedQuoteIsRejectedAndCannotBeRerouted(t *testing.T) {
 		t.Fatal("a rejected quote must explain why the pick was ignored")
 	}
 	_, source, _, quote := originOf(t, resp["id"].(string))
-	if source == nil || *source != "quote_rejected" || quote != nil {
-		t.Fatalf("source = %v quote = %v, want quote_rejected with no quote", source, quote)
+	if source == nil || *source != "agent" || quote != nil {
+		t.Fatalf("source = %v quote = %v, want agent with no quote (DENE-1613: routing decides)", source, quote)
 	}
 }
 

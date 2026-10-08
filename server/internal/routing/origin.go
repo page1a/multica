@@ -27,17 +27,20 @@ const (
 	SourceQuote = "quote"
 	// SourceAgent — an agent chose it on its own. Routing does not use it.
 	SourceAgent = "agent"
-	// SourceQuoteRejected — an agent supplied a quote that the server could
-	// not verify. The slot stays empty and routing must not replace the
-	// rejected choice with a different seat.
-	SourceQuoteRejected = "quote_rejected"
 	// SourceRouter — the routing module filled the slot.
 	SourceRouter = "router"
 )
 
 // NoticeAgentPickIgnored is the one sentence a routing comment says when an
-// agent named an executor that was not honoured. It never says who was named.
-const NoticeAgentPickIgnored = "有 Agent 给这张票指定过执行人，没有附上和它对话的那个人的原话，所以没有采用，执行席由路由从零判断。"
+// agent named an executor that was not honoured — with no quote, or with one
+// that did not check out (DENE-1613). It never says who was named.
+const NoticeAgentPickIgnored = "有 Agent 给这张票指定过执行人，没有附上和它对话的那个人的原话，或附的原话没有点到这个名字，所以没有采用，执行席由路由从零判断。"
+
+// ReasonQuoteNotVerified is what an agent hears when its --per-quote did not
+// check out on a ticket routing judges (DENE-1613): the pick is set aside and
+// routing fills the slot, nobody waits on the agent.
+const ReasonQuoteNotVerified = "the --per-quote words were not found in an earlier message by the person who started this run, or did not name this assignee, " +
+	"so routing picks the executor; if the person names someone later, reassign with --per-quote and their words"
 
 // NoticeAgentTierLabelIgnored is the same for a tier label an agent attached.
 const NoticeAgentTierLabelIgnored = "票上有 Agent 贴的档位标签，没有采用，执行席由路由判断。"
@@ -82,14 +85,6 @@ func (i Issue) HumanLabels() []string {
 // dropped the name: source "agent" with nobody in the slot.
 func (i Issue) IgnoredAgentPick() bool {
 	return i.AssigneeSource == SourceAgent && i.AssigneeType == ""
-}
-
-// RejectedQuote reports that an agent tried to carry a person's words but the
-// server could not verify them. This is deliberately distinct from an agent's
-// unquoted guess: a failed proof must wait for the agent to ask the person,
-// rather than silently assigning somebody else.
-func (i Issue) RejectedQuote() bool {
-	return i.AssigneeSource == SourceQuoteRejected && i.AssigneeType == ""
 }
 
 // ReasonAgentReassignInFlight is what an agent hears when it tries to put a

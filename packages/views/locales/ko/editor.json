@@ -62,6 +62,10 @@
     "close": "닫기",
     "open_in_new_tab": "새 탭에서 열기",
     "remove": "첨부 파일 제거",
+    "open_local": "열기",
+    "reveal_local_finder": "Finder에서 보기",
+    "reveal_local": "폴더에서 보기",
+    "local_copy_gone": "이 컴퓨터의 사본이 바뀌었거나 없습니다. 대신 다운로드합니다.",
     "previous": "이전",
     "next": "다음",
     "sequence_position": "{{index}} / {{total}}",
@@ -165,6 +169,8 @@
     "no_results": "일치하는 스킬 없음",
     "commands": {
       "note": "메모 추가 — 에이전트를 트리거하지 않음"
-    }
+    },
+    "skill_group": "{{name}}의 skill",
+    "skill_hint": "에이전트를 @하면 해당 skill을 고를 수 있습니다"
   }
 }

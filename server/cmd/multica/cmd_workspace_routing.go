@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/spf13/cobra"
 )
 
@@ -13,14 +16,14 @@ import (
 // workspace.settings.routing block consumed by the web settings page.
 var workspaceRoutingCmd = &cobra.Command{
 	Use:   "routing",
-	Short: "Configure the routing analysis model and the continuation and load rules",
+	Short: "Configure routing analysis, thresholds, and dispatch rules",
 }
 
-var workspaceRoutingGetCmd = &cobra.Command{Use: "get", Short: "Show analysis routing settings and all routing switches", Args: cobra.NoArgs, RunE: runWorkspaceRoutingGet}
+var workspaceRoutingGetCmd = &cobra.Command{Use: "get", Short: "Show analysis routing settings, thresholds, and switches", Args: cobra.NoArgs, RunE: runWorkspaceRoutingGet}
 var workspaceRoutingSetCmd = &cobra.Command{
 	Use:   "set",
-	Short: "Set analysis source, runtime, model, thinking level, or routing switches",
-	Long: `Set analysis source, runtime, model, thinking level, or the continuation and load switches.
+	Short: "Set routing analysis, thresholds, or switches",
+	Long: `Set analysis source, runtime, model, thinking level, thresholds, or dispatch switches.
 
 --continuation on|off is 接着做: a ticket continuing a previous stage, its
 parent, or its batch goes back to that work's executor when the seat is strong
@@ -46,6 +49,8 @@ func init() {
 	workspaceRoutingSetCmd.Flags().String("load", "", "负载分流 switch: on (prefer a less busy seat of the same tier) or off (shadow mode)")
 	workspaceRoutingSetCmd.Flags().String("usage-priority", "", "用量优先 switch: on (ample seats first) or off (stable name order)")
 	workspaceRoutingSetCmd.Flags().String("allow-upshift", "", "允许上调一档 switch: on (borrow an ample seat from the tier above) or off")
+	workspaceRoutingSetCmd.Flags().String("confidence-threshold", "", "Confidence floor for the routing model (0, 1]")
+	workspaceRoutingSetCmd.Flags().String("stale-review-hours", "", "Hours before an inactive in-review ticket is checked (0, 8760]")
 	workspaceRoutingCmd.AddCommand(workspaceRoutingGetCmd, workspaceRoutingSetCmd)
 	workspaceCmd.AddCommand(workspaceRoutingCmd)
 }
@@ -77,11 +82,42 @@ func routingView(block map[string]any) map[string]any {
 		usagePriority = true
 	}
 	allowUpshift, _ := block["allow_upshift"].(bool)
+	confidenceThreshold := routing.DefaultConfidenceThreshold
+	if value, ok := numberFromRoutingBlock(block, "confidence_threshold"); ok && value > 0 && value <= 1 {
+		confidenceThreshold = value
+	}
+	staleReviewHours := float64(routing.DefaultStaleReviewHours)
+	if value, ok := numberFromRoutingBlock(block, "stale_review_hours"); ok && value > 0 && value <= 24*365 {
+		staleReviewHours = value
+	}
 	return map[string]any{
 		"source": analysis["source"], "runtime_id": analysis["runtime_id"], "model": analysis["model"], "thinking_level": analysis["thinking_level"],
 		"prefer_continuation": continuation, "continuation_mode": switchMode(continuation),
 		"prefer_idle": idle, "load_mode": switchMode(idle),
 		"usage_priority": usagePriority, "allow_upshift": allowUpshift,
+		"confidence_threshold": confidenceThreshold, "stale_review_hours": staleReviewHours,
+	}
+}
+
+func numberFromRoutingBlock(block map[string]any, key string) (float64, bool) {
+	value, ok := block[key]
+	if !ok {
+		return 0, false
+	}
+	switch value := value.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	case json.Number:
+		parsed, err := strconv.ParseFloat(string(value), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
 	}
 }
 
@@ -113,6 +149,16 @@ func runWorkspaceRoutingSet(cmd *cobra.Command, _ []string) error {
 	allowUpshift, _ := cmd.Flags().GetString("allow-upshift")
 	if allowUpshift != "" && allowUpshift != "on" && allowUpshift != "off" {
 		return fmt.Errorf("--allow-upshift must be on or off")
+	}
+	confidenceThreshold, _ := cmd.Flags().GetString("confidence-threshold")
+	confidenceValue, err := parseRoutingConfidenceThreshold(confidenceThreshold)
+	if err != nil {
+		return err
+	}
+	staleReviewHours, _ := cmd.Flags().GetString("stale-review-hours")
+	staleHoursValue, err := parseRoutingStaleReviewHours(staleReviewHours)
+	if err != nil {
+		return err
 	}
 	if source != "" && source != "api_gateway" && source != "runtime_subscription" {
 		return fmt.Errorf("--source must be api_gateway or runtime_subscription")
@@ -146,6 +192,12 @@ func runWorkspaceRoutingSet(cmd *cobra.Command, _ []string) error {
 	if allowUpshift != "" {
 		block["allow_upshift"] = allowUpshift == "on"
 	}
+	if confidenceThreshold != "" {
+		block["confidence_threshold"] = confidenceValue
+	}
+	if staleReviewHours != "" {
+		block["stale_review_hours"] = staleHoursValue
+	}
 	analysis, _ := block["analysis"].(map[string]any)
 	if analysis == nil {
 		analysis = map[string]any{}
@@ -171,4 +223,26 @@ func runWorkspaceRoutingSet(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	return cli.PrintJSON(os.Stdout, routingView(block))
+}
+
+func parseRoutingConfidenceThreshold(value string) (float64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || !(parsed > 0 && parsed <= 1) {
+		return 0, fmt.Errorf("--confidence-threshold must be a number in (0, 1]")
+	}
+	return parsed, nil
+}
+
+func parseRoutingStaleReviewHours(value string) (float64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || !(parsed > 0 && parsed <= 24*365) {
+		return 0, fmt.Errorf("--stale-review-hours must be a number in (0, 8760]")
+	}
+	return parsed, nil
 }

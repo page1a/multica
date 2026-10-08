@@ -281,6 +281,9 @@
     "cancel": "Cancel",
     "prop_routing_tier": "Tier",
     "prop_routing_tier_hint": "Matched to tasks by strength",
+    "prop_dispatch_mode": "Dispatch",
+    "prop_dispatch_mode_hint": "Mention only: never auto-dispatched; people or agents must name it",
+    "routing_inherited_hint": "Follows the base role. To set these here, turn off following above.",
     "prop_routing_usage": "Usage",
     "prop_routing_usage_hint": "How much account quota this seat has, relatively"
   },
@@ -337,6 +340,8 @@
     "routing_tier_medium": "Medium",
     "routing_tier_weak": "Light",
     "routing_tier_none": "Off",
+    "dispatch_mode_auto": "Auto",
+    "dispatch_mode_mention_only": "Mention only",
     "routing_usage_tight": "Tight",
     "routing_usage_normal": "Normal",
     "routing_usage_ample": "Ample"
@@ -1254,7 +1259,8 @@
     "source_remote_checkout": "Remote checkout",
     "source_mode_in_place": "One run at a time, in your working copy",
     "source_mode_worktree": "Own git worktree per run",
-    "source_mode_shared": "Shared directory, runs in parallel"
+    "source_mode_shared": "Shared directory, runs in parallel",
+    "kind_skill": "Skill"
   },
   "task_failure": {
     "cancelled_by_system": "Cancelled by the system",

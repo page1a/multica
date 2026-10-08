@@ -89,6 +89,9 @@ func (h *Handler) ListWorkspaceLinks(w http.ResponseWriter, r *http.Request) {
 		"can": map[string]bool{
 			"create": workspacelink.Decide(workspacelink.OpCreate, workspacelink.SideSource, actor),
 			"accept": workspacelink.Decide(workspacelink.OpAccept, workspacelink.SideViewer, actor),
+			// Pulling also needs ownership of the other workspace; the
+			// lookup answers that per address.
+			"pull":   workspacelink.Decide(workspacelink.OpAccept, workspacelink.SideViewer, actor),
 			"manage": workspacelink.Decide(workspacelink.OpManage, workspacelink.SideSource, actor),
 			"audit":  workspacelink.Decide(workspacelink.OpAudit, workspacelink.SideSource, actor),
 		},
@@ -111,24 +114,36 @@ func (h *Handler) ListWorkspaceLinkAudit(w http.ResponseWriter, r *http.Request)
 
 // LookupWorkspaceLinkTarget — GET /api/workspace-links/lookup?target=<address>
 // Reads a pasted link or slug the same way Create does and names the
-// workspace it points to. Exact match only; there is no search.
+// workspace it points to. Exact match only; there is no search. `pull` says
+// whether the caller may pull that workspace's projects in, and lists them.
 func (h *Handler) LookupWorkspaceLinkTarget(w http.ResponseWriter, r *http.Request) {
-	ws, _, actor, ok := h.workspaceLinkCaller(w, r)
+	ws, user, actor, ok := h.workspaceLinkCaller(w, r)
 	if !ok {
 		return
 	}
-	target, err := h.workspaceLinks().Lookup(r.Context(), ws, actor, r.URL.Query().Get("target"))
+	address := r.URL.Query().Get("target")
+	svc := h.workspaceLinks()
+	target, err := svc.Lookup(r.Context(), ws, actor, address)
 	if err != nil {
 		writeWorkspaceLinkError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"workspace": target})
+	pull, err := svc.LookupPull(r.Context(), ws, user, actor, address)
+	if err != nil {
+		writeWorkspaceLinkError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspace": target, "pull": pull})
 }
 
 type createWorkspaceLinkRequest struct {
-	// TargetSlug takes any address workspacelink.TargetSlug reads.
+	// TargetSlug takes any address workspacelink.TargetSlug reads. With
+	// Direction "pull" it names the workspace whose projects come in.
 	TargetSlug string   `json:"target_slug"`
 	ProjectIDs []string `json:"project_ids"`
+	// Direction is "offer" (default: share this workspace's projects) or
+	// "pull" (read the other workspace's projects).
+	Direction string `json:"direction"`
 }
 
 // CreateWorkspaceLink — POST /api/workspace-links
@@ -146,7 +161,17 @@ func (h *Handler) CreateWorkspaceLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	link, err := h.workspaceLinks().Create(r.Context(), ws, user, actor, req.TargetSlug, projects)
+	var link workspacelink.Link
+	var err error
+	switch req.Direction {
+	case "", "offer":
+		link, err = h.workspaceLinks().Create(r.Context(), ws, user, actor, req.TargetSlug, projects)
+	case "pull":
+		link, err = h.workspaceLinks().Pull(r.Context(), ws, user, actor, req.TargetSlug, projects)
+	default:
+		writeError(w, http.StatusBadRequest, `direction must be "offer" or "pull"`)
+		return
+	}
 	if err != nil {
 		writeWorkspaceLinkError(w, err)
 		return

@@ -98,9 +98,11 @@ func TestIgnoredAgentPickIsSaidOnceWithoutNamingWhoWasPicked(t *testing.T) {
 	}
 }
 
-func TestRejectedQuoteStaysUnassignedWithoutRerouting(t *testing.T) {
+// DENE-1613: a quote that did not check out is stamped like any other agent
+// pick. The slot is routed, and the one notice covers the quote case too.
+func TestUnverifiedQuoteIsRoutedLikeAnUnquotedPick(t *testing.T) {
 	store := newFakeStore()
-	store.issue.AssigneeSource = SourceQuoteRejected
+	store.issue.AssigneeSource = SourceAgent
 	store.issue.Reviewer = ReviewerRef{Kind: ReviewerNoReview}
 	judge := &fakeJudge{verdict: confidentVerdict()}
 
@@ -108,8 +110,11 @@ func TestRejectedQuoteStaysUnassignedWithoutRerouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Action != ActionNoop || len(store.assigns) != 0 || judge.callCount() != 0 {
-		t.Fatalf("rejected quote was rerouted: outcome=%+v assigns=%v judge_calls=%d", out, store.assigns, judge.callCount())
+	if out.ExecutorWritten == nil || len(store.assigns) != 1 {
+		t.Fatalf("an unverified quote froze the ticket: outcome=%+v assigns=%v", out, store.assigns)
+	}
+	if body := store.comments[KindAssignment][0]; !strings.Contains(body, "附的原话没有点到这个名字") {
+		t.Errorf("comment does not say the quote did not name the seat:\n%s", body)
 	}
 }
 
