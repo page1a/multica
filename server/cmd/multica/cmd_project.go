@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,27 @@ import (
 var projectCmd = &cobra.Command{
 	Use:   "project",
 	Short: "Work with projects",
+}
+
+var projectReportCmd = &cobra.Command{
+	Use:   "report [<project>...]",
+	Short: "What is new in a project since the person last heard it",
+	Long: `What is new in a project since the person last heard it (听汇报).
+
+The server keeps where each person has heard up to per person + project, not
+per chat: hearing a project in one chat, another chat or on the project page
+moves the same cursor. News is every issue whose status moved, or that was
+opened, since then — grouped into done / in_progress / waiting_you, each with
+its source chat when a chat opened it.
+
+Without a project, reports every project of the current chat
+(MULTICA_CHAT_SESSION_ID). In a chat run the person is the human the run works
+for. --mark-heard records the report as heard: the cursor moves to its end,
+that person's inbox rows on the covered issues are read, and the chat reply of
+this run gets the report's follow-up buttons (the "actions" field).`,
+	Example: `  multica project report --output json
+  multica project report "Multica 魔改" --mark-heard --output json`,
+	RunE: runProjectReport,
 }
 
 var projectListCmd = &cobra.Command{
@@ -188,6 +210,7 @@ func validateProjectStatus(status string) error {
 
 func init() {
 	projectCmd.AddCommand(projectListCmd)
+	projectCmd.AddCommand(projectReportCmd)
 	projectCmd.AddCommand(projectGetCmd)
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectUpdateCmd)
@@ -213,6 +236,9 @@ func init() {
 
 	// project list
 	projectListCmd.Flags().String("output", "table", "Output format: table or json")
+	projectReportCmd.Flags().Bool("mark-heard", false, "Record the report as heard: move the cursor, read the covered inbox rows")
+	projectReportCmd.Flags().String("session", "", "Chat whose projects to report when no project is named (defaults to MULTICA_CHAT_SESSION_ID)")
+	projectReportCmd.Flags().String("output", "json", "Output format: table or json")
 	projectListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 	projectListCmd.Flags().String("status", "", "Filter by status")
 
@@ -285,7 +311,7 @@ func init() {
 	projectStatusCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// project memory
-	projectMemoryCheckCmd.Flags().String("path", "", "Local project root to stat (omit to show the latest daemon check)")
+	projectMemoryCheckCmd.Flags().String("path", "", "Directory to stat; only the project's bound local directory counts, any other path is a worktree self-check (omit to show the latest daemon check)")
 	projectMemoryCheckCmd.Flags().String("output", "json", "Output format: table or json")
 	projectMemoryStatusCmd.Flags().String("output", "json", "Output format: table or json")
 	projectMemorySeatGetCmd.Flags().String("output", "table", "Output format: table or json")
@@ -670,7 +696,11 @@ func runProjectMemoryRequest(cmd *cobra.Command, ref string, check bool) error {
 				return fmt.Errorf("check project memory: %w", err)
 			}
 		} else {
+			if abs, absErr := filepath.Abs(path); absErr == nil {
+				path = abs
+			}
 			if err := client.PostJSON(ctx, "/api/projects/"+projectRef.ID+"/memory/check", map[string]any{
+				"path":      path,
 				"locations": projectmemory.Check(path),
 			}, &result); err != nil {
 				return fmt.Errorf("report project memory: %w", err)
@@ -684,6 +714,19 @@ func runProjectMemoryRequest(cmd *cobra.Command, ref string, check bool) error {
 	if output != "table" {
 		return cli.PrintJSON(os.Stdout, result)
 	}
+	// LOCAL is the daemon's observation of the bound local directory; a
+	// WORKTREE column appears only for a --path self-check elsewhere.
+	worktreeState := map[string]string{}
+	worktree, hasWorktree := result["worktree_check"].(map[string]any)
+	if hasWorktree {
+		fmt.Fprintf(os.Stdout, "Worktree self-check of %s does not count as the local directory.\n", strVal(worktree, "path"))
+		worktreeLocations, _ := worktree["locations"].([]any)
+		for _, raw := range worktreeLocations {
+			if location, ok := raw.(map[string]any); ok {
+				worktreeState[strVal(location, "key")] = memoryLocationState(location)
+			}
+		}
+	}
 	locations, _ := result["locations"].([]any)
 	rows := make([][]string, 0, len(locations))
 	for _, raw := range locations {
@@ -691,15 +734,77 @@ func runProjectMemoryRequest(cmd *cobra.Command, ref string, check bool) error {
 		if !ok {
 			continue
 		}
-		exists, _ := location["exists"].(bool)
-		state := "missing"
-		if exists {
-			state = "present"
+		row := []string{strVal(location, "key"), strVal(location, "path"), memoryLocationState(location)}
+		if hasWorktree {
+			row = append(row, worktreeState[strVal(location, "key")])
 		}
-		rows = append(rows, []string{strVal(location, "key"), strVal(location, "path"), state, strVal(location, "modified_at")})
+		rows = append(rows, append(row, strVal(location, "modified_at")))
 	}
-	cli.PrintTable(os.Stdout, []string{"KEY", "PATH", "STATE", "MODIFIED"}, rows)
+	headers := []string{"KEY", "PATH", "LOCAL"}
+	if hasWorktree {
+		headers = append(headers, "WORKTREE")
+	}
+	cli.PrintTable(os.Stdout, append(headers, "MODIFIED"), rows)
+	if sediments, _ := result["recent_sediments"].([]any); len(sediments) > 0 {
+		fmt.Fprintln(os.Stdout, "\nRecent sediments:")
+		for _, raw := range sediments {
+			if sediment, ok := raw.(map[string]any); ok {
+				fmt.Fprintln(os.Stdout, "  "+sedimentSummaryLine(sediment))
+			}
+		}
+	}
 	return nil
+}
+
+// sedimentSummaryLine renders one recent sediment for the table output:
+// when, which layer, where it came from (a boss-layer round also names what
+// it summed up), and what each change did (DENE-1680).
+func sedimentSummaryLine(sediment map[string]any) string {
+	source := strVal(sediment, "issue_identifier")
+	if source == "" {
+		source = "chat " + strVal(sediment, "source_title")
+	}
+	var from []string
+	sources, _ := sediment["sources"].([]any)
+	for _, raw := range sources {
+		item, _ := raw.(map[string]any)
+		name := strVal(item, "identifier")
+		if name == "" {
+			name = strVal(item, "kind") + " " + strVal(item, "title")
+		}
+		from = append(from, name)
+	}
+	if len(from) > 0 {
+		source += " <- " + strings.Join(from, ", ")
+	}
+	var changes []string
+	list, _ := sediment["changes"].([]any)
+	for _, raw := range list {
+		change, _ := raw.(map[string]any)
+		label := strVal(change, "location")
+		if action := strVal(change, "action"); action != "" {
+			label += ":" + action
+		}
+		if entry := strVal(change, "entry"); entry != "" {
+			label += "「" + entry + "」"
+		}
+		changes = append(changes, label)
+	}
+	layer := strVal(sediment, "layer")
+	if layer == "" {
+		layer = "worker"
+	}
+	return fmt.Sprintf("%s  %-6s  %s  %s", strVal(sediment, "created_at"), layer, source, strings.Join(changes, "; "))
+}
+
+func memoryLocationState(location map[string]any) string {
+	if exists, _ := location["exists"].(bool); exists {
+		return "present"
+	}
+	if ref := strVal(location, "mainline_ref"); ref != "" {
+		return "behind (" + ref + ")"
+	}
+	return "missing"
 }
 
 func runProjectMemorySeatGet(cmd *cobra.Command, _ []string) error {
@@ -1623,4 +1728,91 @@ func projectRepoRows(raw any) [][]string {
 		rows = append(rows, []string{strVal(resource, "id"), strVal(ref, "url"), strVal(repo, "mode"), strVal(action, "kind")})
 	}
 	return rows
+}
+
+func runProjectReport(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var projectIDs []string
+	for _, arg := range args {
+		ref, err := resolveProjectID(ctx, client, arg)
+		if err != nil {
+			return fmt.Errorf("resolve project: %w", err)
+		}
+		projectIDs = append(projectIDs, ref.ID)
+	}
+	if len(projectIDs) == 0 {
+		session, _ := cmd.Flags().GetString("session")
+		if strings.TrimSpace(session) == "" {
+			session = os.Getenv("MULTICA_CHAT_SESSION_ID")
+		}
+		if strings.TrimSpace(session) == "" {
+			return fmt.Errorf("project report: name a project, or run it inside a chat (MULTICA_CHAT_SESSION_ID) / pass --session")
+		}
+		ref, err := parseChatSessionLinkRef(session)
+		if err != nil {
+			return fmt.Errorf("project report: %w", err)
+		}
+		var chat struct {
+			ProjectIDs []string `json:"project_ids"`
+		}
+		if err := client.GetJSON(ctx, "/api/chat/sessions/"+url.PathEscape(ref.ID), &chat); err != nil {
+			return fmt.Errorf("project report: read the chat's projects: %w", err)
+		}
+		if len(chat.ProjectIDs) == 0 {
+			return fmt.Errorf("project report: this chat has no project; name one")
+		}
+		projectIDs = chat.ProjectIDs
+	}
+
+	markHeard, _ := cmd.Flags().GetBool("mark-heard")
+	reports := make([]map[string]any, 0, len(projectIDs))
+	for _, id := range projectIDs {
+		var report map[string]any
+		path := "/api/projects/" + url.PathEscape(id) + "/report"
+		if markHeard {
+			err = client.PostJSON(ctx, path+"/heard", map[string]any{}, &report)
+		} else {
+			err = client.GetJSON(ctx, path, &report)
+		}
+		if err != nil {
+			return fmt.Errorf("project report: %w", err)
+		}
+		reports = append(reports, report)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		headers := []string{"PROJECT", "ISSUE", "PHASE", "STATUS", "FROM", "SOURCE CHAT", "TITLE", "LATEST SUMMARY"}
+		var rows [][]string
+		for _, report := range reports {
+			items, _ := report["items"].([]any)
+			if len(items) == 0 {
+				rows = append(rows, []string{strVal(report, "project_title"), "-", "-", "-", "-", "-", "no news since " + strVal(report, "since"), ""})
+			}
+			for _, raw := range items {
+				item, _ := raw.(map[string]any)
+				source := ""
+				if chat, ok := item["source_chat"].(map[string]any); ok {
+					source = strVal(chat, "title")
+					if source == "" {
+						source = strVal(chat, "id")
+					}
+				}
+				from := strVal(item, "from_status")
+				if b, _ := item["opened"].(bool); b {
+					from = "(opened)"
+				}
+				rows = append(rows, []string{strVal(report, "project_title"), strVal(item, "identifier"), strVal(item, "phase"), strVal(item, "status"), from, source, strVal(item, "title"), strVal(item, "latest_summary")})
+			}
+		}
+		cli.PrintTable(os.Stdout, headers, rows)
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, map[string]any{"marked": markHeard, "reports": reports})
 }

@@ -164,6 +164,18 @@ func (h *Handler) RouteIssue(w http.ResponseWriter, r *http.Request) {
 	if outcome.ExecutorWritten != nil {
 		resp["executor"] = outcome.ExecutorWritten.Name
 	}
+	if outcome.Tier != "" {
+		resp["tier"] = outcome.Tier
+	}
+	if outcome.JudgedTier != "" {
+		// The model's own pick, below the rule floor and raised to tier.
+		resp["judged_tier"] = outcome.JudgedTier
+	}
+	if outcome.Trace != nil {
+		// The decision log, the same object the assignment comment prints
+		// (DENE-1677).
+		resp["trace"] = outcome.Trace
+	}
 	if !outcome.ReviewerWritten.Empty() {
 		resp["reviewer"] = outcome.ReviewerWritten.Label()
 		resp["reviewer_type"] = string(outcome.ReviewerWritten.Kind)
@@ -234,14 +246,17 @@ func (h *Handler) EscalateIssue(w http.ResponseWriter, r *http.Request) {
 // model identifier the workspace itself typed in, and whether the last call
 // worked.
 type routingHealthResponse struct {
-	State             string  `json:"state"`
-	Usable            bool    `json:"usable"`
-	Reason            string  `json:"reason"`
-	RetryAfterSeconds int     `json:"retry_after_seconds"`
-	LastSuccessAt     int64   `json:"last_success_at"`
-	LastFailureAt     int64   `json:"last_failure_at"`
-	Model             string  `json:"model"`
-	Threshold         float64 `json:"threshold"`
+	// Rules is the rule table that decides the tier (DENE-1677), read-only:
+	// it ships with the server, like ladder.json.
+	Rules             routing.RuleTableView `json:"rules"`
+	State             string                `json:"state"`
+	Usable            bool                  `json:"usable"`
+	Reason            string                `json:"reason"`
+	RetryAfterSeconds int                   `json:"retry_after_seconds"`
+	LastSuccessAt     int64                 `json:"last_success_at"`
+	LastFailureAt     int64                 `json:"last_failure_at"`
+	Model             string                `json:"model"`
+	Threshold         float64               `json:"threshold"`
 	// Gateway* describe WHERE the model identifier above is sent. The box in
 	// the settings section is a model id and nothing else, which left the
 	// reader with no way to answer "which model is this, on whose endpoint?" —
@@ -322,6 +337,7 @@ const (
 func (h *Handler) routingHealthPayload(ctx context.Context, workspaceID string, rep routing.HealthReport) routingHealthResponse {
 	deploymentConfigured := h.cfg.LLMAPIKey != "" && h.cfg.LLMBaseURL != ""
 	resp := routingHealthResponse{
+		Rules:             routing.DefaultRules.View(routing.DefaultLadder),
 		State:             string(rep.State),
 		Usable:            rep.Usable,
 		Reason:            rep.Reason,
@@ -489,6 +505,7 @@ func (h *Handler) CheckRoutingHealth(w http.ResponseWriter, r *http.Request) {
 
 func offlineRoutingHealth() routingHealthResponse {
 	return routingHealthResponse{
+		Rules:               routing.DefaultRules.View(routing.DefaultLadder),
 		State:               string(routing.StateOff),
 		DefaultPolicyPrompt: routing.DefaultPolicyPrompt,
 		PolicyPrompt:        routing.DefaultPolicyPrompt,

@@ -65,3 +65,17 @@ describe("formatActivity duplicate marks (MUL-7349)", () => {
     ).toBe("把 MUL-2 标记为这个任务的重复");
   });
 });
+
+describe("formatActivity managed link writes (DENE-1663)", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("names the workspace and agent the change came through", async () => {
+    const e = entry("linked_write", { via_workspace: "kunkunya", agent_name: "Goku" });
+    await i18n.changeLanguage("en");
+    expect(formatActivity(e, noActor)).toBe("acted on this issue via kunkunya · Goku");
+    await i18n.changeLanguage("zh-Hans");
+    expect(formatActivity(e, noActor)).toBe("经 kunkunya·Goku 代办");
+  });
+});

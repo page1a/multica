@@ -242,8 +242,10 @@ function ProjectRowActions({
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const togglePin = () => {
-    if (pinned) deletePin.mutate({ itemType: "project", itemId: project.id });
-    else createPin.mutate({ item_type: "project", item_id: project.id });
+    // A refused pin otherwise looks like a click that never landed.
+    const onError = () => toast.error(t(($) => $.page.pin_failed));
+    if (pinned) deletePin.mutate({ itemType: "project", itemId: project.id }, { onError });
+    else createPin.mutate({ item_type: "project", item_id: project.id }, { onError });
   };
 
   return (
@@ -738,10 +740,15 @@ function ProjectBatchToolbar({
             variant="ghost"
             size="sm"
             onClick={() => {
-              for (const p of rows) {
-                if (!pinnedIds.has(p.id)) {
-                  createPin.mutate({ item_type: "project", item_id: p.id });
-                }
+              const unpinned = rows.filter((p) => !pinnedIds.has(p.id));
+              let reported = false;
+              const onError = () => {
+                if (reported) return;
+                reported = true;
+                toast.error(t(($) => $.page.pin_failed));
+              };
+              for (const p of unpinned) {
+                createPin.mutate({ item_type: "project", item_id: p.id }, { onError });
               }
               onClear();
             }}

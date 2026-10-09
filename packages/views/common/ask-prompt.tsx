@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { askOptions, asksOptions } from "@multica/core/asks/queries";
 import { useAnswerAsk } from "@multica/core/asks/mutations";
@@ -19,7 +20,14 @@ export function AskPrompt({ askId, initialAsk }: { askId?: string; initialAsk?: 
       questions={ask.questions}
       mode={ask.mode}
       disabled={answer.isPending}
-      onSubmit={async (answers) => { await answer.mutateAsync({ id: ask.id, answers }); }}
+      onSubmit={async (answers) => {
+        try {
+          await answer.mutateAsync({ id: ask.id, answers });
+        } catch (err) {
+          // Same compact copy as the card until the locale bundle adds ask keys.
+          toast.error(err instanceof Error && err.message ? err.message : "提交失败，请重试");
+        }
+      }}
     />
   );
 }

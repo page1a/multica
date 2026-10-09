@@ -7,6 +7,7 @@ import { chatKeys, sortChatSessions, QUICK_ACTIONS_PENDING_TIMEOUT_MS } from "./
 import { createLogger } from "../logger";
 import type {
   ChatSession,
+  ChatLinkedProjectRef,
   ChatPinnedAgent,
   ChatDraftRestoresResponse,
   ChatQuickActionsPendingState,
@@ -108,7 +109,12 @@ export function useCreateChatSession() {
   const wsId = useWorkspaceId();
 
   return useMutation({
-    mutationFn: (data: { agent_id: string; title?: string; project_ids?: string[] }) => {
+    mutationFn: (data: {
+      agent_id: string;
+      title?: string;
+      project_ids?: string[];
+      linked_projects?: ChatLinkedProjectRef[];
+    }) => {
       logger.info("createChatSession.start", {
         agent_id: data.agent_id,
         project_ids: data.project_ids,
@@ -261,6 +267,35 @@ export function useSetChatSessionProjects() {
         err,
       });
       if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+    },
+  });
+}
+
+/**
+ * Replaces the read-only linked projects of a chat (DENE-1643). `refs` is the
+ * COMPLETE set; an empty array detaches them all. Not optimistic: the server
+ * re-checks every link and decides `available`, so the chips follow its
+ * answer instead of guessing it.
+ */
+export function useSetChatSessionLinkedProjects() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+
+  return useMutation({
+    mutationFn: (data: { sessionId: string; refs: ChatLinkedProjectRef[] }) => {
+      logger.info("setChatSessionLinkedProjects.start", data);
+      return api.updateChatSession(data.sessionId, { linked_projects: data.refs });
+    },
+    onSuccess: (session) => {
+      qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), (old) =>
+        old?.map((s) => (s.id === session.id ? { ...s, linked_projects: session.linked_projects } : s)),
+      );
+    },
+    onError: (err, vars) => {
+      logger.error("setChatSessionLinkedProjects.error", { sessionId: vars.sessionId, err });
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });

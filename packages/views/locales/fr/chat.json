@@ -90,6 +90,10 @@
     "remove_project_context": "Retirer le contexte de projet",
     "no_projects": "Aucun projet pour l'instant",
     "project_context_unsupported": "La description du projet ne s'appliquera pas — le daemon de cet agent doit être mis à jour",
+    "linked_projects": "Projets liés (lecture seule)",
+    "linked_project_chip": "Projet en lecture seule de {{source}}",
+    "linked_project_stale": "Expiré",
+    "linked_project_stale_hint": "N'est plus partagé — l'agent ne le reçoit plus",
     "remove_all_project_context": "Retirer tout le contexte de projet",
     "switch_project": "Passer à un autre projet…",
     "to_goal": "转成目标任务",
@@ -171,7 +175,8 @@
     "quick_actions_regenerate": "Régénérer les suggestions",
     "quick_actions_regenerate_failed": "Impossible d'actualiser les suggestions. Veuillez réessayer.",
     "spawned": "Discussion ouverte",
-    "spawn_untitled": "Nouvelle discussion"
+    "spawn_untitled": "Nouvelle discussion",
+    "issue_receipt": "Résultat de tâche"
   },
   "session_history": {
     "untitled": "Sans titre",
@@ -377,6 +382,7 @@
     "remove": "Retirer",
     "save": "Enregistrer",
     "cancel": "Annuler",
+    "save_failed": "Impossible d'enregistrer l'accès",
     "note_bound": "Une fois privé, il disparaît des listes des autres.",
     "note_unbound": "Une discussion sans projet reste privée.",
     "view_only": "Vous pouvez lire cette discussion, pas y écrire.",
@@ -396,7 +402,8 @@
     "title": "Certaines discussions sont visibles par les membres du projet",
     "body": "Vous avez {{count}} discussions que les membres du projet peuvent maintenant voir.",
     "make_private": "Rendre la sélection privée",
-    "dismiss": "Compris"
+    "dismiss": "Compris",
+    "failed": "Échec de l’enregistrement. Réessayez."
   },
   "title_locked": "Titre verrouillé — l’agent ne le renommera pas",
   "origin": {
@@ -410,5 +417,34 @@
     "reason_runtime_changed": "la dernière session est sur une autre machine",
     "reason_session_lost": "la session précédente n'a pas pu être restaurée",
     "reason_fresh_requested": "nouvelle session demandée"
+  },
+  "report": {
+    "bar_one": "{{count}} ticket de cette discussion",
+    "bar_other": "{{count}} tickets de cette discussion",
+    "bar_fresh_one": "{{count}} ticket de cette discussion · {{fresh}} vient de changer",
+    "bar_fresh_other": "{{count}} tickets de cette discussion · {{fresh}} viennent de changer",
+    "waiting_you": "{{count}} vous attendent",
+    "in_progress": "{{count}} en cours",
+    "done": "{{count}} terminées",
+    "hear": "Écouter le point",
+    "hear_prompt": "Point : raconte-moi les nouveautés de « {{project}} » depuis la dernière fois",
+    "title": "Tickets de cette discussion",
+    "just_changed": "Vient de changer",
+    "opened": "Ouvert · {{to}}",
+    "needs_you": "vous attend"
+  },
+  "tickets": {
+    "heading_one": "{{count}} ticket ouvert",
+    "heading_other": "{{count}} tickets ouverts",
+    "to": "pour {{name}}",
+    "routing": "le routage choisit l'exécutant",
+    "actions": "Actions pour {{id}}",
+    "assign_me": "Me l'attribuer",
+    "assign_agent": "Confier à un agent",
+    "withdraw": "Retirer",
+    "assigned_me": "{{id}} vous est attribué",
+    "assigned_agent": "{{id}} est rendu au routage",
+    "withdrawn": "{{id}} retiré",
+    "failed": "Impossible de modifier {{id}}"
   }
 }

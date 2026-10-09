@@ -347,7 +347,18 @@ func RemoveCleanableWorktree(root, path string, settings WorktreeCleanupSettings
 	if !item.Eligible() {
 		return fmt.Errorf("execenv: refusing to remove %q: %s", path, item.KeepReason)
 	}
-	return forceRemoveWorktree(item.GitRoot, item.Path)
+	if err := forceRemoveWorktree(item.GitRoot, item.Path); err != nil {
+		return err
+	}
+	// The copy was only eligible because its branch is delivered, so the branch
+	// has nothing left to protect once the copy is gone (DENE-1666). Same rule,
+	// same refusals as the sweep: unmerged, checked out elsewhere or holding
+	// rescued work stays.
+	if unlock, lockErr := lockGitRoot(item.GitRoot, nil); lockErr == nil {
+		defer unlock()
+		SweepMergedTaskBranch(item.GitRoot, item.Branch, []string{settings.TrunkBranch}, nil)
+	}
+	return nil
 }
 
 // forceRemoveWorktree unregisters the copy from its repository and deletes it.

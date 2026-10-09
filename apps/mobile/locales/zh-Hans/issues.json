@@ -65,7 +65,9 @@
     "open_on_web": "在网页打开",
     "delete_comment": "删除评论",
     "edit_comment": "编辑评论",
-    "no_runs": "暂无运行"
+    "no_runs": "暂无运行",
+    "from_chat": "来自聊天",
+    "from_chat_hidden": "来自一个你看不到的聊天"
   },
   "new": {
     "title": "新建任务",
@@ -81,6 +83,7 @@
   },
   "activity": {
     "created": "创建了任务",
+    "linked_write": "经 {{workspace}}·{{agent}} 代办",
     "status_changed": "更改了状态：{{from}} → {{to}}",
     "priority_changed": "更改了优先级：{{from}} → {{to}}",
     "self_assigned": "指派给了自己",
@@ -122,6 +125,7 @@
     "all": "该工作区还没有任务。",
     "members": "没有分配给成员的任务。"
   },
+  "waiting_for": "在等：{{reason}}",
   "driver": {
     "none": "没人在推进",
     "revived": "已重跑 {{count}} 次",
@@ -293,6 +297,8 @@
   "resources.commit": "这是提交 ID，不是分支。运行会回传到起始分支。如需一次性修订，请给 multica repo checkout 传入 --ref。",
   "state_card": {
     "section_title": "状态卡",
+    "children": "子任务回执",
+    "children_pr_merged": "已合并",
     "decisions": "已拍板",
     "decisions_empty": "还没有拍板",
     "decision_add": "添加拍板",

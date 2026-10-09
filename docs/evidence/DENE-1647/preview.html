@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1647 预览</title>
+<style>
+  :root { --fg:#18181b; --muted:#71717a; --border:#e4e4e7; --bg:#fff; --soft:#f4f4f5; --red:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif; color:var(--fg); background:#fafafa; }
+  .frames { display:flex; gap:32px; padding:24px; flex-wrap:wrap; align-items:flex-start; }
+  .frame { background:var(--bg); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .desktop { width:720px; }
+  .phone { width:390px; }
+  .label { font-size:12px; color:var(--muted); margin:0 0 8px; }
+  .pane { padding:16px; }
+  h3 { font-size:13px; font-weight:600; margin:0 0 12px; }
+  .run { border-top:1px solid var(--border); padding:10px 0; }
+  .run:first-of-type { border-top:0; }
+  .head { display:flex; align-items:center; gap:8px; min-width:0; }
+  .avatar { width:24px; height:24px; border-radius:999px; background:var(--soft); flex:none; }
+  .name { font-weight:500; white-space:nowrap; }
+  .state { color:var(--red); font-size:12px; }
+  .grow { flex:1; min-width:0; }
+  .time { color:var(--muted); font-size:12px; white-space:nowrap; }
+  .btn { border:1px solid var(--border); border-radius:6px; font-size:12px; padding:2px 8px; background:#fff; white-space:nowrap; min-height:28px; }
+  .body { padding-left:32px; }
+  .caption { color:var(--muted); font-size:12px; margin:4px 0 0; overflow-wrap:anywhere; }
+  .err { margin-top:6px; font:12px ui-monospace, monospace; color:var(--muted); background:var(--soft); border:1px solid var(--border); border-radius:6px; padding:6px 10px; overflow-wrap:anywhere; }
+  .row { display:flex; gap:12px; padding:10px 0; border-top:1px solid var(--border); }
+  .row .k { width:96px; flex:none; color:var(--muted); font-size:12px; }
+  .row .v { min-width:0; }
+  .v .sub { color:var(--muted); font-size:12px; margin-top:2px; }
+  .switch { width:32px; height:18px; border-radius:999px; background:#d4d4d8; flex:none; margin-left:auto; }
+  @media (max-width: 420px) {
+    .frames { padding:0; gap:0; }
+    .desk-wrap, .label { display:none; }
+    .phone { width:100%; border:0; border-radius:0; }
+    .row { flex-wrap:wrap; } .row .k { width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="frames">
+  <div class="desk-wrap">
+    <p class="label">桌面 · 任务执行记录 + 智能体详情</p>
+    <div class="frame desktop"><div class="pane">
+      <h3>执行记录</h3>
+      <div class="run">
+        <div class="head"><span class="avatar"></span><span class="name">布尔玛</span><span class="state">失败</span><span class="grow"></span><span class="time">2 分钟</span><button class="btn">重试</button></div>
+        <div class="body">
+          <p class="caption">失败后已转给 比克</p>
+          <div class="err">API Error: 401 authentication_error</div>
+        </div>
+      </div>
+      <div class="run">
+        <div class="head"><span class="avatar"></span><span class="name">贝吉塔</span><span class="state">失败</span><span class="grow"></span><span class="time">1 分钟</span><button class="btn">重试</button></div>
+        <div class="body"><p class="caption">失败后没有可接的席位，等人决定</p></div>
+      </div>
+      <h3 style="margin-top:20px">布尔玛 · 详情</h3>
+      <div class="row"><div class="k">接活</div><div class="v">已暂停<div class="sub">模型登录被拒（401/403），已暂停。一小时后自动重试，修好登录后重新打开可立即恢复。</div></div><span class="switch"></span></div>
+    </div></div>
+  </div>
+  <div>
+    <p class="label">手机 390px</p>
+    <div class="frame phone"><div class="pane">
+      <h3>执行记录</h3>
+      <div class="run">
+        <div class="head"><span class="avatar"></span><span class="name">布尔玛</span><span class="state">失败</span><span class="grow"></span><button class="btn">重试</button></div>
+        <div class="body">
+          <p class="caption">失败后已转给 比克</p>
+          <div class="err">API Error: 401 authentication_error</div>
+        </div>
+      </div>
+      <div class="run">
+        <div class="head"><span class="avatar"></span><span class="name">贝吉塔</span><span class="state">失败</span><span class="grow"></span><button class="btn">重试</button></div>
+        <div class="body"><p class="caption">失败后没有可接的席位，等人决定</p></div>
+      </div>
+      <h3 style="margin-top:20px">布尔玛 · 详情</h3>
+      <div class="row"><div class="k">接活</div><div class="v">已暂停<div class="sub">模型登录被拒（401/403），已暂停。一小时后自动重试，修好登录后重新打开可立即恢复。</div></div></div>
+    </div></div>
+  </div>
+</div>
+</body>
+</html>

@@ -314,6 +314,7 @@ func (r *Router) wakeStale(ctx context.Context, workspaceID string, issue Issue,
 	if err != nil {
 		return out, err
 	}
+	roster = ForProject(roster, issue.ProjectID)
 	seat, ok := agentByID(roster, issue.Reviewer.ID)
 	if !ok {
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer seat not in roster"}, nil

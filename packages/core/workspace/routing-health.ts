@@ -87,6 +87,36 @@ export interface RoutingHealth {
    */
   mode: RoutingMode;
   roles: RoutingRoleHealth[];
+  /**
+   * The rule table that decides the tier (DENE-1677), read-only. Empty from a
+   * backend that predates it.
+   */
+  rules: RoutingRuleTable;
+}
+
+/** `routing.RuleTableView` in `server/internal/routing/rules.go`. */
+export interface RoutingRuleTable {
+  questions: RoutingRuleQuestion[];
+  rules: RoutingRule[];
+}
+
+export interface RoutingRuleQuestion {
+  key: string;
+  label: string;
+  options: { value: string; label: string }[];
+}
+
+export interface RoutingRule {
+  index: number;
+  id: string;
+  label: string;
+  /** Question key → values the row accepts. Empty for the catch-all. */
+  when: Record<string, string[]>;
+  /** The row matches when any question was 答不出. */
+  any_unknown: boolean;
+  tier: string;
+  tier_label: string;
+  reviewer: "seat" | "none";
 }
 
 /** One model role's endpoint, reduced like the top-level gateway fields. */
@@ -145,6 +175,7 @@ export const RoutingHealthSchema = z.object({
   seats: z.array(z.unknown()).optional(),
   mode: z.string().optional(),
   roles: z.array(z.unknown()).optional(),
+  rules: z.unknown().optional(),
 });
 
 /**
@@ -176,6 +207,7 @@ export const UNKNOWN_ROUTING_HEALTH: RoutingHealth = {
   seats: [],
   mode: "judge",
   roles: [],
+  rules: { questions: [], rules: [] },
 };
 
 const KNOWN_STATES: readonly RoutingState[] = [
@@ -239,7 +271,52 @@ export function parseRoutingHealth(raw: unknown): RoutingHealth {
     seats: parseSeatSummaries(parsed.seats),
     mode: normalizeRoutingMode(parsed.mode),
     roles: parseRoleHealth(parsed.roles),
+    rules: parseRuleTable(parsed.rules),
   };
+}
+
+function parseRuleTable(value: unknown): RoutingRuleTable {
+  if (!isQuotaRecord(value)) return { questions: [], rules: [] };
+  const questions = Array.isArray(value.questions)
+    ? value.questions.flatMap((q) => {
+        if (!isQuotaRecord(q) || typeof q.key !== "string") return [];
+        const options = Array.isArray(q.options)
+          ? q.options.flatMap((o) =>
+              isQuotaRecord(o) && typeof o.value === "string"
+                ? [{ value: o.value, label: typeof o.label === "string" ? o.label : o.value }]
+                : [],
+            )
+          : [];
+        return [{ key: q.key, label: typeof q.label === "string" ? q.label : q.key, options }];
+      })
+    : [];
+  const rules = Array.isArray(value.rules)
+    ? value.rules.flatMap((r, i): RoutingRule[] => {
+        if (!isQuotaRecord(r) || typeof r.id !== "string" || typeof r.tier !== "string") {
+          return [];
+        }
+        const when: Record<string, string[]> = {};
+        if (isQuotaRecord(r.when)) {
+          for (const [key, values] of Object.entries(r.when)) {
+            if (Array.isArray(values)) {
+              when[key] = values.filter((v): v is string => typeof v === "string");
+            }
+          }
+        }
+        return [{
+          index: typeof r.index === "number" ? r.index : i + 1,
+          id: r.id,
+          label: typeof r.label === "string" ? r.label : r.id,
+          when,
+          any_unknown: r.any_unknown === true,
+          tier: r.tier,
+          tier_label: typeof r.tier_label === "string" && r.tier_label !== "" ? r.tier_label : r.tier,
+          // Anything but an explicit "none" reads as a check: the safe reading.
+          reviewer: r.reviewer === "none" ? "none" : "seat",
+        }];
+      })
+    : [];
+  return { questions, rules };
 }
 
 const KNOWN_MODES: readonly RoutingMode[] = ["none", "analysis", "analysis_judge", "judge"];

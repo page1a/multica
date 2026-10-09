@@ -52,6 +52,7 @@ import {
   useHandoffChatSession,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
+import { chatKeys } from "@multica/core/chat/queries";
 import type { Agent, ChatMessage, ChatSession } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -104,7 +105,7 @@ export function ChatSessionHeader({
   // Same query the access dialog reads, so the button, its hover card and the
   // dialog agree; can_edit is the server's answer, not a client copy of it.
   const { data: accessSettings } = useQuery({
-    queryKey: ["chat", wsId, "access", session.id],
+    queryKey: chatKeys.access(wsId, session.id),
     queryFn: () => api.getChatAccess(session.id),
   });
   const accessMode =

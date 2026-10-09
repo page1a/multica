@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
@@ -28,6 +28,7 @@ import type {
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
+import { Popover, PopoverContent } from "@multica/ui/components/ui/popover";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -61,7 +62,7 @@ export function WorkspaceLinksTab() {
 
   return (
     <SettingsTab title={t(($) => $.links.tab.title)} description={t(($) => $.links.tab.description)}>
-      <SettingsSection title={t(($) => $.links.tab.outgoing_title)} description={t(($) => $.links.tab.outgoing_description)}>
+      <SettingsSection anchor="outgoing" title={t(($) => $.links.tab.outgoing_title)} description={t(($) => $.links.tab.outgoing_description)}>
         <CreateLinkForm
           wsId={wsId}
           direction="offer"
@@ -79,7 +80,7 @@ export function WorkspaceLinksTab() {
         </div>
       </SettingsSection>
 
-      <SettingsSection title={t(($) => $.links.tab.incoming_title)} description={t(($) => $.links.tab.incoming_description)}>
+      <SettingsSection anchor="incoming" title={t(($) => $.links.tab.incoming_title)} description={t(($) => $.links.tab.incoming_description)}>
         <CreateLinkForm
           wsId={wsId}
           direction="pull"
@@ -369,6 +370,7 @@ function TargetField({
   const fieldId = pull ? "workspace-link-source" : "workspace-link-target";
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { data: workspaces = [] } = useQuery(workspaceListOptions());
   const needle = value.trim().toLowerCase();
   // Only workspaces the caller already belongs to: there is no search over
@@ -396,33 +398,42 @@ function TargetField({
       <label htmlFor={fieldId} className="text-label">
         {pull ? t(($) => $.links.tab.pull_target_label) : t(($) => $.links.tab.target_label)}
       </label>
-      <div className="relative">
-        <Input
-          id={fieldId}
-          role="combobox"
-          aria-expanded={open && mine.length > 0}
-          aria-controls={`${fieldId}-options`}
-          autoComplete="off"
-          value={value}
-          disabled={disabled}
-          placeholder={t(($) => $.links.tab.target_placeholder)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setOpen(false);
-          }}
-          onChange={(event) => {
-            onChange(event.target.value);
-            setOpen(true);
-          }}
-        />
-        {open && mine.length > 0 ? (
-          <div
-            id={`${fieldId}-options`}
-            role="listbox"
-            aria-label={t(($) => $.links.tab.target_mine)}
-            className="absolute inset-x-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
-          >
+      <Input
+        ref={inputRef}
+        id={fieldId}
+        role="combobox"
+        aria-expanded={open && mine.length > 0}
+        aria-controls={`${fieldId}-options`}
+        autoComplete="off"
+        value={value}
+        disabled={disabled}
+        placeholder={t(($) => $.links.tab.target_placeholder)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+      />
+      {/* The list floats above the page in a portal so the settings card
+          cannot clip it; focus stays in the input the whole time. */}
+      <Popover
+        open={open && mine.length > 0}
+        onOpenChange={(next, details) => {
+          if (!next && details.event?.target !== inputRef.current) setOpen(false);
+        }}
+      >
+        <PopoverContent
+          anchor={inputRef}
+          align="start"
+          initialFocus={false}
+          finalFocus={false}
+          className="w-(--anchor-width) max-h-[min(15rem,var(--available-height))] gap-0 overflow-y-auto p-1"
+        >
+          <div id={`${fieldId}-options`} role="listbox" aria-label={t(($) => $.links.tab.target_mine)}>
             <p className="px-2 py-1 text-caption text-muted-foreground">{t(($) => $.links.tab.target_mine)}</p>
             {mine.map((ws) => (
               <button
@@ -442,8 +453,8 @@ function TargetField({
               </button>
             ))}
           </div>
-        ) : null}
-      </div>
+        </PopoverContent>
+      </Popover>
       {target.workspace ? (
         <div className="flex min-w-0 items-center gap-2 text-body" data-testid={fieldId}>
           <WorkspaceAvatar name={target.workspace.name} avatarUrl={target.workspace.avatar_url} size="sm" className="size-5 shrink-0 rounded-xs" />

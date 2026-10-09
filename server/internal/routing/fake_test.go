@@ -386,6 +386,21 @@ func confidentVerdict() Verdict {
 
 var errUpstream = errors.New("upstream exploded")
 
+// withCreatorFacts puts facts on the issue the way a creator's --routing-facts
+// does, so the rule table routes on them without an analysis call.
+func withCreatorFacts(store *fakeStore, f Facts) {
+	store.issue.ContentHash = "creator-hash"
+	store.issue.Analysis = &AnalysisRecord{Facts: f, Source: FactsFromCreator, Hash: "creator-hash"}
+}
+
+// Facts the table puts on each rung: strong with a check, medium and weak
+// without one.
+var (
+	strongFacts = Facts{Scope: ScopeCrossModule, Clarity: ClarityClear, Risk: RiskMedium}
+	mediumFacts = Facts{Scope: ScopeModule, Clarity: ClarityClear, Risk: RiskMedium}
+	weakFacts   = Facts{Scope: ScopeSmall, Clarity: ClarityClear, Risk: RiskLow}
+)
+
 func newRouter(store Store, judge Judge) *Router {
 	r := New(store, judge)
 	return r

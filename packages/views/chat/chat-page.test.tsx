@@ -191,6 +191,15 @@ vi.mock("./components/use-chat-controller", async () => {
       archiveSession: vi.fn(),
       setActiveSession: mockSetActiveSession,
       setSelectedAgentId: vi.fn(),
+      activeProjectIds: [],
+      linkedProjects: {
+        items: [],
+        options: [],
+        onChange: vi.fn(),
+        isUpdating: false,
+        draftRefs: [],
+        clearDraft: vi.fn(),
+      },
     }),
   };
 });

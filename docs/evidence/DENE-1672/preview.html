@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hans">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1672 回执贯通</title>
+<style>
+  body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px;color:#111;background:#fff}
+  h1{font-size:16px;margin:0 0 16px}
+  h2{font-size:14px;font-weight:600;margin:24px 0 8px}
+  .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+  figure{margin:0}
+  figcaption{color:#666;font-size:12px;margin-top:4px}
+  img{border:1px solid #e5e5e5;border-radius:6px;display:block;max-width:100%}
+  .d img{width:860px}.t img{width:480px}.m img{width:300px}
+  pre{font:12px/1.5 ui-monospace,monospace;background:#f6f6f6;padding:12px;border-radius:6px;overflow-x:auto}
+</style>
+<h1>DENE-1672 聊天和任务之间的回执</h1>
+<h2>聊天里的任务回执</h2>
+<div class="row">
+  <figure class="d"><img src="chat-1280.webp" alt=""><figcaption>1280</figcaption></figure>
+  <figure class="t"><img src="chat-768.webp" alt=""><figcaption>768</figcaption></figure>
+  <figure class="m"><img src="chat-390.webp" alt=""><figcaption>390</figcaption></figure>
+  <figure class="m"><img src="chat-375.webp" alt=""><figcaption>375</figcaption></figure>
+</div>
+<h2>任务页的来源与原话</h2>
+<div class="row">
+  <figure class="d"><img src="issue-1280.webp" alt=""><figcaption>1280</figcaption></figure>
+  <figure class="t"><img src="issue-768.webp" alt=""><figcaption>768</figcaption></figure>
+  <figure class="m"><img src="issue-390.webp" alt=""><figcaption>390</figcaption></figure>
+  <figure class="m"><img src="issue-390-statecard.webp" alt=""><figcaption>390：侧栏状态卡</figcaption></figure>
+  <figure class="m"><img src="issue-375.webp" alt=""><figcaption>375</figcaption></figure>
+</div>
+<h2>CLI</h2>
+<pre>$ multica chat tickets --session &lt;聊天&gt;
+IDENTIFIER  STATUS   ASSIGNEE  TITLE      RESULT
+RECE-1      done     -         登录改走新令牌    登录改走新令牌，旧令牌保留 7 天兼容期
+RECE-2      blocked  -         旧会话迁移到新令牌  迁移脚本已就绪，等 DBA 开迁移窗口
+RECE-3      done     -         删掉旧令牌代码    旧令牌代码已删除，全仓无引用 · PR #612 merged
+
+$ multica issue context RECE-1
+## 状态卡 RECE-1
+
+目标：登录改走新令牌
+来源：聊天「登录改造 · 新令牌」（multica chat history --session &lt;聊天&gt;）
+  原话：登录还在用旧令牌，帮我拆成任务：一是换新令牌，二是把旧会话迁过去。</pre>
+</html>

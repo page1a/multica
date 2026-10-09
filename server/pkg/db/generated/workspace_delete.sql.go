@@ -209,6 +209,12 @@ WITH
 deleted_chat_session_projects AS (
     DELETE FROM chat_session_project WHERE workspace_id = $1
 ),
+deleted_chat_session_linked_projects AS (
+    DELETE FROM chat_session_linked_project WHERE workspace_id = $1
+),
+deleted_project_report_heard AS (
+    DELETE FROM project_report_heard WHERE workspace_id = $1
+),
 deleted_sessions AS (
     DELETE FROM chat_session WHERE chat_session.workspace_id = $1
 ),
@@ -228,6 +234,7 @@ DELETE FROM lark_installation WHERE lark_installation.workspace_id = $1
 // chat_session_project carries workspace_id precisely so teardown does not have
 // to join through chat_session, which this same statement deletes (same no-FK
 // chore as chat_draft_restore in DeleteWorkspaceLeafData).
+// project_report_heard keeps soft references too (DENE-1667).
 func (q *Queries) DeleteWorkspaceCommunicationRoots(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWorkspaceCommunicationRoots, workspaceID)
 	return err

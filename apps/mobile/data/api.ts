@@ -20,6 +20,7 @@ import type {
   ChatMessage,
   ChatPendingTask,
   ChatSession,
+  ChatTicketsResponse,
   Comment,
   CreateIssueRequest,
   CreateLabelRequest,
@@ -98,6 +99,7 @@ import {
   ChatPendingTaskSchema,
   ChatSessionListSchema,
   ChatSessionSchema,
+  ChatTicketsResponseSchema,
   EMPTY_ACTIVE_TASKS_RESPONSE,
   EMPTY_AGENT_LIST,
   EMPTY_AGENT_TASK_LIST,
@@ -105,6 +107,7 @@ import {
   EMPTY_CHAT_MESSAGE_LIST,
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_CHAT_SESSION_LIST,
+  EMPTY_CHAT_TICKETS_RESPONSE,
   EMPTY_COMMENT,
   EMPTY_INBOX_LIST,
   EMPTY_INBOX_UNREAD_SUMMARY,
@@ -1214,6 +1217,20 @@ class ApiClient {
       ChatMessageListSchema,
       EMPTY_CHAT_MESSAGE_LIST,
       { endpoint: "GET /api/chat/sessions/:id/messages" },
+    );
+  }
+
+  /** The issues this chat opened, oldest first, already filtered to what the
+   *  viewer may see (DENE-1665). */
+  async listChatTickets(
+    sessionId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<ChatTicketsResponse> {
+    return this.fetchValidated(
+      `/api/chat/sessions/${sessionId}/tickets`,
+      ChatTicketsResponseSchema,
+      EMPTY_CHAT_TICKETS_RESPONSE,
+      { ...opts, endpoint: "GET /api/chat/sessions/:id/tickets" },
     );
   }
 

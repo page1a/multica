@@ -37,7 +37,8 @@ const (
 	RiskHigh   = "high"
 )
 
-// Facts is what the analysis model reduces a ticket to.
+// Facts is what the analysis model reduces a ticket to. Each enum field may
+// also be Unknown: a question the model did not answer readably.
 type Facts struct {
 	// Scope is how much of the codebase the change touches.
 	Scope string `json:"scope"`
@@ -46,10 +47,20 @@ type Facts struct {
 	// Risk is what getting it wrong costs.
 	Risk string `json:"risk"`
 	// NeedsHuman is whether a person has to make a call before or at
-	// acceptance.
+	// acceptance. An unanswered question reads as false and is listed in
+	// Unanswered.
 	NeedsHuman bool `json:"needs_human"`
+	// Unanswered lists the boolean questions that came back Unknown; the
+	// enum fields carry Unknown in place.
+	Unanswered []string `json:"unanswered,omitempty"`
 	// Summary is one sentence for a human reader. It is never parsed.
 	Summary string `json:"summary,omitempty"`
+}
+
+// UnknownFacts is what a failed or switched-off analysis contributes: every
+// question unanswered. The rule table routes it conservatively.
+func UnknownFacts() Facts {
+	return Facts{Scope: Unknown, Clarity: Unknown, Risk: Unknown, Unanswered: []string{"needs_human"}}
 }
 
 // Normalize lower-cases and trims the enum fields. It does not repair an
@@ -62,24 +73,55 @@ func (f Facts) Normalize() Facts {
 	return f
 }
 
-// Valid reports whether every enum field holds a known value.
+// Valid reports whether every enum field holds a known value or Unknown.
 func (f Facts) Valid() bool {
-	switch f.Scope {
-	case ScopeSmall, ScopeModule, ScopeCrossModule:
-	default:
-		return false
-	}
-	switch f.Clarity {
-	case ClarityClear, ClarityVague:
-	default:
-		return false
-	}
-	switch f.Risk {
-	case RiskLow, RiskMedium, RiskHigh:
-	default:
-		return false
+	for _, key := range []string{"scope", "clarity", "risk"} {
+		if v := f.value(key); v != Unknown && !contains(factValues[key], v) {
+			return false
+		}
 	}
 	return true
+}
+
+// AnyUnknown reports whether some question went unanswered.
+func (f Facts) AnyUnknown() bool {
+	return f.Scope == Unknown || f.Clarity == Unknown || f.Risk == Unknown || len(f.Unanswered) > 0
+}
+
+func (f Facts) value(key string) string {
+	switch key {
+	case "scope":
+		return f.Scope
+	case "clarity":
+		return f.Clarity
+	case "risk":
+		return f.Risk
+	case "needs_human":
+		if contains(f.Unanswered, key) {
+			return Unknown
+		}
+		if f.NeedsHuman {
+			return "yes"
+		}
+		return "no"
+	}
+	return Unknown
+}
+
+func (f *Facts) set(key, v string) {
+	switch key {
+	case "scope":
+		f.Scope = v
+	case "clarity":
+		f.Clarity = v
+	case "risk":
+		f.Risk = v
+	case "needs_human":
+		f.NeedsHuman = v == "yes"
+		if v == Unknown && !contains(f.Unanswered, key) {
+			f.Unanswered = append(f.Unanswered, key)
+		}
+	}
 }
 
 // Where a set of facts came from, for the decision comment.
@@ -88,15 +130,13 @@ const (
 	FactsFromCreator  = "creator"
 )
 
-// AnalysisRecord is what is cached on the issue: the facts, the analysis
-// model's own tier pick when it made one, and the fingerprint of the content
-// they were derived from.
+// AnalysisRecord is what is cached on the issue: the facts, the answers they
+// were read from, and the fingerprint of the content they describe. A record
+// written before DENE-1677 may carry a tier pick of its own; it is ignored.
 type AnalysisRecord struct {
 	Facts Facts `json:"facts"`
-	// Verdict is the analysis model's tier pick. Absent on facts a creator
-	// supplied: those carry no pick, and the analysis-only mode derives one
-	// from the facts by rule instead (see RuleVerdict).
-	Verdict *Verdict `json:"verdict,omitempty"`
+	// Answers is the per-question trace. Absent on facts a creator supplied.
+	Answers []Answer `json:"answers,omitempty"`
 	// Source is FactsFromAnalysis or FactsFromCreator.
 	Source string `json:"source"`
 	// Model is the analysis model that wrote the record. A record from a
@@ -199,25 +239,17 @@ func AnalysisRequestFromContext(ctx context.Context) (workspaceID, issueID, cont
 	return v[0], v[1], v[2], true
 }
 
-const analyzeSystemPrompt = `You read a work ticket and reduce it to facts, then route it to a seat on a fixed ladder of AI agents.
+// analyzeSystemPrompt is the multiple-choice sheet. The model only ever
+// chooses an option number; the rule table, not the model, turns the numbers
+// into a tier.
+var analyzeSystemPrompt = `You read a work ticket and answer a fixed set of multiple-choice questions about it.
 
-Facts — choose exactly one value for each:
-- scope: "small" (one file or a local edit), "module" (one module or feature area), "cross_module" (several modules, a contract between them, or a migration).
-- clarity: "clear" (can be acted on as written), "vague" (the goal or acceptance is open to interpretation).
-- risk: "low" (cheap to get wrong and easy to undo), "medium", "high" (data loss, money, security, outward-facing or irreversible effects).
-- needs_human: true only when a person has to make a decision the ticket does not already contain.
-- summary: one short sentence for a human reader.
+For each question, answer with the number of exactly one option. Nothing but the number is read: an answer without a valid number counts as unanswered.
 
-Routing:
-1. executor_tier: which ladder tier should DO this work. Choose from candidate_tiers exactly.
-2. reviewer: "seat" (an agent checks it), "human" (acceptance needs a conversation with a person), or "none" (small, self-evident work).
-3. reviewer_tier: when reviewer is "seat", which tier checks it. Choose from candidate_tiers exactly.
+` + DefaultRules.questionsPrompt() + `
+summary: one short sentence for a human reader.
 
-When escalation_reason is present, the seat now holding the ticket reported that the work is too hard for it: choose again, weighing that report, and do not choose a weaker tier than the one that reported it.
-
-Report calibrated confidence in [0,1] separately for the executor choice and the reviewer choice; below-threshold answers are discarded rather than used, so do not inflate them. Follow policy_prompt in the user payload when choosing tiers.
-
-Respond with a JSON object with keys: scope, clarity, risk, needs_human, summary, executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. You do not change status, assignee, or any other ticket field, and you do not take an action.`
+Respond with a JSON object whose keys are the question keys above, each holding an option number, plus summary. You do not choose who does the work, change status, assignee, or any other ticket field, and you do not take an action.`
 
 const stuckSystemPrompt = `A work ticket is blocked. Read it and its recent discussion and say where it is stuck.
 
@@ -267,10 +299,9 @@ func (a LLMAnalyst) ask(ctx context.Context, target Target, system string, st an
 	return raw, nil
 }
 
-// Analyze asks for the facts and the tier pick in one call. Facts outside the
-// closed set are a broken contract, not a weak answer.
+// Analyze asks the questions in one call.
 func (a LLMAnalyst) Analyze(ctx context.Context, target Target, st AnalysisState) (AnalysisRecord, error) {
-	raw, err := a.ask(ctx, target, analyzeSystemPrompt, st, 600)
+	raw, err := a.ask(ctx, target, analyzeSystemPrompt, st, 400)
 	if err != nil {
 		return AnalysisRecord{}, err
 	}
@@ -282,30 +313,23 @@ func (a LLMAnalyst) Analyze(ctx context.Context, target Target, st AnalysisState
 	return ParseAnalysisResult(raw, target.Model)
 }
 
-// ParseAnalysisResult validates a runtime or gateway response at the common
-// routing boundary. It is also used by the daemon callback to persist a result
-// that arrives after the original routing waiter has timed out.
+// ParseAnalysisResult reads a runtime or gateway reply at the common routing
+// boundary. It is also used by the daemon callback to persist a result that
+// arrives after the original routing waiter has timed out.
+//
+// Only a reply that is not a JSON object at all is an error, and the caller
+// routes that as every question unanswered. Inside an object, each answer
+// is read for its option number alone; anything else is Unknown for that one
+// question.
 func ParseAnalysisResult(raw, model string) (AnalysisRecord, error) {
-	var reply struct {
-		Facts
-		Verdict
-	}
+	var reply map[string]json.RawMessage
 	raw = unwrapRuntimeAnalysis(raw)
-	if err := json.Unmarshal([]byte(raw), &reply); err != nil {
-		return AnalysisRecord{}, fmt.Errorf("%w: analysis was not JSON: %v", ErrJudgeUnavailable, err)
+	if err := json.Unmarshal([]byte(raw), &reply); err != nil || reply == nil {
+		return AnalysisRecord{}, fmt.Errorf("%w: analysis was not a JSON object", ErrJudgeUnavailable)
 	}
-	facts := reply.Facts.Normalize()
-	if !facts.Valid() {
-		return AnalysisRecord{}, fmt.Errorf("%w: analysis facts outside the allowed values: %+v", ErrJudgeUnavailable, facts)
-	}
-	v := reply.Verdict
-	v.Reviewer = ReviewerKind(strings.ToLower(strings.TrimSpace(string(v.Reviewer))))
-	switch v.Reviewer {
-	case ReviewerSeat, ReviewerHuman, ReviewerNone:
-	default:
-		return AnalysisRecord{}, fmt.Errorf("%w: unknown reviewer branch %q", ErrJudgeUnavailable, v.Reviewer)
-	}
-	return AnalysisRecord{Facts: facts, Verdict: &v, Source: FactsFromAnalysis, Model: model}, nil
+	facts, answers := DefaultRules.read(reply)
+	facts.Summary = clipRunes(rawAnswer(reply["summary"]), 200)
+	return AnalysisRecord{Facts: facts, Answers: answers, Source: FactsFromAnalysis, Model: model}, nil
 }
 
 // unwrapRuntimeAnalysis extracts the model message from the common CLI
@@ -388,44 +412,13 @@ func (a LLMAnalyst) Stuck(ctx context.Context, target Target, st AnalysisState) 
 	return adv, nil
 }
 
-// RuleVerdict picks a tier from facts without a model. It is what the
-// analysis-only mode uses for facts a creator supplied: the point of
-// supplying them is to skip the analysis call, and in that mode there is no
-// judge to ask either. The rule is the policy prompt's own reading of the
-// facts, so it is written down once here rather than left to a model.
-func RuleVerdict(f Facts) Verdict {
-	tier := "medium"
-	switch {
-	case f.Risk == RiskHigh || f.Scope == ScopeCrossModule || f.Clarity == ClarityVague:
-		tier = "strong"
-	case f.Scope == ScopeSmall && f.Risk == RiskLow && f.Clarity == ClarityClear:
-		tier = "weak"
-	}
-	v := Verdict{
-		ExecutorTier:       tier,
-		ExecutorConfidence: 1,
-		Reviewer:           ReviewerSeat,
-		ReviewerTier:       tier,
-		ReviewerConfidence: 1,
-		Reason:             "按建票时带的事实定档：" + FactsLine(f),
-	}
-	if f.NeedsHuman {
-		v.Reviewer = ReviewerHuman
-		v.ReviewerTier = ""
-	}
-	return v
-}
-
 // FactsLine renders facts the way the decision comment prints them.
 func FactsLine(f Facts) string {
-	scope := map[string]string{ScopeSmall: "小", ScopeModule: "单模块", ScopeCrossModule: "跨模块"}[f.Scope]
-	clarity := map[string]string{ClarityClear: "清楚", ClarityVague: "模糊"}[f.Clarity]
-	risk := map[string]string{RiskLow: "低", RiskMedium: "中", RiskHigh: "高"}[f.Risk]
-	human := "否"
-	if f.NeedsHuman {
-		human = "是"
+	parts := make([]string, 0, len(DefaultRules.Questions))
+	for _, a := range DefaultRules.AnswersFor(f) {
+		parts = append(parts, a.Label+" "+a.ValueLabel)
 	}
-	return fmt.Sprintf("改动范围 %s · 需求 %s · 出错代价 %s · 要人拍板 %s", scope, clarity, risk, human)
+	return strings.Join(parts, " · ")
 }
 
 // AnalysisCache is the optional half of Store that persists analysis

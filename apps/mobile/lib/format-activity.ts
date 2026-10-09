@@ -69,6 +69,11 @@ export function formatActivity(
   switch (entry.action) {
     case "created":
       return t("issues:activity.created");
+    case "linked_write":
+      return t("issues:activity.linked_write", {
+        workspace: details.via_workspace ?? "?",
+        agent: details.agent_name ?? "?",
+      });
     case "status_changed":
       return t("issues:activity.status_changed", {
         from: statusName(details.from, resolveStatusLabel),

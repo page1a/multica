@@ -65,6 +65,27 @@ export interface StateCardChanges {
   more?: number;
 }
 
+/** The chat the issue was opened from and what was asked there (DENE-1672). */
+export interface StateCardSource {
+  chat_session_id: string;
+  chat_title: string;
+  message_id?: string;
+  excerpt?: string;
+}
+
+/** A sub-task's receipt (DENE-1679): its conclusion, pull requests and knowledge. */
+export interface StateCardChildReceipt {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  /** Canonical status. */
+  status: string;
+  conclusion?: string;
+  summary?: string;
+  knowledge?: string;
+  pull_requests: { number: number; url: string; state: string }[];
+}
+
 export interface IssueStateCard {
   issue_id: string;
   identifier: string;
@@ -73,6 +94,9 @@ export interface IssueStateCard {
   now: StateCardNow;
   baton?: StateCardBaton | null;
   changes: StateCardChanges;
+  source?: StateCardSource | null;
+  /** Sub-task receipts the viewer can see. */
+  children?: StateCardChildReceipt[];
   /** The card as the CLI prints it. */
   text: string;
 }

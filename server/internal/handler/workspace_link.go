@@ -20,7 +20,7 @@ import (
 // workspace by RequireWorkspaceMember.
 
 func (h *Handler) workspaceLinks() *workspacelink.Service {
-	return workspacelink.New(h.Queries, h.TxStarter)
+	return workspacelink.New(h.Queries, h.TxStarter).WithMemoryLine(h.projectMemoryBriefLine)
 }
 
 // workspaceLinkCaller reads the caller's workspace, user and tier from the
@@ -166,6 +166,11 @@ func (h *Handler) CreateWorkspaceLink(w http.ResponseWriter, r *http.Request) {
 	switch req.Direction {
 	case "", "offer":
 		link, err = h.workspaceLinks().Create(r.Context(), ws, user, actor, req.TargetSlug, projects)
+		if err == nil {
+			if id, perr := parseUUIDSafe(link.ID); perr == nil {
+				h.notifyWorkspaceLinkOffered(r.Context(), id, user)
+			}
+		}
 	case "pull":
 		link, err = h.workspaceLinks().Pull(r.Context(), ws, user, actor, req.TargetSlug, projects)
 	default:
@@ -182,6 +187,8 @@ func (h *Handler) CreateWorkspaceLink(w http.ResponseWriter, r *http.Request) {
 type updateWorkspaceLinkRequest struct {
 	ProjectIDs *[]string `json:"project_ids"`
 	Accept     bool      `json:"accept"`
+	// Managed switches managed access (DENE-1663).
+	Managed *bool `json:"managed"`
 }
 
 // UpdateWorkspaceLink — PATCH /api/workspace-links/{id}
@@ -199,7 +206,7 @@ func (h *Handler) UpdateWorkspaceLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	patch := workspacelink.Patch{Accept: req.Accept}
+	patch := workspacelink.Patch{Accept: req.Accept, Managed: req.Managed}
 	if req.ProjectIDs != nil {
 		projects, ok := parseProjectUUIDs(w, *req.ProjectIDs)
 		if !ok {
@@ -211,6 +218,11 @@ func (h *Handler) UpdateWorkspaceLink(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeWorkspaceLinkError(w, err)
 		return
+	}
+	if patch.Accept {
+		if row, err := h.Queries.GetWorkspaceLink(r.Context(), id); err == nil {
+			h.answerWorkspaceLinkRequest(r.Context(), row, user, inboxTypeWorkspaceLinkAccepted)
+		}
 	}
 	writeJSON(w, http.StatusOK, link)
 }
@@ -225,9 +237,22 @@ func (h *Handler) RevokeWorkspaceLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Read before the delete: the notices need to know what was revoked.
+	before, beforeErr := h.Queries.GetWorkspaceLink(r.Context(), id)
 	if err := h.workspaceLinks().Revoke(r.Context(), ws, user, actor, id); err != nil {
 		writeWorkspaceLinkError(w, err)
 		return
+	}
+	if beforeErr == nil {
+		switch {
+		case before.Status != "pending":
+			h.archiveWorkspaceLinkRequest(r.Context(), before)
+		case before.TargetWorkspaceID == ws:
+			h.answerWorkspaceLinkRequest(r.Context(), before, user, inboxTypeWorkspaceLinkDeclined)
+		default:
+			// The source withdrew its own offer: nobody needs a receipt.
+			h.answerWorkspaceLinkRequest(r.Context(), before, user, "")
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

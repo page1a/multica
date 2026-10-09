@@ -12,7 +12,7 @@ import (
 )
 
 const listProjectMemoryStatus = `-- name: ListProjectMemoryStatus :many
-SELECT project_id, workspace_id, location_key, path, exists_on_disk, is_directory, modified_at, observed_at, error FROM project_memory_status
+SELECT project_id, workspace_id, location_key, path, exists_on_disk, is_directory, modified_at, observed_at, error, mainline_ref FROM project_memory_status
 WHERE project_id = $1 AND workspace_id = $2
 ORDER BY location_key ASC
 `
@@ -41,6 +41,7 @@ func (q *Queries) ListProjectMemoryStatus(ctx context.Context, arg ListProjectMe
 			&i.ModifiedAt,
 			&i.ObservedAt,
 			&i.Error,
+			&i.MainlineRef,
 		); err != nil {
 			return nil, err
 		}
@@ -94,9 +95,9 @@ func (q *Queries) ListProjectMemoryTargets(ctx context.Context, workspaceID pgty
 const upsertProjectMemoryStatus = `-- name: UpsertProjectMemoryStatus :one
 INSERT INTO project_memory_status (
     project_id, workspace_id, location_key, path, exists_on_disk,
-    is_directory, modified_at, observed_at, error
+    is_directory, modified_at, observed_at, error, mainline_ref
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 )
 ON CONFLICT (project_id, location_key) DO UPDATE SET
     workspace_id = EXCLUDED.workspace_id,
@@ -105,8 +106,9 @@ ON CONFLICT (project_id, location_key) DO UPDATE SET
     is_directory = EXCLUDED.is_directory,
     modified_at = EXCLUDED.modified_at,
     observed_at = EXCLUDED.observed_at,
-    error = EXCLUDED.error
-RETURNING project_id, workspace_id, location_key, path, exists_on_disk, is_directory, modified_at, observed_at, error
+    error = EXCLUDED.error,
+    mainline_ref = EXCLUDED.mainline_ref
+RETURNING project_id, workspace_id, location_key, path, exists_on_disk, is_directory, modified_at, observed_at, error, mainline_ref
 `
 
 type UpsertProjectMemoryStatusParams struct {
@@ -119,6 +121,7 @@ type UpsertProjectMemoryStatusParams struct {
 	ModifiedAt   pgtype.Timestamptz `json:"modified_at"`
 	ObservedAt   pgtype.Timestamptz `json:"observed_at"`
 	Error        pgtype.Text        `json:"error"`
+	MainlineRef  pgtype.Text        `json:"mainline_ref"`
 }
 
 func (q *Queries) UpsertProjectMemoryStatus(ctx context.Context, arg UpsertProjectMemoryStatusParams) (ProjectMemoryStatus, error) {
@@ -132,6 +135,7 @@ func (q *Queries) UpsertProjectMemoryStatus(ctx context.Context, arg UpsertProje
 		arg.ModifiedAt,
 		arg.ObservedAt,
 		arg.Error,
+		arg.MainlineRef,
 	)
 	var i ProjectMemoryStatus
 	err := row.Scan(
@@ -144,6 +148,7 @@ func (q *Queries) UpsertProjectMemoryStatus(ctx context.Context, arg UpsertProje
 		&i.ModifiedAt,
 		&i.ObservedAt,
 		&i.Error,
+		&i.MainlineRef,
 	)
 	return i, err
 }

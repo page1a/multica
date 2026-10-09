@@ -36,7 +36,9 @@
     "steer_step_read": "既読",
     "retrying": "再試行を待っています。",
     "skills_used": "使用した skill：{{names}}",
-    "skill_step": "skill {{name}} を使用"
+    "skill_step": "skill {{name}} を使用",
+    "relayed_to": "失敗後 {{name}} に引き継ぎました",
+    "relay_waiting": "引き継げる席がなく、判断待ちです"
   },
   "working_filter_error": {
     "title": "エージェントが作業中のタスクを読み込めませんでした"
@@ -170,6 +172,7 @@
     "last_activity_missing": "活動時刻なし",
     "knowledge_none": "該当する知識なし",
     "knowledge_change": "知識: {{locations}}",
+    "knowledge_change_unverified": "知識: {{locations}}（納品未確認）",
     "section_title": "クローズ記録",
     "conclusion": "結論",
     "status": "ステータス",
@@ -503,6 +506,7 @@
     "prop_status": "ステータス",
     "prop_priority": "優先度",
     "prop_stage": "ステージ",
+    "prop_waiting_for": "待ち",
     "prop_assignee": "担当者",
     "prop_reviewer": "検収担当",
     "prop_start_date": "開始日",
@@ -615,7 +619,9 @@
       "status_merged_other": "{{count}} 件のコミットを統合済み",
       "status_conflict": "競合あり、担当者が解決",
       "show_all_other": "全 {{count}} 件を表示"
-    }
+    },
+    "from_chat": "チャットから",
+    "from_chat_hidden": "閲覧できないチャットから"
   },
   "timeline": {
     "loading": "読み込み中..."
@@ -655,6 +661,7 @@
     "status_changed_pr": "関連するすべての PR がマージされたため（{{prs}}）、ステータスを {{from}} から {{to}} に変更しました",
     "pr_auto_complete_disabled": "このタスクを PR マージでステータスを変えないように設定しました",
     "pr_auto_complete_enabled": "このタスクの PR マージ後のステータス変更を再開しました",
+    "linked_write": "{{workspace}}·{{agent}} 経由で操作しました",
     "wakeup_created": "起動を追加しました：{{condition}} · {{agent}} を起こす",
     "wakeup_triggered": "{{condition}} · {{agent}} を起こしました",
     "wakeup_triggered_merged": "{{condition}}（{{agent}} の開始待ちの実行に合流しました）",
@@ -676,6 +683,7 @@
   },
   "comment": {
     "add_reaction": "リアクションを追加",
+    "reaction_failed": "リアクションを更新できませんでした",
     "collapse_thread": "スレッドを折りたたむ",
     "expand_thread": "スレッドを展開",
     "delete_title": "コメントを削除",
@@ -1844,6 +1852,9 @@
     "reason_fresh_requested": "新規セッションを指定"
   },
   "state_card": {
+    "source_quote": "元の依頼",
+    "children": "サブタスクの結果",
+    "children_pr_merged": "マージ済み",
     "section_title": "状態カード",
     "decisions": "決定事項",
     "decisions_empty": "まだ決定事項はありません",

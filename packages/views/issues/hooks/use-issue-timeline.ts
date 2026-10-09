@@ -519,9 +519,13 @@ export function useIssueTimeline(issueId: string, userId?: string) {
           r.actor_type === "member" &&
           r.actor_id === userId,
       );
-      toggleCommentReaction({ commentId, emoji, existing });
+      // The optimistic chip vanishes on failure; say why.
+      toggleCommentReaction(
+        { commentId, emoji, existing },
+        { onError: () => toast.error(t(($) => $.comment.reaction_failed)) },
+      );
     },
-    [userId, toggleCommentReaction],
+    [userId, toggleCommentReaction, t],
   );
 
   return {

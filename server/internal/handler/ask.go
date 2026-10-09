@@ -359,5 +359,8 @@ func (h *Handler) AnswerAsk(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// A platform ask with its own effect (DENE-1647): the answer is carried
+	// out here, so the CLI, the issue card and the inbox all act the same.
+	h.applyReviewStuckAnswer(r.Context(), ws, issueID, userID, req.Answers["0"])
 	writeJSON(w, 200, map[string]any{"id": id.String(), "status": status, "answers": req.Answers})
 }

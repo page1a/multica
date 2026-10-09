@@ -76,7 +76,7 @@ func (h *Handler) SuggestIssueDraftAssignees(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	projectName := ""
+	projectName, projectUUID := "", ""
 	var projectDomains []string
 	if req.ProjectID != nil && *req.ProjectID != "" {
 		projectID, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
@@ -86,7 +86,7 @@ func (h *Handler) SuggestIssueDraftAssignees(w http.ResponseWriter, r *http.Requ
 		if p, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
 			ID: projectID, WorkspaceID: session.WorkspaceID,
 		}); err == nil {
-			projectName = p.Title
+			projectName, projectUUID = p.Title, util.UUIDToString(p.ID)
 			projectDomains = service.LoadDomainScene(r.Context(), h.Queries, session.WorkspaceID, pgtype.UUID{}, p.ID).Project
 		}
 	}
@@ -101,7 +101,7 @@ func (h *Handler) SuggestIssueDraftAssignees(w http.ResponseWriter, r *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
 	defer cancel()
-	suggestions, err := h.Routing.Suggest(ctx, util.UUIDToString(session.WorkspaceID), projectName, projectDomains, rows)
+	suggestions, err := h.Routing.Suggest(ctx, util.UUIDToString(session.WorkspaceID), projectUUID, projectName, projectDomains, rows)
 	if err != nil {
 		// A suggestion is advisory: the panel works without one, so a routing
 		// failure answers with empty rows instead of failing the draft page.

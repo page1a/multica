@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/workspacelink"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -1747,6 +1748,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
+		// The one way a task token reaches another workspace (DENE-1663): a
+		// managed link carries the run's originator into the source on a
+		// whitelist of issue/autopilot routes. Before the guest interceptor
+		// so it, and every gate after it, judges the originator there.
+		r.Use(workspacelink.New(queries, pool).Managed)
 		// Guests are the read-only tier (DENE-695). One interceptor in
 		// front of every authenticated route, rather than a check
 		// repeated in each of the ~250 write handlers below — the rule
@@ -2172,12 +2178,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Cross-workspace read-only links (DENE-1225). The header names
 			// the caller's own workspace; internal/workspacelink decides
-			// everything else, and /view is the only way source data leaves.
+			// everything else; /view and /projects (the shared projects a chat
+			// may attach read-only, DENE-1643) are the only ways source data
+			// leaves.
 			r.Route("/api/workspace-links", func(r chi.Router) {
 				r.Get("/", h.ListWorkspaceLinks)
 				r.Post("/", h.CreateWorkspaceLink)
 				r.Get("/audit", h.ListWorkspaceLinkAudit)
 				r.Get("/lookup", h.LookupWorkspaceLinkTarget)
+				r.Get("/projects", h.ListChatLinkedProjectOptions)
 				r.Patch("/{id}", h.UpdateWorkspaceLink)
 				r.Delete("/{id}", h.RevokeWorkspaceLink)
 				r.Get("/{id}/view", h.GetWorkspaceLinkView)
@@ -2458,6 +2467,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/memory", h.GetProjectMemory)
 					r.Get("/memory/check", h.GetProjectMemory)
 					r.Get("/memory/status", h.GetProjectMemory)
+					r.Get("/memory/monitor", h.GetProjectMemoryMonitor)
 					r.Post("/memory/check", h.PostProjectMemoryCheck)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
@@ -2480,6 +2490,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 					r.Get("/members", h.ListProjectMembers)
 					r.Post("/members", h.AddProjectMember)
+					// What is new since the caller last heard this project
+					// (DENE-1667); /heard records it as heard.
+					r.Get("/report", h.GetProjectReport)
+					r.Post("/report/heard", h.MarkProjectReportHeard)
 					r.Delete("/members/{memberId}", h.RemoveProjectMember)
 				})
 			})
@@ -2516,6 +2530,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/trigger", h.TriggerAutopilot)
 					r.Get("/runs", h.ListAutopilotRuns)
 					r.Get("/runs/{runId}", h.GetAutopilotRun)
+					r.Get("/linked-changes", h.ListAutopilotLinkedChanges)
 					r.Get("/deliveries", h.ListAutopilotDeliveries)
 					r.Get("/deliveries/{deliveryId}", h.GetAutopilotDelivery)
 					r.Post("/deliveries/{deliveryId}/replay", h.ReplayAutopilotDelivery)
@@ -2814,6 +2829,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{sessionId}", func(r chi.Router) {
 					r.Get("/", h.GetChatSession)
 					r.Post("/to-goal", h.ConvertChatSessionToGoal)
+					r.Get("/tickets", h.ListChatSessionTickets)
 					r.Get("/access", h.GetChatSessionAccess)
 					r.Put("/access", h.PutChatSessionAccess)
 					r.Get("/work-thread", h.GetChatWorkThread)
@@ -2827,6 +2843,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/title", h.WriteChatTitle)
 					r.Post("/progress", h.WriteChatProgress)
 					r.Get("/progress", h.ListChatProgress)
+					r.Post("/sediment", h.CreateChatSediment)
+					r.Get("/sediment", h.ListChatSediments)
 					r.Post("/onboarding", h.StartMikaOnboarding)
 					// Explicit "refresh" of a turn's quick actions: re-runs the
 					// daemon suggestion pass for the latest assistant reply (MUL-5149).

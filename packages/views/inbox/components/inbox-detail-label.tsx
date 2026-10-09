@@ -45,6 +45,9 @@ export function useTypeLabels(): Record<InboxItemType, string> {
     parking_unexplained: t(($) => $.types.parking_unexplained),
     issue_stall_action: t(($) => $.types.issue_stall_action),
     children_done: t(($) => $.types.children_done),
+    workspace_link_request: t(($) => $.types.workspace_link_request),
+    workspace_link_accepted: t(($) => $.types.workspace_link_accepted),
+    workspace_link_declined: t(($) => $.types.workspace_link_declined),
   };
 }
 

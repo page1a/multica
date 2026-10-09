@@ -60,6 +60,7 @@ import {
   notificationPreferenceKeys,
 } from "../notification-preferences/queries";
 import { workspaceKeys, workspaceListOptions } from "../workspace/queries";
+import { workspaceLinkKeys } from "../workspace-links/queries";
 import { isWorkspaceDeletePending } from "../workspace/pending-delete";
 import {
   showWebNotification,
@@ -128,6 +129,7 @@ import type {
   ChatPendingTask,
   ChatMessagesPage,
   ChatSession,
+  ChatLinkedProject,
   Progress,
   ChatSessionCreatedPayload,
   InvitationCreatedPayload,
@@ -372,6 +374,8 @@ type ChatSessionUpdatedPayload = {
   /** The session's full project set, sent on the same events that carry
    *  `project_id` (DENE-522). Absent on rename/pin/archive. */
   project_ids?: string[];
+  /** Full read-only linked set (DENE-1643); absent unless it changed. */
+  linked_projects?: ChatLinkedProject[];
   pinned?: boolean;
   status?: "active" | "archived";
   /** Present only when the creator dismisses the "bind a project" reminder. */
@@ -416,6 +420,7 @@ export function applyChatSessionUpdatedToCache(
             // predating project_ids sends only project_id, and the singular
             // patch above still moves the chip.
             ...("project_ids" in payload ? { project_ids: payload.project_ids } : {}),
+            ...("linked_projects" in payload ? { linked_projects: payload.linked_projects } : {}),
             pinned: payload.pinned ?? s.pinned,
             status: payload.status ?? s.status,
             ...("project_nudge_dismissed" in payload
@@ -1365,6 +1370,7 @@ export function useRealtimeSync(
         }
         if (payload.status_changed) {
           qc.invalidateQueries({ queryKey: homeKeys.all(wsId) });
+          qc.invalidateQueries({ queryKey: projectKeys.reports(wsId) });
         }
         if (payload.progress_changed) {
           qc.invalidateQueries({ queryKey: issueKeys.progress(wsId, issue.id) });
@@ -1372,6 +1378,8 @@ export function useRealtimeSync(
         // The state card derives from status, the close record, handoff and
         // decisions, all of which arrive as issue:updated (DENE-1328).
         qc.invalidateQueries({ queryKey: issueKeys.context(wsId, issue.id) });
+        // A chat's ticket card shows its issues' status and executor (DENE-1665).
+        qc.invalidateQueries({ queryKey: chatKeys.ticketsAll(wsId) });
       }
     });
 
@@ -1379,7 +1387,10 @@ export function useRealtimeSync(
       const { issue } = p as IssueCreatedPayload;
       if (!issue) return;
       const wsId = getCurrentWsId();
-      if (wsId) onIssueCreated(qc, wsId, issue);
+      if (wsId) {
+        onIssueCreated(qc, wsId, issue);
+        qc.invalidateQueries({ queryKey: chatKeys.ticketsAll(wsId) });
+      }
     });
 
     const unsubIssueDeleted = ws.on("issue:deleted", (p) => {
@@ -1389,6 +1400,7 @@ export function useRealtimeSync(
       if (wsId) {
         onIssueDeleted(qc, wsId, issue_id);
         void onInboxIssueDeleted(qc, wsId, issue_id);
+        qc.invalidateQueries({ queryKey: chatKeys.ticketsAll(wsId) });
       }
     });
 
@@ -1404,6 +1416,7 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (!wsId) return;
       applyIssueInvalidatedToCache(qc, wsId, p as IssueInvalidatedPayload);
+      qc.invalidateQueries({ queryKey: chatKeys.ticketsAll(wsId) });
     });
 
     const unsubIssueLabelsChanged = ws.on("issue_labels:changed", (p) => {
@@ -1460,6 +1473,11 @@ export function useRealtimeSync(
       if (!item) return;
       const inboxWsId = getCurrentWsId();
       if (inboxWsId) qc.invalidateQueries({ queryKey: homeKeys.all(inboxWsId) });
+      // A link request or receipt changed that workspace's link list
+      // (DENE-1641); the settings nav counts pending requests from it.
+      if (item.type.startsWith("workspace_link_")) {
+        qc.invalidateQueries({ queryKey: workspaceLinkKeys.list(item.workspace_id) });
+      }
       await handleInboxNew(qc, item);
     });
 
@@ -1893,6 +1911,8 @@ export function useRealtimeSync(
       // Patch the row in place; refetch only when the payload can't (DENE-1507).
       const id = getCurrentWsId();
       if (!id || !applyChatDoneToSessionList(qc, id, payload)) invalidateSessionLists();
+      // A turn may have told the report and moved the heard cursor (DENE-1667).
+      if (id) qc.invalidateQueries({ queryKey: projectKeys.reports(id) });
     });
 
     // Late quick-actions supplement from the daemon's background suggestion

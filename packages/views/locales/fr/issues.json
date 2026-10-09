@@ -37,7 +37,9 @@
     "steer_step_read": "Lu",
     "retrying": "En attente d'une nouvelle tentative.",
     "skills_used": "Skills utilisés : {{names}}",
-    "skill_step": "Skill {{name}} utilisé"
+    "skill_step": "Skill {{name}} utilisé",
+    "relayed_to": "Confié à {{name}} après l’échec",
+    "relay_waiting": "Aucun poste ne peut reprendre ; en attente d’une décision"
   },
   "working_filter_error": {
     "title": "Impossible de charger les tâches en cours de traitement par les agents"
@@ -449,6 +451,7 @@
     "prop_status": "Statut",
     "prop_priority": "Priorité",
     "prop_stage": "Étape",
+    "prop_waiting_for": "En attente de",
     "prop_assignee": "Assigné à",
     "prop_start_date": "Date de début",
     "prop_due_date": "Date d'échéance",
@@ -563,7 +566,9 @@
       "status_conflict": "Conflit, l'exécutant résout",
       "show_all_one": "Tout afficher ({{count}})",
       "show_all_other": "Tout afficher ({{count}})"
-    }
+    },
+    "from_chat": "Depuis la discussion",
+    "from_chat_hidden": "Depuis une discussion que vous ne voyez pas"
   },
   "timeline": {
     "loading": "Chargement..."
@@ -607,6 +612,7 @@
     "status_changed_pr": "a changé le statut de {{from}} à {{to}} après la fusion de toutes les PR liées ({{prs}})",
     "pr_auto_complete_disabled": "a configuré cette tâche pour garder son statut à la fusion des PR",
     "pr_auto_complete_enabled": "a de nouveau fait changer le statut de cette tâche à la fusion des PR",
+    "linked_write": "a agi sur cette tâche via {{workspace}} · {{agent}}",
     "wakeup_created": "a ajouté un réveil : {{condition}} · réveiller {{agent}}",
     "wakeup_triggered": "{{condition}} · {{agent}} réveillé",
     "wakeup_triggered_merged": "{{condition}} · ajouté à l’exécution en attente de {{agent}}",
@@ -631,6 +637,7 @@
   },
   "comment": {
     "add_reaction": "Ajouter une réaction",
+    "reaction_failed": "Impossible de mettre à jour la réaction",
     "collapse_thread": "Replier le fil",
     "expand_thread": "Développer le fil",
     "delete_title": "Supprimer le commentaire",
@@ -1608,6 +1615,7 @@
     "last_activity_missing": "Aucune heure d'activité",
     "knowledge_none": "Aucune connaissance qualifiée",
     "knowledge_change": "Connaissance : {{locations}}",
+    "knowledge_change_unverified": "Connaissance : {{locations}} (livraison non vérifiée)",
     "section_title": "Enregistrement de clôture",
     "conclusion": "Conclusion",
     "status": "Statut",
@@ -1901,6 +1909,9 @@
     "reason_fresh_requested": "nouvelle session demandée"
   },
   "state_card": {
+    "source_quote": "Demande d’origine",
+    "children": "Résultats des sous-tâches",
+    "children_pr_merged": "fusionnée",
     "section_title": "Fiche d’état",
     "decisions": "Décidé",
     "decisions_empty": "Rien de décidé pour l’instant",

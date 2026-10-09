@@ -66,6 +66,27 @@ type ProjectContextForEnv struct {
 	ChatCount  int
 }
 
+// ReferenceProjectForEnv is a project another workspace shares read-only,
+// attached to a chat as reference (DENE-1643). The daemon checked whether each
+// local path exists on this machine.
+type ReferenceProjectForEnv struct {
+	Title       string
+	SourceName  string
+	Description string
+	Resources   []ReferenceResourceForEnv
+	MemoryLine  string
+}
+
+// ReferenceResourceForEnv is one shared resource: a repository URL or a
+// directory path; Missing marks a path this machine does not have.
+type ReferenceResourceForEnv struct {
+	Type    string
+	Label   string
+	URL     string
+	Path    string
+	Missing bool
+}
+
 // CodeSourceForEnv describes where a task's code lives and why. Populated by
 // the daemon, which is the only component that can see the machine's
 // filesystem; rendered verbatim into the brief's `## Code Source` section.
@@ -275,6 +296,9 @@ type TaskContextForEnv struct {
 	// only source for a server that predates projects[]; projectContexts()
 	// normalises both shapes so rendering reads one path.
 	Projects []ProjectContextForEnv
+	// ReferenceProjects are read-only projects shared from another workspace
+	// (DENE-1643). Rendered only as reference; empty renders nothing.
+	ReferenceProjects []ReferenceProjectForEnv
 	// SidecarRoot, when set, is where this task's sidecar files were written
 	// instead of the cwd (Environment.SidecarRoot). The brief names the
 	// absolute paths it implies — the default relative paths would point at a

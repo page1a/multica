@@ -10,6 +10,7 @@ import { Archive, ArchiveRestore } from "lucide-react";
 import type { InboxItem } from "@multica/core/types";
 import type { InboxView } from "./inbox-view";
 import { InboxDetailLabel, useTypeLabels } from "./inbox-detail-label";
+import { useWorkspaceLinkNoticeTitle } from "./workspace-link-notice";
 import {
   getInboxDisplayTitle,
   isAutopilotQuotaNotice,
@@ -83,9 +84,10 @@ export function InboxListItem({
       ? paths.workspace(slug).issueDetail(item.issue_id)
       : null;
   const intentNavigate = useIntentNavigate();
+  const linkNoticeTitle = useWorkspaceLinkNoticeTitle();
   const displayTitle = isAutopilotQuotaNotice(item.type)
     ? typeLabels[item.type]
-    : getInboxDisplayTitle(item);
+    : linkNoticeTitle(item) ?? getInboxDisplayTitle(item);
   const isArchivedView = view === "archived";
   // Archiving deliberately leaves `read` untouched so unarchiving restores the
   // real unread state, so archived rows would otherwise keep an unread marker

@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   recordVisit: vi.fn(),
   toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+  createPin: vi.fn(),
 }));
 
 vi.mock("@multica/ui/lib/clipboard", () => ({
@@ -56,7 +58,7 @@ vi.mock("@multica/core/projects/mutations", () => ({
 
 vi.mock("@multica/core/pins", () => ({
   pinListOptions: () => ({ queryKey: ["pins"] }),
-  useCreatePin: () => ({ mutate: vi.fn() }),
+  useCreatePin: () => ({ mutate: mocks.createPin }),
   useDeletePin: () => ({ mutate: vi.fn() }),
 }));
 
@@ -86,6 +88,8 @@ vi.mock("@multica/core/paths", () => ({
     projects: () => "/test-workspace/projects",
     settings: () => "/test-workspace/settings",
     issueDetail: (id: string) => `/test-workspace/issues/${id}`,
+    chatWithPrompt: (prompt: string, ...projectIds: string[]) =>
+      `/test-workspace/chat?prompt=${encodeURIComponent(prompt)}&project_ids=${projectIds.join(",")}`,
   }),
 }));
 
@@ -94,7 +98,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { success: mocks.toastSuccess },
+  toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }));
 
 vi.mock("react-resizable-panels", () => ({
@@ -323,6 +327,21 @@ beforeEach(() => {
   mocks.push.mockReset();
   mocks.recordVisit.mockReset();
   mocks.toastSuccess.mockReset();
+  mocks.toastError.mockReset();
+  mocks.createPin.mockReset();
+});
+
+describe("ProjectDetail pin", () => {
+  it("says so when the server refuses the pin", async () => {
+    const user = userEvent.setup();
+    mocks.createPin.mockImplementation((_vars, opts?: { onError?: () => void }) => opts?.onError?.());
+    renderProjectDetail();
+
+    await user.click(screen.getByTitle("Pin to sidebar"));
+
+    expect(mocks.createPin).toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith("Couldn't update the pin");
+  });
 });
 
 describe("ProjectDetail sharing", () => {

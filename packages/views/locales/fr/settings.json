@@ -1967,6 +1967,7 @@
     "gateway_key_placeholder": "sk-…",
     "gateway_key_stored": "Une clé est enregistrée",
     "gateway_key_save": "Enregistrer la clé",
+    "gateway_key_save_error": "Clé non enregistrée. Réessayez.",
     "gateway_key_clear": "Effacer",
     "gateway_pair_incomplete": "Renseignez le point de terminaison et la clé, sinon le point de terminaison partagé du déploiement est utilisé.",
     "gateway_default_model": "Le modèle par défaut de ce déploiement est {{model}}.",
@@ -1974,6 +1975,7 @@
     "filters_placeholder": "Les sièges indisponibles sont exclus de l'attribution.",
     "health_checking": "Vérification…",
     "health_recheck": "Revérifier",
+    "health_recheck_failed": "Revérification impossible. Réessayez.",
     "health_connected": "Connecté · auto-vérifié {{when}}",
     "health_never_checked": "Aucun appel effectué depuis le démarrage du serveur",
     "health_retry_in": "Nouvelle tentative dans environ {{minutes}} min",
@@ -2029,10 +2031,10 @@
     "seats_work_off": "Travail désactivé : le routage l’ignore",
     "seats_runtime_unknown": "Runtime inconnu",
     "judge_title": "Modèle de jugement",
-    "judge_description": "Choisit le niveau (faible / moyen / fort / le plus fort) avec une probabilité. Quand le modèle d’analyse est actif, il ne voit que les faits.",
+    "judge_description": "Lit les réponses de l’analyse et peut relever d’un cran le niveau de la table, avec une raison. Il ne peut pas l’abaisser.",
     "judge_enabled_label": "Utiliser le modèle de jugement",
     "analysis_title": "Modèle d’analyse",
-    "analysis_description": "Lit tout le ticket et le résume en quelques faits : périmètre, clarté, coût d’une erreur, décision humaine requise. Quand un ticket s’arrête, il écrit où il bloque.",
+    "analysis_description": "Lit tout le ticket et répond à quatre questions à choix : périmètre, clarté, coût d’une erreur, décision humaine requise. Quand un ticket s’arrête, il écrit où il bloque.",
     "analysis_enabled_label": "Utiliser le modèle d’analyse",
     "analysis_source_label": "Source",
     "analysis_source_description": "Choisissez la passerelle API ou un runtime avec abonnement.",
@@ -2046,10 +2048,16 @@
     "analysis_key_label": "Clé API d’analyse",
     "modes": {
       "none": "Aucun modèle actif : aucun appel, et chaque ticket prend le niveau de repli.",
-      "analysis": "Analyse seule : le modèle d’analyse choisit le niveau, et le seuil s’applique à sa confiance déclarée.",
-      "analysis_judge": "Les deux : le modèle d’analyse écrit les faits, le modèle de jugement choisit le niveau à partir d’eux.",
-      "judge": "Jugement seul : le modèle de jugement lit le ticket et choisit le niveau."
-    }
+      "analysis": "Analyse seule : le modèle d’analyse répond aux questions et la table fixe le niveau.",
+      "analysis_judge": "Les deux : la table fixe le niveau, et le modèle de jugement peut le relever d’un cran au plus, jamais l’abaisser.",
+      "judge": "Jugement seul : personne ne répond aux questions, la ligne « sans réponse » de la table fixe le niveau, et le jugement peut le relever d’un cran."
+    },
+    "rules_title": "Règles de niveau",
+    "rules_description": "Après les réponses de l’analyse, la première règle qui correspond fixe le niveau.",
+    "rules_any_unknown": "Une question sans réponse",
+    "rules_catch_all": "Aucune règle ci-dessus",
+    "rules_review": "{{tier}}, avec revue",
+    "rules_no_review": "{{tier}}, sans revue"
   },
   "project_sharing": {
     "title": "Autorisations et partage",

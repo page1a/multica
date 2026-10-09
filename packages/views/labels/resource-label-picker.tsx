@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Search, Tag } from "lucide-react";
+import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   labelListOptions,
@@ -39,6 +40,8 @@ export function ResourceLabelPicker({
   );
   const attach = useAttachResourceLabel(resourceType, resourceId);
   const detach = useDetachResourceLabel(resourceType, resourceId);
+  const onError = (err: Error) =>
+    toast.error(err.message || t(($) => $.resource_picker.save_failed));
   const selectedIds = useMemo(() => new Set(selected.map((label) => label.id)), [selected]);
   const filtered = catalog.filter((label) =>
     label.name.toLowerCase().includes(query.trim().toLowerCase()),
@@ -99,7 +102,9 @@ export function ResourceLabelPicker({
                 key={label.id}
                 type="button"
                 onClick={() =>
-                  isSelected ? detach.mutate(label.id) : attach.mutate(label.id)
+                  isSelected
+                    ? detach.mutate(label.id, { onError })
+                    : attach.mutate(label.id, { onError })
                 }
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-body hover:bg-accent"
               >

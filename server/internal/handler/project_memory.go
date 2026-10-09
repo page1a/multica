@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/projectmemory"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -31,6 +34,19 @@ type ProjectMemoryLocation struct {
 	ModifiedAt  *string `json:"modified_at"`
 	ObservedAt  *string `json:"observed_at"`
 	Error       *string `json:"error"`
+	// MainlineRef is set when the slot is missing locally but the remote
+	// mainline already has it: the local directory is behind.
+	MainlineRef *string `json:"mainline_ref"`
+}
+
+// ProjectMemoryWorktreeCheck is a self-check from a directory that is not the
+// project's local directory, usually an agent's own worktree. It is returned
+// to the caller only: it never replaces the daemon's local-directory
+// observation and never opens or closes a sediment round (DENE-1660).
+type ProjectMemoryWorktreeCheck struct {
+	Path      string                  `json:"path"`
+	Locations []ProjectMemoryLocation `json:"locations"`
+	Missing   []string                `json:"missing"`
 }
 
 type ProjectMemoryIssue struct {
@@ -41,18 +57,31 @@ type ProjectMemoryIssue struct {
 }
 
 type ProjectMemoryResponse struct {
-	ProjectID               string                  `json:"project_id"`
-	WorkspaceID             string                  `json:"workspace_id"`
-	Locations               []ProjectMemoryLocation `json:"locations"`
-	Missing                 []string                `json:"missing"`
-	ObservedAt              *string                 `json:"observed_at"`
-	LatestSedimentAt        *string                 `json:"latest_sediment_at"`
-	SedimentIssue           *ProjectMemoryIssue     `json:"sediment_issue"`
-	SedimentAgentConfigured bool                    `json:"sediment_agent_configured"`
-	SedimentError           *string                 `json:"sediment_error"`
+	ProjectID string `json:"project_id"`
+	// Source names whose observation Locations is: always the project's
+	// local directory as the daemon saw it.
+	Source                  string                      `json:"source"`
+	WorkspaceID             string                      `json:"workspace_id"`
+	Locations               []ProjectMemoryLocation     `json:"locations"`
+	Missing                 []string                    `json:"missing"`
+	ObservedAt              *string                     `json:"observed_at"`
+	LatestSedimentAt        *string                     `json:"latest_sediment_at"`
+	SedimentIssue           *ProjectMemoryIssue         `json:"sediment_issue"`
+	SedimentAgentConfigured bool                        `json:"sediment_agent_configured"`
+	SedimentError           *string                     `json:"sediment_error"`
+	WorktreeCheck           *ProjectMemoryWorktreeCheck `json:"worktree_check,omitempty"`
+	// RecentSediments are the newest deliveries that wrote this project's
+	// memory: issue closes and chats, with the files bound to each location.
+	RecentSediments []KnowledgeSedimentResponse `json:"recent_sediments"`
 }
 
+const projectMemorySourceLocalDirectory = "local_directory"
+
 type projectMemoryCheckRequest struct {
+	// Path is the absolute directory the caller checked. Only the project's
+	// own local directory counts as an observation; anything else, including
+	// an empty path from an older CLI, is a worktree self-check.
+	Path      string                         `json:"path"`
 	Locations []projectmemory.LocationResult `json:"locations"`
 }
 
@@ -129,6 +158,7 @@ func (h *Handler) projectMemoryResponse(ctx context.Context, project db.Project)
 
 	response := ProjectMemoryResponse{
 		ProjectID:   uuidToString(project.ID),
+		Source:      projectMemorySourceLocalDirectory,
 		WorkspaceID: uuidToString(project.WorkspaceID),
 		Locations:   make([]ProjectMemoryLocation, 0, len(projectmemory.Locations())),
 		Missing:     make([]string, 0, len(projectmemory.Locations())),
@@ -141,6 +171,9 @@ func (h *Handler) projectMemoryResponse(ctx context.Context, project db.Project)
 			item.ModifiedAt = memoryTime(row.ModifiedAt)
 			item.ObservedAt = memoryTime(row.ObservedAt)
 			item.Error = memoryText(row.Error)
+			if !row.ExistsOnDisk {
+				item.MainlineRef = memoryText(row.MainlineRef)
+			}
 			if response.ObservedAt == nil {
 				response.ObservedAt = item.ObservedAt
 			}
@@ -172,6 +205,7 @@ func (h *Handler) projectMemoryResponse(ctx context.Context, project db.Project)
 		response.SedimentIssue = h.projectMemoryIssue(ctx, issue)
 		response.LatestSedimentAt = memoryTime(issue.UpdatedAt)
 	}
+	response.RecentSediments = h.recentKnowledgeSediments(ctx, project)
 	return response
 }
 
@@ -248,10 +282,14 @@ func (h *Handler) recordProjectMemoryCheck(ctx context.Context, project db.Proje
 		if result.Error != "" {
 			errorText = pgtype.Text{String: result.Error, Valid: true}
 		}
+		var mainlineRef pgtype.Text
+		if !result.Exists && strings.TrimSpace(result.MainlineRef) != "" {
+			mainlineRef = pgtype.Text{String: strings.TrimSpace(result.MainlineRef), Valid: true}
+		}
 		if _, err := h.Queries.UpsertProjectMemoryStatus(ctx, db.UpsertProjectMemoryStatusParams{
 			ProjectID: project.ID, WorkspaceID: project.WorkspaceID, LocationKey: location.Key,
 			Path: location.Path, ExistsOnDisk: result.Exists, IsDirectory: result.IsDirectory,
-			ModifiedAt: modifiedAt, ObservedAt: observedAt, Error: errorText,
+			ModifiedAt: modifiedAt, ObservedAt: observedAt, Error: errorText, MainlineRef: mainlineRef,
 		}); err != nil {
 			return err
 		}
@@ -259,8 +297,11 @@ func (h *Handler) recordProjectMemoryCheck(ctx context.Context, project db.Proje
 	return nil
 }
 
-// PostProjectMemoryCheck accepts the daemon's stat-only observation. The
-// server owns the checklist and paths; client-provided paths are ignored.
+// PostProjectMemoryCheck accepts a stat-only check from `project memory check
+// --path`. A check of the project's own local directory is an observation like
+// the daemon's; any other directory is a worktree self-check that is echoed
+// back and never stored. The server owns the checklist; client-provided
+// location paths are ignored.
 func (h *Handler) PostProjectMemoryCheck(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "id")
 	project, ok := h.loadVisibleProjectMemoryProject(r.Context(), r, projectID)
@@ -273,24 +314,240 @@ func (h *Handler) PostProjectMemoryCheck(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid memory check request")
 		return
 	}
-	if err := h.recordProjectMemoryCheck(r.Context(), project, request.Locations); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store project memory check")
+	isLocal, err := h.isProjectLocalDirectory(r.Context(), project, request.Path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load project directories")
 		return
 	}
-	response := h.projectMemoryResponse(r.Context(), project)
-	if len(response.Missing) > 0 {
-		reason := "缺少项目记忆位置：" + strings.Join(response.Missing, ", ")
-		result, err := h.EnsureMemoryRound(r.Context(), project, reason)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "project memory sediment failed")
-			return
-		}
-		if result.Error != "" {
-			response.SedimentError = stringPtr(result.Error)
-		}
-		response = h.projectMemoryResponse(r.Context(), project)
+	if !isLocal {
+		response := h.projectMemoryResponse(r.Context(), project)
+		response.WorktreeCheck = worktreeMemoryCheck(request.Path, request.Locations)
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	response, err := h.observeLocalMemory(r.Context(), project, request.Locations)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// isProjectLocalDirectory reports whether path is one of the project's bound
+// local directories. Paths are compared cleaned; the resource's real_path
+// covers a binding made through a symlink.
+func (h *Handler) isProjectLocalDirectory(ctx context.Context, project db.Project, path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, nil
+	}
+	resources, err := h.Queries.ListProjectMemoryTargets(ctx, project.WorkspaceID)
+	if err != nil {
+		return false, err
+	}
+	want := filepath.Clean(path)
+	for _, resource := range resources {
+		if resource.ProjectID != project.ID {
+			continue
+		}
+		var ref struct {
+			LocalPath string `json:"local_path"`
+			RealPath  string `json:"real_path"`
+		}
+		if json.Unmarshal(resource.ResourceRef, &ref) != nil {
+			continue
+		}
+		for _, candidate := range []string{ref.LocalPath, ref.RealPath} {
+			if strings.TrimSpace(candidate) != "" && filepath.Clean(candidate) == want {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// worktreeMemoryCheck shapes a self-check against the server-owned checklist.
+// Client paths and kinds are ignored; only the per-key observation is kept.
+func worktreeMemoryCheck(path string, locations []projectmemory.LocationResult) *ProjectMemoryWorktreeCheck {
+	byKey := make(map[string]projectmemory.LocationResult, len(locations))
+	for _, result := range locations {
+		byKey[result.Key] = result
+	}
+	check := &ProjectMemoryWorktreeCheck{
+		Path:      strings.TrimSpace(path),
+		Locations: make([]ProjectMemoryLocation, 0, len(projectmemory.Locations())),
+		Missing:   make([]string, 0, len(projectmemory.Locations())),
+	}
+	for _, location := range projectmemory.Locations() {
+		item := ProjectMemoryLocation{Key: location.Key, Path: location.Path, Kind: location.Kind}
+		if result, ok := byKey[location.Key]; ok {
+			item.Exists = result.Exists
+			item.IsDirectory = result.IsDirectory
+			if result.ModifiedAt != nil {
+				value := result.ModifiedAt.UTC().Format(time.RFC3339)
+				item.ModifiedAt = &value
+			}
+			if result.Error != "" {
+				item.Error = stringPtr(result.Error)
+			}
+		} else {
+			item.Error = stringPtr("not reported")
+		}
+		if !item.Exists {
+			check.Missing = append(check.Missing, item.Key)
+		}
+		check.Locations = append(check.Locations, item)
+	}
+	return check
+}
+
+// observeLocalMemory stores the local directory's observation and, when slots
+// are missing, opens a sediment round unless the last round already covered
+// this gap (see ensureGapRound).
+func (h *Handler) observeLocalMemory(ctx context.Context, project db.Project, locations []projectmemory.LocationResult) (ProjectMemoryResponse, error) {
+	if err := h.recordProjectMemoryCheck(ctx, project, locations); err != nil {
+		return ProjectMemoryResponse{}, errors.New("failed to store project memory check")
+	}
+	response := h.projectMemoryResponse(ctx, project)
+	if len(response.Missing) == 0 {
+		return response, nil
+	}
+	sedimentErr, err := h.ensureGapRound(ctx, project, response)
+	if err != nil {
+		return ProjectMemoryResponse{}, errors.New("project memory sediment failed")
+	}
+	response = h.projectMemoryResponse(ctx, project)
+	if sedimentErr != "" {
+		response.SedimentError = stringPtr(sedimentErr)
+	}
+	return response, nil
+}
+
+// sedimentGapCooldown is how long a closed round keeps the same gap from
+// opening another one. The daemon re-reports on every refresh; without this a
+// gap the round could not fix in the local directory reopened within minutes
+// (DENE-1659: 200 tickets in a week).
+const sedimentGapCooldown = 7 * 24 * time.Hour
+
+// sedimentGapKey is the issue metadata key holding the missing checklist keys
+// a round was opened or extended for.
+const sedimentGapKey = "sediment_gap"
+
+// ensureGapRound opens or extends the round for the missing slots. A closed
+// latest round whose recorded gap already covers every missing slot, closed
+// within the cooldown, suppresses a new one: only a new missing slot or an
+// expired cooldown opens again.
+func (h *Handler) ensureGapRound(ctx context.Context, project db.Project, response ProjectMemoryResponse) (string, error) {
+	missing := append([]string(nil), response.Missing...)
+	sort.Strings(missing)
+	latest, err := h.Queries.FindLatestSedimentIssue(ctx, db.FindLatestSedimentIssueParams{
+		WorkspaceID: project.WorkspaceID, Column2: uuidToString(project.ID),
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	if err == nil && sedimentRoundCoversGap(latest, missing, time.Now()) {
+		// An older round still open takes the note instead; only a project
+		// with no open round is held back by the closed one.
+		if _, openErr := h.Queries.FindOpenSedimentIssue(ctx, db.FindOpenSedimentIssueParams{
+			WorkspaceID: project.WorkspaceID, Column2: uuidToString(project.ID),
+		}); errors.Is(openErr, pgx.ErrNoRows) {
+			return "", nil
+		} else if openErr != nil {
+			return "", openErr
+		}
+	}
+	result, err := h.EnsureMemoryRound(ctx, project, missingMemoryReason(response))
+	if err != nil || result.Error != "" || result.Issue == nil {
+		return result.Error, err
+	}
+	gap := mergeGap(sedimentIssueGap(*result.Issue), missing)
+	value, _ := json.Marshal(gap)
+	if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID: result.Issue.ID, WorkspaceID: result.Issue.WorkspaceID, Key: sedimentGapKey, Value: value,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	return "", nil
+}
+
+func sedimentRoundCoversGap(issue db.Issue, missing []string, now time.Time) bool {
+	if issue.Status != "done" && issue.Status != "cancelled" {
+		return false
+	}
+	if !issue.UpdatedAt.Valid || now.Sub(issue.UpdatedAt.Time) >= sedimentGapCooldown {
+		return false
+	}
+	recorded := sedimentIssueGap(issue)
+	if len(recorded) == 0 {
+		return false
+	}
+	covered := make(map[string]bool, len(recorded))
+	for _, key := range recorded {
+		covered[key] = true
+	}
+	for _, key := range missing {
+		if !covered[key] {
+			return false
+		}
+	}
+	return true
+}
+
+func sedimentIssueGap(issue db.Issue) []string {
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(issue.Metadata, &metadata) != nil {
+		return nil
+	}
+	var gap []string
+	if json.Unmarshal(metadata[sedimentGapKey], &gap) != nil {
+		return nil
+	}
+	return gap
+}
+
+func mergeGap(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	merged := make([]string, 0, len(a)+len(b))
+	for _, key := range append(append([]string(nil), a...), b...) {
+		if !seen[key] {
+			seen[key] = true
+			merged = append(merged, key)
+		}
+	}
+	sort.Strings(merged)
+	return merged
+}
+
+// missingMemoryReason separates slots that were never written from slots the
+// remote mainline already has. The latter need the local directory synced,
+// not a second copy written by the sediment agent.
+func missingMemoryReason(response ProjectMemoryResponse) string {
+	var absent, behind []string
+	behindRefs := map[string]bool{}
+	var refs []string
+	for _, location := range response.Locations {
+		if location.Exists {
+			continue
+		}
+		if location.MainlineRef != nil {
+			behind = append(behind, location.Key)
+			if !behindRefs[*location.MainlineRef] {
+				behindRefs[*location.MainlineRef] = true
+				refs = append(refs, *location.MainlineRef)
+			}
+			continue
+		}
+		absent = append(absent, location.Key)
+	}
+	parts := make([]string, 0, 2)
+	if len(absent) > 0 {
+		parts = append(parts, "缺少项目记忆位置："+strings.Join(absent, ", "))
+	}
+	if len(behind) > 0 {
+		parts = append(parts, fmt.Sprintf("本地目录落后，需要同步：%s 已有 %s，同步本地目录即可，不用重写", strings.Join(refs, ", "), strings.Join(behind, ", ")))
+	}
+	return strings.Join(parts, "；")
 }
 
 func configuredSedimentAgent(raw []byte) (pgtype.UUID, error) {
@@ -420,6 +677,17 @@ func (h *Handler) appendMemoryReason(ctx context.Context, issue db.Issue, agentI
 // seat, a bad setting, or a write failure is logged and returned as text. It
 // never fails the business event that noticed the progress.
 func (h *Handler) noteMemoryProgress(ctx context.Context, workspaceID, projectID pgtype.UUID, reason string) string {
+	return h.noteMemoryMilestone(ctx, workspaceID, projectID, reason, "", nil)
+}
+
+// noteMemoryMilestone is noteMemoryProgress for the three milestone triggers
+// (children all terminal, stage advance, project completed). The digest
+// (sedimentDigest) follows the one-line reason, so the round's ticket carries
+// the source tickets' conclusions and close evidence (DENE-1661). source is
+// the parent ticket or project the milestone sums up: it makes the round a
+// boss-layer sediment (DENE-1680), whose close declares what each change does
+// to the existing entries and whose record names the source.
+func (h *Handler) noteMemoryMilestone(ctx context.Context, workspaceID, projectID pgtype.UUID, reason, digest string, source *sedimentSource) string {
 	reason = strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(reason))
 	if !projectID.Valid || reason == "" || h.Queries == nil {
 		return ""
@@ -431,6 +699,12 @@ func (h *Handler) noteMemoryProgress(ctx context.Context, workspaceID, projectID
 		slog.Warn("memory round: sediment failed", "error", err, "project_id", uuidToString(projectID), "reason", reason)
 		return "project memory sediment failed"
 	}
+	if digest = strings.TrimSpace(digest); digest != "" {
+		reason += "\n\n" + digest
+	}
+	if source != nil {
+		reason += "\n\n老板层沉淀：" + closeprotocol.BossLayerHint
+	}
 	result, err := h.EnsureMemoryRound(ctx, project, reason)
 	if err != nil {
 		slog.Warn("memory round: sediment failed", "error", err, "project_id", uuidToString(projectID), "reason", reason)
@@ -439,6 +713,12 @@ func (h *Handler) noteMemoryProgress(ctx context.Context, workspaceID, projectID
 	if result.Error != "" {
 		slog.Warn("memory round: sediment skipped", "error", result.Error, "project_id", uuidToString(projectID), "reason", reason)
 		return result.Error
+	}
+	if source != nil && result.Issue != nil {
+		if err := h.addRoundSource(ctx, *result.Issue, *source); err != nil {
+			slog.Warn("memory round: source not recorded", "error", err, "project_id", uuidToString(projectID))
+			return "project memory sediment failed"
+		}
 	}
 	return ""
 }
@@ -454,12 +734,14 @@ func (h *Handler) sedimentClosedBarrier(ctx context.Context, parent, completed d
 	}
 	label := issueIdentifier(h.getIssuePrefix(ctx, parent.WorkspaceID), parent.Number)
 	var reason string
+	sources := children
 	if siblingsAreStaged(children) {
 		if !completed.Stage.Valid {
 			return
 		}
 		if next := nextOpenStage(children, completed.Stage.Int32, isTerminal); next > 0 {
 			reason = fmt.Sprintf("阶段推进：%s 的第 %d 阶段已终态，下一阶段是 %d", label, completed.Stage.Int32, next)
+			sources = childrenInStage(children, completed.Stage.Int32)
 		} else if stagedChildrenAllTerminal(children, isTerminal) {
 			reason = fmt.Sprintf("父票子票全部终态：%s", label)
 		} else {
@@ -470,7 +752,17 @@ func (h *Handler) sedimentClosedBarrier(ctx context.Context, parent, completed d
 	} else {
 		return
 	}
-	h.noteMemoryProgress(ctx, parent.WorkspaceID, parent.ProjectID, reason)
+	h.noteMemoryMilestone(ctx, parent.WorkspaceID, parent.ProjectID, reason, h.sedimentDigest(ctx, sources), &sedimentSource{Kind: "issue", ID: uuidToString(parent.ID)})
+}
+
+func childrenInStage(children []db.Issue, stage int32) []db.Issue {
+	var out []db.Issue
+	for _, child := range children {
+		if child.Stage.Valid && child.Stage.Int32 == stage {
+			out = append(out, child)
+		}
+	}
+	return out
 }
 
 func nextOpenStage(children []db.Issue, closedStage int32, isTerminal func(db.Issue) bool) int32 {
@@ -620,21 +912,10 @@ func (h *Handler) ReportDaemonProjectMemoryCheck(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
-	if err := h.recordProjectMemoryCheck(r.Context(), project, request.Locations); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store project memory check")
+	response, err := h.observeLocalMemory(r.Context(), project, request.Locations)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	response := h.projectMemoryResponse(r.Context(), project)
-	if len(response.Missing) > 0 {
-		result, ensureErr := h.EnsureMemoryRound(r.Context(), project, "缺少项目记忆位置："+strings.Join(response.Missing, ", "))
-		if ensureErr != nil {
-			writeError(w, http.StatusInternalServerError, "project memory sediment failed")
-			return
-		}
-		if result.Error != "" {
-			response.SedimentError = stringPtr(result.Error)
-		}
-		response = h.projectMemoryResponse(r.Context(), project)
 	}
 	writeJSON(w, http.StatusOK, response)
 }

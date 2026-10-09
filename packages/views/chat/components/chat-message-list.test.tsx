@@ -1078,4 +1078,19 @@ describe("ChatMessageList opened-chat cards (DENE-1271)", () => {
 
     expect(screen.getByText("没有新开聊天：这个聊天本身是派生出来的，不能再往下开。")).toBeInTheDocument();
   });
+
+  it("frames a dispatched task's result as a receipt card", () => {
+    renderMessages([{
+      id: "receipt",
+      chat_session_id: "session-1",
+      role: "assistant",
+      content: "DENE-9 修登录 · 已完成\n\n结论：登录改走新令牌",
+      message_kind: "issue_receipt",
+      task_id: null,
+      created_at: "2026-10-08T00:00:00Z",
+    }]);
+
+    expect(screen.getByText("Task receipt")).toBeInTheDocument();
+    expect(screen.getByText(/结论：登录改走新令牌/)).toBeInTheDocument();
+  });
 });

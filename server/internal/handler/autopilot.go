@@ -2299,6 +2299,61 @@ func (h *Handler) ListAutopilotRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"runs": resp, "total": len(resp)})
 }
 
+// AutopilotLinkedChangeResponse is one write to an autopilot made through a
+// managed workspace link (DENE-1663): who started the run, from which viewer
+// workspace, and which agent.
+type AutopilotLinkedChangeResponse struct {
+	ID               string `json:"id"`
+	Route            string `json:"route"`
+	ActorID          string `json:"actor_id"`
+	ActorName        string `json:"actor_name"`
+	ViaWorkspaceID   string `json:"via_workspace_id"`
+	ViaWorkspaceName string `json:"via_workspace_name"`
+	ViaSlug          string `json:"via_slug"`
+	AgentID          string `json:"agent_id"`
+	AgentName        string `json:"agent_name"`
+	TaskID           string `json:"task_id"`
+	CreatedAt        string `json:"created_at"`
+}
+
+// ListAutopilotLinkedChanges returns the autopilot's writes made through a
+// managed workspace link, newest first.
+func (h *Handler) ListAutopilotLinkedChanges(w http.ResponseWriter, r *http.Request) {
+	autopilot, ok := h.loadAutopilotInWorkspace(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
+	if !ok {
+		return
+	}
+	limit := int32(50)
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 200 {
+		limit = int32(v)
+	}
+	rows, err := h.Queries.ListAutopilotLinkedChanges(r.Context(), db.ListAutopilotLinkedChangesParams{
+		AutopilotID: autopilot.ID,
+		Limit:       limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list linked changes")
+		return
+	}
+	resp := make([]AutopilotLinkedChangeResponse, len(rows))
+	for i, c := range rows {
+		resp[i] = AutopilotLinkedChangeResponse{
+			ID:               uuidToString(c.ID),
+			Route:            c.Route,
+			ActorID:          uuidToString(c.ActorID),
+			ActorName:        c.ActorName,
+			ViaWorkspaceID:   uuidToString(c.ViaWorkspaceID),
+			ViaWorkspaceName: c.ViaWorkspaceName,
+			ViaSlug:          c.ViaSlug,
+			AgentID:          uuidToString(c.AgentID),
+			AgentName:        c.AgentName,
+			TaskID:           uuidToString(c.TaskID),
+			CreatedAt:        timestampToString(c.CreatedAt),
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changes": resp})
+}
+
 // GetAutopilotRun returns a single run including its full trigger_payload.
 // Workspace scoping is enforced via loadAutopilotInWorkspace; the run is
 // then re-checked to belong to that autopilot so a guessed runId from

@@ -1967,6 +1967,7 @@
     "gateway_key_placeholder": "sk-…",
     "gateway_key_stored": "A key is saved",
     "gateway_key_save": "Save key",
+    "gateway_key_save_error": "Key not saved. Try again.",
     "gateway_key_clear": "Clear",
     "gateway_pair_incomplete": "Fill in both the endpoint and key, or the deployment's shared endpoint is used.",
     "gateway_default_model": "That deployment's own default model is {{model}}.",
@@ -1974,6 +1975,7 @@
     "filters_placeholder": "Unavailable seats are left out of assignment.",
     "health_checking": "Checking…",
     "health_recheck": "Re-check",
+    "health_recheck_failed": "Couldn't re-check. Try again.",
     "health_connected": "Connected · self-checked {{when}}",
     "health_never_checked": "No call made since the server started",
     "health_retry_in": "Retrying in about {{minutes}} min",
@@ -2029,10 +2031,10 @@
     "seats_work_off": "Work is off, so routing skips it",
     "seats_runtime_unknown": "Unknown runtime",
     "judge_title": "Judge model",
-    "judge_description": "Picks the tier (weak / medium / strong / strongest) with a probability. With the analysis model on, it sees only the facts.",
+    "judge_description": "Reads the analysis answers and may raise the rule table's tier by one, with a reason. It cannot lower it.",
     "judge_enabled_label": "Use the judge model",
     "analysis_title": "Analysis model",
-    "analysis_description": "Reads the whole ticket and reduces it to a few facts: scope, clarity, cost of a mistake, whether a person must decide. When a ticket stops, it writes where it is stuck.",
+    "analysis_description": "Reads the whole ticket and answers four multiple-choice questions: scope, clarity, cost of a mistake, whether a person must decide. When a ticket stops, it writes where it is stuck.",
     "analysis_enabled_label": "Use the analysis model",
     "analysis_source_label": "Source",
     "analysis_source_description": "Choose the API gateway or a subscribed runtime.",
@@ -2046,10 +2048,16 @@
     "analysis_key_label": "Analysis API key",
     "modes": {
       "none": "Neither model is on: no model is called, and every ticket goes to the fallback tier.",
-      "analysis": "Analysis only: the analysis model picks the tier, and the threshold gates its self-reported confidence.",
-      "analysis_judge": "Both on: the analysis model writes the facts and the judge picks the tier from them.",
-      "judge": "Judge only: the judge reads the ticket and picks the tier."
-    }
+      "analysis": "Analysis only: the analysis model answers the questions and the rule table sets the tier.",
+      "analysis_judge": "Both on: the rule table sets the tier, and the judge may raise it by one at most, never lower.",
+      "judge": "Judge only: nobody answers the questions, so the table's unanswered row sets the tier, and the judge may raise it by one."
+    },
+    "rules_title": "Tier rules",
+    "rules_description": "After the analysis model answers, the first matching rule from the top sets the tier.",
+    "rules_any_unknown": "Any question unanswered",
+    "rules_catch_all": "Nothing above matched",
+    "rules_review": "{{tier}}, reviewed",
+    "rules_no_review": "{{tier}}, no review"
   },
   "project_sharing": {
     "title": "Permissions & sharing",

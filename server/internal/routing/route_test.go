@@ -116,8 +116,10 @@ func TestTodoFillsBothSlotsAndDoesNotMention(t *testing.T) {
 	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空游戏" {
 		t.Errorf("assigns = %v, want [孙悟空游戏]", store.assigns)
 	}
-	if len(store.reviewer) != 1 || store.reviewer[0] != "布尔玛游戏" {
-		t.Errorf("reviewer writes = %v, want [布尔玛游戏]", store.reviewer)
+	// The unknown row asks for a check next to the executor: 孙悟空游戏 has
+	// no second model family on its rung here, so one rung down.
+	if len(store.reviewer) != 1 || store.reviewer[0] != "贝吉塔游戏" {
+		t.Errorf("reviewer writes = %v, want [贝吉塔游戏]", store.reviewer)
 	}
 	// Dispatched to an agent: somebody is on it, so an @ would be noise.
 	if out.Mentioned {
@@ -127,7 +129,7 @@ func TestTodoFillsBothSlotsAndDoesNotMention(t *testing.T) {
 		t.Errorf("subscribed %v with no mention to deliver", store.subs)
 	}
 	body := store.comments[KindAssignment][0]
-	for _, want := range []string{"孙悟空游戏", "布尔玛游戏", "游戏", "路由没有改过状态"} {
+	for _, want := range []string{"孙悟空游戏", "贝吉塔游戏", "游戏", "路由没有改过状态"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("decision comment is missing %q:\n%s", want, body)
 		}
@@ -230,10 +232,10 @@ func TestSecondRouteCallWritesNothingMore(t *testing.T) {
 	}
 }
 
-func TestLowConfidenceStillDispatchesToTheFallbackRung(t *testing.T) {
-	// Routing never parks a ticket for lack of confidence: an unconfident
-	// verdict lands on the ladder's fallback rung, both slots come out filled,
-	// and nobody is pinged — somebody is working on it.
+func TestJudgeBelowTheTableStillDispatchesOnTheTable(t *testing.T) {
+	// A judge answer weaker than the table (here: nobody answered the
+	// questions, so the unknown row's medium) never lowers it. Both slots
+	// come out filled, and nobody is pinged — somebody is working on it.
 	store := newFakeStore()
 	judge := &fakeJudge{verdict: Verdict{
 		ExecutorTier: "weak", ExecutorConfidence: 0.4,
@@ -244,10 +246,10 @@ func TestLowConfidenceStillDispatchesToTheFallbackRung(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空游戏" {
-		t.Errorf("assigns = %v, want the fallback rung (孙悟空游戏), not the unconfident pick", store.assigns)
+	if len(store.assigns) != 1 || store.assigns[0] != "贝吉塔游戏" {
+		t.Errorf("assigns = %v, want the table's medium rung (贝吉塔游戏), not the weak pick", store.assigns)
 	}
-	if len(store.reviewer) != 1 || store.reviewer[0] != "贝吉塔游戏" {
+	if len(store.reviewer) != 1 || store.reviewer[0] != "比克游戏" {
 		t.Errorf("reviewer = %v, want the rung below the executor, not the strongest", store.reviewer)
 	}
 	if out.Action != ActionAssigned {
@@ -257,8 +259,8 @@ func TestLowConfidenceStillDispatchesToTheFallbackRung(t *testing.T) {
 		t.Error("pinged a person about a ticket that was dispatched")
 	}
 	body := store.comments[KindAssignment][0]
-	if !strings.Contains(body, "兜底") {
-		t.Errorf("comment does not say the pick was a fallback:\n%s", body)
+	if !strings.Contains(body, "给的是弱档，没采用") {
+		t.Errorf("comment does not say the judge was overruled:\n%s", body)
 	}
 }
 
@@ -284,6 +286,7 @@ func TestReviewerIsNeverTheSeatThatDidTheWork(t *testing.T) {
 
 func TestReviewerCollisionOnTopRungFallsToTheRungBelow(t *testing.T) {
 	store := newFakeStore()
+	withCreatorFacts(store, strongFacts)
 	v := confidentVerdict()
 	v.ExecutorTier = "strongest"
 	v.ReviewerTier = "strongest"
@@ -300,15 +303,15 @@ func TestReviewerCollisionOnTopRungFallsToTheRungBelow(t *testing.T) {
 	}
 }
 
-// The judge answering "this acceptance needs a person" must not put a person
-// in the slot. This is the regression DENE-633 was reopened for: a reviewer
+// 要人拍板 must not put a person in the slot. This is the regression DENE-633 was reopened for: a reviewer
 // slot naming a member freezes the ticket, because a ticket a person holds is
 // one routing never touches again.
-func TestJudgeAskingForAPersonStillWritesASeat(t *testing.T) {
+func TestNeedsHumanStillWritesASeat(t *testing.T) {
 	store := newFakeStore()
-	v := confidentVerdict()
-	v.Reviewer = ReviewerHuman
-	judge := &fakeJudge{verdict: v}
+	facts := strongFacts
+	facts.NeedsHuman = true
+	withCreatorFacts(store, facts)
+	judge := &fakeJudge{verdict: confidentVerdict()}
 
 	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
 	if err != nil {
@@ -323,7 +326,7 @@ func TestJudgeAskingForAPersonStillWritesASeat(t *testing.T) {
 	}
 	body := store.comments[KindAssignment][0]
 	if !strings.Contains(body, "需要人拍板") {
-		t.Errorf("comment hides that the judge asked for a person:\n%s", body)
+		t.Errorf("comment hides that a person has to decide:\n%s", body)
 	}
 	if !strings.Contains(body, "@ 对应的人") {
 		t.Errorf("comment does not tell the seat to ping the person:\n%s", body)
@@ -337,9 +340,8 @@ func TestNoReviewNeededWritesAValueRatherThanLeavingTheSlotEmpty(t *testing.T) {
 	// An empty slot is re-judged on every later status change. "No review
 	// needed" has to be written down for the rule to ever close.
 	store := newFakeStore()
-	v := confidentVerdict()
-	v.Reviewer = ReviewerNone
-	judge := &fakeJudge{verdict: v}
+	withCreatorFacts(store, mediumFacts)
+	judge := &fakeJudge{verdict: confidentVerdict()}
 
 	out, err := newRouter(store, judge).Route(context.Background(), "ws", "issue-1")
 	if err != nil {
@@ -839,8 +841,8 @@ func TestUnknownProjectDoesNotGuessADirection(t *testing.T) {
 
 func TestBrokenVerdictBranchFallsBackRatherThanGuessing(t *testing.T) {
 	// A tier the ladder does not have is a broken answer, not a licence to
-	// improvise: the ticket goes to the declared fallback rung, and the reason
-	// names the tier so the drift is visible.
+	// improvise: the ticket stays on the table's rung, and the reason names
+	// the tier so the drift is visible.
 	store := newFakeStore()
 	v := confidentVerdict()
 	v.ExecutorTier = "godlike"
@@ -850,8 +852,8 @@ func TestBrokenVerdictBranchFallsBackRatherThanGuessing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空游戏" {
-		t.Errorf("assigns = %v, want the fallback rung", store.assigns)
+	if len(store.assigns) != 1 || store.assigns[0] != "贝吉塔游戏" {
+		t.Errorf("assigns = %v, want the table's rung", store.assigns)
 	}
 	if !strings.Contains(out.Reason, `"godlike"`) {
 		t.Errorf("reason = %q, want it to name the tier the judge invented", out.Reason)
@@ -959,7 +961,7 @@ func TestLowConfidenceReportsTheFallbackWithAReadableReason(t *testing.T) {
 	if out.Action != ActionAssigned || out.ExecutorWritten == nil || out.ReviewerWritten.Empty() {
 		t.Fatalf("outcome = %+v, want both slots written", out)
 	}
-	for _, want := range []string{"executor fell back to 孙悟空游戏: confidence 47% < threshold 70%", "reviewer fell back to 贝吉塔游戏: confidence 38% < threshold 70%"} {
+	for _, want := range []string{`judge answer "weak" not used`} {
 		if !strings.Contains(out.Reason, want) {
 			t.Errorf("reason = %q, want it to contain %q", out.Reason, want)
 		}
@@ -980,10 +982,11 @@ func TestLowConfidenceReportsTheFallbackWithAReadableReason(t *testing.T) {
 	}
 }
 
-func TestUnconfidentReviewerIsNamedInTheReasonButStillFilled(t *testing.T) {
+// The judge has no say over the reviewer: the table's row does.
+func TestJudgesReviewerAnswerDoesNotDecideTheSlot(t *testing.T) {
 	store := newFakeStore()
 	v := confidentVerdict()
-	v.ReviewerConfidence = 0.38
+	v.Reviewer, v.ReviewerConfidence = ReviewerNone, 1
 	out, err := newRouter(store, &fakeJudge{verdict: v}).Route(context.Background(), "ws", "issue-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -991,8 +994,8 @@ func TestUnconfidentReviewerIsNamedInTheReasonButStillFilled(t *testing.T) {
 	if out.Action != ActionAssigned || out.ExecutorWritten == nil || out.ReviewerWritten.Empty() {
 		t.Errorf("outcome = %+v, want assigned with both slots written", out)
 	}
-	if !strings.Contains(out.Reason, "reviewer fell back") || strings.Contains(out.Reason, "executor") {
-		t.Errorf("reason = %q, want only the reviewer slot named", out.Reason)
+	if out.ReviewerWritten.Kind != ReviewerAgent || out.Reason != "" {
+		t.Errorf("reviewer = %+v reason = %q, want the table's seat and no note", out.ReviewerWritten, out.Reason)
 	}
 }
 
@@ -1091,14 +1094,16 @@ func TestInReviewFillsAnEmptyReviewerSlotAndHandsOff(t *testing.T) {
 	if out.Action != ActionHandedOff {
 		t.Fatalf("action = %q, want %q (reason %q)", out.Action, ActionHandedOff, out.Reason)
 	}
-	if out.ReviewerWritten.Label() != "布尔玛游戏" {
-		t.Errorf("reviewer written = %q, want 布尔玛游戏", out.ReviewerWritten.Label())
+	// The table asks for a check; the ladder puts it next to the holder,
+	// one rung down because strong has no second family here.
+	if out.ReviewerWritten.Label() != "贝吉塔游戏" {
+		t.Errorf("reviewer written = %q, want 贝吉塔游戏", out.ReviewerWritten.Label())
 	}
-	if len(store.reviewer) != 1 || store.reviewer[0] != "布尔玛游戏" {
-		t.Errorf("reviewer slot = %v, want [布尔玛游戏]", store.reviewer)
+	if len(store.reviewer) != 1 || store.reviewer[0] != "贝吉塔游戏" {
+		t.Errorf("reviewer slot = %v, want [贝吉塔游戏]", store.reviewer)
 	}
-	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-bulma-g" {
-		t.Errorf("handoffs = %v, want [agent:a-bulma-g]", store.handoffs)
+	if len(store.handoffs) != 1 || store.handoffs[0] != "agent:a-vegeta-g" {
+		t.Errorf("handoffs = %v, want [agent:a-vegeta-g]", store.handoffs)
 	}
 	body := store.comments[KindHandoff][0]
 	if !strings.Contains(body, "现场定了一个") {
@@ -1214,6 +1219,7 @@ func TestTopRungExecutorFallsBackToTheRungBelow(t *testing.T) {
 // strong, the check steps down.
 func TestStrongExecutorFallbackReviewerIsNotStrongest(t *testing.T) {
 	store := newFakeStore()
+	withCreatorFacts(store, strongFacts)
 	judge := &fakeJudge{verdict: Verdict{
 		ExecutorTier: "strong", ExecutorConfidence: 0.9,
 		Reviewer: ReviewerSeat, ReviewerTier: "strongest", ReviewerConfidence: 0.2,
@@ -1246,6 +1252,7 @@ func TestStrongExecutorFallbackReviewerIsNotStrongest(t *testing.T) {
 func TestStrongExecutorFallbackReviewerUsesAnotherModelOnTheSameTier(t *testing.T) {
 	store := newFakeStore()
 	store.roster["特兰克斯游戏"] = Agent{ID: "a-trunks-g", Name: "特兰克斯游戏"}
+	withCreatorFacts(store, strongFacts)
 	judge := &fakeJudge{verdict: Verdict{
 		ExecutorTier: "strong", ExecutorConfidence: 0.9,
 		Reviewer: ReviewerSeat, ReviewerTier: "strongest", ReviewerConfidence: 0.2,
@@ -1261,5 +1268,38 @@ func TestStrongExecutorFallbackReviewerUsesAnotherModelOnTheSameTier(t *testing.
 	body := store.comments[KindAssignment][0]
 	if !strings.Contains(body, "同档换一家模型") {
 		t.Errorf("comment does not say the reviewer stayed on the rung:\n%s", body)
+	}
+}
+
+func TestRuleTableDecidesTheReviewerWhateverJudgedReviewSays(t *testing.T) {
+	// 按判断配验收 (DENE-1252) asked the judge whether a check was needed.
+	// Since DENE-1677 the rule table answers that with certainty, so the
+	// switch reads without error and changes nothing.
+	for _, on := range []bool{true, false} {
+		for _, tc := range []struct {
+			facts Facts
+			seat  bool
+		}{{mediumFacts, false}, {strongFacts, true}} {
+			store := newFakeStore()
+			store.settings.JudgedReview = on
+			withCreatorFacts(store, tc.facts)
+			if _, err := newRouter(store, &fakeJudge{verdict: confidentVerdict()}).Route(context.Background(), "ws", "issue-1"); err != nil {
+				t.Fatalf("route: %v", err)
+			}
+			if len(store.reviewer) != 1 || (store.reviewer[0] != LabelNoReview) != tc.seat {
+				t.Errorf("judged review %v, facts %+v: reviewer = %v, want seat=%v", on, tc.facts, store.reviewer, tc.seat)
+			}
+		}
+	}
+}
+
+func TestJudgedReviewKeepsAConfidentSeat(t *testing.T) {
+	store := newFakeStore()
+	store.settings.JudgedReview = true
+	if _, err := newRouter(store, &fakeJudge{verdict: confidentVerdict()}).Route(context.Background(), "ws", "issue-1"); err != nil {
+		t.Fatalf("route: %v", err)
+	}
+	if len(store.reviewer) != 1 || store.reviewer[0] == LabelNoReview {
+		t.Errorf("reviewer = %v, want the judged seat", store.reviewer)
 	}
 }

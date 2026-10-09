@@ -77,7 +77,11 @@
     "stall_review_title": "Ce ticket est en revue de stagnation pendant 24 heures",
     "stall_processed_title": "Ce ticket a été traité automatiquement",
     "stall_keep": "Conserver",
-    "stall_undo": "Annuler le traitement"
+    "stall_undo": "Annuler le traitement",
+    "link_projects": "Projets : {{projects}}",
+    "link_answer": "Traiter dans Espaces liés",
+    "link_open": "Ouvrir Espaces liés",
+    "stall_action_failed": "Impossible de mettre à jour le ticket"
   },
   "types": {
     "needs_you": "Nécessite votre attention",
@@ -108,7 +112,10 @@
     "agent_access_approved": "Accès à l'agent approuvé",
     "agent_access_declined": "Accès à l'agent refusé",
     "parking_unexplained": "Arrêt sans explication",
-    "issue_stall_action": "Action de stagnation"
+    "issue_stall_action": "Action de stagnation",
+    "workspace_link_request": "Demande de liaison",
+    "workspace_link_accepted": "Liaison acceptée",
+    "workspace_link_declined": "Liaison refusée"
   },
   "labels": {
     "set_status_to": "Statut défini sur",
@@ -126,7 +133,10 @@
     "children_done_stage": "Sous-tâches de l’étape {{stage}} terminées",
     "access_requested_by": "{{requester}} demande à utiliser {{agent}}",
     "access_approved_for": "Votre demande d'utiliser {{agent}} a été approuvée",
-    "access_declined_for": "Votre demande d'utiliser {{agent}} a été refusée"
+    "access_declined_for": "Votre demande d'utiliser {{agent}} a été refusée",
+    "link_requested_by": "{{source}} souhaite partager des projets avec vous",
+    "link_accepted_by": "{{target}} a accepté votre liaison",
+    "link_declined_by": "{{target}} a refusé votre liaison"
   },
   "toasts": {
     "source_context_retry_started": "Nouvelle tentative démarrée avec le contexte d'origine",

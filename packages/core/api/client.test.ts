@@ -4,6 +4,8 @@ import { configStore } from "../config";
 import type { StorageAdapter, User } from "../types";
 import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage } from "./client";
 import { EMPTY_PLUGIN_PACKAGE_LIST, EMPTY_PLUGIN_PREVIEW, EMPTY_PLUGIN_SURFACE_LAUNCH } from "./schemas";
+import { UnreadableFileError } from "../attachments/file-readable";
+import { isRetryableUploadError } from "../attachments/upload-retry";
 
 afterEach(() => {
   configStore.getState().setAgentConversationStartersSupported(false);
@@ -2181,6 +2183,22 @@ describe("ApiClient", () => {
       await expect(
         client.uploadFile(file, undefined, controller.signal),
       ).rejects.toMatchObject({ name: "AbortError" });
+    });
+
+    it("fails fast without a request when the file's bytes cannot be read", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      // A pasted Telegram photo: name and size, but every read rejects.
+      const file = new File(["photo"], "telegram-cloud-photo.jpg", { type: "image/jpeg" });
+      vi.spyOn(file, "slice").mockReturnValue({
+        arrayBuffer: () => Promise.reject(new DOMException("unreadable", "NotReadableError")),
+      } as unknown as Blob);
+
+      const err = await new ApiClient("https://api.example.test").uploadFile(file).catch((e) => e);
+      expect(err).toBeInstanceOf(UnreadableFileError);
+      expect(isRetryableUploadError(err)).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("sendChatMessage serialises attachment_ids onto the JSON body when present", async () => {

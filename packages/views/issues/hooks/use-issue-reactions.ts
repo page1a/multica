@@ -10,8 +10,11 @@ import type {
 import { issueReactionsOptions, issueKeys } from "@multica/core/issues/queries";
 import { useToggleIssueReaction, type ToggleIssueReactionVars } from "@multica/core/issues/mutations";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
+import { toast } from "sonner";
+import { useT } from "../../i18n";
 
 export function useIssueReactions(issueId: string, userId?: string) {
+  const { t } = useT("issues");
   const qc = useQueryClient();
   const { data: serverReactions = [], isLoading: loading } = useQuery(
     issueReactionsOptions(issueId),
@@ -129,9 +132,13 @@ export function useIssueReactions(issueId: string, userId?: string) {
           r.actor_type === "member" &&
           r.actor_id === userId,
       );
-      toggleMutation.mutate({ emoji, existing });
+      // The optimistic chip vanishes on failure; say why.
+      toggleMutation.mutate(
+        { emoji, existing },
+        { onError: () => toast.error(t(($) => $.comment.reaction_failed)) },
+      );
     },
-    [userId, serverReactions, toggleMutation],
+    [userId, serverReactions, toggleMutation, t],
   );
 
   return { reactions, loading, toggleReaction };

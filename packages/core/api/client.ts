@@ -5,6 +5,7 @@ import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue
 import type { IssueDeliveryLines } from "./schemas";
 import { WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
 import type { InboxFilters } from "../inbox/filter-store";
+import type { ChatLinkedProjectRef, LinkedProjectOption } from "../types/workspace-link";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import type { InboxBoardResponse, ParkingRecordsResponse, UnreadInboxIssue, WaitingSummon } from "../types/home";
 import type { WorkThreadSnapshot } from "../types/work_thread";
@@ -129,6 +130,7 @@ import type {
   ChatMessage,
   ChatMessagesPage,
   ChatDraftRestoresResponse,
+  ChatTicketsResponse,
   ChatPendingTask,
   PrioritizeQueuedChatTaskResponse,
   PendingChatTasksResponse,
@@ -139,7 +141,9 @@ import type {
   CancelTaskResponse,
   Project,
   ProjectMemoryStatus,
+  ProjectMemoryMonitor,
   ProjectMemoryChecklistItem,
+  ProjectReport,
   CloseIssueRequest,
   CloseIssueResponse,
   ProjectMember,
@@ -317,6 +321,7 @@ import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import { compressImageForUpload } from "../attachments/compress-image";
+import { isFileReadable, UnreadableFileError } from "../attachments/file-readable";
 import { defaultStorage } from "../platform/storage";
 import {
   parseRoutingHealth,
@@ -4788,6 +4793,9 @@ export class ApiClient {
     // failure via `signal.aborted` / `err.name === "AbortError"`.
     signal?: AbortSignal,
   ): Promise<Attachment> {
+    // A handle whose bytes cannot be read fails like a dropped connection
+    // once sent; stop here so the retry policy does not spin on it.
+    if (!(await isFileReadable(file))) throw new UnreadableFileError(file.name);
     // Large phone photos are downscaled first: on a slow uplink the original
     // often cannot finish inside the proxy timeout (see compress-image.ts).
     const body = await compressImageForUpload(file);
@@ -5126,6 +5134,8 @@ export class ApiClient {
        *  than silently preferring one. */
       project_ids?: string[];
       project_id?: string | null;
+      /** Read-only projects shared from linked workspaces (DENE-1643). */
+      linked_projects?: ChatLinkedProjectRef[];
     },
     workspaceSlug?: string,
   ): Promise<ChatSession> {
@@ -5176,7 +5186,12 @@ export class ApiClient {
     // One field per request: the server rejects a body that carries more than
     // one of them. `project_ids` is the complete replacement set in selection
     // order; an empty array clears the session's project context.
-    data: { title: string } | { project_id: string | null } | { project_ids: string[] },
+    // `linked_projects` replaces the read-only linked set the same way.
+    data:
+      | { title: string }
+      | { project_id: string | null }
+      | { project_ids: string[] }
+      | { linked_projects: ChatLinkedProjectRef[] },
   ): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}`, {
       method: "PATCH",
@@ -5323,6 +5338,11 @@ export class ApiClient {
     return parseWithFallback(raw, ChatPendingTaskSchema, EMPTY_CHAT_PENDING_TASK, {
       endpoint: "GET /api/chat/sessions/:id/pending-task",
     });
+  }
+
+  /** Issues this chat opened, oldest first (DENE-1665). */
+  async listChatTickets(sessionId: string): Promise<ChatTicketsResponse> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/tickets`);
   }
 
   async getChatWorkThread(sessionId: string): Promise<WorkThreadSnapshot | null> {
@@ -5520,6 +5540,11 @@ export class ApiClient {
     return this.fetch(`/api/projects/${id}`);
   }
 
+  /** The project's news since the caller last heard it; reading moves nothing. */
+  async getProjectReport(id: string): Promise<ProjectReport> {
+    return this.fetch(`/api/projects/${id}/report`);
+  }
+
   async listProjectMemoryLocations(): Promise<{
     locations: ProjectMemoryChecklistItem[];
     builtin_sediment_instruction?: string;
@@ -5529,6 +5554,11 @@ export class ApiClient {
 
   async getProjectMemory(id: string): Promise<ProjectMemoryStatus> {
     return this.fetch(`/api/projects/${id}/memory/status`);
+  }
+
+  async getProjectMemoryMonitor(id: string, days?: number): Promise<ProjectMemoryMonitor> {
+    const query = days ? `?days=${days}` : "";
+    return this.fetch(`/api/projects/${id}/memory/monitor${query}`);
   }
 
   async checkProjectMemory(
@@ -6617,6 +6647,12 @@ export class ApiClient {
 
   async revokeWorkspaceLink(linkId: string): Promise<void> {
     await this.fetch(`/api/workspace-links/${encodeURIComponent(linkId)}`, { method: "DELETE" });
+  }
+
+  /** Shared projects this workspace may attach to a chat read-only (DENE-1643). */
+  async listLinkedProjectOptions(): Promise<LinkedProjectOption[]> {
+    const raw = await this.fetch<{ projects?: LinkedProjectOption[] }>("/api/workspace-links/projects");
+    return Array.isArray(raw?.projects) ? raw.projects : [];
   }
 
   async getLinkedView(linkId: string, params: LinkedViewParams = {}): Promise<LinkedView> {

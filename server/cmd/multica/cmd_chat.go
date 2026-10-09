@@ -104,6 +104,26 @@ var chatToGoalCmd = &cobra.Command{
 	RunE:  runChatToGoal,
 }
 
+var chatTicketsCmd = &cobra.Command{
+	Use:   "tickets",
+	Short: "List the issues a chat opened",
+	Long: `List the issues opened from a chat — by its agent's "issue create" or
+"plan apply", or by turning the chat into a goal — oldest first, with status,
+assignee and the first line of each issue's 目标 section, plus its latest
+status move (from_status, changed_at) and phase — waiting_you, in_progress or
+done, bucketed as "multica project report" does. A ticket that is done,
+blocked, cancelled or in review also carries its result: the close's summary,
+PRs and knowledge (summary, pull_requests, knowledge). The chat shows the same
+list as its ticket cards and progress bar; each issue names the chat back as
+source_chat in "multica issue get".
+
+  multica chat tickets
+  multica chat tickets --session <id|url> --output json
+`,
+	Args: cobra.NoArgs,
+	RunE: runChatTickets,
+}
+
 var chatTitleCmd = &cobra.Command{
 	Use:   "title <Project · topic>",
 	Short: "Report the title for the current chat",
@@ -203,6 +223,9 @@ func init() {
 	chatToGoalCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
 	chatToGoalCmd.Flags().String("output", "json", "Output format: table or json")
 	chatCmd.AddCommand(chatTitleCmd)
+	chatCmd.AddCommand(chatTicketsCmd)
+	chatTicketsCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
+	chatTicketsCmd.Flags().String("output", "table", "Output format: table or json")
 	chatCmd.AddCommand(chatOpenCmd)
 	chatCmd.AddCommand(chatSendCmd)
 	chatCmd.AddCommand(chatHandoffCmd)
@@ -254,6 +277,75 @@ func runChatTitle(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return cli.PrintJSON(os.Stdout, out)
+}
+
+func runChatTickets(cmd *cobra.Command, _ []string) error {
+	session, _ := cmd.Flags().GetString("session")
+	if strings.TrimSpace(session) == "" {
+		session = os.Getenv("MULTICA_CHAT_SESSION_ID")
+	}
+	ref, err := parseChatSessionLinkRef(session)
+	if err != nil {
+		return fmt.Errorf("chat tickets: --session is required (or set MULTICA_CHAT_SESSION_ID): %w", err)
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var out struct {
+		ChatSessionID string           `json:"chat_session_id"`
+		Tickets       []map[string]any `json:"tickets"`
+	}
+	if err := client.GetJSON(ctx, "/api/chat/sessions/"+url.PathEscape(ref.ID)+"/tickets", &out); err != nil {
+		return fmt.Errorf("list chat tickets: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output != "table" {
+		return cli.PrintJSON(os.Stdout, out)
+	}
+	if len(out.Tickets) == 0 {
+		fmt.Println("This chat has not opened any issues.")
+		return nil
+	}
+	headers := []string{"IDENTIFIER", "STATUS", "PHASE", "ASSIGNEE", "TITLE", "RESULT"}
+	rows := make([][]string, 0, len(out.Tickets))
+	for _, t := range out.Tickets {
+		assignee, _ := t["assignee_name"].(string)
+		if assignee == "" {
+			assignee = "-"
+		}
+		phase, _ := t["phase"].(string)
+		if phase == "" {
+			phase = "-"
+		}
+		rows = append(rows, []string{fmt.Sprint(t["identifier"]), fmt.Sprint(t["status"]), phase, assignee, fmt.Sprint(t["title"]), chatTicketResult(t)})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+// chatTicketResult is a ticket's receipt in one table cell: its close summary
+// and PRs, "-" while it has none.
+func chatTicketResult(t map[string]any) string {
+	var parts []string
+	if summary, _ := t["summary"].(string); summary != "" {
+		if r := []rune(summary); len(r) > 60 {
+			summary = string(r[:59]) + "…"
+		}
+		parts = append(parts, summary)
+	}
+	prs, _ := t["pull_requests"].([]any)
+	for _, raw := range prs {
+		if pr, ok := raw.(map[string]any); ok {
+			parts = append(parts, fmt.Sprintf("PR #%v %v", pr["number"], pr["state"]))
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " · ")
 }
 
 func runChatToGoal(cmd *cobra.Command, _ []string) error {

@@ -160,14 +160,12 @@
     "open_in_new_tab": "Ouvrir dans un nouvel onglet"
   },
   "work_thread": {
-    "thread": "Fil · {{state}}",
+    "resumable": "Arrêté en cours de route",
     "queued_count": "{{count}} en attente",
     "continue": "Continuer",
-    "continue_aria": "Continuer le fil de travail",
+    "continue_aria": "Reprendre là où l'agent s'est arrêté",
     "interrupt": "Interrompre",
     "interrupt_aria": "Interrompre le fil de travail",
-    "queue": "Mettre en file",
-    "queue_aria": "Mettre une entrée en file dans le fil de travail",
     "insert": "Insérer",
     "prioritize_aria": "Prioriser {{id}}"
   },

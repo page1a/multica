@@ -117,3 +117,73 @@ func TestContinuationSkipsMentionOnly(t *testing.T) {
 		t.Fatal("a mention_only seat continued a related ticket automatically")
 	}
 }
+
+// DENE-1648: a seat limited to projects is a candidate only on tickets in
+// one of them. A ticket with no project, or a path that never said which
+// ticket it picks for, does not get it.
+func TestProjectLimitedSeatOnlyInItsProjects(t *testing.T) {
+	ipa := SeatState{Projects: []string{"p-ipa"}}
+	cases := []struct {
+		name string
+		c    SelectContext
+		ok   bool
+	}{
+		{"own project", SelectContext{ProjectID: "p-ipa"}, true},
+		{"other project", SelectContext{ProjectID: "p-other"}, false},
+		{"no project", SelectContext{}, false},
+		{"shared roster", SelectContext{AnyProject: true}, true},
+	}
+	for _, tc := range cases {
+		ok, why := SeatSelectable(ipa, tc.c)
+		if ok != tc.ok || (!ok && why != ReasonOutOfProject) {
+			t.Fatalf("%s: ok=%v why=%q, want ok=%v", tc.name, ok, why, tc.ok)
+		}
+	}
+	if ok, _ := SeatSelectable(SeatState{}, SelectContext{ProjectID: "p-other"}); !ok {
+		t.Fatal("an unlimited seat was refused")
+	}
+
+	roster := map[string]Agent{
+		"克林":  {ID: "krillin", Name: "克林", Tier: "weak"},
+		"拉蒂兹": {ID: "raditz", Name: "拉蒂兹", Tier: "weak", Usage: "ample", State: ipa},
+	}
+	weak, ok := SeatByTier(DefaultLadder.SceneCandidates(GenericScene, ForProject(roster, "p-other")), "weak")
+	if !ok || weak.ID != "krillin" {
+		t.Fatalf("other project: weak rung = %+v, want 克林", weak)
+	}
+	weak, ok = SeatByTier(DefaultLadder.SceneCandidates(GenericScene, ForProject(roster, "p-ipa")), "weak")
+	if !ok || weak.ID != "raditz" {
+		t.Fatalf("own project: weak rung = %+v, want the ample 拉蒂兹", weak)
+	}
+}
+
+// Routing end to end: a weak rule-table row on a ticket outside the seat's project
+// lands on another weak seat.
+func TestRouteSkipsSeatLimitedToAnotherProject(t *testing.T) {
+	store := newFakeStore()
+	store.issue.ProjectID = "p-other"
+	store.roster = map[string]Agent{
+		"孙悟空": {ID: "goku", Name: "孙悟空", Tier: "strong"},
+		"克林":  {ID: "krillin", Name: "克林", Tier: "weak", Usage: "tight"},
+		"拉蒂兹": {ID: "raditz", Name: "拉蒂兹", Tier: "weak", Usage: "ample", State: SeatState{Projects: []string{"p-ipa"}}},
+	}
+	withCreatorFacts(store, weakFacts)
+	judge := &fakeJudge{verdict: Verdict{ExecutorTier: "weak", ExecutorConfidence: 1, Reviewer: ReviewerNone, ReviewerConfidence: 1}}
+	out := routeWith(t, store, judge, nil)
+	if out.ExecutorWritten == nil || out.ExecutorWritten.ID != "krillin" {
+		t.Fatalf("executor = %+v, want 克林", out.ExecutorWritten)
+	}
+
+	store = newFakeStore()
+	store.issue.ProjectID = "p-ipa"
+	store.roster = map[string]Agent{
+		"孙悟空": {ID: "goku", Name: "孙悟空", Tier: "strong"},
+		"克林":  {ID: "krillin", Name: "克林", Tier: "weak", Usage: "tight"},
+		"拉蒂兹": {ID: "raditz", Name: "拉蒂兹", Tier: "weak", Usage: "ample", State: SeatState{Projects: []string{"p-ipa"}}},
+	}
+	withCreatorFacts(store, weakFacts)
+	out = routeWith(t, store, judge, nil)
+	if out.ExecutorWritten == nil || out.ExecutorWritten.ID != "raditz" {
+		t.Fatalf("own project executor = %+v, want 拉蒂兹", out.ExecutorWritten)
+	}
+}

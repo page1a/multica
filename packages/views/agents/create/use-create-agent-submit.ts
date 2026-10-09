@@ -105,10 +105,10 @@ export function useCreateAgentSubmit(options: {
           });
           await Promise.all([
             qc.invalidateQueries({
-              queryKey: [...workspaceKeys.squads(wsId), squadId, "members"],
+              queryKey: workspaceKeys.squadMembers(wsId, squadId),
             }),
             qc.invalidateQueries({
-              queryKey: [...workspaceKeys.squads(wsId), squadId],
+              queryKey: workspaceKeys.squad(wsId, squadId),
             }),
           ]);
         } catch (error) {

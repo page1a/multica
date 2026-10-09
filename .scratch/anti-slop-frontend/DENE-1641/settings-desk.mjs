@@ -1,0 +1,11 @@
+import { chromium } from "playwright";
+import fs from "node:fs";
+const b = await chromium.launch({ channel: "chrome" });
+const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript(t => localStorage.setItem("multica_token", t), fs.readFileSync("/tmp/dene1641_dev","utf8").trim());
+const p = await ctx.newPage();
+await p.goto("http://localhost:13920/dev/settings?tab=workspace-links&section=incoming", { waitUntil: "domcontentloaded", timeout: 120000 });
+await p.getByRole("button", { name: "Accept", exact: true }).waitFor({ timeout: 60000 });
+await p.waitForTimeout(1500);
+await p.screenshot({ path: process.argv[2] });
+await b.close();

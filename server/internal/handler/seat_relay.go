@@ -55,7 +55,12 @@ func (h *Handler) disabledParentSeat(ctx context.Context, parent db.Issue) (db.A
 
 // substituteAgent picks a same-tier other-family seat, or one tier down,
 // that can take work the failed seat cannot.
-func (h *Handler) substituteAgent(ctx context.Context, workspaceID pgtype.UUID, failed db.Agent, avoid []string, scene routing.Scene) (db.Agent, routing.Seat, bool) {
+func (h *Handler) substituteAgent(ctx context.Context, workspaceID pgtype.UUID, failed db.Agent, avoid []string, issue db.Issue) (db.Agent, routing.Seat, bool) {
+	scene := service.IssueDomainScene(ctx, h.Queries, issue).Scene
+	projectID := ""
+	if issue.ProjectID.Valid {
+		projectID = uuidToString(issue.ProjectID)
+	}
 	agents, err := h.Queries.ListAgents(ctx, workspaceID)
 	if err != nil {
 		return db.Agent{}, routing.Seat{}, false
@@ -65,7 +70,7 @@ func (h *Handler) substituteAgent(ctx context.Context, workspaceID pgtype.UUID, 
 	seats := newSeatDomains(routingStore{h: h}.domainNames(ctx, workspaceID), agents)
 	for _, agent := range agents {
 		state := service.AgentSeatState(agent)
-		if ok, _ := routing.SeatSelectable(state, routing.SelectContext{}); !ok {
+		if ok, _ := routing.SeatSelectable(state, routing.SelectContext{ProjectID: projectID}); !ok {
 			continue
 		}
 		id := uuidToString(agent.ID)
@@ -118,7 +123,7 @@ func (h *Handler) planStageAdvance(ctx context.Context, parent db.Issue, childre
 	if !parentOff {
 		return plan
 	}
-	replacement, _, ok := h.substituteAgent(ctx, parent.WorkspaceID, off, nil, service.IssueDomainScene(ctx, h.Queries, parent).Scene)
+	replacement, _, ok := h.substituteAgent(ctx, parent.WorkspaceID, off, nil, parent)
 	if !ok {
 		plan.skipWake = true
 		plan.note += fmt.Sprintf(" 父票执行人 %s 已停用，同档和下一档都没有能接的席位，阶段没有人推进。", off.Name)
@@ -211,7 +216,7 @@ func stagePromotionNote(promoted []string, started int, held []stagegate.Hold) s
 func (h *Handler) coverDisabledMention(ctx context.Context, issue db.Issue, failed db.Agent, authorType, authorID, originator, wsID string) (db.Agent, bool) {
 	avoid := []string{}
 	for range 4 {
-		agent, _, ok := h.substituteAgent(ctx, issue.WorkspaceID, failed, avoid, service.IssueDomainScene(ctx, h.Queries, issue).Scene)
+		agent, _, ok := h.substituteAgent(ctx, issue.WorkspaceID, failed, avoid, issue)
 		if !ok {
 			return db.Agent{}, false
 		}

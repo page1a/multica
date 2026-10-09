@@ -2,6 +2,8 @@ package handler
 
 import (
 	"net/http"
+
+	"github.com/multica-ai/multica/server/internal/workspacelink"
 )
 
 // RequireHumanActor is a chi-style middleware that rejects requests
@@ -112,7 +114,9 @@ func isMachineCredentialActor(r *http.Request) bool {
 	// client-supplied value before stamping its own, so a recognized value here
 	// is authoritative.
 	switch r.Header.Get("X-Actor-Source") {
-	case "task_token", "cloud_pat":
+	case "task_token", "cloud_pat", workspacelink.ManagedActorSource:
+		// A managed request (DENE-1663) runs as its originator but is still
+		// an agent's call: human-only gates refuse it.
 		return true
 	default:
 		return false

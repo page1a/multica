@@ -122,3 +122,31 @@ SELECT id, title, icon FROM project
 WHERE workspace_id = sqlc.arg('workspace_id')::uuid
   AND visibility <> 'private'
 ORDER BY title, id;
+
+-- name: ListLinkedReferenceProjects :many
+-- DENE-1643: the full rows of a link's shared projects, for the read-only
+-- project context (description, resources, memory). Same filter as
+-- ListLinkedViewProjects: still ticked on this link, still in the source,
+-- still not private. An empty project_ids filter means every ticked project.
+SELECT p.* FROM workspace_link_project lp
+JOIN project p ON p.id = lp.project_id
+WHERE lp.link_id = sqlc.arg('link_id')::uuid
+  AND p.workspace_id = sqlc.arg('source_workspace_id')::uuid
+  AND p.visibility <> 'private'
+  AND (cardinality(sqlc.arg('project_ids')::uuid[]) = 0 OR p.id = ANY(sqlc.arg('project_ids')::uuid[]))
+ORDER BY p.title, p.id;
+
+-- name: SetWorkspaceLinkManaged :one
+-- DENE-1663: the source owner's switch letting the viewer's agents manage
+-- the source's issues and autopilots for their run's originator.
+UPDATE workspace_link SET managed = sqlc.arg('managed')::boolean
+WHERE id = sqlc.arg('id')::uuid
+RETURNING *;
+
+-- name: GetActiveWorkspaceLinkBetween :one
+-- The active link from source to viewer, if any. The managed gate reads it
+-- on every call, so switching managed off or revoking takes effect at once.
+SELECT * FROM workspace_link
+WHERE source_workspace_id = sqlc.arg('source_workspace_id')::uuid
+  AND target_workspace_id = sqlc.arg('target_workspace_id')::uuid
+  AND status = 'active';

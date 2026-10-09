@@ -90,6 +90,10 @@
     "no_projects": "プロジェクトがまだありません",
     "switch_project": "他のプロジェクトに切り替え…",
     "project_context_unsupported": "プロジェクトの説明は適用されません——このエージェントのデーモンのアップグレードが必要です",
+    "linked_projects": "連携プロジェクト（読み取り専用）",
+    "linked_project_chip": "{{source}} の読み取り専用プロジェクト",
+    "linked_project_stale": "無効",
+    "linked_project_stale_hint": "共有が解除されたため、エージェントには渡されません",
     "to_goal": "转成目标任务",
     "mode_menu": "送信方法",
     "mode_steer": "割り込み",
@@ -166,7 +170,8 @@
     "quick_actions_regenerate": "候補を再生成",
     "quick_actions_regenerate_failed": "候補を再生成できませんでした。もう一度お試しください。",
     "spawned": "チャットを作成",
-    "spawn_untitled": "新しいチャット"
+    "spawn_untitled": "新しいチャット",
+    "issue_receipt": "タスクの結果"
   },
   "session_history": {
     "untitled": "無題",
@@ -372,6 +377,7 @@
     "remove": "外す",
     "save": "保存",
     "cancel": "キャンセル",
+    "save_failed": "保存できませんでした",
     "note_bound": "非公開にすると、ほかの人の一覧から消えます。",
     "note_unbound": "プロジェクト未設定のチャットは非公開のままです。",
     "view_only": "このチャットは読めますが、発言はできません。",
@@ -391,7 +397,8 @@
     "title": "一部のチャットがプロジェクトメンバーに見えるようになりました",
     "body": "プロジェクトメンバーが見られるチャットが {{count}} 件あります。",
     "make_private": "選択したものを非公開にする",
-    "dismiss": "了解"
+    "dismiss": "了解",
+    "failed": "保存できませんでした。もう一度お試しください。"
   },
   "title_locked": "タイトルはロック済み（エージェントは変更しません）",
   "origin": {
@@ -405,5 +412,31 @@
     "reason_runtime_changed": "前回のセッションは別のマシンにあります",
     "reason_session_lost": "前のセッションを復元できませんでした",
     "reason_fresh_requested": "新規セッションを指定"
+  },
+  "report": {
+    "bar_other": "このチャットのチケット {{count}} 件",
+    "bar_fresh_other": "このチャットのチケット {{count}} 件 · 変更 {{fresh}}",
+    "waiting_you": "あなた待ち {{count}}",
+    "in_progress": "進行中 {{count}}",
+    "done": "完了 {{count}}",
+    "hear": "報告を聞く",
+    "hear_prompt": "報告：「{{project}}」の前回以降の進捗を教えて",
+    "title": "このチャットで作ったチケット",
+    "just_changed": "今変わった",
+    "opened": "新規 · {{to}}",
+    "needs_you": "要対応"
+  },
+  "tickets": {
+    "heading_other": "{{count}} 件の課題を作成",
+    "to": "担当 {{name}}",
+    "routing": "ルーティングが担当を選びます",
+    "actions": "{{id}} の操作",
+    "assign_me": "自分に割り当て",
+    "assign_agent": "エージェントに任せる",
+    "withdraw": "取り下げ",
+    "assigned_me": "{{id}} を自分に割り当てました",
+    "assigned_agent": "{{id}} をルーティングに戻しました",
+    "withdrawn": "{{id}} を取り下げました",
+    "failed": "{{id}} を更新できませんでした"
   }
 }

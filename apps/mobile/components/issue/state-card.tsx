@@ -10,15 +10,17 @@
  *                        + Add a decision        (Alert.prompt)
  *   Last baton           summary · Handoff to X · 2h ago
  *   Since you were here  thread title   2 new
+ *   Sub-task results     ● DENE-2 title · conclusion · #5 merged  (tap → issue)
  *
  * Edits go through `/api/issues/:id/decisions` with the same server rules
  * as web and CLI; a refusal is shown as an alert with the server's reason.
  */
 import { useCallback } from "react";
 import { ActionSheetIOS, Alert, Pressable, View } from "react-native";
+import { router } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
-import type { StateCardDecision } from "@multica/core/types";
+import type { StateCardChildReceipt, StateCardDecision } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { issueContextOptions } from "@/data/queries/issues";
 import { useIssueDecisionMutations } from "@/data/mutations/issues";
@@ -61,6 +63,8 @@ export function StateCard({ issueId }: { issueId: string }) {
         )}
       </Row>
 
+      {card.children && card.children.length > 0 ? <ChildReceipts receipts={card.children} /> : null}
+
       <Row
         label={
           changes.anchor === "none" ? t("state_card.changes_first") : t("state_card.changes")
@@ -89,6 +93,49 @@ export function StateCard({ issueId }: { issueId: string }) {
         )}
       </Row>
     </View>
+  );
+}
+
+function ChildReceipts({ receipts }: { receipts: StateCardChildReceipt[] }) {
+  const { t } = useT("issues");
+  const wsSlug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
+  return (
+    <Row label={t("state_card.children")}>
+      {receipts.map((r) => {
+        const prs = r.pull_requests
+          .map((pr) =>
+            [pr.number > 0 ? `#${pr.number}` : "PR", pr.state === "merged" ? t("state_card.children_pr_merged") : null]
+              .filter(Boolean)
+              .join(" "),
+          )
+          .join("，");
+        const meta = [prs, r.knowledge].filter(Boolean).join(" · ");
+        return (
+          <Pressable
+            key={r.issue_id}
+            accessibilityRole="link"
+            onPress={() => {
+              if (wsSlug) router.push(`/${wsSlug}/issue/${r.issue_id}`);
+            }}
+            className="min-h-11 justify-center gap-0.5 py-1 active:opacity-60"
+          >
+            <Text className="text-sm text-foreground" numberOfLines={1}>
+              {r.identifier} {r.title}
+            </Text>
+            {r.summary ? (
+              <Text className="text-sm text-foreground" numberOfLines={2}>
+                {r.summary}
+              </Text>
+            ) : null}
+            {meta ? (
+              <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                {meta}
+              </Text>
+            ) : null}
+          </Pressable>
+        );
+      })}
+    </Row>
   );
 }
 

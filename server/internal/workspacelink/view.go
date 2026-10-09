@@ -40,6 +40,8 @@ type LinkedWorkspace struct {
 }
 
 // LinkedProject is one ticked project. ID is only a filter key for this view.
+// Its project context (description, resources, memory line) is shared with it
+// (DENE-1643).
 type LinkedProject struct {
 	ID     string  `json:"id"`
 	Title  string  `json:"title"`
@@ -47,6 +49,7 @@ type LinkedProject struct {
 	Status string  `json:"status"`
 	Done   int64   `json:"done"`
 	Total  int64   `json:"total"`
+	ProjectContext
 }
 
 // LinkedIssue is the status fields of one issue. No UUID, no description, no
@@ -121,11 +124,25 @@ func (s *Service) View(ctx context.Context, viewerWS pgtype.UUID, role permissio
 		Issues:   []LinkedIssue{},
 		Statuses: []LinkedStatusName{},
 	}
+	fullRows, err := s.q.ListLinkedReferenceProjects(ctx, db.ListLinkedReferenceProjectsParams{
+		LinkID: link.ID, SourceWorkspaceID: source, ProjectIds: []pgtype.UUID{},
+	})
+	if err != nil {
+		return LinkedView{}, err
+	}
+	contexts, err := s.projectContexts(ctx, source, fullRows)
+	if err != nil {
+		return LinkedView{}, err
+	}
 	ticked := false
 	for _, p := range projectRows {
+		pc, ok := contexts[p.ID.Bytes]
+		if !ok {
+			pc = ProjectContext{Resources: []LinkedResource{}}
+		}
 		view.Projects = append(view.Projects, LinkedProject{
 			ID: util.UUIDToString(p.ID), Title: p.Title, Icon: util.TextToPtr(p.Icon),
-			Status: p.Status, Done: p.DoneCount, Total: p.TotalCount,
+			Status: p.Status, Done: p.DoneCount, Total: p.TotalCount, ProjectContext: pc,
 		})
 		if page.ProjectID.Valid && p.ID == page.ProjectID {
 			ticked = true

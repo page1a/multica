@@ -127,6 +127,14 @@ type Request struct {
 	Verdict      string
 	Continuation Continuation
 	Knowledge    *KnowledgeAudit
+	// DeliveredFiles is the delivery's changed paths, as the CLI read them
+	// from git; nil when the caller sent none (see BindDeliveredFiles).
+	DeliveredFiles *[]string
+	// MemoryFiles are the delivery's project-memory files as git reads them
+	// (DENE-1680); nil when the caller sent none. Boss marks a boss-layer
+	// sediment round, which must declare an action per change.
+	MemoryFiles *[]MemoryFile
+	Boss        bool
 }
 
 // CheckRequest is the server's request-shape gate, in the order the close
@@ -150,8 +158,29 @@ func CheckRequest(req Request) string {
 	if req.Knowledge == nil {
 		return KnowledgeAuditRequiredMsg
 	}
-	if _, _, err := CanonicalKnowledgeAudit(*req.Knowledge); err != nil {
+	audit, _, err := CanonicalKnowledgeAudit(StripKnowledgeEvidence(*req.Knowledge))
+	if err != nil {
 		return err.Error()
 	}
+	if KnowledgeMustShip(outcome, req.Verdict) {
+		if _, err := BindDeliveredFiles(audit, req.DeliveredFiles); err != nil {
+			return err.Error()
+		}
+		if err := CheckMemoryHygiene(audit, req.MemoryFiles, req.Boss); err != nil {
+			return err.Error()
+		}
+	}
 	return ""
+}
+
+// KnowledgeMustShip reports whether a close delivers work, so the knowledge it
+// claims has to ride along: done and in_review by the executor. A reviewer's
+// pass ships someone else's delivery, and a blocked or parked close ships
+// nothing yet.
+func KnowledgeMustShip(outcome, verdict string) bool {
+	if strings.TrimSpace(verdict) != "" {
+		return false
+	}
+	outcome = NormalizeOutcome(outcome)
+	return outcome == issuestatus.Done || outcome == issuestatus.InReview
 }

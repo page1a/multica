@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
 	"github.com/multica-ai/multica/server/internal/progress"
+	"github.com/multica-ai/multica/server/internal/receipt"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/statecard"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -50,12 +51,19 @@ func (h *Handler) GetIssueContext(w http.ResponseWriter, r *http.Request) {
 	}
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	var excludeTask pgtype.UUID
+	viewer := sourceViewer{UserID: userID}
+	if r.Header.Get("X-Actor-Source") == "task_token" {
+		viewer = sourceViewer{}
+		if task, ok := h.taskFromRequestHeader(r); ok {
+			viewer = taskSourceViewer(task)
+		}
+	}
 	if actorType == "agent" {
 		if task, ok := h.taskFromRequestHeader(r); ok {
 			excludeTask = task.ID
 		}
 	}
-	card, err := h.buildStateCard(r.Context(), issue, statecard.Caller{Type: actorType, ID: actorID}, excludeTask, explicit)
+	card, err := h.buildStateCard(r.Context(), issue, statecard.Caller{Type: actorType, ID: actorID}, viewer, excludeTask, explicit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build state card: "+err.Error())
 		return
@@ -63,7 +71,24 @@ func (h *Handler) GetIssueContext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, IssueContextResponse{Card: card, Text: statecard.Render(card)})
 }
 
-func (h *Handler) buildStateCard(ctx context.Context, issue db.Issue, caller statecard.Caller, excludeTask pgtype.UUID, explicit *time.Time) (statecard.Card, error) {
+// sourceViewer is whose eyes the state card's source line is read with: a
+// person, or a run's originator plus the chat the run itself belongs to.
+type sourceViewer struct {
+	UserID  string
+	OwnChat pgtype.UUID
+}
+
+// taskSourceViewer reads as the human a run acts for. A run without one sees
+// only its own chat.
+func taskSourceViewer(task db.AgentTaskQueue) sourceViewer {
+	v := sourceViewer{OwnChat: task.ChatSessionID}
+	if task.OriginatorUserID.Valid {
+		v.UserID = uuidToString(task.OriginatorUserID)
+	}
+	return v
+}
+
+func (h *Handler) buildStateCard(ctx context.Context, issue db.Issue, caller statecard.Caller, viewer sourceViewer, excludeTask pgtype.UUID, explicit *time.Time) (statecard.Card, error) {
 	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
 	card := statecard.Card{
 		IssueID:    uuidToString(issue.ID),
@@ -85,6 +110,8 @@ func (h *Handler) buildStateCard(ctx context.Context, issue db.Issue, caller sta
 		return card, err
 	}
 
+	card.Source = h.stateCardSource(ctx, issue, viewer)
+
 	decisions, err := h.Queries.ListIssueDecisions(ctx, db.ListIssueDecisionsParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
 	if err != nil {
 		return card, err
@@ -97,12 +124,67 @@ func (h *Handler) buildStateCard(ctx context.Context, issue db.Issue, caller sta
 	card.Now = statecard.DeriveNow(meta, issue.Status)
 	card.Baton = statecard.DeriveBaton(meta, h.closeNote(ctx, issue, meta))
 
+	card.Children = h.stateCardChildren(ctx, issue, viewer)
+
 	changes, err := h.stateCardChanges(ctx, issue, caller, excludeTask, explicit)
 	if err != nil {
 		return card, err
 	}
 	card.Changes = changes
 	return card, nil
+}
+
+// stateCardSource names the chat the issue was opened from and quotes the
+// user message it answered: the chat's newest one at the issue's creation. A
+// chat that is gone, or one the viewer cannot read, leaves no line.
+func (h *Handler) stateCardSource(ctx context.Context, issue db.Issue, viewer sourceViewer) *statecard.Source {
+	if !issue.OriginChatSessionID.Valid {
+		return nil
+	}
+	session, err := h.Queries.GetChatSession(ctx, issue.OriginChatSessionID)
+	if err != nil || session.WorkspaceID != issue.WorkspaceID {
+		return nil
+	}
+	if !(viewer.OwnChat.Valid && viewer.OwnChat == session.ID) {
+		if viewer.UserID == "" {
+			return nil
+		}
+		if access, err := h.chatAccessFor(ctx, session, viewer.UserID); err != nil || !access.see {
+			return nil
+		}
+	}
+	src := &statecard.Source{ChatSessionID: uuidToString(session.ID), ChatTitle: session.Title}
+	if msg, err := h.Queries.GetChatSourceMessage(ctx, db.GetChatSourceMessageParams{
+		ChatSessionID: session.ID, Before: issue.CreatedAt,
+	}); err == nil {
+		src.MessageID = uuidToString(msg.ID)
+		src.Excerpt = receipt.Clip(msg.Content, statecard.MaxSourceExcerpt)
+	}
+	return src
+}
+
+// stateCardChildren is the sub-task receipts the viewer can see. A run with
+// no person behind it sees the ones every reader of the parent can see.
+func (h *Handler) stateCardChildren(ctx context.Context, issue db.Issue, viewer sourceViewer) []receipt.Receipt {
+	var keep func(db.Issue) bool
+	if viewer.UserID == "" {
+		keep = h.visibleWithParent(ctx, issue)
+	} else {
+		userID, err := parseUUIDStrict(viewer.UserID)
+		if err != nil {
+			return []receipt.Receipt{}
+		}
+		v, err := h.visibilityViewerForUser(ctx, issue.WorkspaceID, userID)
+		if err != nil {
+			return []receipt.Receipt{}
+		}
+		keep = v.canSeeIssue
+	}
+	out := h.childReceipts(ctx, issue, keep)
+	if out == nil {
+		out = []receipt.Receipt{}
+	}
+	return out
 }
 
 // closeNote is the latest close's summary: its progress line when the line

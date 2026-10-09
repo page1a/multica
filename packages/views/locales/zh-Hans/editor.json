@@ -148,6 +148,7 @@
   },
   "upload": {
     "failed": "{{filename}} 上传失败：{{reason}}",
+    "unreadable": "读不到文件内容，请先保存到本地再添加",
     "in_progress": "上传中…",
     "interrupted": "上传已中断——文件未保存。请重新添加。",
     "remove": "移除",

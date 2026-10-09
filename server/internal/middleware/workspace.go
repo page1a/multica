@@ -212,6 +212,9 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 			// allowed to operate on a workspace other than the one
 			// stamped into its task token. This is the catch-all
 			// behind resolveWorkspaceUUID's earlier check. MUL-2600.
+			// The one exception, a managed link (DENE-1663), never
+			// reaches here as a task token: workspacelink.Managed has
+			// already turned it into its originator's request.
 			if r.Header.Get("X-Actor-Source") == "task_token" {
 				bound := r.Header.Get("X-Workspace-ID")
 				if bound == "" || workspaceID != bound {

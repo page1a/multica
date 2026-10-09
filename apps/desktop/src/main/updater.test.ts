@@ -20,6 +20,7 @@ const ctx = vi.hoisted(() => ({
   quitAndInstall: vi.fn(),
   setFeedURL: vi.fn(),
   fetchText: vi.fn<(url: string) => Promise<string>>(),
+  manifestExists: vi.fn<(url: string) => Promise<boolean>>(),
   getVersion: vi.fn(() => "0.3.17"),
   userDataPath: "",
   openPath: vi.fn(async () => ""),
@@ -79,7 +80,9 @@ import {
   applyStableFeed,
   applyTestFeed,
   feedNameForReleaseChannel,
+  listTestReleaseTags,
   pickNewestTestReleaseTag,
+  testManifestFileName,
   resolveCapabilities,
   setupAutoUpdater,
   testReleaseFeedOptions,
@@ -127,6 +130,7 @@ function setup(
     resolveCapabilities: async () => capabilities,
     fetchInstaller,
     fetchText: ctx.fetchText.mockResolvedValue(atom),
+    manifestExists: ctx.manifestExists,
   });
 }
 
@@ -232,6 +236,18 @@ describe("release channel feed", () => {
       channel: "test-x64",
       url: "https://github.com/jeff-kunkun/multica/releases/download/v0.5.5-test.1",
     });
+  });
+
+  it("lists test tags newest first and names the manifest per platform", () => {
+    expect(
+      listTestReleaseTags(RELEASES_ATOM("v0.5.5-test.2", "v0.5.4", "v0.5.5-test.10", "v0.5.5-test.2")),
+    ).toEqual(["v0.5.5-test.10", "v0.5.5-test.2"]);
+    expect(testManifestFileName("darwin", "arm64")).toBe("test-mac.yml");
+    expect(testManifestFileName("darwin", "x64")).toBe("test-x64-mac.yml");
+    expect(testManifestFileName("win32", "x64")).toBe("test.yml");
+    expect(testManifestFileName("win32", "arm64")).toBe("test-arm64.yml");
+    expect(testManifestFileName("linux", "x64")).toBe("test-linux.yml");
+    expect(testManifestFileName("linux", "arm64")).toBe("test-linux-arm64.yml");
   });
 
   it("picks the highest vX.Y.Z-test.N tag out of the releases feed", () => {
@@ -349,6 +365,8 @@ describe("setupAutoUpdater", () => {
     ctx.getVersion.mockReturnValue("0.3.17");
     ctx.setFeedURL.mockClear();
     ctx.fetchText.mockReset();
+    ctx.manifestExists.mockReset();
+    ctx.manifestExists.mockResolvedValue(true);
     autoUpdater.channel = null;
     autoUpdater.allowDowngrade = false;
     autoUpdater.allowPrerelease = false;
@@ -490,6 +508,107 @@ describe("setupAutoUpdater", () => {
     expect(ctx.setFeedURL.mock.invocationCallOrder[0]).toBeLessThan(
       ctx.checkForUpdates.mock.invocationCallOrder[0],
     );
+  });
+
+  describe("a test release whose manifest is not uploaded yet", () => {
+    const TEST_PREFS = JSON.stringify({ automaticUpdates: true, releaseChannel: "test" });
+    const manifest = testManifestFileName();
+    const url = (tag: string) =>
+      `https://github.com/jeff-kunkun/multica/releases/download/${tag}/${manifest}`;
+
+    it("falls back to the previous test release and re-checks within minutes", async () => {
+      writeFileSync(updaterPreferencesPath(ctx.userDataPath), TEST_PREFS);
+      setup(() => null);
+      ctx.manifestExists.mockImplementation(async (u) => u !== url("v0.5.5-test.2"));
+      await invokeIpc("updater:get-preferences");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await flushPromises();
+
+      expect(ctx.manifestExists).toHaveBeenCalledWith(url("v0.5.5-test.2"));
+      expect(ctx.setFeedURL).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          url: "https://github.com/jeff-kunkun/multica/releases/download/v0.5.5-test.1",
+        }),
+      );
+      expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+      expect(ctx.log.error).not.toHaveBeenCalled();
+
+      // The manifest lands; the short re-check picks the newest tag up
+      // long before the hourly timer.
+      ctx.manifestExists.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await flushPromises();
+
+      expect(ctx.checkForUpdates).toHaveBeenCalledTimes(2);
+      expect(ctx.setFeedURL).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          url: "https://github.com/jeff-kunkun/multica/releases/download/v0.5.5-test.2",
+        }),
+      );
+      // Everything present: no further short re-check is queued.
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      await flushPromises();
+      expect(ctx.checkForUpdates).toHaveBeenCalledTimes(2);
+    });
+
+    it("reports up to date, not an error, when no test release has its manifest", async () => {
+      writeFileSync(updaterPreferencesPath(ctx.userDataPath), TEST_PREFS);
+      setup(() => null);
+      ctx.manifestExists.mockResolvedValue(false);
+      await invokeIpc("updater:get-preferences");
+
+      const result = await invokeIpc("updater:check");
+
+      expect(result).toMatchObject({
+        ok: true,
+        available: false,
+        latestVersion: "0.3.17",
+      });
+      expect(ctx.checkForUpdates).not.toHaveBeenCalled();
+      expect(ctx.setFeedURL).not.toHaveBeenCalled();
+      expect(ctx.log.error).not.toHaveBeenCalled();
+
+      ctx.manifestExists.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await flushPromises();
+      expect(ctx.checkForUpdates).toHaveBeenCalled();
+      expect(ctx.setFeedURL).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          url: "https://github.com/jeff-kunkun/multica/releases/download/v0.5.5-test.2",
+        }),
+      );
+    });
+
+    it("treats a probe failure other than 404 as a failed check", async () => {
+      writeFileSync(updaterPreferencesPath(ctx.userDataPath), TEST_PREFS);
+      setup(() => null);
+      ctx.manifestExists.mockRejectedValue(new Error("offline"));
+      await invokeIpc("updater:get-preferences");
+
+      await expect(invokeIpc("updater:check")).resolves.toEqual({
+        ok: false,
+        error: "offline",
+      });
+      expect(ctx.checkForUpdates).not.toHaveBeenCalled();
+    });
+
+    it("does not queue a re-check when automatic updates are off", async () => {
+      writeFileSync(
+        updaterPreferencesPath(ctx.userDataPath),
+        JSON.stringify({ automaticUpdates: false, releaseChannel: "test" }),
+      );
+      setup(() => null);
+      ctx.manifestExists.mockResolvedValue(false);
+      await invokeIpc("updater:get-preferences");
+      await invokeIpc("updater:check");
+      ctx.manifestExists.mockResolvedValue(true);
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      await flushPromises();
+
+      expect(ctx.checkForUpdates).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps stable clients on the app-update.yml provider", async () => {

@@ -90,6 +90,10 @@
     "no_projects": "아직 프로젝트가 없습니다",
     "switch_project": "다른 프로젝트로 전환…",
     "project_context_unsupported": "프로젝트 설명이 적용되지 않습니다 — 이 에이전트의 데몬 업그레이드가 필요합니다",
+    "linked_projects": "연결된 프로젝트(읽기 전용)",
+    "linked_project_chip": "{{source}}의 읽기 전용 프로젝트",
+    "linked_project_stale": "무효",
+    "linked_project_stale_hint": "더 이상 공유되지 않아 에이전트가 받지 않습니다",
     "to_goal": "转成目标任务",
     "mode_menu": "보내기 방식",
     "mode_steer": "끼어들기",
@@ -166,7 +170,8 @@
     "quick_actions_regenerate": "제안 다시 생성",
     "quick_actions_regenerate_failed": "제안을 다시 생성하지 못했습니다. 다시 시도해 주세요.",
     "spawned": "채팅을 열었습니다",
-    "spawn_untitled": "새 채팅"
+    "spawn_untitled": "새 채팅",
+    "issue_receipt": "작업 결과"
   },
   "session_history": {
     "untitled": "제목 없음",
@@ -372,6 +377,7 @@
     "remove": "제거",
     "save": "저장",
     "cancel": "취소",
+    "save_failed": "저장하지 못했습니다",
     "note_bound": "비공개로 바꾸면 다른 사람 목록에서 사라집니다.",
     "note_unbound": "프로젝트가 없는 채팅은 비공개입니다.",
     "view_only": "이 채팅은 볼 수 있지만 말할 수는 없습니다.",
@@ -391,7 +397,8 @@
     "title": "일부 채팅이 이제 프로젝트 멤버에게 보입니다",
     "body": "프로젝트 멤버가 볼 수 있는 채팅이 {{count}}개 있습니다.",
     "make_private": "선택한 항목을 비공개로",
-    "dismiss": "알겠습니다"
+    "dismiss": "알겠습니다",
+    "failed": "저장하지 못했습니다. 다시 시도하세요."
   },
   "title_locked": "제목 잠김 — 에이전트가 이름을 바꾸지 않습니다",
   "origin": {
@@ -405,5 +412,31 @@
     "reason_runtime_changed": "지난 세션이 다른 기기에 있음",
     "reason_session_lost": "이전 세션을 복원하지 못함",
     "reason_fresh_requested": "새 세션 요청"
+  },
+  "report": {
+    "bar_other": "이 채팅의 티켓 {{count}}건",
+    "bar_fresh_other": "이 채팅의 티켓 {{count}}건 · 방금 바뀜 {{fresh}}",
+    "waiting_you": "내 차례 {{count}}",
+    "in_progress": "진행 중 {{count}}",
+    "done": "완료 {{count}}",
+    "hear": "보고 듣기",
+    "hear_prompt": "보고: 「{{project}}」의 지난번 이후 새 진행을 알려줘",
+    "title": "이 채팅에서 만든 티켓",
+    "just_changed": "방금 바뀜",
+    "opened": "새로 열림 · {{to}}",
+    "needs_you": "내 처리 필요"
+  },
+  "tickets": {
+    "heading_other": "이슈 {{count}}개 생성",
+    "to": "담당 {{name}}",
+    "routing": "라우팅이 담당자를 고릅니다",
+    "actions": "{{id}} 작업",
+    "assign_me": "나에게 배정",
+    "assign_agent": "에이전트에게 맡기기",
+    "withdraw": "철회",
+    "assigned_me": "{{id}}을(를) 나에게 배정했습니다",
+    "assigned_agent": "{{id}}을(를) 라우팅에 돌려보냈습니다",
+    "withdrawn": "{{id}}을(를) 철회했습니다",
+    "failed": "{{id}}을(를) 업데이트하지 못했습니다"
   }
 }

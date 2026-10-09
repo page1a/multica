@@ -1952,6 +1952,7 @@
     "gateway_key_placeholder": "sk-…",
     "gateway_key_stored": "已保存一个 Key",
     "gateway_key_save": "保存 Key",
+    "gateway_key_save_error": "Key 没保存上，请重试",
     "gateway_key_clear": "清除",
     "gateway_pair_incomplete": "端点和 Key 需同时填写，否则使用部署共用端点。",
     "gateway_default_model": "该部署自己的默认模型是 {{model}}。",
@@ -1959,6 +1960,7 @@
     "filters_placeholder": "不可用的席位不参与分配。",
     "health_checking": "自检中…",
     "health_recheck": "重新自检",
+    "health_recheck_failed": "自检没跑成，请重试",
     "health_connected": "已连通 · {{when}}自检",
     "health_never_checked": "服务端启动以来还没有发起过调用",
     "health_retry_in": "约 {{minutes}} 分钟后重试",
@@ -2014,10 +2016,10 @@
     "seats_work_off": "已关闭接活，路由不会派给它",
     "seats_runtime_unknown": "未知运行时",
     "judge_title": "判断模型",
-    "judge_description": "只管选档（弱 / 中 / 强 / 最强）并给出概率。分析模型开着时，它只看整理好的事实。",
+    "judge_description": "看分析模型的答案，觉得规则表定低了可以抬一档并写理由，不能降档。",
     "judge_enabled_label": "启用判断模型",
     "analysis_title": "分析模型",
-    "analysis_description": "读完整张票，整理成几条事实：改动范围、需求是否清楚、出错代价、是否要人拍板。票停下时写一句卡在哪了。",
+    "analysis_description": "读完整张票，答四道选择题：改动范围、需求是否清楚、出错代价、是否要人拍板。票停下时写一句卡在哪了。",
     "analysis_enabled_label": "启用分析模型",
     "analysis_source_label": "来源",
     "analysis_source_description": "选择 API 网关或运行时订阅模型。",
@@ -2031,10 +2033,16 @@
     "analysis_key_label": "分析模型 API Key",
     "modes": {
       "none": "两个都没开：不调用模型，每张票走兜底档。",
-      "analysis": "只开分析：分析模型直接选档，阈值卡它自报的置信度。",
-      "analysis_judge": "两个都开：分析模型整理事实，判断模型据此选档。",
-      "judge": "只开判断：判断模型读票选档。"
-    }
+      "analysis": "只开分析：分析模型答选择题，规则表定档。",
+      "analysis_judge": "两个都开：规则表定档，判断模型最多再抬一档，不能降档。",
+      "judge": "只开判断：没人答题，按规则表「答不出」那行定档，判断模型最多再抬一档。"
+    },
+    "rules_title": "定档规则",
+    "rules_description": "分析模型答题后，从上往下第一条对上的规则定档。",
+    "rules_any_unknown": "任一题答不出",
+    "rules_catch_all": "以上都没对上",
+    "rules_review": "{{tier}}，要验收",
+    "rules_no_review": "{{tier}}，不验收"
   },
   "project_sharing": {
     "title": "权限与共享",

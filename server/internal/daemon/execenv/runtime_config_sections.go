@@ -557,6 +557,60 @@ func writeProjectContext(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("When a deliverable must be attributed to one project — creating an issue, for example — infer the target from the request and the project descriptions above. If it is still ambiguous, ask the user which project to use instead of guessing.\n\n")
 }
 
+// writeReferenceProjects emits the read-only reference projects a chat
+// attached from another workspace (DENE-1643). Nothing is written without
+// them, so every other brief stays byte-identical. They are context only: the
+// run's working project and code source above are unchanged.
+func writeReferenceProjects(b *strings.Builder, ctx TaskContextForEnv) {
+	if len(ctx.ReferenceProjects) == 0 {
+		return
+	}
+	b.WriteString("## Read-only Reference Projects\n\n")
+	b.WriteString("Shared from other workspaces for reading only. Never open a worktree, commit or write in their directories, and never push to their repositories; `multica repo checkout` to read is fine.\n\n")
+	for _, project := range ctx.ReferenceProjects {
+		title := project.Title
+		if title == "" {
+			title = "Project"
+		}
+		if project.SourceName != "" {
+			fmt.Fprintf(b, "### %s (from %s)\n\n", title, project.SourceName)
+		} else {
+			fmt.Fprintf(b, "### %s\n\n", title)
+		}
+		if desc := strings.TrimSpace(project.Description); desc != "" {
+			b.WriteString(desc)
+			b.WriteString("\n\n")
+		}
+		writeProjectMemoryLine(b, project.MemoryLine)
+		if len(project.Resources) == 0 {
+			continue
+		}
+		for _, r := range project.Resources {
+			b.WriteString("- ")
+			b.WriteString(formatReferenceResource(r))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+}
+
+func formatReferenceResource(r ReferenceResourceForEnv) string {
+	var out string
+	switch {
+	case r.Path != "":
+		out = fmt.Sprintf("%s: `%s`", r.Type, r.Path)
+		if r.Missing {
+			out += " — not on this machine; read its repositories instead"
+		}
+	default:
+		out = fmt.Sprintf("%s: %s", r.Type, r.URL)
+	}
+	if r.Label != "" {
+		out = fmt.Sprintf("%s (%s)", out, r.Label)
+	}
+	return out
+}
+
 func writeProjectChatDirectoryHint(b *strings.Builder, project ProjectContextForEnv) {
 	if project.ChatCount <= 0 || strings.TrimSpace(project.ID) == "" {
 		return
@@ -658,8 +712,9 @@ func writeWorkflowHeader(b *strings.Builder) {
 // emitted by daemon.BuildPrompt instead of fragmenting this cached brief across
 // group, direct, and unknown-audience chat sessions (MUL-5377, MUL-5442).
 func writeWorkflowChat(b *strings.Builder) {
-	b.WriteString("**You are in chat mode.** Reply conversationally, concisely and directly. Look things up and act through the `multica` CLI (`issue list | get`, `workspace get`, `issue create | update`); get code with `multica repo checkout <url>` (`--ref` for an exact revision).\n\n")
+	b.WriteString("**You are in chat mode.** Reply conversationally, concisely and directly. Look things up and act through the `multica` CLI (`issue list | get`, `workspace get`, `issue create | update`, `chat tickets`); get code with `multica repo checkout <url>` (`--ref` for an exact revision).\n\n")
 	b.WriteString("When the user hands you another chat to take over — a session link or id, often \"接管这个：<url>\" — read it silently first with `multica chat history --session <url-or-id> --output json` (a summary plus the latest messages; page older ones with `--before <next_cursor>`), then continue the work from it.\n\n")
+	b.WriteString("A chat that changed code or settled something worth keeping ends like a task: write project memory (refresh-project), commit, then `multica chat sediment`. Plain Q&A skips it.\n\n")
 }
 
 // writeWorkflowQuickCreate emits the quick-create workflow's hard
@@ -758,7 +813,7 @@ func writeWorkflowIssue(b *strings.Builder, ctx TaskContextForEnv) {
 // brief keeps the one-line map so the flags remain discoverable without it.
 func writeSubIssueCreation(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("## Sub-issue Creation\n\n")
-	b.WriteString("`--status todo` starts an agent-assigned child immediately; `--status backlog` parks it for later promotion; `--stage <N>` groups children into ordered stages.")
+	b.WriteString("`--status todo` starts an agent-assigned child immediately; `--status backlog` parks it only when it waits on something (`--waiting-for`); `--stage <N>` groups children into ordered stages.")
 	if where, ok := issueContractsSkill(modelVisibleSkills(ctx.AgentSkills)); ok {
 		b.WriteString(" Before creating sub-issues, read " + where + " — it covers serial chains, promotion, and stage wake semantics.")
 	}
@@ -1014,6 +1069,7 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	}
 
 	writeProjectContext(&b, ctx)
+	writeReferenceProjects(&b, ctx)
 	writeCodeSource(&b, ctx)
 
 	if kind == kindIssue {

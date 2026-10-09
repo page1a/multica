@@ -230,10 +230,11 @@ SELECT EXISTS (
 
 -- name: CloseManualQuotaBreakers :execrows
 -- DENE-870: a balance breaker has no timer. A person turning the seat back
--- on after topping up is the recovery.
+-- on after topping up is the recovery. DENE-1647: a refused login is the
+-- same — turning the seat on after fixing it ends the wait at once.
 UPDATE agent_quota_breaker
 SET recovered_at = now()
-WHERE agent_id = $1 AND reason = 'balance_exhausted' AND recovered_at IS NULL;
+WHERE agent_id = $1 AND reason IN ('balance_exhausted', 'auth_failure') AND recovered_at IS NULL;
 
 -- name: ListOpenQuotaBreakers :many
 SELECT agent_id, reason, detail, recover_condition, recover_at, opened_at
@@ -282,3 +283,44 @@ WHERE workspace_id = @workspace_id
   AND runtime_inherited
   AND archived_at IS NULL
 ORDER BY created_at, id;
+
+-- name: ListIssueWorkerAgentIDs :many
+-- Seats that finished a run on this issue. A replacement acceptance seat
+-- must not be one of them: the executor never accepts its own work.
+SELECT DISTINCT agent_id
+FROM agent_task_queue
+WHERE issue_id = $1
+  AND status = 'completed'
+  AND agent_id IS NOT NULL;
+
+-- name: HasOpenReviewStuckAsk :one
+-- One open "acceptance seat failed" ask per issue. The ask is recognised by
+-- its close option, which no other ask carries.
+SELECT EXISTS (
+    SELECT 1 FROM agent_ask
+    WHERE issue_id = sqlc.arg('issue_id')::uuid
+      AND status = 'open'
+      AND questions @> '[{"options":[{"id":"review_stuck.close"}]}]'::jsonb
+)::bool;
+
+-- name: CreateReviewStuckAsk :one
+INSERT INTO agent_ask (workspace_id, issue_id, asker_type, asker_id, title, questions, mode)
+VALUES ($1, $2, 'agent', $3, $4, $5, 'needs_you')
+RETURNING id;
+
+-- name: ListIssueQuotaRelays :many
+-- DENE-1647: the relay record for each failed run on an issue, for the
+-- execution log and `multica issue runs`.
+SELECT r.source_task_id,
+       r.outcome,
+       r.wait_reason,
+       r.to_agent_id,
+       COALESCE(a.name, '')::text AS to_agent_name,
+       COALESCE((
+           SELECT b.reason FROM agent_quota_breaker b
+           WHERE b.source_task_id = r.source_task_id AND b.agent_id = r.from_agent_id
+           LIMIT 1
+       ), '')::text AS reason
+FROM agent_quota_relay r
+LEFT JOIN agent a ON a.id = r.to_agent_id
+WHERE r.issue_id = $1;

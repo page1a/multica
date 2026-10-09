@@ -7,7 +7,7 @@ import (
 
 func newWorkspaceRoutingSetTestCmd() *cobra.Command {
 	cmd := newRoutingProjectsTestCmd()
-	for _, f := range []string{"source", "runtime", "model", "thinking", "continuation", "load", "usage-priority", "allow-upshift", "confidence-threshold", "stale-review-hours"} {
+	for _, f := range []string{"source", "runtime", "model", "thinking", "continuation", "load", "usage-priority", "allow-upshift", "judged-review", "confidence-threshold", "stale-review-hours"} {
 		cmd.Flags().String(f, "", "")
 	}
 	return cmd
@@ -77,6 +77,29 @@ func TestWorkspaceRoutingSetTierSwitches(t *testing.T) {
 	}
 	if got := routingView(block); got["usage_priority"] != false || got["allow_upshift"] != true {
 		t.Fatalf("view = %v", got)
+	}
+}
+
+func TestWorkspaceRoutingSetJudgedReview(t *testing.T) {
+	if got := routingView(nil); got["judged_review"] != false {
+		t.Fatalf("default judged_review = %v", got)
+	}
+	var patched map[string]any
+	routingProjectsServer(t, map[string]any{"routing": map[string]any{"allow_upshift": true}}, &patched)
+	cmd := newWorkspaceRoutingSetTestCmd()
+	_ = cmd.Flags().Set("judged-review", "on")
+	if err := runWorkspaceRoutingSet(cmd, nil); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	settings, _ := patched["settings"].(map[string]any)
+	block, _ := settings["routing"].(map[string]any)
+	if block["judged_review"] != true || block["allow_upshift"] != true {
+		t.Fatalf("block = %v", block)
+	}
+	bad := newWorkspaceRoutingSetTestCmd()
+	_ = bad.Flags().Set("judged-review", "maybe")
+	if err := runWorkspaceRoutingSet(bad, nil); err == nil {
+		t.Fatal("want error for --judged-review maybe")
 	}
 }
 

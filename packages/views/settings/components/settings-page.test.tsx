@@ -60,9 +60,16 @@ vi.mock("@multica/core/auth", () => {
   );
   return { useAuthStore };
 });
+// Query data by the first segment of the query key; everything else is empty.
+const queryData: Record<string, unknown> = {};
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-query")>();
-  return { ...actual, useQuery: () => ({ data: undefined }) };
+  return {
+    ...actual,
+    useQuery: (options?: { queryKey?: readonly unknown[] }) => ({
+      data: queryData[String(options?.queryKey?.[0])],
+    }),
+  };
 });
 
 const replace = vi.fn();
@@ -403,5 +410,25 @@ describe("SettingsPage search", () => {
       { target: { value: "plugins" } },
     );
     expect(screen.getByText("No matching settings")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage linked workspaces count", () => {
+  it("counts the offers waiting for this workspace's answer", () => {
+    queryData["workspace-links"] = {
+      links: [
+        { id: "a", side: "viewer", status: "pending" },
+        { id: "b", side: "viewer", status: "active" },
+        { id: "c", side: "source", status: "pending" },
+      ],
+    };
+    try {
+      renderWithI18n(<SettingsPage />);
+      expect(screen.getByRole("link", { name: "Linked workspaces 1" })).toBeInTheDocument();
+      // The phone's page picker carries the same count.
+      expect(screen.getByRole("option", { name: "Linked workspaces (1)" })).toBeInTheDocument();
+    } finally {
+      delete queryData["workspace-links"];
+    }
   });
 });

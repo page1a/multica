@@ -485,3 +485,13 @@ WHERE iss.workspace_id = $1 AND iss.status = 'todo'
   AND iss.assignee_type = 'member' AND iss.assignee_id = sqlc.arg('user_id')::uuid
 ORDER BY iss.updated_at DESC
 LIMIT 400;
+
+-- name: ArchiveWorkspaceLinkRequestInbox :many
+-- A link request is answered once (DENE-1641): accepting, declining or
+-- withdrawing it archives the request notice for every manager it reached.
+UPDATE inbox_item SET archived = true
+WHERE type = 'workspace_link_request'
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND details->>'link_id' = sqlc.arg('link_id')::text
+  AND archived = false
+RETURNING id, recipient_id;

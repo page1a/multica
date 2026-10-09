@@ -121,6 +121,7 @@ export function useSetProjectVisibility(wsId: string) {
       qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
       qc.invalidateQueries({ queryKey: workspaceKeys.list() });
       qc.invalidateQueries({ queryKey: visibilityKeys.accessAll(wsId) });
+      qc.invalidateQueries({ queryKey: visibilityKeys.projectPreview(vars.projectId) });
     },
   });
 }

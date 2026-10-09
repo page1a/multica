@@ -1,5 +1,7 @@
 import type { AgentTask } from "./agent";
 import type { Progress } from "./progress";
+import type { ChatLinkedProject } from "./workspace-link";
+import type { ProjectReportPhase } from "./project";
 
 /** A user's pinned "quick agent" for the Chat list top bar. */
 export interface ChatPinnedAgent {
@@ -28,7 +30,9 @@ export type ChatMessageKind =
   /** An agent opened a chat from this one; `linked_session_id` points at it. */
   | "chat_spawn"
   /** An agent tried to open a chat from this one and the server refused. */
-  | "chat_spawn_refused";
+  | "chat_spawn_refused"
+  /** A ticket this chat opened reports its result (DENE-1672). */
+  | "issue_receipt";
 
 /**
  * A concise follow-up offered by an assistant reply. `label` is rendered in
@@ -123,6 +127,9 @@ export interface ChatSession {
    *  because a server predating the set omits it — `chatSessionProjectIds`
    *  normalises that back to the single `project_id`. */
   project_ids?: string[];
+  /** Read-only projects shared from linked workspaces (DENE-1643). Never the
+   *  chat's own project; optional for older servers. */
+  linked_projects?: ChatLinkedProject[];
   title: string;
   title_locked?: boolean;
   progress?: Progress | null;
@@ -424,4 +431,34 @@ export interface ChatPendingTask {
   steer_provider?: string;
   /** How a steer reaches the reply (DENE-1349): "same" in the running CLI, "restart" stops it and resumes the session, "handoff" (DENE-1347) stops the current step in the same session. */
   steer_mode?: string;
+}
+
+/**
+ * One issue a chat opened (DENE-1665): `GET /api/chat/sessions/:id/tickets`,
+ * also `multica chat tickets`. `goal` is the first line of the description's
+ * 目标 section — the "why" shown on the chat's ticket card.
+ */
+export interface ChatTicket {
+  id: string;
+  identifier: string;
+  title: string;
+  status: string;
+  priority: string;
+  assignee_type: "member" | "agent" | "squad" | null;
+  assignee_id: string | null;
+  assignee_name?: string;
+  goal?: string;
+  created_at: string;
+  updated_at: string;
+  /** DENE-1667: the latest status move; empty `from_status` and the creation time when it never moved. */
+  from_status?: string;
+  changed_at: string;
+  /** The caller's bucket, as the project report computes it. */
+  phase: ProjectReportPhase;
+  needs_you: boolean;
+}
+
+export interface ChatTicketsResponse {
+  chat_session_id: string;
+  tickets: ChatTicket[];
 }

@@ -2,13 +2,16 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 )
 
-func TestRuntimeAnalysisFailureFallsBackToJudge(t *testing.T) {
+// A runtime analysis failure leaves every question unknown: the table's
+// unknown row routes the ticket, and the judge is still asked.
+func TestRuntimeAnalysisFailureStillRoutes(t *testing.T) {
 	store := newCachingStore(analysisAndJudge())
 	store.settings.Analysis.Source = AnalysisSourceRuntimeSubscription
 	store.settings.Analysis.RuntimeID = "runtime-1"
@@ -16,25 +19,55 @@ func TestRuntimeAnalysisFailureFallsBackToJudge(t *testing.T) {
 	analyst := &fakeAnalyst{err: errors.New("runtime offline")}
 	r := newRouter(store, judge)
 	r.Analyst = analyst
-	if _, err := r.decide(context.Background(), "ws", store.settings, store.issue, JudgeState{}); err != nil {
-		t.Fatalf("runtime failure did not fall back: %v", err)
+	d, err := r.decide(context.Background(), "ws", store.settings, store.issue, JudgeState{})
+	if err != nil {
+		t.Fatalf("runtime failure stalled the decision: %v", err)
 	}
 	if judge.callCount() != 1 {
 		t.Fatalf("judge calls = %d, want 1", judge.callCount())
 	}
+	if d.Trace.Rule.ID != "unknown" || judge.assignedState().RuleTier != "medium" {
+		t.Fatalf("rule = %q, judge rule tier = %q; want the unknown row at medium", d.Trace.Rule.ID, judge.assignedState().RuleTier)
+	}
 }
 
-func TestGatewayAnalysisFailureIsNotRetriedAsJudge(t *testing.T) {
-	store := newCachingStore(analysisAndJudge())
-	judge := &fakeJudge{verdict: confidentVerdict()}
-	analyst := &fakeAnalyst{err: errors.New("gateway unavailable")}
-	r := newRouter(store, judge)
-	r.Analyst = analyst
-	if _, err := r.decide(context.Background(), "ws", store.settings, store.issue, JudgeState{}); err == nil {
-		t.Fatal("gateway failure unexpectedly fell back to judge")
-	}
-	if judge.callCount() != 0 {
-		t.Fatalf("judge calls = %d, want 0", judge.callCount())
+// A gateway failure, a timeout or a garbled reply never stalls the ticket and
+// never lands it on the weakest rung: the questions are unknown, the table
+// routes unknown to medium with a seat reviewer.
+func TestAnalysisFailureRoutesAsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"gateway", errors.New("gateway unavailable")},
+		{"timeout", context.DeadlineExceeded},
+		{"garbled", ErrJudgeUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newCachingStore(analysisOnly())
+			out := routeWith(t, store, &fakeJudge{}, &fakeAnalyst{err: tc.err})
+			if out.Action != ActionAssigned {
+				t.Fatalf("action = %q, want assigned", out.Action)
+			}
+			if len(store.assigns) != 1 || store.assigns[0] != "贝吉塔游戏" {
+				t.Fatalf("assigns = %v, want the medium seat 贝吉塔游戏", store.assigns)
+			}
+			if len(store.reviewer) != 1 {
+				t.Fatalf("reviewer slots = %v, want a seat", store.reviewer)
+			}
+			if out.Trace == nil || out.Trace.Tier != "medium" || out.Trace.AnalysisError == "" {
+				t.Fatalf("trace = %+v, want medium with the analysis error", out.Trace)
+			}
+			if len(store.saved) != 0 {
+				t.Error("a failed analysis was cached")
+			}
+			body := store.comments[KindAssignment][0]
+			for _, want := range []string{"分析模型没答上", "改动范围、需求、出错代价、要人拍板：答不出", "「有一题答不出」→ 中档"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("comment is missing %q:\n%s", want, body)
+				}
+			}
+		})
 	}
 }
 
@@ -105,12 +138,16 @@ func noModels() Settings {
 	return Settings{Enabled: true, ConfidenceThreshold: 0.7, JudgeEnabled: boolPtr(false)}
 }
 
+// analysedFacts is a cross-module answer: the table's second row, strong
+// with a seat reviewer.
 func analysedFacts() AnalysisRecord {
-	v := confidentVerdict()
-	return AnalysisRecord{
-		Facts:   Facts{Scope: ScopeModule, Clarity: ClarityClear, Risk: RiskMedium, Summary: "改一个模块"},
-		Verdict: &v, Source: FactsFromAnalysis,
+	reply := map[string]json.RawMessage{
+		"scope": json.RawMessage(`"3"`), "clarity": json.RawMessage(`1`),
+		"risk": json.RawMessage(`"2"`), "needs_human": json.RawMessage(`"1"`),
 	}
+	f, answers := DefaultRules.read(reply)
+	f.Summary = "改两个模块"
+	return AnalysisRecord{Facts: f, Answers: answers, Source: FactsFromAnalysis}
 }
 
 func newCachingStore(settings Settings) *cachingStore {
@@ -188,9 +225,9 @@ func TestModeNoneCallsNoModelAndTakesTheFallback(t *testing.T) {
 	}
 }
 
-// 只分析: the analysis model picks the tier, the judge is never asked, and
-// the result is cached.
-func TestModeAnalysisPicksTheTierWithoutTheJudge(t *testing.T) {
+// 只分析: the analysis model answers the questions, the rule table picks the
+// tier, the judge is never asked, and the answers are cached.
+func TestModeAnalysisRuleTablePicksTheTier(t *testing.T) {
 	store := newCachingStore(analysisOnly())
 	judge := &fakeJudge{}
 	analyst := &fakeAnalyst{record: analysedFacts()}
@@ -214,36 +251,24 @@ func TestModeAnalysisPicksTheTierWithoutTheJudge(t *testing.T) {
 	if len(store.saved) != 1 || store.saved[0].Hash != store.issue.ContentHash || store.saved[0].Model != "analysis-model" {
 		t.Errorf("analysis not cached against content and model: %+v", store.saved)
 	}
+	if out.Trace == nil || out.Trace.Rule.ID != "cross_module" || out.Trace.Tier != "strong" || out.Trace.Seat != "孙悟空游戏" {
+		t.Fatalf("trace = %+v, want the cross_module row, strong, 孙悟空游戏", out.Trace)
+	}
 	body := store.comments[KindAssignment][0]
-	for _, want := range []string{"分析模型 `analysis-model` 读完票直接选档", "改动范围", "改一个模块"} {
+	for _, want := range []string{"分析模型 `analysis-model`", "改动范围：跨模块（答 3）", "第 2 行「跨模块」→ 强档，要验收", "改两个模块"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment is missing %q:\n%s", want, body)
 		}
 	}
 }
 
-// The threshold gates the analysis model's own confidence too.
-func TestModeAnalysisLowConfidenceTakesTheFallback(t *testing.T) {
-	store := newCachingStore(analysisOnly())
-	rec := analysedFacts()
-	low := confidentVerdict()
-	low.ExecutorConfidence = 0.2
-	low.ExecutorTier = "weak"
-	rec.Verdict = &low
-	routeWith(t, store, &fakeJudge{}, &fakeAnalyst{record: rec})
-	// The weak pick is ignored: the executor lands on the fallback rung.
-	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空游戏" {
-		t.Fatalf("assigns = %v, want the fallback 孙悟空游戏", store.assigns)
-	}
-	if body := store.comments[KindAssignment][0]; !strings.Contains(body, "兜底档") || !strings.Contains(body, "20%") {
-		t.Errorf("comment does not report the low confidence:\n%s", body)
-	}
-}
-
-// 分析+判断: the judge decides from the facts and never sees the prose.
+// 分析+判断: the judge decides from the facts and never sees the prose, and
+// it cannot lower the table's tier.
 func TestModeBothJudgeSeesFactsNotTheBody(t *testing.T) {
 	store := newCachingStore(analysisAndJudge())
-	judge := &fakeJudge{verdict: confidentVerdict()}
+	weak := confidentVerdict()
+	weak.ExecutorTier, weak.ExecutorConfidence = "weak", 1
+	judge := &fakeJudge{verdict: weak}
 	analyst := &fakeAnalyst{record: analysedFacts()}
 
 	out := routeWith(t, store, judge, analyst)
@@ -254,26 +279,29 @@ func TestModeBothJudgeSeesFactsNotTheBody(t *testing.T) {
 		t.Fatalf("calls: analyst=%d judge=%d, want 1 and 1", analyst.analyzes, judge.callCount())
 	}
 	st := judge.assignedState()
-	if st.Facts == nil || st.Facts.Scope != ScopeModule {
-		t.Fatalf("judge did not receive the facts: %+v", st.Facts)
+	if st.Facts == nil || st.Facts.Scope != ScopeCrossModule || st.RuleTier != "strong" {
+		t.Fatalf("judge did not receive the facts and the rule tier: %+v %q", st.Facts, st.RuleTier)
 	}
 	if st.DescriptionSummary != "" {
 		t.Errorf("judge saw the description in both-roles mode: %q", st.DescriptionSummary)
 	}
+	if out.Trace.Tier != "strong" || out.Trace.Judge == nil || out.Trace.Judge.Effect != JudgeIgnored {
+		t.Fatalf("trace = %+v judge=%+v, want strong with the judge ignored", out.Trace, out.Trace.Judge)
+	}
 	body := store.comments[KindAssignment][0]
-	if !strings.Contains(body, "判断模型 `judge-model` 按整理好的事实定档") {
-		t.Errorf("comment does not credit the judge with the facts:\n%s", body)
+	if !strings.Contains(body, "判断模型** `judge-model`：给的是弱档，没采用（判断模型只能往上调）") {
+		t.Errorf("comment does not say the judge was overruled:\n%s", body)
 	}
 }
 
-// 只判断: exactly the old behaviour — no analysis call, the judge reads the
-// summary.
-func TestModeJudgeIsTheOldPath(t *testing.T) {
+// 只判断 (old configs): nobody answers the questions, so the table's unknown
+// row sets medium, and the judge reads the summary and may raise one rung.
+func TestModeJudgeRoutesOnTheUnknownRow(t *testing.T) {
 	store := newCachingStore(newFakeStore().settings)
 	judge := &fakeJudge{verdict: confidentVerdict()}
 	analyst := &fakeAnalyst{record: analysedFacts()}
 
-	routeWith(t, store, judge, analyst)
+	out := routeWith(t, store, judge, analyst)
 	if analyst.analyzes != 0 {
 		t.Errorf("judge-only mode called the analysis model %d times", analyst.analyzes)
 	}
@@ -281,11 +309,55 @@ func TestModeJudgeIsTheOldPath(t *testing.T) {
 	if st.Facts != nil {
 		t.Errorf("judge-only mode passed facts nobody supplied: %+v", st.Facts)
 	}
-	if st.DescriptionSummary != "票面摘要" {
-		t.Errorf("judge did not read the summary: %q", st.DescriptionSummary)
+	if st.DescriptionSummary != "票面摘要" || st.RuleTier != "medium" {
+		t.Errorf("judge state: summary %q rule tier %q", st.DescriptionSummary, st.RuleTier)
 	}
 	if len(store.saved) != 0 {
 		t.Error("judge-only mode wrote an analysis cache")
+	}
+	// confidentVerdict asks for strong: one rung above medium, with a reason.
+	if out.Trace.Rule.ID != "unknown" || out.Trace.Tier != "strong" || out.Trace.Judge.Effect != JudgeRaised {
+		t.Fatalf("trace = %+v judge=%+v, want unknown row raised to strong", out.Trace, out.Trace.Judge)
+	}
+	if len(store.assigns) != 1 || store.assigns[0] != "孙悟空游戏" {
+		t.Errorf("assigns = %v, want 孙悟空游戏", store.assigns)
+	}
+	if body := store.comments[KindAssignment][0]; !strings.Contains(body, "上调一档到强档（置信度 90%）：中等复杂度") {
+		t.Errorf("comment does not show the raise:\n%s", body)
+	}
+}
+
+// The judge raises by one rung at most, needs a reason and the threshold,
+// and never lowers.
+func TestJudgeOnlyRaisesOneRung(t *testing.T) {
+	l := DefaultLadder
+	base := func(tier string) decision {
+		return decision{Verdict: Verdict{ExecutorTier: tier, Reviewer: ReviewerSeat}}
+	}
+	cases := []struct {
+		name, rule, judge string
+		conf              float64
+		reason            string
+		err               error
+		want, effect      string
+	}{
+		{"strongest is capped at one rung", "weak", "strongest", 1, "很难", nil, "medium", JudgeRaised},
+		{"one rung up", "medium", "strong", 0.9, "跨端", nil, "strong", JudgeRaised},
+		{"lower is ignored", "strong", "weak", 1, "简单", nil, "strong", JudgeIgnored},
+		{"equal agrees", "medium", "medium", 0.9, "", nil, "medium", JudgeAgreed},
+		{"no reason", "medium", "strong", 0.9, " ", nil, "medium", JudgeIgnored},
+		{"low confidence", "medium", "strong", 0.3, "跨端", nil, "medium", JudgeIgnored},
+		{"off the ladder", "medium", "godlike", 1, "x", nil, "medium", JudgeIgnored},
+		{"already strongest", "strongest", "strongest", 1, "x", nil, "strongest", JudgeAgreed},
+		{"failed", "medium", "", 0, "", errUpstream, "medium", JudgeFailed},
+	}
+	for _, c := range cases {
+		trace := &Trace{}
+		v := Verdict{ExecutorTier: c.judge, ExecutorConfidence: c.conf, Reason: c.reason}
+		d := base(c.rule).withJudge(v, c.err, 0.7, l, trace)
+		if d.Verdict.ExecutorTier != c.want || trace.Judge.Effect != c.effect {
+			t.Errorf("%s: tier %q effect %q, want %q %q", c.name, d.Verdict.ExecutorTier, trace.Judge.Effect, c.want, c.effect)
+		}
 	}
 }
 
@@ -306,7 +378,7 @@ func TestAnalysisIsCachedUntilTheContentChanges(t *testing.T) {
 	if analyst.analyzes != 1 || !d.Cached {
 		t.Fatalf("second decide re-analysed: calls=%d cached=%v", analyst.analyzes, d.Cached)
 	}
-	if !strings.Contains(decisionSourceLine(d, store.settings), "沿用上次分析") {
+	if !strings.Contains(decisionSourceLine(d, store.settings, DefaultLadder), "沿用上次答案") {
 		t.Error("comment line does not say the analysis was reused")
 	}
 
@@ -329,8 +401,8 @@ func TestAnalysisIsCachedUntilTheContentChanges(t *testing.T) {
 	}
 }
 
-// Facts supplied at creation skip the analysis call; in analysis-only mode
-// the tier comes from the rule.
+// Facts supplied at creation skip the analysis call and go straight to the
+// table.
 func TestCreatorFactsSkipTheAnalysisCall(t *testing.T) {
 	store := newCachingStore(analysisOnly())
 	store.issue.Analysis = &AnalysisRecord{
@@ -344,7 +416,7 @@ func TestCreatorFactsSkipTheAnalysisCall(t *testing.T) {
 		t.Fatalf("called the analysis model %d times despite creator facts", analyst.analyzes)
 	}
 	body := store.comments[KindAssignment][0]
-	for _, want := range []string{"按建票时带的事实套规则选档", "建票时带上，未调用分析"} {
+	for _, want := range []string{"建票时带上，未调用分析", "出错代价：高", "第 1 行「出错代价高」"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment is missing %q:\n%s", want, body)
 		}
@@ -362,23 +434,54 @@ func TestCreatorFactsSkipTheAnalysisCall(t *testing.T) {
 	}
 }
 
-func TestRuleVerdictLadder(t *testing.T) {
+func TestRuleTableLadder(t *testing.T) {
 	cases := []struct {
-		f    Facts
-		want string
+		f        Facts
+		want     string
+		reviewer ReviewerKind
 	}{
-		{Facts{Scope: ScopeSmall, Clarity: ClarityClear, Risk: RiskLow}, "weak"},
-		{Facts{Scope: ScopeModule, Clarity: ClarityClear, Risk: RiskMedium}, "medium"},
-		{Facts{Scope: ScopeCrossModule, Clarity: ClarityClear, Risk: RiskLow}, "strong"},
-		{Facts{Scope: ScopeSmall, Clarity: ClarityVague, Risk: RiskLow}, "strong"},
+		{Facts{Scope: ScopeSmall, Clarity: ClarityClear, Risk: RiskLow}, "weak", ReviewerNone},
+		{Facts{Scope: ScopeModule, Clarity: ClarityClear, Risk: RiskMedium}, "medium", ReviewerNone},
+		{Facts{Scope: ScopeCrossModule, Clarity: ClarityClear, Risk: RiskLow}, "strong", ReviewerSeat},
+		{Facts{Scope: ScopeSmall, Clarity: ClarityVague, Risk: RiskLow}, "strong", ReviewerSeat},
+		{Facts{Scope: ScopeSmall, Clarity: ClarityClear, Risk: RiskHigh}, "strong", ReviewerSeat},
+		{Facts{Scope: ScopeSmall, Clarity: Unknown, Risk: RiskLow}, "medium", ReviewerSeat},
+		{UnknownFacts(), "medium", ReviewerSeat},
 	}
 	for _, c := range cases {
-		if got := RuleVerdict(c.f).ExecutorTier; got != c.want {
-			t.Errorf("RuleVerdict(%+v) = %q, want %q", c.f, got, c.want)
+		_, row := DefaultRules.Match(c.f)
+		v := row.Verdict(c.f)
+		if v.ExecutorTier != c.want || v.Reviewer != c.reviewer {
+			t.Errorf("Match(%+v) = %q/%q, want %q/%q", c.f, v.ExecutorTier, v.Reviewer, c.want, c.reviewer)
 		}
 	}
-	if RuleVerdict(Facts{Scope: ScopeSmall, Clarity: ClarityClear, Risk: RiskLow, NeedsHuman: true}).Reviewer != ReviewerHuman {
+	human := Facts{Scope: ScopeSmall, Clarity: ClarityClear, Risk: RiskLow, NeedsHuman: true}
+	if _, row := DefaultRules.Match(human); row.Verdict(human).Reviewer != ReviewerHuman {
 		t.Error("needs_human facts did not route acceptance to a person")
+	}
+}
+
+// Every combination, unknowns included: cross-module and unknown never land
+// on the weakest rung. validate checks this at init; the test pins it.
+func TestNoUnknownOrCrossModuleIsWeak(t *testing.T) {
+	if err := DefaultRules.validate(DefaultLadder); err != nil {
+		t.Fatal(err)
+	}
+	broken := DefaultRules
+	broken.Rules = append([]Rule{{ID: "bad", Label: "坏", When: map[string][]string{"scope": {ScopeCrossModule}}, Tier: "weak", Reviewer: ReviewerNone}}, DefaultRules.Rules...)
+	if err := broken.validate(DefaultLadder); err == nil {
+		t.Error("a table that sends cross-module to weak passed validation")
+	}
+}
+
+// The same facts give the same tier, every time.
+func TestSameFactsSameTierTenTimes(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		store := newCachingStore(analysisOnly())
+		out := routeWith(t, store, &fakeJudge{}, &fakeAnalyst{record: analysedFacts()})
+		if out.Trace.Tier != "strong" || store.assigns[0] != "孙悟空游戏" {
+			t.Fatalf("run %d: tier %q seat %v", i, out.Trace.Tier, store.assigns)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ export const workspaceLinkKeys = {
   audit: (wsId: string) => [...workspaceLinkKeys.all(wsId), "audit"] as const,
   lookup: (wsId: string, target: string) => [...workspaceLinkKeys.all(wsId), "lookup", target] as const,
   pullLookup: (wsId: string, target: string) => [...workspaceLinkKeys.all(wsId), "pull-lookup", target] as const,
+  projectOptions: (wsId: string) => [...workspaceLinkKeys.all(wsId), "project-options"] as const,
   view: (wsId: string, linkId: string, projectId: string | null) =>
     [...workspaceLinkKeys.all(wsId), "view", linkId, projectId ?? "all"] as const,
 };
@@ -42,6 +43,18 @@ export const workspaceLinkLookupOptions = (wsId: string, target: string, enabled
     enabled: !!wsId && enabled && target !== "",
     retry: false,
     staleTime: 60_000,
+  });
+
+/** Shared projects a chat may attach read-only (DENE-1643). Re-read on focus
+ *  so a revoke drops out of the menu without a reload. */
+export const linkedProjectOptionsOptions = (wsId: string) =>
+  queryOptions({
+    queryKey: workspaceLinkKeys.projectOptions(wsId),
+    queryFn: () => api.listLinkedProjectOptions(),
+    enabled: !!wsId,
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+    retry: false,
   });
 
 export const linkedViewOptions = (wsId: string, linkId: string, projectId: string | null) =>

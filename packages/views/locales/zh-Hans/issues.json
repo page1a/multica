@@ -36,7 +36,9 @@
     "steer_step_read": "已读取",
     "retrying": "正在等待重试。",
     "skills_used": "用到 skill：{{names}}",
-    "skill_step": "使用 skill {{name}}"
+    "skill_step": "使用 skill {{name}}",
+    "relayed_to": "失败后已转给 {{name}}",
+    "relay_waiting": "失败后没有可接的席位，等人决定"
   },
   "working_filter_error": {
     "title": "无法加载智能体正在处理的任务"
@@ -170,6 +172,7 @@
     "last_activity_missing": "无活动时间",
     "knowledge_none": "无够格知识",
     "knowledge_change": "知识：{{locations}}",
+    "knowledge_change_unverified": "知识：{{locations}}（未核对交付）",
     "section_title": "收口记录",
     "conclusion": "结论",
     "status": "状态",
@@ -503,6 +506,7 @@
     "prop_status": "状态",
     "prop_priority": "优先级",
     "prop_stage": "阶段",
+    "prop_waiting_for": "在等",
     "prop_assignee": "负责人",
     "prop_reviewer": "验收席",
     "prop_start_date": "开始日期",
@@ -615,7 +619,9 @@
       "status_merged_other": "已并回 {{count}} 个提交",
       "status_conflict": "并回冲突，等执行人解决",
       "show_all_other": "展开全部 {{count}} 个"
-    }
+    },
+    "from_chat": "来自聊天",
+    "from_chat_hidden": "来自一个你看不到的聊天"
   },
   "timeline": {
     "loading": "加载中…"
@@ -655,6 +661,7 @@
     "status_changed_pr": "所有关联 PR 均已合并（{{prs}}），状态从 {{from}} 改为 {{to}}",
     "pr_auto_complete_disabled": "设置此任务合并后不改状态",
     "pr_auto_complete_enabled": "恢复了此任务合并后改状态",
+    "linked_write": "经 {{workspace}}·{{agent}} 代办",
     "wakeup_created": "添加了唤醒：{{condition}}唤醒 {{agent}}",
     "wakeup_triggered": "{{condition}}，唤醒了 {{agent}}",
     "wakeup_triggered_merged": "{{condition}}，并入了 {{agent}} 待开始的运行",
@@ -676,6 +683,7 @@
   },
   "comment": {
     "add_reaction": "添加表情回应",
+    "reaction_failed": "表情回应更新失败",
     "collapse_thread": "收起讨论",
     "expand_thread": "展开讨论",
     "delete_title": "删除评论",
@@ -1844,6 +1852,9 @@
     "reason_fresh_requested": "按要求新开"
   },
   "state_card": {
+    "source_quote": "原话",
+    "children": "子任务回执",
+    "children_pr_merged": "已合并",
     "section_title": "状态卡",
     "decisions": "已拍板",
     "decisions_empty": "还没有拍板",

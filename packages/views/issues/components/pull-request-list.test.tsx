@@ -446,6 +446,20 @@ describe("PullRequestList auto-complete", () => {
     );
   });
 
+  it("says so when undoing a removal fails", async () => {
+    mockPRs = [makePR({ id: "a", number: 12 }), makePR({ id: "b", number: 19, state: "closed" })];
+    mockAutoComplete = decision("not_merged", ["b"]);
+    apiMock.unlinkIssuePullRequest.mockResolvedValue({ pull_requests: [mockPRs[0]], auto_complete: decision("waiting", ["a"]) });
+    apiMock.linkIssuePullRequest.mockRejectedValue(new Error("gone"));
+    toastMock.error.mockReset();
+    renderList();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalled());
+    const opts = toastMock.success.mock.calls[0]![1] as { action: { onClick: () => void } };
+    opts.action.onClick();
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Couldn’t link the pull request."));
+  });
+
   // The workspace chose to leave status alone: a team choice, not repeated on
   // every issue. An older backend's no_close_intent says nothing either.
   it.each(["workspace_disabled", "no_close_intent", "at_target", "terminal"])("says nothing for %s", async (state) => {

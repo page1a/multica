@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "asks, open a chat, goals, inbox, project board, issues, sub-issues, wakeups, charts, routing, close protocol, stalls, driver, halt, mentions, agents, specialisation, squads, autopilot, projects, runtimes, progress, state card, skill import, transfer, linked workspace, GitHub App. Not product code."
+description: "asks, open a chat, goals, inbox, project board/report, sub-issues, wakeups, charts, routing, close protocol, stalls, driver, halt, mentions, agents, specialisation, squads, autopilot, projects, runtimes, progress, state card, skill import, transfer, linked workspace, GitHub App. Not product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -35,12 +35,13 @@ Read the invariants below, then open the reference(s) your task actually needs �
 | `references/specialisations.md` | Base roles and specialisations: create by base role + domain, what a child inherits, the two-level cap, runtime following, solidify, the archive guard |
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
 | `references/autopilots.md` | Autopilots: schedule / webhook / manual triggers, `create_issue` vs `run_only`, why one did not fire |
-| `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode), and project memory (`check`, `status`, `seat`) |
+| `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode), and project memory (`check`, `status`, `monitor`, `seat`, `chat sediment`) |
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/inbox.md` | The user asks about their inbox or what is stuck: `multica inbox board` (optionally `--project`) and the fixed five-part answer |
+| `references/project-report.md` | The user asks to hear a project's report (听汇报, 有什么新进展, 上次以来): `multica project report --mark-heard`, the fixed spoken shape with a Mermaid chart, and acting on its buttons |
 | `references/project-board.md` | The user asks for the full open-ticket panorama by project: `multica project board` (one or more projects, or the whole workspace) |
 | `references/chat-spawn.md` | Opening a chat with another agent from a chat (`multica chat open`): task-or-chat table, limits, refusal codes |
-| `references/workspace-links.md` | Reading another workspace's shared projects through a link: `multica workspace link list` / `view`, what the view contains, why it says link not found |
+| `references/workspace-links.md` | Reading another workspace's shared projects through a link: `multica workspace link list` / `view`, pending link requests (`list --pending`), what the view contains, why it says link not found; on a managed link, working on the source's issues and autopilots with `--linked <source-slug>` |
 | `references/transfer.md` | `multica transfer export` / `import` / `bind-runtimes`, and the kun `/transfer/*` endpoints |
 | `references/skill-import.md` | Importing a skill into this workspace from a URL or a local archive |
 | `references/github-app.md` | GitHub App identity for this deployment: status, and a setup link a person opens to create the App |
@@ -51,8 +52,7 @@ issue, then writing a mention needs `squads.md`, `issues.md` and `mentions.md`,
 and skipping one of those means acting on a contract you have not read.
 
 What is never right is reading every reference because you are not sure. Each
-reference states its own contracts in full and none depends on another, so
-pick by domain and skip the rest.
+reference states its own contracts in full and none depends on another, so pick by domain and skip the rest.
 
 ## Invariants
 
@@ -80,10 +80,9 @@ mentioning, triggering and status changes mutate durable workspace state or
 start agent runs that cost real budget. Never run one to see what happens. When
 the user has not asked for a specific mutation, propose it instead of making it.
 
-**A chat agent dispatches; it does not do the work.** By default it creates the
-ticket with no executor and routing picks. Only when the person said 「你来做」
-(or named you) does it assign itself with `--per-quote "<原话>"` and start. A
-quote that does not check out goes to routing too; do not go back for words.
+**A chat agent dispatches; it does not do the work.** Past an aligned small fix it
+opens a ticket with `## 目标` / `## 验收` (`references/chat-spawn.md`); routing picks unless a person
+must do it. Only 「你来做」 (or your name) self-assigns with `--per-quote "<原话>"`; an unverified quote goes to routing.
 
 **The owner of a ticket owns it to the end.** Once it is yours: post a start
 comment first (how you read the ask, which direction you will take), comment at

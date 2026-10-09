@@ -107,6 +107,25 @@ type ProjectContextData struct {
 	ChatCount  int    `json:"chat_count,omitempty"`
 }
 
+// LinkedProjectData mirrors handler.TaskLinkedProjectData — a read-only
+// reference project a chat attached through a workspace link (DENE-1643).
+type LinkedProjectData struct {
+	Title       string               `json:"title"`
+	SourceName  string               `json:"source_name"`
+	Description string               `json:"description,omitempty"`
+	Resources   []LinkedResourceData `json:"resources,omitempty"`
+	MemoryLine  string               `json:"memory_line,omitempty"`
+}
+
+// LinkedResourceData is a shared project's resource: a repository URL or a
+// directory path on the source side, nothing else.
+type LinkedResourceData struct {
+	Type  string  `json:"type"`
+	Label *string `json:"label"`
+	URL   string  `json:"url,omitempty"`
+	Path  string  `json:"path,omitempty"`
+}
+
 // ConnectedAppData keeps the claim-response field local to daemon types while
 // sharing the canonical JSON shape with the runtime app metadata package.
 type ConnectedAppData = runtimeapps.ConnectedApp
@@ -194,14 +213,18 @@ type Task struct {
 	// field leaves Projects empty and the daemon renders the primary project
 	// exactly as before. Mirror field: internal/handler/agent.go
 	// AgentTaskResponse.Projects, same JSON name.
-	Projects                      []ProjectContextData `json:"projects,omitempty"`
-	IsLeaderTask                  bool                 `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
-	LeaderRoleResolved            bool                 `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
-	PriorSessionID                string               `json:"prior_session_id,omitempty"`                 // Claude session ID from a previous task on this issue
-	PriorWorkDir                  string               `json:"prior_work_dir,omitempty"`                   // work_dir from a previous task on this issue
-	PriorSessionResumeUnavailable bool                 `json:"prior_session_resume_unavailable,omitempty"` // MUL-5305: server signals a more recent Codex session was withheld (rollout missing) and PriorSessionID (if any) is an older fallback; the run must disclose the continuity gap even if that older session resumes cleanly. Absent/false on old servers.
-	ContinueInterruptedSession    bool                 `json:"continue_interrupted_session,omitempty"`     // DENE-727: auto-retry inherited a resume-safe parent session; daemon sends a continue prompt instead of re-injecting the original task. omitempty so old daemons ignore it and keep today's full prompt while still resuming.
-	ContinueAfterTimeLimit        bool                 `json:"continue_after_time_limit,omitempty"`        // DENE-857: the interrupted turn hit the workspace time limit. The continue prompt closes out finished work and splits what remains. Old daemons ignore it and send the generic continue prompt.
+	Projects []ProjectContextData `json:"projects,omitempty"`
+	// LinkedProjects are read-only reference projects (DENE-1643). They never
+	// feed the code source, the working directory or resources.json. Mirror
+	// field: internal/handler/agent.go AgentTaskResponse.LinkedProjects.
+	LinkedProjects                []LinkedProjectData `json:"linked_projects,omitempty"`
+	IsLeaderTask                  bool                `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
+	LeaderRoleResolved            bool                `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
+	PriorSessionID                string              `json:"prior_session_id,omitempty"`                 // Claude session ID from a previous task on this issue
+	PriorWorkDir                  string              `json:"prior_work_dir,omitempty"`                   // work_dir from a previous task on this issue
+	PriorSessionResumeUnavailable bool                `json:"prior_session_resume_unavailable,omitempty"` // MUL-5305: server signals a more recent Codex session was withheld (rollout missing) and PriorSessionID (if any) is an older fallback; the run must disclose the continuity gap even if that older session resumes cleanly. Absent/false on old servers.
+	ContinueInterruptedSession    bool                `json:"continue_interrupted_session,omitempty"`     // DENE-727: auto-retry inherited a resume-safe parent session; daemon sends a continue prompt instead of re-injecting the original task. omitempty so old daemons ignore it and keep today's full prompt while still resuming.
+	ContinueAfterTimeLimit        bool                `json:"continue_after_time_limit,omitempty"`        // DENE-857: the interrupted turn hit the workspace time limit. The continue prompt closes out finished work and splits what remains. Old daemons ignore it and send the generic continue prompt.
 	// SessionRestartReason is filled by the daemon when a continue-retry
 	// cannot actually resume and has to open a new CLI session. It is not
 	// part of the claim payload.
@@ -241,6 +264,7 @@ type Task struct {
 	ChatType                  string                `json:"chat_type,omitempty"`                    // "group" when the channel conversation is a shared room, "p2p" for a 1:1 with the bot. Empty for a web chat or an old server; the per-turn prompt then reports unknown rather than guessing 1:1
 	ChatInThread              bool                  `json:"chat_in_thread,omitempty"`               // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
 	ChatTitleRequested        bool                  `json:"chat_title_requested,omitempty"`         // server asks this run to name the chat with `multica chat title` (workspace naming source is runtime and no runtime title landed yet)
+	ChatDispatchedIssues      []string              `json:"chat_dispatched_issues,omitempty"`       // tasks this chat dispatched, one server-rendered receipt line each (DENE-1672)
 	ChatMessage               string                `json:"chat_message,omitempty"`                 // user message content for chat tasks
 	ChatMessageAttachments    []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"`     // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
 	ChatIntro                 bool                  `json:"chat_intro,omitempty"`                   // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats

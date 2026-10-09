@@ -104,9 +104,8 @@ vi.mock("@multica/core/realtime", () => ({
   useWSReconnect: vi.fn(),
 }));
 
-vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}));
+const toastMock = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
+vi.mock("sonner", () => ({ toast: toastMock }));
 
 import { useIssueTimeline } from "./use-issue-timeline";
 
@@ -149,6 +148,20 @@ describe("useIssueTimeline", () => {
     expect(result.current.deleteComment).toBe(first.deleteComment);
     expect(result.current.toggleReaction).toBe(first.toggleReaction);
     expect(result.current.submitComment).toBe(first.submitComment);
+  });
+
+  it("says so when a comment reaction is refused", async () => {
+    toastMock.error.mockClear();
+    stableHandles.toggleMutate.mockImplementation(
+      (_vars: unknown, opts?: { onError?: () => void }) => opts?.onError?.(),
+    );
+    const { result } = renderHook(() => useIssueTimeline("issue-1", "user-1"));
+
+    await act(() => result.current.toggleReaction("c1", "👍"));
+
+    expect(stableHandles.toggleMutate).toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    stableHandles.toggleMutate.mockReset();
   });
 
   it("passes suppressed agent ids through editComment", async () => {

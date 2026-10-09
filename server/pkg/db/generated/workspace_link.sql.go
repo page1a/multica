@@ -15,7 +15,7 @@ const acceptWorkspaceLink = `-- name: AcceptWorkspaceLink :one
 UPDATE workspace_link
 SET status = 'active', accepted_by = $2, accepted_at = now()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at
+RETURNING id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at, managed
 `
 
 type AcceptWorkspaceLinkParams struct {
@@ -35,6 +35,7 @@ func (q *Queries) AcceptWorkspaceLink(ctx context.Context, arg AcceptWorkspaceLi
 		&i.AcceptedBy,
 		&i.CreatedAt,
 		&i.AcceptedAt,
+		&i.Managed,
 	)
 	return i, err
 }
@@ -67,7 +68,7 @@ func (q *Queries) ClearWorkspaceLinkProjects(ctx context.Context, linkID pgtype.
 const createWorkspaceLink = `-- name: CreateWorkspaceLink :one
 INSERT INTO workspace_link (source_workspace_id, target_workspace_id, created_by)
 VALUES ($1, $2, $3)
-RETURNING id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at
+RETURNING id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at, managed
 `
 
 type CreateWorkspaceLinkParams struct {
@@ -88,6 +89,7 @@ func (q *Queries) CreateWorkspaceLink(ctx context.Context, arg CreateWorkspaceLi
 		&i.AcceptedBy,
 		&i.CreatedAt,
 		&i.AcceptedAt,
+		&i.Managed,
 	)
 	return i, err
 }
@@ -101,9 +103,40 @@ func (q *Queries) DeleteWorkspaceLink(ctx context.Context, id pgtype.UUID) error
 	return err
 }
 
+const getActiveWorkspaceLinkBetween = `-- name: GetActiveWorkspaceLinkBetween :one
+SELECT id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at, managed FROM workspace_link
+WHERE source_workspace_id = $1::uuid
+  AND target_workspace_id = $2::uuid
+  AND status = 'active'
+`
+
+type GetActiveWorkspaceLinkBetweenParams struct {
+	SourceWorkspaceID pgtype.UUID `json:"source_workspace_id"`
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+}
+
+// The active link from source to viewer, if any. The managed gate reads it
+// on every call, so switching managed off or revoking takes effect at once.
+func (q *Queries) GetActiveWorkspaceLinkBetween(ctx context.Context, arg GetActiveWorkspaceLinkBetweenParams) (WorkspaceLink, error) {
+	row := q.db.QueryRow(ctx, getActiveWorkspaceLinkBetween, arg.SourceWorkspaceID, arg.TargetWorkspaceID)
+	var i WorkspaceLink
+	err := row.Scan(
+		&i.ID,
+		&i.SourceWorkspaceID,
+		&i.TargetWorkspaceID,
+		&i.Status,
+		&i.CreatedBy,
+		&i.AcceptedBy,
+		&i.CreatedAt,
+		&i.AcceptedAt,
+		&i.Managed,
+	)
+	return i, err
+}
+
 const getWorkspaceLink = `-- name: GetWorkspaceLink :one
 
-SELECT id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at FROM workspace_link WHERE id = $1
+SELECT id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at, managed FROM workspace_link WHERE id = $1
 `
 
 // Cross-workspace read-only links (DENE-1225). Only server/internal/workspacelink
@@ -120,6 +153,7 @@ func (q *Queries) GetWorkspaceLink(ctx context.Context, id pgtype.UUID) (Workspa
 		&i.AcceptedBy,
 		&i.CreatedAt,
 		&i.AcceptedAt,
+		&i.Managed,
 	)
 	return i, err
 }
@@ -150,6 +184,63 @@ func (q *Queries) InsertWorkspaceLinkAudit(ctx context.Context, arg InsertWorksp
 		arg.Detail,
 	)
 	return err
+}
+
+const listLinkedReferenceProjects = `-- name: ListLinkedReferenceProjects :many
+SELECT p.id, p.workspace_id, p.title, p.description, p.icon, p.status, p.lead_type, p.lead_id, p.created_at, p.updated_at, p.priority, p.start_date, p.due_date, p.visibility, p.created_by, p.domain_ids FROM workspace_link_project lp
+JOIN project p ON p.id = lp.project_id
+WHERE lp.link_id = $1::uuid
+  AND p.workspace_id = $2::uuid
+  AND p.visibility <> 'private'
+  AND (cardinality($3::uuid[]) = 0 OR p.id = ANY($3::uuid[]))
+ORDER BY p.title, p.id
+`
+
+type ListLinkedReferenceProjectsParams struct {
+	LinkID            pgtype.UUID   `json:"link_id"`
+	SourceWorkspaceID pgtype.UUID   `json:"source_workspace_id"`
+	ProjectIds        []pgtype.UUID `json:"project_ids"`
+}
+
+// DENE-1643: the full rows of a link's shared projects, for the read-only
+// project context (description, resources, memory). Same filter as
+// ListLinkedViewProjects: still ticked on this link, still in the source,
+// still not private. An empty project_ids filter means every ticked project.
+func (q *Queries) ListLinkedReferenceProjects(ctx context.Context, arg ListLinkedReferenceProjectsParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listLinkedReferenceProjects, arg.LinkID, arg.SourceWorkspaceID, arg.ProjectIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Icon,
+			&i.Status,
+			&i.LeadType,
+			&i.LeadID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Priority,
+			&i.StartDate,
+			&i.DueDate,
+			&i.Visibility,
+			&i.CreatedBy,
+			&i.DomainIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLinkedViewIssues = `-- name: ListLinkedViewIssues :many
@@ -439,7 +530,7 @@ func (q *Queries) ListWorkspaceLinkProjects(ctx context.Context, arg ListWorkspa
 }
 
 const listWorkspaceLinksForWorkspace = `-- name: ListWorkspaceLinksForWorkspace :many
-SELECT l.id, l.source_workspace_id, l.target_workspace_id, l.status, l.created_by, l.accepted_by, l.created_at, l.accepted_at,
+SELECT l.id, l.source_workspace_id, l.target_workspace_id, l.status, l.created_by, l.accepted_by, l.created_at, l.accepted_at, l.managed,
        sw.name AS source_name, sw.slug AS source_slug, sw.avatar_url AS source_avatar_url,
        tw.name AS target_name, tw.slug AS target_slug, tw.avatar_url AS target_avatar_url
 FROM workspace_link l
@@ -459,6 +550,7 @@ type ListWorkspaceLinksForWorkspaceRow struct {
 	AcceptedBy        pgtype.UUID        `json:"accepted_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	AcceptedAt        pgtype.Timestamptz `json:"accepted_at"`
+	Managed           bool               `json:"managed"`
 	SourceName        string             `json:"source_name"`
 	SourceSlug        string             `json:"source_slug"`
 	SourceAvatarUrl   pgtype.Text        `json:"source_avatar_url"`
@@ -486,6 +578,7 @@ func (q *Queries) ListWorkspaceLinksForWorkspace(ctx context.Context, workspaceI
 			&i.AcceptedBy,
 			&i.CreatedAt,
 			&i.AcceptedAt,
+			&i.Managed,
 			&i.SourceName,
 			&i.SourceSlug,
 			&i.SourceAvatarUrl,
@@ -536,4 +629,34 @@ func (q *Queries) ListWorkspaceShareableProjects(ctx context.Context, workspaceI
 		return nil, err
 	}
 	return items, nil
+}
+
+const setWorkspaceLinkManaged = `-- name: SetWorkspaceLinkManaged :one
+UPDATE workspace_link SET managed = $1::boolean
+WHERE id = $2::uuid
+RETURNING id, source_workspace_id, target_workspace_id, status, created_by, accepted_by, created_at, accepted_at, managed
+`
+
+type SetWorkspaceLinkManagedParams struct {
+	Managed bool        `json:"managed"`
+	ID      pgtype.UUID `json:"id"`
+}
+
+// DENE-1663: the source owner's switch letting the viewer's agents manage
+// the source's issues and autopilots for their run's originator.
+func (q *Queries) SetWorkspaceLinkManaged(ctx context.Context, arg SetWorkspaceLinkManagedParams) (WorkspaceLink, error) {
+	row := q.db.QueryRow(ctx, setWorkspaceLinkManaged, arg.Managed, arg.ID)
+	var i WorkspaceLink
+	err := row.Scan(
+		&i.ID,
+		&i.SourceWorkspaceID,
+		&i.TargetWorkspaceID,
+		&i.Status,
+		&i.CreatedBy,
+		&i.AcceptedBy,
+		&i.CreatedAt,
+		&i.AcceptedAt,
+		&i.Managed,
+	)
+	return i, err
 }

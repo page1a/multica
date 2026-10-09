@@ -2005,3 +2005,21 @@ WHERE m.chat_session_id = ANY(sqlc.arg(session_ids)::uuid[])
   AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
   AND LOWER(m.content) LIKE ALL(sqlc.arg(patterns)::text[])
 ORDER BY m.chat_session_id, m.created_at DESC;
+
+-- name: ListChatSessionLinkedProjectsForSessions :many
+-- DENE-1643: the read-only linked projects of every session on a page, in
+-- selection order. Whether each is still reachable is decided by
+-- internal/workspacelink, never by this row.
+SELECT * FROM chat_session_linked_project
+WHERE chat_session_id = ANY(sqlc.arg('chat_session_ids')::uuid[])
+ORDER BY chat_session_id, position ASC, created_at ASC, id ASC;
+
+-- name: DeleteChatSessionLinkedProjectsForSession :exec
+-- Replace semantics, same as DeleteChatSessionProjectsForSession.
+DELETE FROM chat_session_linked_project
+WHERE chat_session_id = $1 AND workspace_id = $2;
+
+-- name: InsertChatSessionLinkedProject :exec
+INSERT INTO chat_session_linked_project (workspace_id, chat_session_id, link_id, project_id, title, source_name, position)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (chat_session_id, link_id, project_id) DO NOTHING;

@@ -188,6 +188,47 @@ func (q *Queries) ArchiveInboxItem(ctx context.Context, id pgtype.UUID) (InboxIt
 	return i, err
 }
 
+const archiveWorkspaceLinkRequestInbox = `-- name: ArchiveWorkspaceLinkRequestInbox :many
+UPDATE inbox_item SET archived = true
+WHERE type = 'workspace_link_request'
+  AND workspace_id = $1::uuid
+  AND details->>'link_id' = $2::text
+  AND archived = false
+RETURNING id, recipient_id
+`
+
+type ArchiveWorkspaceLinkRequestInboxParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	LinkID      string      `json:"link_id"`
+}
+
+type ArchiveWorkspaceLinkRequestInboxRow struct {
+	ID          pgtype.UUID `json:"id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+}
+
+// A link request is answered once (DENE-1641): accepting, declining or
+// withdrawing it archives the request notice for every manager it reached.
+func (q *Queries) ArchiveWorkspaceLinkRequestInbox(ctx context.Context, arg ArchiveWorkspaceLinkRequestInboxParams) ([]ArchiveWorkspaceLinkRequestInboxRow, error) {
+	rows, err := q.db.Query(ctx, archiveWorkspaceLinkRequestInbox, arg.WorkspaceID, arg.LinkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ArchiveWorkspaceLinkRequestInboxRow{}
+	for rows.Next() {
+		var i ArchiveWorkspaceLinkRequestInboxRow
+		if err := rows.Scan(&i.ID, &i.RecipientID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countUnreadInbox = `-- name: CountUnreadInbox :one
 SELECT count(*) FROM inbox_item i
 LEFT JOIN issue iss ON iss.id = i.issue_id

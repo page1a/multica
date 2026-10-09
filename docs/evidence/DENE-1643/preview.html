@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1643 聊天挂连通项目（只读）</title>
+<style>
+:root{--bg:#fafafa;--surface:#fff;--raised:#f4f4f5;--border:#e4e4e7;--fg:#18181b;--muted:#71717a;--brand:#4f46e5}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 -apple-system,"PingFang SC",system-ui,sans-serif;background:var(--bg);color:var(--fg);padding:24px}
+h2{font-size:13px;color:var(--muted);font-weight:500;margin:28px 0 10px}
+.row{display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start}
+.frame{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;position:relative}
+.desk{width:720px}.phone{width:390px;padding:12px}
+.composer{border:1px solid var(--border);border-radius:10px;background:var(--surface);padding-bottom:36px;position:relative}
+.chips{display:flex;flex-wrap:wrap;gap:4px 8px;padding:8px 12px 0}
+.pill{display:inline-flex;align-items:center;gap:6px;height:24px;max-width:224px;border:1px solid var(--border);background:var(--raised);border-radius:999px;padding:0 8px 0 10px;font-size:12px;font-weight:500;overflow:hidden;white-space:nowrap}
+.pill.linked{border-style:dashed}.pill .t{overflow:hidden;text-overflow:ellipsis;min-width:0}.pill .s{color:var(--muted);font-weight:400;flex-shrink:0}.pill .x{color:var(--muted);flex-shrink:0}
+.pill.stale{color:var(--muted)}.pill.stale .t{text-decoration:line-through}
+.editor{padding:8px 12px;color:var(--muted);min-height:44px}
+.plus{position:absolute;left:8px;bottom:6px;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:var(--muted);background:var(--raised)}
+.send{position:absolute;right:8px;bottom:6px;width:28px;height:28px;border-radius:50%;background:var(--fg)}
+.menu{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:4px;font-size:13px}
+.mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;white-space:nowrap}.mi.hl{background:var(--raised)}
+.mi .ck{width:14px;text-align:center}.mi .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.mi .src{color:var(--muted);font-size:12px;max-width:96px;overflow:hidden;text-overflow:ellipsis}
+.mi.stale .tt{color:var(--muted);text-decoration:line-through}
+.lbl{padding:4px 6px;font-size:12px;color:var(--muted);font-weight:500}.sep{height:1px;background:var(--border);margin:4px -4px}
+.cnt{color:var(--muted);font-size:12px}
+.note{font-size:12px;color:var(--muted);margin-top:8px}
+.settings .r{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--border)}.settings .d{color:var(--muted);font-size:12px}
+</style></head><body>
+
+<h2>桌面 / Web：输入框 + 「+ → 项目上下文」菜单</h2>
+<div class="row">
+<div class="frame desk" style="height:420px">
+  <div style="position:absolute;left:16px;right:16px;bottom:16px">
+  <div class="composer">
+    <div class="chips">
+      <span class="pill"><span>📘</span><span class="t">Multica 魔改</span><span class="x">✕</span></span>
+      <span class="pill linked" title="来自 Acme 的只读项目"><span>📁</span><span class="t">设计规范</span><span class="s">Acme</span><span class="x">✕</span></span>
+      <span class="pill linked stale" title="已不再共享，智能体不再收到它"><span>📁</span><span class="t">旧接口文档</span><span class="s">失效</span><span class="x">✕</span></span>
+    </div>
+    <div class="editor">问点什么…</div>
+    <span class="plus">＋</span><span class="send"></span>
+  </div></div>
+  <div class="menu" style="left:24px;bottom:64px;width:170px">
+    <div class="mi">🖼 上传文件</div>
+    <div class="mi hl">🗂 <span class="tt">项目上下文</span><span class="cnt">3</span> ›</div>
+  </div>
+  <div class="menu" style="left:196px;bottom:64px;width:270px">
+    <div class="mi"><span class="ck">✓</span>📘 <span class="tt">Multica 魔改</span></div>
+    <div class="mi">⇄ 切换到其他项目…</div>
+    <div class="sep"></div>
+    <div class="lbl">连通的项目（只读）</div>
+    <div class="mi"><span class="ck">✓</span>📁 <span class="tt">设计规范</span><span class="src">Acme</span></div>
+    <div class="mi"><span class="ck"></span>📁 <span class="tt">官网改版</span><span class="src">Acme</span></div>
+    <div class="mi stale"><span class="ck">✓</span>📁 <span class="tt">旧接口文档</span><span class="src">失效</span></div>
+    <div class="sep"></div>
+    <div class="mi">✕ 移除全部项目上下文</div>
+  </div>
+</div>
+</div>
+
+<h2>手机网页 390px：同一菜单，子菜单盖在主菜单上，标签可截断</h2>
+<div class="row">
+<div class="frame phone" style="height:470px">
+  <div style="position:absolute;left:12px;right:12px;bottom:12px">
+  <div class="composer">
+    <div class="chips">
+      <span class="pill"><span>📘</span><span class="t">Multica 魔改</span><span class="x">✕</span></span>
+      <span class="pill linked"><span>📁</span><span class="t">设计规范</span><span class="s">Acme</span><span class="x">✕</span></span>
+      <span class="pill linked stale"><span>📁</span><span class="t">旧接口文档</span><span class="s">失效</span><span class="x">✕</span></span>
+    </div>
+    <div class="editor">问点什么…</div>
+    <span class="plus">＋</span><span class="send"></span>
+  </div></div>
+  <div class="menu" style="left:20px;right:20px;bottom:130px">
+    <div class="mi"><span class="ck">✓</span>📘 <span class="tt">Multica 魔改</span></div>
+    <div class="sep"></div>
+    <div class="lbl">连通的项目（只读）</div>
+    <div class="mi"><span class="ck">✓</span>📁 <span class="tt">设计规范</span><span class="src">Acme</span></div>
+    <div class="mi"><span class="ck"></span>📁 <span class="tt">一个很长很长很长的共享项目名称会截断</span><span class="src">Acme Studio</span></div>
+    <div class="mi stale"><span class="ck">✓</span>📁 <span class="tt">旧接口文档</span><span class="src">失效</span></div>
+    <div class="sep"></div>
+    <div class="mi">✕ 移除全部项目上下文</div>
+  </div>
+</div>
+<div class="frame phone settings">
+  <div style="font-weight:600;margin-bottom:4px">发起连通</div>
+  <div class="r"><div>把本工作区的哪些项目给对方看<div class="d">对方能读到所勾项目的描述、仓库地址、本地目录路径和项目记忆，他们的智能体也会读到；私有任务和私有项目不会带出。</div></div></div>
+  <div class="note">设置 → 连通工作区，发起连通处的说明（源方看到）</div>
+</div>
+</div>
+</body></html>

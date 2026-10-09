@@ -33,6 +33,11 @@ export const chatKeys = {
    *  completes the cache stays warm so the persisted assistant message
    *  can render the same trace without refetching. */
   taskMessages: (taskId: string) => ["task-messages", taskId] as const,
+  /** The issues each chat opened (DENE-1665). Workspace-scoped like web's
+   *  `chatKeys.tickets`; `ticketsAll` is the prefix issue events invalidate. */
+  ticketsAll: (wsId: string | null) => [...chatKeys.all(wsId), "tickets"] as const,
+  tickets: (wsId: string | null, sessionId: string) =>
+    [...chatKeys.ticketsAll(wsId), sessionId] as const,
 };
 
 // UUID gate mirrors `packages/core/chat/queries.ts`: optimistic task ids
@@ -77,5 +82,13 @@ export const taskMessagesOptions = (taskId: string | null | undefined) =>
     queryKey: chatKeys.taskMessages(taskId ?? ""),
     queryFn: ({ signal }) => api.listTaskMessages(taskId!, { signal }),
     enabled: isTaskMessageTaskId(taskId),
+    staleTime: Infinity,
+  });
+
+export const chatTicketsOptions = (wsId: string | null, sessionId: string | null) =>
+  queryOptions({
+    queryKey: chatKeys.tickets(wsId, sessionId ?? ""),
+    queryFn: ({ signal }) => api.listChatTickets(sessionId!, { signal }),
+    enabled: !!wsId && !!sessionId,
     staleTime: Infinity,
   });

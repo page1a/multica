@@ -23,6 +23,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/blockwait"
 	"github.com/multica-ai/multica/server/internal/closeprotocol"
+	"github.com/multica-ai/multica/server/internal/receipt"
 )
 
 // Decision limits. A decision is one sentence someone settled, not a report.
@@ -53,6 +54,12 @@ const (
 	KeyHandoffByType  = "handoff.by_type"
 	KeyHandoffByID    = "handoff.by_id"
 )
+
+// KeyLatestSummary is the --summary of the latest close or handoff, word for
+// word, rewritten by every one of them — empty when that one carried none.
+// The project report reads it as latest_summary (DENE-1691); write order is
+// the order, so no timestamp comparison can let an older line through.
+const KeyLatestSummary = "summary.latest"
 
 // HandoffKeys lists every handoff key, for writers that replace the record.
 var HandoffKeys = []string{KeyHandoffAt, KeyHandoffSummary, KeyHandoffTo, KeyHandoffByType, KeyHandoffByID}
@@ -230,10 +237,25 @@ type Card struct {
 	IssueID    string     `json:"issue_id"`
 	Identifier string     `json:"identifier"`
 	Goal       Goal       `json:"goal"`
+	Source     *Source    `json:"source"`
 	Decisions  []Decision `json:"decisions"`
 	Now        Now        `json:"now"`
 	Baton      *Baton     `json:"baton"`
 	Changes    Changes    `json:"changes"`
+	// Children are the sub-tasks' receipts the viewer can see (DENE-1679).
+	Children []receipt.Receipt `json:"children"`
+}
+
+// MaxSourceExcerpt bounds the source message quoted on the card.
+const MaxSourceExcerpt = 200
+
+// Source is the chat an issue was dispatched from (DENE-1672): the executor
+// reads what was asked, and where to read the rest.
+type Source struct {
+	ChatSessionID string `json:"chat_session_id"`
+	ChatTitle     string `json:"chat_title"`
+	MessageID     string `json:"message_id,omitempty"`
+	Excerpt       string `json:"excerpt,omitempty"`
 }
 
 // DeriveNow reads "现在在哪" from the close record. meta is the issue's
@@ -307,6 +329,25 @@ func DeriveBaton(meta map[string]string, close CloseNote) *Baton {
 	}
 }
 
+// LatestSummary is the report's latest_summary (DENE-1691): the latest close
+// or handoff --summary as stored under KeyLatestSummary. Issues closed before
+// that key existed fall back to the newer of the last close and the last
+// summarised handoff; nothing else stands in, so an older line is never
+// passed off as the latest conclusion.
+func LatestSummary(meta map[string]string, closeSummary string) string {
+	if latest, ok := meta[KeyLatestSummary]; ok {
+		return strings.TrimSpace(latest)
+	}
+	handoffAt := strings.TrimSpace(meta[KeyHandoffAt])
+	if closeprotocol.Complete(meta) && (handoffAt == "" || !after(handoffAt, strings.TrimSpace(meta[closeprotocol.KeyAt]))) {
+		return strings.TrimSpace(closeSummary)
+	}
+	if handoffAt == "" {
+		return ""
+	}
+	return strings.TrimSpace(meta[KeyHandoffSummary])
+}
+
 func after(a, b string) bool {
 	ta, errA := time.Parse(time.RFC3339Nano, a)
 	tb, errB := time.Parse(time.RFC3339Nano, b)
@@ -370,6 +411,16 @@ func Render(c Card) string {
 		}
 		fmt.Fprintf(&b, "  %s %s\n", mark, ch.Description)
 	}
+	if c.Source != nil {
+		title := c.Source.ChatTitle
+		if title == "" {
+			title = "未命名聊天"
+		}
+		fmt.Fprintf(&b, "来源：聊天「%s」（multica chat history --session %s）\n", title, c.Source.ChatSessionID)
+		if c.Source.Excerpt != "" {
+			fmt.Fprintf(&b, "  原话：%s\n", c.Source.Excerpt)
+		}
+	}
 
 	b.WriteString("\n已拍板：")
 	if len(c.Decisions) == 0 {
@@ -421,6 +472,17 @@ func Render(c Card) string {
 			}
 		}
 		fmt.Fprintf(&b, "（%s，%s）%s\n", label, c.Baton.At, c.Baton.Summary)
+	}
+
+	if len(c.Children) > 0 {
+		b.WriteString("\n子任务回执：\n")
+		for i, r := range c.Children {
+			if i == receipt.MaxChildren {
+				fmt.Fprintf(&b, "  - 另有 %d 个子任务\n", len(c.Children)-receipt.MaxChildren)
+				break
+			}
+			fmt.Fprintf(&b, "  - %s\n", r.Line())
+		}
 	}
 
 	b.WriteString("\n你上次之后的变化：")

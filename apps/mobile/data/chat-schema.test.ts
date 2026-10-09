@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ChatPendingTaskSchema, SendChatMessageResponseSchema } from "./schemas";
+import {
+  ChatPendingTaskSchema,
+  ChatTicketsResponseSchema,
+  SendChatMessageResponseSchema,
+} from "./schemas";
 
 describe("ChatPendingTaskSchema", () => {
   it("keeps the pending head and valid queue rows when one row is malformed", () => {
@@ -40,5 +44,28 @@ describe("SendChatMessageResponseSchema", () => {
 
   it("ignores a malformed additive queue position", () => {
     expect(SendChatMessageResponseSchema.parse({ ...base, queued: "no" }).queued).toBeUndefined();
+  });
+});
+
+describe("ChatTicketsResponseSchema", () => {
+  it("downgrades an unknown assignee_type to unassigned", () => {
+    const parsed = ChatTicketsResponseSchema.parse({
+      chat_session_id: "s1",
+      tickets: [
+        {
+          id: "i1",
+          identifier: "DENE-1",
+          title: "Fix it",
+          status: "todo",
+          priority: "high",
+          assignee_type: "robot",
+          assignee_id: "x",
+          created_at: "2026-10-01T00:00:00Z",
+          updated_at: "2026-10-01T00:00:00Z",
+        },
+      ],
+    });
+    expect(parsed.tickets[0].assignee_type).toBeNull();
+    expect(parsed.tickets[0].goal).toBeUndefined();
   });
 });

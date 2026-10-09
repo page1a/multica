@@ -73,7 +73,7 @@ import {
   EMPTY_PLUGIN_INSTALLATION_LIST,
   EMPTY_PLUGIN_PREVIEW,
 } from "./schemas";
-import { IssueViewSchema, IssueViewListSchema } from "./schemas";
+import { IssueViewSchema, IssueViewListSchema, IssueStateCardSchema } from "./schemas";
 import {
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
@@ -3210,5 +3210,15 @@ describe("AgentActivityBucketListSchema duration", () => {
     expect(parsed[0]?.task_count).toBe(201);
     expect(parsed[0]?.duration_ms).toBeUndefined();
     expect(parsed[0]?.duration_count).toBeUndefined();
+  });
+});
+
+describe("IssueStateCardSchema source (DENE-1672)", () => {
+  it("keeps the chat quote and accepts a card without a source", () => {
+    const withSource = IssueStateCardSchema.parse({
+      source: { chat_session_id: "c-1", chat_title: "登录改造", excerpt: "把登录改成新令牌" },
+    });
+    expect(withSource.source?.excerpt).toBe("把登录改成新令牌");
+    expect(IssueStateCardSchema.parse({ source: null }).source).toBeNull();
   });
 });

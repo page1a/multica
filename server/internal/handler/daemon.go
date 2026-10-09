@@ -3700,6 +3700,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// Runtime naming only works if the run is told to name the chat; the
 		// cached brief merely lists the command, which agents never acted on.
 		resp.ChatTitleRequested = !cs.TitleLocked && h.chatNamingSource(r.Context(), cs) == "runtime" && !h.runtimeChatTitleReported(r.Context(), cs)
+		resp.ChatDispatchedIssues = h.chatDispatchedLines(r.Context(), cs)
 		// Legacy compatibility: agent creation no longer creates intro chats,
 		// but historical is_agent_intro sessions can still be resumed. Such a
 		// session carries no user message on its opening turn, so flag it for
@@ -3751,6 +3752,19 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		h.applyClaimChatCounts(r.Context(), &projectCtx, task, cs.WorkspaceID)
 		projectCtx.applyTo(&resp)
+		linkedProjects, linkedErr := h.resolveClaimChatLinkedProjects(r.Context(), *task, cs)
+		if linkedErr != nil {
+			slog.Error("chat claim: load linked projects failed; preserving task for redelivery",
+				"task_id", uuidToString(task.ID),
+				"chat_session_id", uuidToString(cs.ID),
+				"error", linkedErr)
+			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_project_context",
+				status:  http.StatusInternalServerError,
+				message: "failed to load linked projects",
+			}
+		}
+		resp.LinkedProjects = linkedProjects
 		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid {
 			// Resume chat sessions only when the stored pointer was produced
 			// by the same runtime as the claiming task. When the chat_session
@@ -6518,9 +6532,34 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	if !activeOnly {
 		h.hydrateTaskUsage(r.Context(), issue.ID, resp)
 		h.hydrateTaskSkills(r.Context(), issue.ID, resp)
+		h.hydrateTaskRelays(r.Context(), issue.ID, resp)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// hydrateTaskRelays attaches the relay record of each failed run (DENE-1647)
+// so the log and `multica issue runs` say where the work went. Display
+// metadata: an error leaves the rows without it.
+func (h *Handler) hydrateTaskRelays(ctx context.Context, issueID pgtype.UUID, resp []AgentTaskResponse) {
+	if len(resp) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListIssueQuotaRelays(ctx, issueID)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	byTask := make(map[string]*TaskRelayData, len(rows))
+	for _, row := range rows {
+		relay := &TaskRelayData{Outcome: row.Outcome, Reason: row.Reason, WaitReason: row.WaitReason, ToAgentName: row.ToAgentName}
+		if row.ToAgentID.Valid {
+			relay.ToAgentID = uuidToString(row.ToAgentID)
+		}
+		byTask[uuidToString(row.SourceTaskID)] = relay
+	}
+	for i := range resp {
+		resp[i].Relay = byTask[resp[i].ID]
+	}
 }
 
 // hydrateTaskSkills attaches the skills each run used (DENE-1573), read from

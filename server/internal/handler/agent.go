@@ -199,6 +199,9 @@ type AgentResponse struct {
 	// (DENE-1600, ADR-0008): auto, or mention_only for a seat that takes
 	// work only when named. Independent of RoutingTier and WorkEnabled.
 	DispatchMode string `json:"dispatch_mode"`
+	// DispatchProjects limits automatic dispatch to tickets in these
+	// projects (DENE-1648). Empty serves every project.
+	DispatchProjects []string `json:"dispatch_projects"`
 	// Fit is the agent's group for one issue or project (DENE-1477): match
 	// (对口), generic (通用) or other (其他). Only on a list asked with
 	// for_issue / for_project, which also orders the list by it.
@@ -341,6 +344,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		RoutingTier:              a.RoutingTier.String,
 		RoutingUsage:             a.RoutingUsage,
 		DispatchMode:             a.DispatchMode,
+		DispatchProjects:         dispatchProjectsOrEmpty(a),
 		ComposioToolkitAllowlist: composioAllowlist,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
@@ -778,6 +782,17 @@ type TaskCancellationActor struct {
 	Name string `json:"name,omitempty"`
 }
 
+// TaskRelayData is one failed run's relay record. Outcome is the
+// agent_quota_relay outcome (relayed, waiting, skipped_*); ToAgent* is the
+// seat that took over, empty when none did.
+type TaskRelayData struct {
+	Outcome     string `json:"outcome"`
+	Reason      string `json:"reason,omitempty"`
+	ToAgentID   string `json:"to_agent_id,omitempty"`
+	ToAgentName string `json:"to_agent_name,omitempty"`
+	WaitReason  string `json:"wait_reason,omitempty"`
+}
+
 type AgentTaskResponse struct {
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
@@ -874,10 +889,15 @@ type AgentTaskResponse struct {
 	// one. The singular project_* fields above mirror the FIRST entry so a
 	// daemon predating this field still renders the primary project. Mirror
 	// field: internal/daemon/types.go, same JSON name.
-	Projects       []TaskProjectContextData `json:"projects,omitempty"`
-	CreatedAt      string                   `json:"created_at"`
-	PriorSessionID string                   `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir   string                   `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	Projects []TaskProjectContextData `json:"projects,omitempty"`
+	// LinkedProjects are read-only reference projects a chat attached through
+	// a workspace link (DENE-1643), re-checked against the link at claim. They
+	// never feed the code source or the working project. Mirror field:
+	// internal/daemon/types.go, same JSON name.
+	LinkedProjects []TaskLinkedProjectData `json:"linked_projects,omitempty"`
+	CreatedAt      string                  `json:"created_at"`
+	PriorSessionID string                  `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir   string                  `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
 	// PriorSessionResumeUnavailable is set when a more recent Codex session was
 	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
 	// any) is then an older fallback, and the daemon surfaces the continuity gap
@@ -984,6 +1004,7 @@ type AgentTaskResponse struct {
 	ChatType                 string               `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type — "group" for a shared room, "p2p" for a 1:1 with the bot. Lets the per-turn prompt tell the agent who else can read its replies; empty for a web-only chat
 	ChatInThread             bool                 `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
 	ChatTitleRequested       bool                 `json:"chat_title_requested,omitempty"`        // workspace names chats through the runtime and this chat has no runtime title yet; the prompt asks the agent to run `multica chat title`
+	ChatDispatchedIssues     []string             `json:"chat_dispatched_issues,omitempty"`      // DENE-1672: the tasks this chat dispatched, one receipt line each, newest first
 	ChatMessage              string               `json:"chat_message,omitempty"`                // user message for chat tasks
 	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
 	ChatIntro                bool                 `json:"chat_intro,omitempty"`                  // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
@@ -1048,6 +1069,10 @@ type AgentTaskResponse struct {
 	// (DENE-1573). Only the issue execution log fills it; empty means none
 	// were detected, or the daemon predates detection.
 	SkillsUsed []string `json:"skills_used,omitempty"`
+	// Relay is what the platform did after this run failed on a broken seat
+	// (DENE-1647): handed to another seat, waiting for one, or skipped. Only
+	// the issue execution log fills it.
+	Relay *TaskRelayData `json:"relay,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -2630,6 +2655,11 @@ type UpdateAgentRequest struct {
 	// mention_only (DENE-1600). It belongs to the routing set, so a
 	// following specialisation takes its base role's value.
 	DispatchMode *string `json:"dispatch_mode"`
+	// DispatchProjects is omitted-preserves / present-sets; an empty list
+	// lifts the limit (DENE-1648). Every id must be a project in the
+	// agent's workspace. It is the seat's own, not part of what a following
+	// specialisation inherits.
+	DispatchProjects *[]string `json:"dispatch_projects"`
 	// ComposioToolkitAllowlist is a tri-state, same pattern as
 	// thinking_level, mcp_config:
 	//   - field omitted → no change (column preserved as-is)
@@ -3298,6 +3328,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.DispatchMode = pgtype.Text{String: key, Valid: true}
+	}
+	if req.DispatchProjects != nil {
+		ids, msg := h.resolveDispatchProjects(r.Context(), existing.WorkspaceID, *req.DispatchProjects)
+		if msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		params.DispatchProjects = ids
 	}
 	// A following specialisation does not own its rung or its usage
 	// (DENE-1016). Turning follow off in this same request is the opt-out, so
@@ -4613,4 +4651,38 @@ func applyWorkPause(resp *AgentResponse, agent db.Agent, pauses map[string]Agent
 	if pause, ok := pauses[uuidToString(agent.ID)]; ok {
 		resp.WorkPause = &pause
 	}
+}
+
+// dispatchProjectsOrEmpty is the agent's project limit for the API: always a
+// list, empty when the seat serves every project.
+func dispatchProjectsOrEmpty(a db.Agent) []string {
+	if ids := service.AgentDispatchProjects(a); ids != nil {
+		return ids
+	}
+	return []string{}
+}
+
+// resolveDispatchProjects validates a project limit (DENE-1648): each entry
+// is a project id in this workspace, duplicates collapse, and an empty list
+// lifts the limit. The second return value is the 400 message.
+func (h *Handler) resolveDispatchProjects(ctx context.Context, workspaceID pgtype.UUID, raw []string) ([]pgtype.UUID, string) {
+	out := make([]pgtype.UUID, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		id, err := util.ParseUUID(value)
+		if err != nil {
+			return nil, fmt.Sprintf("dispatch_projects: %q is not a project id", value)
+		}
+		key := util.UUIDToString(id)
+		if seen[key] {
+			continue
+		}
+		if _, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: id, WorkspaceID: workspaceID}); err != nil {
+			return nil, fmt.Sprintf("dispatch_projects: %s is not a project in this workspace", value)
+		}
+		seen[key] = true
+		out = append(out, id)
+	}
+	return out, ""
 }

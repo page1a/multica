@@ -720,7 +720,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
 	sedimentError := ""
 	if prevProject.Status != "completed" && project.Status == "completed" {
-		sedimentError = h.noteMemoryProgress(r.Context(), project.WorkspaceID, project.ID, "项目置为 completed："+project.Title)
+		sedimentError = h.noteMemoryMilestone(r.Context(), project.WorkspaceID, project.ID, "项目置为 completed："+project.Title, h.projectSedimentDigest(r.Context(), project), &sedimentSource{Kind: "project", ID: uuidToString(project.ID)})
 	}
 	writeJSON(w, http.StatusOK, struct {
 		ProjectResponse

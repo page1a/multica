@@ -177,7 +177,7 @@ func (q *Queries) FillProjectIssueDomain(ctx context.Context, arg FillProjectIss
 }
 
 const getSpecializationByDomain = `-- name: GetSpecializationByDomain :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode, dispatch_projects FROM agent
 WHERE parent_agent_id = $1 AND domain_id = $2 AND archived_at IS NULL
 LIMIT 1
 `
@@ -232,6 +232,7 @@ func (q *Queries) GetSpecializationByDomain(ctx context.Context, arg GetSpeciali
 		&i.RoutingUsage,
 		&i.DomainID,
 		&i.DispatchMode,
+		&i.DispatchProjects,
 	)
 	return i, err
 }
@@ -261,7 +262,7 @@ func (q *Queries) GetWorkspaceDomain(ctx context.Context, arg GetWorkspaceDomain
 }
 
 const listSpecializationsByDomain = `-- name: ListSpecializationsByDomain :many
-SELECT a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level, a.composio_toolkit_allowlist, a.permission_mode, a.kind, a.system_key, a.disabled_runtime_skills, a.service_tier, a.conversation_starters, a.switchable_models, a.auto_retry_enabled, a.parent_agent_id, a.runtime_inherited, a.routing_tier, a.work_enabled, a.plan_limits, a.doorbell_enabled, a.routing_usage, a.domain_id, a.dispatch_mode FROM agent a
+SELECT a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level, a.composio_toolkit_allowlist, a.permission_mode, a.kind, a.system_key, a.disabled_runtime_skills, a.service_tier, a.conversation_starters, a.switchable_models, a.auto_retry_enabled, a.parent_agent_id, a.runtime_inherited, a.routing_tier, a.work_enabled, a.plan_limits, a.doorbell_enabled, a.routing_usage, a.domain_id, a.dispatch_mode, a.dispatch_projects FROM agent a
 JOIN agent p ON p.id = a.parent_agent_id
 WHERE a.workspace_id = $1 AND a.domain_id = $2
   AND a.name = p.name || $3::text
@@ -324,6 +325,7 @@ func (q *Queries) ListSpecializationsByDomain(ctx context.Context, arg ListSpeci
 			&i.RoutingUsage,
 			&i.DomainID,
 			&i.DispatchMode,
+			&i.DispatchProjects,
 		); err != nil {
 			return nil, err
 		}
@@ -374,7 +376,7 @@ func (q *Queries) ListWorkspaceDomains(ctx context.Context, workspaceID pgtype.U
 const renameAgentForDomain = `-- name: RenameAgentForDomain :one
 UPDATE agent SET name = $3, updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode, dispatch_projects
 `
 
 type RenameAgentForDomainParams struct {
@@ -427,6 +429,7 @@ func (q *Queries) RenameAgentForDomain(ctx context.Context, arg RenameAgentForDo
 		&i.RoutingUsage,
 		&i.DomainID,
 		&i.DispatchMode,
+		&i.DispatchProjects,
 	)
 	return i, err
 }
@@ -480,7 +483,7 @@ func (q *Queries) SeedWorkspaceDomains(ctx context.Context, arg SeedWorkspaceDom
 const setAgentDomain = `-- name: SetAgentDomain :one
 UPDATE agent SET domain_id = $3::uuid, updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters, switchable_models, auto_retry_enabled, parent_agent_id, runtime_inherited, routing_tier, work_enabled, plan_limits, doorbell_enabled, routing_usage, domain_id, dispatch_mode, dispatch_projects
 `
 
 type SetAgentDomainParams struct {
@@ -533,6 +536,7 @@ func (q *Queries) SetAgentDomain(ctx context.Context, arg SetAgentDomainParams) 
 		&i.RoutingUsage,
 		&i.DomainID,
 		&i.DispatchMode,
+		&i.DispatchProjects,
 	)
 	return i, err
 }
@@ -540,7 +544,7 @@ func (q *Queries) SetAgentDomain(ctx context.Context, arg SetAgentDomainParams) 
 const setIssueDomain = `-- name: SetIssueDomain :one
 UPDATE issue SET domain_id = $3::uuid, updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at, duplicate_of_issue_id, domain_id
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, reviewer_type, reviewer_id, visibility, assignee_source, assignee_source_user_id, assignee_quote, progress_text, progress_source, progress_tone, progress_author_type, progress_author_id, progress_updated_at, duplicate_of_issue_id, domain_id, origin_chat_session_id
 `
 
 type SetIssueDomainParams struct {
@@ -596,6 +600,7 @@ func (q *Queries) SetIssueDomain(ctx context.Context, arg SetIssueDomainParams) 
 		&i.ProgressUpdatedAt,
 		&i.DuplicateOfIssueID,
 		&i.DomainID,
+		&i.OriginChatSessionID,
 	)
 	return i, err
 }

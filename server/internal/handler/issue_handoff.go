@@ -239,6 +239,9 @@ func (h *Handler) recordHandoff(r *http.Request, issue db.Issue, resp HandoffIss
 			slog.Warn("handoff: write decisions failed", "issue_id", uuidToString(issue.ID), "error", err)
 		}
 	}
+	// Every handoff rewrites the latest conclusion, an empty one included,
+	// so the report never shows a line from before this handoff.
+	h.setIssueMetaString(ctx, issue, statecard.KeyLatestSummary, summary)
 	if summary != "" {
 		to := resp.TargetName
 		if to == "" || to == resp.TargetID {

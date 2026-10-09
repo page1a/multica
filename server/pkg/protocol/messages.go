@@ -348,6 +348,10 @@ const (
 	// ChatMessageKindChatSpawnRefused explains in the same chat why the
 	// server refused to open a new one (depth, budget, permissions).
 	ChatMessageKindChatSpawnRefused = "chat_spawn_refused"
+	// ChatMessageKindIssueReceipt reports a task this chat dispatched: it
+	// finished, stopped, or waits for review (DENE-1672). linked_issue_id
+	// points at the task; the content reads on its own as markdown.
+	ChatMessageKindIssueReceipt = "issue_receipt"
 )
 
 // ChatDonePayload is broadcast when an agent finishes responding to a chat
@@ -455,6 +459,16 @@ type ChatSessionDeletedPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 }
 
+// ChatLinkedProject is one read-only linked project attached to a chat.
+type ChatLinkedProject struct {
+	LinkID     string  `json:"link_id"`
+	ProjectID  string  `json:"project_id"`
+	Title      string  `json:"title"`
+	Icon       *string `json:"icon"`
+	SourceName string  `json:"source_name"`
+	Available  bool    `json:"available"`
+}
+
 // ChatSessionUpdatedPayload is broadcast when a user-editable field on a
 // chat session changes (today: title via inline rename). Other tabs/devices
 // patch the session row in their cached list so the dropdown stays in sync
@@ -473,6 +487,9 @@ type ChatSessionUpdatedPayload struct {
 	// leaves the existing set untouched — and an empty non-nil slice when the
 	// set was cleared.
 	ProjectIDs *[]string `json:"project_ids,omitempty"`
+	// LinkedProjects carries the full read-only linked set (DENE-1643), set
+	// only when that set changed; nil leaves the receiver's set untouched.
+	LinkedProjects *[]ChatLinkedProject `json:"linked_projects,omitempty"`
 	// Pinned is set only by the pin/unpin path; nil on a plain rename so a
 	// receiver leaves the existing pin state untouched.
 	Pinned *bool `json:"pinned,omitempty"`

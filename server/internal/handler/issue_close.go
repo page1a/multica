@@ -58,6 +58,15 @@ type CloseIssueRequest struct {
 	// KnowledgeAudit is required. None declares 无够格知识; Changes names the
 	// project-memory locations this close wrote. The two cannot be combined.
 	KnowledgeAudit *closeprotocol.KnowledgeAudit `json:"knowledge_audit,omitempty"`
+	// DeliveredFiles is the delivery's changed paths, read by the CLI from
+	// git (the PR's files, or the branch against its target). A done or
+	// in_review whose audit names locations must deliver files writing each
+	// of them (DENE-1661); without the list the audit is kept as unverified.
+	DeliveredFiles *[]string `json:"delivered_files,omitempty"`
+	// MemoryFiles is git's account of the delivered project-memory files —
+	// size, deleted lines, supersede marks, sections — held to the memory
+	// hygiene rules (DENE-1680). nil when the caller sent none.
+	MemoryFiles *[]closeprotocol.MemoryFile `json:"memory_files,omitempty"`
 	// Decisions are `issue close --decision`: settled points written to the
 	// state card's 已拍板 list in the same transaction (DENE-1328).
 	Decisions []string `json:"decisions,omitempty"`
@@ -65,6 +74,9 @@ type CloseIssueRequest struct {
 	// onto its parent's branch (DENE-1537): the commits it merged back, or
 	// the files that conflicted. Required for such a sub-issue's done.
 	DeliveryMerge *service.DeliveryMergeReport `json:"delivery_merge,omitempty"`
+	// WaitingFor is `issue close --outcome backlog --waiting-for`: what the
+	// parked ticket waits for (DENE-1638). Required for an agent's backlog.
+	WaitingFor string `json:"waiting_for,omitempty"`
 }
 
 // CloseIssueResponse reports what actually happened, not what was asked for:
@@ -280,7 +292,7 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, closeRejection(err))
 		return
 	}
-	parsedAudit, canonicalAudit, auditRejection := requireKnowledgeAudit(req.KnowledgeAudit)
+	parsedAudit, canonicalAudit, auditRejection := requireShippedKnowledgeAudit(req.KnowledgeAudit, req.DeliveredFiles, req.MemoryFiles, isBossRound(issue), outcome)
 	if auditRejection != "" {
 		writeError(w, http.StatusBadRequest, auditRejection)
 		return
@@ -387,11 +399,30 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
+		// The summary word for word: the progress line is clipped, the
+		// report's latest_summary is not (DENE-1691).
+		if err := setIssueMetaStringTx(ctx, qtx, updated, statecard.KeyLatestSummary, summary); err != nil {
+			return err
+		}
 		if err := insertDecisions(ctx, qtx, updated, decisions, statecard.SourceClose, actorType, actorID); err != nil {
 			return err
 		}
 		if lineMerge != nil {
 			if _, err := service.RecordDeliveryMerge(ctx, qtx, *line, lineMerge.DeliveryMergeReport); err != nil {
+				return err
+			}
+		}
+		if closeprotocol.KnowledgeMustShip(outcome, "") {
+			if err := recordIssueSediment(ctx, qtx, updated, parsedAudit, req.MemoryFiles, prURL, lineMerge, actorType, actorID); err != nil {
+				return err
+			}
+		}
+		if reason := strings.TrimSpace(req.WaitingFor); outcome == issuestatus.Backlog && reason != "" {
+			if err := setIssueMetaStringTx(ctx, qtx, updated, metaKeyBacklogWaitingFor, truncateRunes(reason, maxBacklogWaitingForRunes)); err != nil {
+				return err
+			}
+		} else if outcome != issuestatus.Backlog {
+			if _, err := qtx.DeleteIssueMetadataKey(ctx, db.DeleteIssueMetadataKeyParams{ID: updated.ID, WorkspaceID: updated.WorkspaceID, Key: metaKeyBacklogWaitingFor}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
 		}
@@ -500,6 +531,7 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusChanged {
 		waiters := h.listBlockWaiters(ctx, updated, identifier)
 		h.notifyParentOfChildDone(ctx, prev, updated)
+		h.postSourceChatReceipt(ctx, prev, updated)
 		h.notifyWaitersOfIssueDone(ctx, prev, updated)
 		h.RouteIssueAsync(r, uuidToString(issue.WorkspaceID), uuidToString(issue.ID))
 		resp.Woken = describeCloseWake(updated, rec, prefix, len(waiters))
@@ -531,6 +563,9 @@ func (h *Handler) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if resp.Summoned {
 		resp.Woken = append(resp.Woken, "已替你叫 --needs-human 的人：收件箱、关注、票上 @ 都已送到；他回复后平台叫醒执行智能体")
+	}
+	if parsedAudit.Unverified {
+		resp.Warnings = append(resp.Warnings, closeprotocol.KnowledgeUnverifiedWarning)
 	}
 	if d := declaredFrom(ctx); d.Unverified {
 		h.setIssueMetaString(ctx, updated, "close.pr_unverified", d.URL)
@@ -773,6 +808,11 @@ func (h *Handler) deriveCloseRecord(r *http.Request, issue db.Issue, req CloseIs
 		// Returned to planning / the ready list on purpose. The evidence says
 		// why; nothing is delivered and no PR gate runs. Neither status is a
 		// stage terminal, so no stage_done wake.
+		if outcome == issuestatus.Backlog {
+			if reject := backlogWaitingForRejection(&req.WaitingFor, actorType, issue.Stage.Valid); reject != "" {
+				return rec, reject
+			}
+		}
 		meta[closeprotocol.KeyConclusion] = closeprotocol.ConclusionDeferred
 	case issuestatus.InProgress:
 		// "This turn stops, the next one continues." The who/when is the same
@@ -971,11 +1011,36 @@ func requireKnowledgeAudit(raw *closeprotocol.KnowledgeAudit) (closeprotocol.Kno
 	if raw == nil {
 		return closeprotocol.KnowledgeAudit{}, "", closeprotocol.KnowledgeAuditRequiredMsg
 	}
-	parsed, canonical, err := closeprotocol.CanonicalKnowledgeAudit(*raw)
+	parsed, canonical, err := closeprotocol.CanonicalKnowledgeAudit(closeprotocol.StripKnowledgeEvidence(*raw))
 	if err != nil {
 		return closeprotocol.KnowledgeAudit{}, "", err.Error()
 	}
 	return parsed, canonical, ""
+}
+
+// requireShippedKnowledgeAudit is requireKnowledgeAudit for the executor's
+// close: a delivering outcome binds every claimed location to the delivered
+// files (DENE-1661), so "I wrote AGENTS.md" only passes when the delivery
+// actually carries an AGENTS.md change. It then holds the audit and the
+// delivered memory files to the hygiene rules (DENE-1680); boss is a
+// boss-layer sediment round.
+func requireShippedKnowledgeAudit(raw *closeprotocol.KnowledgeAudit, delivered *[]string, memoryFiles *[]closeprotocol.MemoryFile, boss bool, outcome string) (closeprotocol.KnowledgeAudit, string, string) {
+	parsed, canonical, rejection := requireKnowledgeAudit(raw)
+	if rejection != "" || !closeprotocol.KnowledgeMustShip(outcome, "") {
+		return parsed, canonical, rejection
+	}
+	bound, err := closeprotocol.BindDeliveredFiles(parsed, delivered)
+	if err != nil {
+		return closeprotocol.KnowledgeAudit{}, "", err.Error()
+	}
+	bound, canonical, err = closeprotocol.CanonicalKnowledgeAudit(bound)
+	if err != nil {
+		return closeprotocol.KnowledgeAudit{}, "", err.Error()
+	}
+	if err := closeprotocol.CheckMemoryHygiene(bound, memoryFiles, boss); err != nil {
+		return closeprotocol.KnowledgeAudit{}, "", err.Error()
+	}
+	return bound, canonical, ""
 }
 
 // writeCloseKeysTx writes a finished close record in one transaction. The
@@ -1176,7 +1241,8 @@ func closeProgressTone(outcome string) string {
 // (DENE-1183). A 200 means the shape is acceptable, not that the close will
 // land: ticket-dependent gates (linked PR, child tree, parent) run at close.
 func (h *Handler) CheckCloseIssue(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id")); !ok {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
 		return
 	}
 	var req CloseIssueRequest
@@ -1184,7 +1250,9 @@ func (h *Handler) CheckCloseIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if msg := closeprotocol.CheckRequest(closeCheckRequest(req)); msg != "" {
+	check := closeCheckRequest(req)
+	check.Boss = isBossRound(issue)
+	if msg := closeprotocol.CheckRequest(check); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -1209,6 +1277,8 @@ func closeCheckRequest(req CloseIssueRequest) closeprotocol.Request {
 			WaitTimeout:   deref(req.WaitTimeout),
 			NeedsHuman:    deref(req.NeedsHuman),
 		},
-		Knowledge: req.KnowledgeAudit,
+		Knowledge:      req.KnowledgeAudit,
+		DeliveredFiles: req.DeliveredFiles,
+		MemoryFiles:    req.MemoryFiles,
 	}
 }

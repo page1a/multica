@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -27,7 +28,7 @@ export function ChatVisibilityNotice() {
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const { data } = useQuery({
-    queryKey: ["chat", wsId, "visibility-notice"],
+    queryKey: chatKeys.visibilityNotice(wsId),
     queryFn: () => api.getChatVisibilityNotice(),
   });
   const [open, setOpen] = useState(false);
@@ -40,12 +41,16 @@ export function ChatVisibilityNotice() {
     setOpen(true);
   }, [data]);
 
+  const showError = (error: unknown) =>
+    toast.error(error instanceof Error && error.message ? error.message : t(($) => $.notice.failed));
+
   const dismiss = useMutation({
     mutationFn: () => api.dismissChatVisibilityNotice(),
     onSuccess: () => {
       setOpen(false);
-      void qc.invalidateQueries({ queryKey: ["chat", wsId, "visibility-notice"] });
+      void qc.invalidateQueries({ queryKey: chatKeys.visibilityNotice(wsId) });
     },
+    onError: showError,
   });
 
   const makePrivate = useMutation({
@@ -55,10 +60,14 @@ export function ChatVisibilityNotice() {
       }
       await api.dismissChatVisibilityNotice();
     },
-    onSuccess: async () => {
-      setOpen(false);
-      await qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
-      await qc.invalidateQueries({ queryKey: ["chat", wsId, "visibility-notice"] });
+    onSuccess: () => setOpen(false),
+    onError: showError,
+    // Even a half-done run may have made some chats private: refresh the
+    // list, each chat's own detail and access, and the notice itself.
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+      for (const id of selected) void qc.invalidateQueries({ queryKey: chatKeys.session(wsId, id) });
+      void qc.invalidateQueries({ queryKey: chatKeys.visibilityNotice(wsId) });
     },
   });
 

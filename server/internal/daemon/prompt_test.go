@@ -2573,3 +2573,17 @@ func TestBuildPromptStateCardReasons(t *testing.T) {
 		t.Fatalf("a wakeup does not open with the card:\n%s", out)
 	}
 }
+
+func TestBuildChatPromptListsDispatchedIssues(t *testing.T) {
+	task := Task{ChatSessionID: "sess-1", ChatMessage: "进展如何"}
+	if out := BuildPrompt(task, "claude"); strings.Contains(out, "Tickets this chat opened") {
+		t.Fatalf("prompt lists dispatched tasks the server did not send\n%s", out)
+	}
+	task.ChatDispatchedIssues = []string{"DENE-9 修登录 — 已完成 · 登录改走新令牌"}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{"Tickets this chat opened", "- DENE-9 修登录 — 已完成", "multica chat tickets"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prompt misses %q\n%s", want, out)
+		}
+	}
+}

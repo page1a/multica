@@ -115,6 +115,12 @@ export interface RoutingSettings {
    * is shadow mode. With both on, 「接着做」 wins.
    */
   prefer_idle: boolean;
+  /**
+   * 「按判断配验收」(DENE-1252): the reviewer slot gets a seat only when the
+   * routing model asks for a check with confidence; otherwise it reads
+   * 不需要验收. Default off, which keeps the fallback reviewer seat.
+   */
+  judged_review: boolean;
 }
 
 /**
@@ -171,6 +177,7 @@ export const DEFAULT_ROUTING_SETTINGS: RoutingSettings = {
   allow_upshift: false,
   prefer_continuation: false,
   prefer_idle: false,
+  judged_review: false,
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -221,6 +228,7 @@ export function parseRoutingSettings(
     allow_upshift: block.allow_upshift === true,
     prefer_continuation: block.prefer_continuation === true,
     prefer_idle: block.prefer_idle === true,
+    judged_review: block.judged_review === true,
   };
 }
 
@@ -350,6 +358,7 @@ export function withRoutingSettings(
     allow_upshift: next.allow_upshift,
     prefer_continuation: next.prefer_continuation,
     prefer_idle: next.prefer_idle,
+    judged_review: next.judged_review,
     judge_enabled: next.judge_enabled,
     [ROUTING_ANALYSIS_KEY]: analysis,
   };

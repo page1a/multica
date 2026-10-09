@@ -68,10 +68,12 @@ func TestIronLawEveryPickSaysWhy(t *testing.T) {
 	}{
 		{"confident verdict", func(*fakeStore, *fakeJudge) {}, PickReasonTier},
 		{"tier label from a person", func(s *fakeStore, _ *fakeJudge) { s.issue.Labels = []string{"强"} }, PickReasonTier},
+		// A judge that does not clear the bar leaves the rule table's tier.
 		{"weak verdict", func(_ *fakeStore, j *fakeJudge) {
 			j.verdict.ExecutorConfidence = 0.1
-		}, PickReasonFallback},
-		{"no tier answer", func(_ *fakeStore, j *fakeJudge) { j.verdict.ExecutorTier = "" }, PickReasonFallback},
+		}, PickReasonTier},
+		{"no tier answer", func(_ *fakeStore, j *fakeJudge) { j.verdict.ExecutorTier = "" }, PickReasonTier},
+		{"no model on", func(s *fakeStore, _ *fakeJudge) { s.settings = noModels() }, PickReasonFallback},
 		{"held by a person, reviewer filled", func(s *fakeStore, _ *fakeJudge) {
 			s.issue.AssigneeType, s.issue.AssigneeID, s.issue.AssigneeSource = "agent", "a-piccolo-g", SourceHuman
 		}, PickReasonHuman},

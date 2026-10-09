@@ -5,6 +5,7 @@
     "add": "添加标签",
     "search": "搜索标签...",
     "no_labels": "请先在设置中创建标签",
-    "no_results": "没有匹配的标签"
+    "no_results": "没有匹配的标签",
+    "save_failed": "标签更新失败"
   }
 }

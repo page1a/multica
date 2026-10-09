@@ -1,0 +1,50 @@
+{
+  "questions": [
+    {
+      "key": "scope",
+      "label": "改动范围",
+      "question": "How much of the codebase does the change touch?",
+      "options": [
+        {"value": "small", "label": "小", "text": "one file or a local edit"},
+        {"value": "module", "label": "单模块", "text": "one module or feature area"},
+        {"value": "cross_module", "label": "跨模块", "text": "several modules, a contract between them, or a migration"}
+      ]
+    },
+    {
+      "key": "clarity",
+      "label": "需求",
+      "question": "Can the requirement be acted on as written?",
+      "options": [
+        {"value": "clear", "label": "清楚", "text": "yes, the goal and acceptance are stated"},
+        {"value": "vague", "label": "模糊", "text": "no, the goal or acceptance is open to interpretation"}
+      ]
+    },
+    {
+      "key": "risk",
+      "label": "出错代价",
+      "question": "What does getting it wrong cost?",
+      "options": [
+        {"value": "low", "label": "低", "text": "cheap to get wrong and easy to undo"},
+        {"value": "medium", "label": "中", "text": "a real cost, but contained and recoverable"},
+        {"value": "high", "label": "高", "text": "data loss, money, security, outward-facing or irreversible effects"}
+      ]
+    },
+    {
+      "key": "needs_human",
+      "label": "要人拍板",
+      "question": "Does a person have to make a decision the ticket does not already contain?",
+      "options": [
+        {"value": "no", "label": "否", "text": "no, the ticket already contains every decision"},
+        {"value": "yes", "label": "是", "text": "yes, a person has to decide something first or at acceptance"}
+      ]
+    }
+  ],
+  "rules": [
+    {"id": "high_risk", "label": "出错代价高", "when": {"risk": ["high"]}, "tier": "strong", "reviewer": "seat"},
+    {"id": "cross_module", "label": "跨模块", "when": {"scope": ["cross_module"]}, "tier": "strong", "reviewer": "seat"},
+    {"id": "vague", "label": "需求模糊", "when": {"clarity": ["vague"]}, "tier": "strong", "reviewer": "seat"},
+    {"id": "unknown", "label": "有一题答不出", "any_unknown": true, "tier": "medium", "reviewer": "seat"},
+    {"id": "simple", "label": "小改动、需求清楚、代价低", "when": {"scope": ["small"], "clarity": ["clear"], "risk": ["low"]}, "tier": "weak", "reviewer": "none"},
+    {"id": "default", "label": "其余", "tier": "medium", "reviewer": "none"}
+  ]
+}

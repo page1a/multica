@@ -66,6 +66,14 @@ export interface WorkspaceLinkAuditEntry {
   created_at: string;
 }
 
+/** A shared project's resource: a repository URL or a directory path. */
+export interface LinkedResource {
+  type: string;
+  label: string | null;
+  url?: string;
+  path?: string;
+}
+
 export interface LinkedViewProject {
   id: string;
   title: string;
@@ -73,6 +81,35 @@ export interface LinkedViewProject {
   status: string;
   done: number;
   total: number;
+  /** Sharing a project shares its context (DENE-1643); optional for older servers. */
+  description?: string;
+  resources?: LinkedResource[];
+  memory_line?: string;
+}
+
+/** A shared project a chat may attach as a read-only reference (DENE-1643). */
+export interface LinkedProjectOption {
+  link_id: string;
+  id: string;
+  title: string;
+  icon: string | null;
+  source: { name: string; avatar_url: string | null };
+}
+
+/** Names one shared project through the link it arrives on. */
+export interface ChatLinkedProjectRef {
+  link_id: string;
+  project_id: string;
+}
+
+/** A read-only linked project attached to a chat. `available` turns false
+ *  once the link is revoked or the project unticked; the agent stops
+ *  receiving it then, and the chat shows it as stale. */
+export interface ChatLinkedProject extends ChatLinkedProjectRef {
+  title: string;
+  icon: string | null;
+  source_name: string;
+  available: boolean;
 }
 
 export interface LinkedViewIssue {

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1661 项目记忆卡片：最近沉淀</title>
+<style>
+  :root { --fg:#18181b; --muted:#71717a; --border:#e4e4e7; --card:#fff; --primary:#2563eb; --ok:#047857; --warn:#b45309; }
+  body { margin:0; padding:24px; background:#f4f4f5; font:14px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif; color:var(--fg); }
+  h1 { font-size:15px; font-weight:600; margin:0 0 16px; }
+  .frames { display:flex; gap:32px; align-items:flex-start; flex-wrap:wrap; }
+  .frame h2 { font-size:12px; font-weight:500; color:var(--muted); margin:0 0 8px; }
+  .desktop { width:560px; }
+  .phone { width:390px; box-sizing:border-box; padding:0 16px; background:#fafafa; border:1px solid var(--border); border-radius:24px; padding-top:20px; padding-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; }
+  .title { font-weight:500; }
+  .cap { font-size:12px; }
+  .muted { color:var(--muted); }
+  .row { display:flex; align-items:center; gap:8px; font-size:12px; margin-top:8px; }
+  .row.base { align-items:baseline; margin-top:6px; }
+  .dot { width:14px; height:14px; border-radius:50%; border:2px solid var(--ok); box-sizing:border-box; flex:none; }
+  .grow { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ok { color:var(--ok); flex:none; }
+  .warn { color:var(--warn); flex:none; }
+  .src { color:var(--primary); max-width:40%; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .time { color:var(--muted); flex:none; }
+  .sec { margin-top:12px; }
+  .strip { display:flex; flex-wrap:wrap; gap:6px; margin-top:16px; }
+  .chip { font-size:12px; color:var(--muted); background:#f4f4f5; border-radius:4px; padding:1px 6px; }
+</style>
+</head>
+<body>
+<h1>项目详情 → 项目记忆：新增「最近沉淀」；子任务收口条的知识标签显示实际文件</h1>
+<div class="frames">
+  <div class="frame desktop">
+    <h2>桌面 / Web（1280 宽下的卡片区域）</h2>
+    <div class="card" id="card-desktop"></div>
+    <div class="strip" id="strip-desktop"></div>
+  </div>
+  <div class="frame">
+    <h2>手机网页 390px</h2>
+    <div class="phone">
+      <div class="card" id="card-phone"></div>
+      <div class="strip" id="strip-phone"></div>
+    </div>
+  </div>
+</div>
+<template id="card">
+  <div class="head">
+    <div><div class="title">项目记忆</div><div class="cap muted">项目本地目录里的五个记忆位置</div></div>
+    <span class="cap muted">2026/10/8 20:40</span>
+  </div>
+  <div class="row"><span class="dot"></span><span class="grow">AGENTS.md</span><span class="ok">已存在</span></div>
+  <div class="row"><span class="dot"></span><span class="grow">CONTEXT.md</span><span class="ok">已存在</span></div>
+  <div class="row"><span class="dot"></span><span class="grow">docs/adr</span><span class="ok">已存在</span></div>
+  <div class="row"><span class="dot"></span><span class="grow">docs/README.md</span><span class="ok">已存在</span></div>
+  <div class="row"><span class="dot"></span><span class="grow">docs/evidence/INDEX.md</span><span class="ok">已存在</span></div>
+  <div class="sec">
+    <div class="cap muted">最近沉淀</div>
+    <div class="row base"><span class="src">DENE-1661</span><span class="grow">AGENTS.md, CONTEXT.md</span><span class="time">2 分钟前</span></div>
+    <div class="row base"><span class="src" title="路由规则讨论">聊天 路由规则讨论</span><span class="grow">docs/adr/0012-route-quotes.md, AGENTS.md</span><span class="time">3 小时前</span></div>
+    <div class="row base"><span class="src">DENE-1598</span><span class="grow">agents</span><span class="warn" title="交付文件没核对上，记忆位置是自报的">未核对</span><span class="time">2 天前</span></div>
+  </div>
+</template>
+<template id="strip">
+  <span class="chip">已交付</span><span class="chip">无下一位</span><span class="chip">知识：AGENTS.md, CONTEXT.md</span><span class="chip">2 分钟前</span>
+</template>
+<script>
+  for (const id of ["desktop", "phone"]) {
+    document.getElementById("card-" + id).append(document.getElementById("card").content.cloneNode(true));
+    document.getElementById("strip-" + id).append(document.getElementById("strip").content.cloneNode(true));
+  }
+</script>
+</body>
+</html>

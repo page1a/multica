@@ -5,6 +5,7 @@
     "add": "Add labels",
     "search": "Search labels...",
     "no_labels": "Create labels in Settings first",
-    "no_results": "No matching labels"
+    "no_results": "No matching labels",
+    "save_failed": "Couldn't update labels"
   }
 }

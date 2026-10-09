@@ -116,6 +116,8 @@ describe("WorkspaceLinksTab", () => {
     await screen.findByText("Pick the workspace to share with first.");
     await user.click(screen.getByLabelText("Workspace URL to share with"));
     const list = await screen.findByRole("listbox");
+    // Floats in a portal: the settings card would clip it otherwise.
+    expect(list.closest('[data-slot="card"]')).toBeNull();
     expect(screen.queryByRole("option", { name: /Acme/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: /Side project/ }));
     expect(list).not.toBeInTheDocument();

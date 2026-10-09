@@ -291,6 +291,7 @@ func (h *Handler) maybeAutoCompleteIssue(ctx context.Context, workspaceID, issue
 	// (prev != done, parent exists and is not terminal), so calling them
 	// unconditionally is safe.
 	h.notifyParentOfChildDone(ctx, issue, updated)
+	h.postSourceChatReceipt(ctx, issue, updated)
 	h.notifyWaitersOfIssueDone(ctx, issue, updated)
 	if updated.ParentIssueID.Valid {
 		h.processChildEvents(ctx, updated.ParentIssueID)

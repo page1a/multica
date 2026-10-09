@@ -395,9 +395,13 @@ Stage 2 只做三件事：把 2.3 决策表写进 Builder/Reviewer/Operator/Disp
 | `close.at` | RFC3339 UTC | 同上 | 最后一键 |
 | `close.block_kind` | `decision` `permission` `external` `dependency` `capacity`；仅 blocked 收口必填 | 收尾 agent | 与 blocked 收口一并写入 |
 | `close.block_action` | 非空，最多 80 个字符；仅 blocked 收口必填 | 收尾 agent | 与 blocked 收口一并写入 |
-| `close.knowledge_audit` | `{"none":true}`，或 `{"changes":[{"location","summary"}]}` | 同一次 `issue close` | 每次新收口必填，和证据、状态同一事务。不是原来的八个键：旧收口没有它也仍然可读 |
+| `close.knowledge_audit` | `{"none":true}`，或 `{"changes":[{"location","summary","files"}]}`（`files` 由服务端按交付文件填，可带 `"unverified":true`） | 同一次 `issue close` | 每次新收口必填，和证据、状态同一事务。不是原来的八个键：旧收口没有它也仍然可读 |
 
 `close.knowledge_audit` 的位置只允许项目记忆清单：`agents`、`context`、`adr`、`docs_index`、`evidence_index`。CLI 用 `--knowledge-none` 声明无够格知识，或重复 `--knowledge <位置>=<摘要>`。缺审计、位置不在清单、摘要为空、同一位置写两次、两种写法一起用，都拒绝，评论和 `close.*` 都不落。无 PR 的票同样要带。声明无够格知识可以收口。PR 正文里的知识审计段不再是第二道关单门。
+
+沉淀随交付走（DENE-1661）：`done` / `in_review`（不带 verdict）时，审计里每个位置都必须能在本次交付改动的文件里找到。CLI 从 git 读出交付文件（子票对父票交付分支，否则对最近的主线）作为 `delivered_files` 上报，服务端逐个位置核对，找不到就整体拒绝。没带清单的收口（网页、旧版 CLI）照收，但审计标「未核对」并给警告。核对后的文件写在每条改动的 `files` 上，并记一条沉淀记录（`knowledge_sediment`），项目页「项目记忆」和 `multica project memory status` 的 `recent_sediments` 能看到。聊天收尾用 `multica chat sediment` 走同一套核对；另外要证明主线真的收到了（DENE-1668）：主线取仓库的 `multica.mainline`、远端默认分支或唯一的 main/master，定不了就拒绝；有远端的仓库只认远端主线已含这些提交，或合进本仓库主线的 PR，CLI 先查一遍、服务端用同一个 `closeprotocol.CheckSedimentLanding` 再查一遍。
+
+记忆卫生（DENE-1680）：每条改动可以声明动作，`--knowledge <位置>:update:<条目>=…` 改原条目、`:merge:<条目>` 新建并标待合并、`:supersede:<条目>` 原条目在文件里标「已被 X 取代」不删、`:new` 确实没有相关条目。父票子票全部终态、阶段推进、项目完成开的沉淀轮次是老板层（票上记 `sediment_sources`），聊天沉淀也是老板层：每条改动必须声明动作，删改已有行必须声明 update 或 supersede。CLI 从 git 读出记忆文件的体积、删掉的行数、新增的取代标注和章节作为 `memory_files` 上报，服务端用 `closeprotocol.CheckMemoryHygiene` 判：声明 supersede 却没有标注拒绝；地图文件（AGENTS.md、CONTEXT.md、两个索引，含嵌套的 AGENTS.md）超过 32 KiB 拒绝，拒绝原因先点名已标取代的章节，再点名最大的几节，够抵掉超出量为止。体积门对所有带 `memory_files` 的收口生效（含 `--knowledge-none`）；网页和旧版 CLI 不带事实，只查声明。老板层沉淀记录 `layer=boss` 和 `sources`，项目页「项目记忆」显示「汇总自 DENE-N」和每条改动的动作。
 
 阻塞扩展校验：`conclusion=blocked` 的新记录必须同时提供上述两个字段；旧记录缺少两字段时保持可读兼容。`block_kind=dependency` 必须有非空 `close.waiting_on`，且 `decision` / `permission` 必须指定具体的 `member`、`agent` 或 `squad` 责任人。非 blocked 收口的两个字段必须为空或不存在，避免解除阻塞后残留旧原因。人类审核逾期阈值按产品决策为 24 小时；`capacity` 阻塞不计入“需要你”摘要。
 

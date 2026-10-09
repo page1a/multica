@@ -2131,6 +2131,25 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getAllByRole("link", { name: "MUL-9" })).toHaveLength(2);
   });
 
+  // DENE-1663: a change made through a managed workspace link names the
+  // workspace and agent it came through.
+  it("names the workspace and agent of a managed-link change", async () => {
+    mockApiObj.listTimeline.mockResolvedValue([
+      {
+        type: "activity",
+        id: "act-linked",
+        actor_type: "member",
+        actor_id: "user-1",
+        action: "linked_write",
+        details: { route: "issue.update", via_workspace: "kunkunya", agent_name: "Goku" },
+        created_at: "2026-01-16T00:00:00Z",
+      },
+    ]);
+    renderIssueDetail();
+
+    expect(await screen.findByText(/acted on this issue via kunkunya · Goku/)).toBeInTheDocument();
+  });
+
   // MUL-7429: an automatic status change says why, and the per-issue switch
   // shows on the timeline.
   it("explains PR merge automation activity", async () => {

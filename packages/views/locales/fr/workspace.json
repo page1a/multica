@@ -34,7 +34,7 @@
   "links": {
     "tab": {
       "title": "Espaces liés",
-      "description": "Permet à un autre espace de suivre en lecture seule les projets choisis, sans le rejoindre. Il ne voit que l'avancement et le statut des tâches — jamais les descriptions, commentaires, pièces jointes ni éléments privés.",
+      "description": "Permet à un autre espace de suivre en lecture seule les projets choisis, sans le rejoindre. Il voit l'avancement, le statut des tâches et le contexte des projets — jamais les descriptions de tâches, commentaires, pièces jointes ni éléments privés.",
       "outgoing_title": "Partagé depuis cet espace",
       "outgoing_description": "Rien n'est visible tant qu'un propriétaire ou administrateur de l'autre espace n'a pas accepté.",
       "outgoing_empty": "Rien n'est partagé pour l'instant.",
@@ -50,7 +50,7 @@
       "projects_label": "Quels projets de cet espace ils peuvent voir",
       "no_shareable_projects": "Aucun projet partageable. Les projets privés ne peuvent jamais être partagés.",
       "create": "Proposer le lien",
-      "create_hint": "Les tâches et projets privés restent masqués même s'ils sont cochés.",
+      "create_hint": "L'autre espace et ses agents peuvent lire la description, les dépôts, les chemins de dossiers locaux et la mémoire de chaque projet coché. Les tâches et projets privés restent masqués.",
       "need_target": "Choisissez d'abord l'espace de travail destinataire.",
       "need_projects": "Cochez au moins un projet.",
       "create_reason": "Seul le propriétaire peut partager les données de cet espace.",

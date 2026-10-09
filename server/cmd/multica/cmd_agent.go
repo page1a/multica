@@ -233,6 +233,7 @@ func init() {
 	agentUpdateCmd.Flags().String("thinking-level", "", "New reasoning/effort level for the agent's runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Pass an empty string to clear and fall back to the runtime default.")
 	agentUpdateCmd.Flags().String("routing-tier", "", "New seat strength for automatic dispatch: strongest|strong|medium|weak (the Chinese labels 最强/强/中/弱 are accepted too). Pass an empty string to take the seat off the routing ladder. A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
 	agentUpdateCmd.Flags().String("dispatch-mode", "", "Whether automatic dispatch may pick this seat: auto|mention_only. mention_only seats are still reached by @mention, assignment and delegation, but routing, quota relay and seat relay never pick them. Independent of --routing-tier and --work-enabled. A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
+	agentUpdateCmd.Flags().String("dispatch-projects", "", "Limit automatic dispatch to tickets in these projects: comma-separated project ids, id prefixes or exact titles. Routing, quota relay and seat relay pick the seat only for tickets in one of them; @mention, assignment and delegation are not limited. Pass an empty value to serve every project again.")
 	agentUpdateCmd.Flags().String("routing-usage", "", "New usage tag for automatic dispatch: tight|normal|ample (the Chinese labels 紧张/常规/充足 are accepted too). A specialisation that follows its base role cannot set this; change the base role, or pass --runtime-inherited=false first.")
 	agentUpdateCmd.Flags().String("service-tier", "", "New Codex execution speed: default = explicit Standard when supported by the daemon's installed Codex CLI; a catalog tier such as priority = explicit Fast. Pass an empty string to clear and inherit local Codex configuration.")
 	agentUpdateCmd.Flags().String("custom-args", "", "New custom CLI arguments as JSON array. For model selection prefer --model; Codex-style -c key=value is rejected on runtimes that reserve -c for session continuation (Claude, CodeBuddy, OpenCode, Pi and others), and session-resume flags are always dropped because the daemon owns which session a run continues.")
@@ -341,6 +342,11 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 		client.TaskID = taskID
 	}
 	client.LocalCopyURL = localCopyURL(token)
+	if linked, _ := cmd.Flags().GetString(linkedFlag); strings.TrimSpace(linked) != "" {
+		if err := useLinkedWorkspace(client, strings.TrimSpace(linked)); err != nil {
+			return nil, err
+		}
+	}
 	return client, nil
 }
 
@@ -948,6 +954,14 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetString("routing-usage")
 		body["routing_usage"] = v
 	}
+	if cmd.Flags().Changed("dispatch-projects") {
+		v, _ := cmd.Flags().GetString("dispatch-projects")
+		ids, err := resolveDispatchProjects(client, v)
+		if err != nil {
+			return err
+		}
+		body["dispatch_projects"] = ids
+	}
 	if cmd.Flags().Changed("visibility") {
 		v, _ := cmd.Flags().GetString("visibility")
 		body["visibility"] = v
@@ -994,7 +1008,7 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --routing-usage, --dispatch-mode, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, --runtime-inherited, or --work-enabled (env vars now live behind `multica agent env set <id>`)")
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --conversation-starters, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --routing-tier, --routing-usage, --dispatch-mode, --dispatch-projects, --custom-args, --mcp-config, --visibility, --status, --max-concurrent-tasks, --parent-agent-id, --runtime-inherited, or --work-enabled (env vars now live behind `multica agent env set <id>`)")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())
@@ -1764,4 +1778,42 @@ func strVal(m map[string]any, key string) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// resolveDispatchProjects turns --dispatch-projects into project ids. An empty
+// value is an empty list, which lifts the limit. An entry matching a project
+// title exactly wins over id-prefix matching.
+func resolveDispatchProjects(client *cli.APIClient, raw string) ([]string, error) {
+	ids := []string{}
+	if strings.TrimSpace(raw) == "" {
+		return ids, nil
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	projects, err := fetchProjectCandidates(ctx, client)
+	if err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
+	}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		id := ""
+		for _, p := range projects {
+			if p.Display == entry {
+				id = p.ID
+				break
+			}
+		}
+		if id == "" {
+			resolved, err := resolveProjectID(ctx, client, entry)
+			if err != nil {
+				return nil, fmt.Errorf("--dispatch-projects %q: %w", entry, err)
+			}
+			id = resolved.ID
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }

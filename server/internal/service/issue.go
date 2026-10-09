@@ -83,13 +83,16 @@ type IssueCreateParams struct {
 	// true when the caller chose one, generic included; left out, a project
 	// with exactly one domain gives it to the issue. A domain the resolved
 	// project does not carry fails the create with ErrIssueDomainNotInProject.
-	DomainID      pgtype.UUID
-	DomainPinned  bool
-	StartDate     pgtype.Date
-	DueDate       pgtype.Date
-	OriginType    pgtype.Text
-	OriginID      pgtype.UUID
-	AttachmentIDs []pgtype.UUID
+	DomainID     pgtype.UUID
+	DomainPinned bool
+	StartDate    pgtype.Date
+	DueDate      pgtype.Date
+	OriginType   pgtype.Text
+	OriginID     pgtype.UUID
+	// OriginChatSessionID is the chat this issue was opened from (DENE-1665),
+	// written in the create transaction. Unset for issues no chat opened.
+	OriginChatSessionID pgtype.UUID
+	AttachmentIDs       []pgtype.UUID
 	// LabelIDs are the issue-scoped labels to attach to the new issue. They
 	// are validated and written inside the create transaction (see Create),
 	// so the issue is never committed with a partial or wrong label set. An
@@ -563,6 +566,15 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		issue, err = qtx.SetIssueDomain(ctx, db.SetIssueDomainParams{ID: issue.ID, WorkspaceID: p.WorkspaceID, DomainID: domainID})
 		if err != nil {
 			return issueCreateTxOutcome{}, fmt.Errorf("set issue domain: %w", err)
+		}
+	}
+	if !p.OriginChatSessionID.Valid {
+		p.OriginChatSessionID = chatOriginSession(ctx, qtx, p)
+	}
+	if p.OriginChatSessionID.Valid {
+		issue, err = qtx.SetIssueOriginChatSession(ctx, db.SetIssueOriginChatSessionParams{ID: issue.ID, WorkspaceID: p.WorkspaceID, ChatSessionID: p.OriginChatSessionID})
+		if err != nil {
+			return issueCreateTxOutcome{}, fmt.Errorf("set issue origin chat: %w", err)
 		}
 	}
 	if p.GoalMode {

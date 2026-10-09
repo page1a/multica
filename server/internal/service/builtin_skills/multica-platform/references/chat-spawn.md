@@ -24,6 +24,16 @@ need its answer.
 | A conversation with another agent: ask, explore, compare options | `multica chat open` |
 | Discussion inside a task | an issue comment; split parallel exploration into sub-issues |
 | Turn the current chat into tracked work | `multica chat to-goal` |
+| See the issues this chat opened, their status, latest move and phase (waiting_you / in_progress / done) | `multica chat tickets [--session <id>] --output json` |
+
+**Chat aligns, a ticket executes.** In chat, only make an aligned small fix: at
+most 3 files and 150 lines, no migration, not a server + UI + CLI change.
+Anything bigger that is aligned becomes a ticket (`issue create` or `plan
+apply`) whose description carries `## 目标` and `## 验收`; the server refuses a
+chat ticket without them. Leave the executor empty for agent work (routing
+picks); assign the person when a human must do it. Every ticket links back to
+the chat: the chat shows it as a ticket card with live status, `multica chat
+tickets` lists them, and `multica issue get` names the chat as `source_chat`.
 
 A task run cannot open a chat (`chat_spawn_task_mode`). That is deliberate:
 discussion on a task stays in its comments.
@@ -60,3 +70,18 @@ The same policy governs creating issues: `agent_spawn_disabled` and
 `agent_spawn_budget_exceeded` can also come back from `multica issue create`
 and `multica plan apply` when the workspace limits issue creation from a chat
 or from a task.
+
+## Receipts from the issues a chat opened
+
+An IM `/issue` command and an alignment also record their chat, like a chat
+run's `issue create` / `plan apply` and `chat to-goal`. `multica issue context`
+opens with a 来源 line quoting the message the issue answered.
+
+When such an issue enters 待验收, done, blocked or cancelled, the server posts a
+receipt card into the chat: status, the close's summary, PRs, knowledge. A
+sub-issue of a ticket from the same chat stays quiet; its parent reports, and
+the parent's card lists each sub-issue's conclusion, PRs and knowledge
+(only sub-issues everyone in the chat may see). A
+chat run opens with the newest ten tickets and where each stands; answer "how
+is it going" from that list, not from memory. `multica chat tickets` shows the
+same result (`summary`, `pull_requests`, `knowledge`) for every ticket.

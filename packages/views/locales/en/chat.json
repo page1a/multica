@@ -92,6 +92,10 @@
     "no_projects": "No projects yet",
     "switch_project": "Switch to another project…",
     "project_context_unsupported": "Project description won't apply — this agent's daemon needs an upgrade",
+    "linked_projects": "Linked projects (read-only)",
+    "linked_project_chip": "Read-only project from {{source}}",
+    "linked_project_stale": "Stale",
+    "linked_project_stale_hint": "No longer shared — the agent no longer gets it",
     "to_goal": "Turn into a goal task",
     "mode_menu": "Send mode",
     "mode_steer": "Steer",
@@ -171,7 +175,8 @@
     "quick_actions_regenerate": "Regenerate suggestions",
     "quick_actions_regenerate_failed": "Couldn't refresh suggestions. Please try again.",
     "spawned": "Opened chat",
-    "spawn_untitled": "New chat"
+    "spawn_untitled": "New chat",
+    "issue_receipt": "Task receipt"
   },
   "session_history": {
     "untitled": "Untitled",
@@ -377,6 +382,7 @@
     "remove": "Remove",
     "save": "Save",
     "cancel": "Cancel",
+    "save_failed": "Couldn't save access",
     "note_bound": "Once private, it's hidden from everyone else's list.",
     "note_unbound": "A chat with no project stays private.",
     "view_only": "You can read this chat, but you can't send messages.",
@@ -396,7 +402,8 @@
     "title": "Some of your chats are now visible to project members",
     "body": "You have {{count}} chats that project members can now see.",
     "make_private": "Make selected private",
-    "dismiss": "Got it"
+    "dismiss": "Got it",
+    "failed": "Couldn't save. Try again."
   },
   "title_locked": "Title locked — the agent will not rename it",
   "origin": {
@@ -410,5 +417,34 @@
     "reason_runtime_changed": "last session is on another machine",
     "reason_session_lost": "previous session could not be restored",
     "reason_fresh_requested": "fresh session requested"
+  },
+  "report": {
+    "bar_one": "{{count}} issue from this chat",
+    "bar_other": "{{count}} issues from this chat",
+    "bar_fresh_one": "{{count}} issue from this chat · {{fresh}} just changed",
+    "bar_fresh_other": "{{count}} issues from this chat · {{fresh}} just changed",
+    "waiting_you": "{{count}} need you",
+    "in_progress": "{{count}} in progress",
+    "done": "{{count}} done",
+    "hear": "Hear report",
+    "hear_prompt": "Report: tell me what's new in \"{{project}}\" since I last heard",
+    "title": "Issues from this chat",
+    "just_changed": "Just changed",
+    "opened": "Opened · {{to}}",
+    "needs_you": "needs you"
+  },
+  "tickets": {
+    "heading_one": "Opened {{count}} issue",
+    "heading_other": "Opened {{count}} issues",
+    "to": "to {{name}}",
+    "routing": "routing picks the executor",
+    "actions": "Actions for {{id}}",
+    "assign_me": "Give to me",
+    "assign_agent": "Give to an agent",
+    "withdraw": "Withdraw",
+    "assigned_me": "{{id}} is yours",
+    "assigned_agent": "{{id}} is back with routing",
+    "withdrawn": "Withdrew {{id}}",
+    "failed": "Couldn't update {{id}}"
   }
 }

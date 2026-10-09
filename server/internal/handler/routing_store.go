@@ -174,6 +174,13 @@ func (s routingStore) issueView(ctx context.Context, row db.Issue) (routing.Issu
 	if out.Status == "blocked" {
 		out.Wait = s.blockWait(ctx, row)
 	}
+	if out.Status == "in_review" {
+		if ids, err := s.h.Queries.ListIssueWorkerAgentIDs(ctx, row.ID); err == nil {
+			for _, id := range ids {
+				out.Workers = append(out.Workers, util.UUIDToString(id))
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -1199,6 +1206,7 @@ func (s routingStore) CompleteFromReview(ctx context.Context, workspaceID, issue
 	// Both are best-effort and guard on the transition themselves; the status
 	// write has already committed, so neither can undo it.
 	s.h.notifyParentOfChildDone(ctx, prev, issue)
+	s.h.postSourceChatReceipt(ctx, prev, issue)
 	s.h.notifyWaitersOfIssueDone(ctx, prev, issue)
 	return true, nil
 }
@@ -1249,11 +1257,6 @@ func (s routingStore) SaveAnalysis(ctx context.Context, workspaceID, issueID str
 
 func (h *Handler) writeAnalysisRecord(ctx context.Context, wsID, issueID pgtype.UUID, rec routing.AnalysisRecord) error {
 	rec.Facts.Summary = clipRunes(rec.Facts.Summary, analysisTextLimit)
-	if rec.Verdict != nil {
-		v := *rec.Verdict
-		v.Reason = clipRunes(v.Reason, analysisTextLimit)
-		rec.Verdict = &v
-	}
 	_, err := h.DB.Exec(ctx, `
 		UPDATE issue
 		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$3::text], to_jsonb($4::text), true)

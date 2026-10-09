@@ -36,6 +36,27 @@ func TestCheckRequestOrderAndMessages(t *testing.T) {
 	if got := CheckRequest(Request{Outcome: "done", Evidence: "x", Knowledge: &KnowledgeAudit{Changes: []KnowledgeChange{{Location: "DESIGN.md", Summary: "x"}}}}); !strings.Contains(got, "不在项目记忆清单里") {
 		t.Errorf("unknown knowledge location: %q", got)
 	}
+	// DENE-1661: a delivering close's audit must ship with the delivery.
+	wrote := &KnowledgeAudit{Changes: []KnowledgeChange{{Location: "context", Summary: "词条"}}}
+	code := []string{"server/x.go"}
+	withContext := []string{"server/x.go", "CONTEXT.md"}
+	for _, tc := range []struct {
+		name string
+		req  Request
+		ok   bool
+	}{
+		{"done without the file", Request{Outcome: "done", Evidence: "x", Knowledge: wrote, DeliveredFiles: &code}, false},
+		{"in_review without the file", Request{Outcome: "in_review", Evidence: "x", Knowledge: wrote, DeliveredFiles: &code}, false},
+		{"done with the file", Request{Outcome: "done", Evidence: "x", Knowledge: wrote, DeliveredFiles: &withContext}, true},
+		{"no list is unverified, not refused", Request{Outcome: "done", Evidence: "x", Knowledge: wrote}, true},
+		{"verdict pass ships someone else's work", Request{Outcome: "done", Evidence: "x", Verdict: "pass", Knowledge: wrote, DeliveredFiles: &code}, true},
+		{"blocked ships nothing yet", Request{Outcome: "blocked", Evidence: "x", Knowledge: wrote, DeliveredFiles: &code, Continuation: Continuation{BlockedBy: "DENE-1"}}, true},
+	} {
+		got := CheckRequest(tc.req)
+		if tc.ok && got != "" || !tc.ok && !strings.Contains(got, "本次交付的改动里没有对应文件") {
+			t.Errorf("%s: got %q", tc.name, got)
+		}
+	}
 }
 
 // The outcome table is written out in `multica issue close --help`, the

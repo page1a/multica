@@ -458,6 +458,9 @@ type Agent struct {
 	// (mention_only) stays on the roster so it can still be woken as a
 	// holder; the candidate builders drop it.
 	State SeatState
+	// project is the ticket's project the roster was read for (ForProject);
+	// it decides whether a project-limited seat is a candidate.
+	project string
 }
 
 // agentDirection is the direction a seat serves: its recorded domain, or by

@@ -34,7 +34,7 @@
   "links": {
     "tab": {
       "title": "Linked workspaces",
-      "description": "Let another workspace read the status of chosen projects without joining this one. They see project progress and task status only — never descriptions, comments, attachments or private items.",
+      "description": "Let another workspace read the status of chosen projects without joining this one. They see project progress, task status and project context — never task descriptions, comments, attachments or private items.",
       "outgoing_title": "Shared from this workspace",
       "outgoing_description": "The other workspace's owner or admin has to accept before anyone there can see anything.",
       "outgoing_empty": "Nothing shared yet.",
@@ -50,7 +50,7 @@
       "projects_label": "Which of this workspace's projects they can see",
       "no_shareable_projects": "This workspace has no shareable projects. Private projects can never be shared.",
       "create": "Offer link",
-      "create_hint": "Private tasks and private projects stay hidden even when ticked.",
+      "create_hint": "They can read each ticked project's description, repositories, local directory paths and project memory, and so can their agents. Private tasks and projects stay hidden.",
       "need_target": "Pick the workspace to share with first.",
       "need_projects": "Tick at least one project.",
       "create_reason": "Only the owner can share this workspace's data.",

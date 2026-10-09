@@ -219,6 +219,7 @@ UPDATE agent SET
     routing_tier = COALESCE(sqlc.narg('routing_tier'), routing_tier),
     routing_usage = COALESCE(sqlc.narg('routing_usage'), routing_usage),
     dispatch_mode = COALESCE(sqlc.narg('dispatch_mode')::text, dispatch_mode),
+    dispatch_projects = COALESCE(sqlc.narg('dispatch_projects')::uuid[], dispatch_projects),
     conversation_starters = COALESCE(sqlc.narg('conversation_starters'), conversation_starters),
     composio_toolkit_allowlist = COALESCE(sqlc.narg('composio_toolkit_allowlist')::text[], composio_toolkit_allowlist),
     switchable_models = COALESCE(sqlc.narg('switchable_models'), switchable_models),

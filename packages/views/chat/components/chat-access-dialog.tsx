@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -44,7 +45,7 @@ export function ChatAccessDialog({
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const { data: settings } = useQuery({
-    queryKey: ["chat", wsId, "access", session?.id],
+    queryKey: chatKeys.access(wsId, session?.id ?? ""),
     queryFn: () => api.getChatAccess(session!.id),
     enabled: open && !!session,
   });
@@ -87,6 +88,7 @@ export function ChatAccessDialog({
       }
       onOpenChange(false);
     },
+    onError: (error) => toast.error(error instanceof Error && error.message ? error.message : t(($) => $.sharing.save_failed)),
   });
 
   const candidates = members.filter(
@@ -104,7 +106,7 @@ export function ChatAccessDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className="pr-8">
             {t(($) => $.sharing.title)}
             {session?.title ? ` · ${session.title}` : ""}
           </DialogTitle>
@@ -210,9 +212,11 @@ export function ChatAccessDialog({
             onSelect={() => setMode("private")}
             icon
           />
-          <p className="rounded-md bg-amber-50 px-2.5 py-2 text-caption text-amber-800">
-            {bound ? t(($) => $.sharing.note_bound) : t(($) => $.sharing.note_unbound)}
-          </p>
+          {!bound ? (
+            <p className="text-caption text-muted-foreground">{t(($) => $.sharing.note_unbound)}</p>
+          ) : mode === "private" && settings && settings.mode !== "private" ? (
+            <p className="text-caption text-muted-foreground">{t(($) => $.sharing.note_bound)}</p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

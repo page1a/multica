@@ -157,7 +157,26 @@ describe("readCloseProtocol", () => {
     );
     expect(changed.knowledgeAudit).toEqual({
       none: false,
-      changes: [{ location: "agents", summary: "补了开张种子" }],
+      changes: [{ location: "agents", summary: "补了开张种子", files: [] }],
+      unverified: false,
+    });
+  });
+
+  it("reads the delivered files bound to each slot and the unverified mark", () => {
+    const view = readCloseProtocol(
+      {
+        ...DENE_231_METADATA,
+        "close.knowledge_audit": JSON.stringify({
+          changes: [{ location: "context", summary: "加了词条", files: ["CONTEXT.md", 3] }],
+          unverified: true,
+        }),
+      },
+      "done",
+    );
+    expect(view.knowledgeAudit).toEqual({
+      none: false,
+      changes: [{ location: "context", summary: "加了词条", files: ["CONTEXT.md"] }],
+      unverified: true,
     });
   });
 

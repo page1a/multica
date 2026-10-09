@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import { isFileReadable } from "@multica/core/attachments";
 import { createSafeId } from "@multica/core/utils";
 
 /**
@@ -294,6 +295,35 @@ function dedupFiles(files: FileList): File[] {
   });
 }
 
+/**
+ * Swap a pasted file whose bytes cannot be read for the image the clipboard
+ * also carries, when it carries one.
+ *
+ * Telegram on macOS copies a photo as a reference into its own cache: the
+ * paste event hands over a File that every read rejects. The async clipboard
+ * API still exposes the image data itself, so asking it is the one way to
+ * keep the paste. Anything else — readable files, a clipboard without an
+ * image, a denied permission — passes the original through, and the upload
+ * layer reports it as unreadable instead of retrying.
+ */
+export async function recoverUnreadablePaste(file: File): Promise<File> {
+  if (await isFileReadable(file)) return file;
+  if (typeof navigator === "undefined" || !navigator.clipboard?.read) return file;
+  try {
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find((t) => t.startsWith("image/"));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const ext = type.slice("image/".length).split("+")[0];
+      const base = file.name.replace(/\.[^.]*$/, "") || "image";
+      return new File([blob], `${base}.${ext}`, { type });
+    }
+  } catch {
+    // Permission denied or clipboard changed: the upload reports it.
+  }
+  return file;
+}
+
 /** Filename given to the .txt synthesised from an over-threshold paste. */
 export const PASTED_TEXT_FILENAME = "pasted-text.txt";
 
@@ -375,7 +405,14 @@ export function createFileUploadExtension(
                 return true;
               }
               if (!onUploadFileRef.current) return false;
-              handleFiles(dedupFiles(files));
+              const pasted = dedupFiles(files);
+              // The clipboard holds one image at most, so only a single
+              // pasted file can be recovered from it.
+              if (pasted.length === 1) {
+                void recoverUnreadablePaste(pasted[0]!).then((file) => handleFiles([file]));
+              } else {
+                handleFiles(pasted);
+              }
               return true;
             },
             handleDrop(view, event) {

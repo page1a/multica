@@ -162,3 +162,52 @@ func TestRenderCoversEverySection(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderNamesSourceChat(t *testing.T) {
+	card := Card{Identifier: "DENE-2", Goal: Goal{Title: "x"}}
+	if strings.Contains(Render(card), "来源") {
+		t.Fatal("card without a source renders a source line")
+	}
+	card.Source = &Source{ChatSessionID: "chat-1", ChatTitle: "Multica · 回执", Excerpt: "聊天派的票要回执"}
+	text := Render(card)
+	for _, want := range []string{"来源：聊天「Multica · 回执」", "multica chat history --session chat-1", "原话：聊天派的票要回执"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("render misses %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestLatestSummary(t *testing.T) {
+	closed := map[string]string{}
+	for _, k := range closeprotocol.Keys {
+		closed[k] = ""
+	}
+	closed[closeprotocol.KeyAt] = "2026-10-08T10:00:00Z"
+	withHandoff := func(at string) map[string]string {
+		m := map[string]string{KeyHandoffSummary: "交棒结论", KeyHandoffAt: at}
+		for k, v := range closed {
+			m[k] = v
+		}
+		return m
+	}
+	cases := []struct {
+		name  string
+		meta  map[string]string
+		close string
+		want  string
+	}{
+		{"nothing", map[string]string{}, "", ""},
+		{"close summary", closed, "收尾结论", "收尾结论"},
+		{"close without summary", closed, "", ""},
+		{"newer handoff", withHandoff("2026-10-08T10:00:05Z"), "收尾结论", "交棒结论"},
+		{"newer close without summary hides an older handoff", withHandoff("2026-10-08T09:00:00Z"), "", ""},
+		{"handoff only", map[string]string{KeyHandoffSummary: "交棒结论", KeyHandoffAt: "2026-10-08T09:00:00Z"}, "", "交棒结论"},
+		{"stored latest wins", map[string]string{KeyLatestSummary: "最新  结论", KeyHandoffSummary: "交棒结论", KeyHandoffAt: "2026-10-08T09:00:00Z"}, "", "最新  结论"},
+		{"stored empty hides older lines", map[string]string{KeyLatestSummary: "", KeyHandoffSummary: "交棒结论", KeyHandoffAt: "2026-10-08T09:00:00Z"}, "收尾结论", ""},
+	}
+	for _, c := range cases {
+		if got := LatestSummary(c.meta, c.close); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}

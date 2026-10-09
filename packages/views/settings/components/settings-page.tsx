@@ -69,6 +69,7 @@ import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { ConfigTransferTab } from "./config-transfer-tab";
 import { ProjectSharingTab } from "./project-sharing-tab";
+import { workspaceLinksOptions } from "@multica/core/workspace-links";
 import { WorkspaceLinksTab } from "./workspace-links-tab";
 import { SETTINGS_ANCHOR_ATTR } from "./settings-layout";
 import { searchSettings } from "./settings-search";
@@ -95,6 +96,8 @@ type SettingsEntry = ExtraSettingsTab & {
   wide?: boolean;
   /** Owners and admins manage it; members see a read-only page. */
   adminOnly?: boolean;
+  /** Things waiting for the reader on this page, shown after the label. */
+  count?: number;
 };
 
 interface SettingsSubgroup {
@@ -137,12 +140,20 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
     false,
   );
   const appsAvailable = useComposioAvailable();
+  // Offers this workspace has not answered yet (DENE-1641).
+  const { data: links } = useQuery({
+    ...workspaceLinksOptions(workspace?.id ?? ""),
+    enabled: !!workspace?.id,
+  });
+  const pendingLinks = (links?.links ?? []).filter(
+    (link) => link.side === "viewer" && link.status === "pending",
+  ).length;
   const entry = (
     value: string,
     label: string,
     icon: ExtraSettingsTab["icon"],
     content: React.ReactNode,
-    options: { wide?: boolean; adminOnly?: boolean } = {},
+    options: { wide?: boolean; adminOnly?: boolean; count?: number } = {},
   ): SettingsEntry => ({ value, label, icon, content, ...options });
   const membersEntry = entry(
     "members",
@@ -234,7 +245,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
               t(($) => $.page.tabs.workspace_links),
               Network,
               <WorkspaceLinksTab />,
-              { wide: true },
+              { wide: true, count: pendingLinks || undefined },
             ),
             ...(billingEnabled
               ? [
@@ -436,7 +447,12 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
         )}
       >
         <item.icon className="size-4 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>{" "}
+        {item.count ? (
+          <span className="shrink-0 text-caption tabular-nums text-muted-foreground">
+            {item.count}
+          </span>
+        ) : null}
         {isMember && item.adminOnly ? (
           <Lock
             className="size-3 shrink-0 text-faint-foreground"
@@ -522,7 +538,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
                 >
                   {subgroup.entries.map((item) => (
                     <option key={item.value} value={item.value}>
-                      {item.label}
+                      {item.count ? `${item.label} (${item.count})` : item.label}
                     </option>
                   ))}
                 </optgroup>

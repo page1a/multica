@@ -6,6 +6,15 @@ On an agent-assigned issue, create status decides whether the assignee fires
 immediately. A non-backlog status (e.g. `todo`) enqueues the agent at create
 time; `backlog` sets the assignee without triggering.
 
+Routing never picks up `backlog`, so a ticket that should start now goes in
+`todo` (the default when `--status` is left out). An agent parking a ticket in
+`backlog` names what it waits for with `--waiting-for "<one line>"`; without
+it the server refuses and points at `todo`. Staged children (`--stage <N>`)
+are exempt — the stage before them is what they wait for. People are not
+asked. The line shows on the ticket and in `issue get` as
+`metadata["backlog.waiting_for"]`, and is dropped when the ticket leaves
+backlog.
+
 Parallel children — all start now:
 
 ```bash
@@ -15,7 +24,7 @@ multica issue create --title "..." --parent <issue-id> --assignee <agent> --stat
 Strictly serial children — park later steps, promote one at a time:
 
 ```bash
-multica issue create --title "Step 2: ..." --parent <issue-id> --assignee <agent> --status backlog
+multica issue create --title "Step 2: ..." --parent <issue-id> --assignee <agent> --status backlog --waiting-for "Step 1 merged"
 multica issue status <child-id> todo   # promote when the previous step is truly done
 ```
 

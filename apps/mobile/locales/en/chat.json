@@ -185,5 +185,29 @@
     "fallback": "Queued message",
     "action_failed_toast": "Couldn't update the queued message",
     "steering": "Steering"
+  },
+  "tickets": {
+    "heading_one": "Opened {{count}} issue",
+    "heading_other": "Opened {{count}} issues",
+    "to": "to {{name}}",
+    "routing": "routing picks the executor",
+    "actions": "Actions for {{id}}",
+    "assign_me": "Give to me",
+    "assign_agent": "Give to an agent",
+    "withdraw": "Withdraw",
+    "failed": "Couldn't update {{id}}"
+  },
+  "progress": {
+    "bar_one": "{{count}} issue from this chat",
+    "bar_other": "{{count}} issues from this chat",
+    "bar_fresh_one": "{{count}} issue from this chat · {{fresh}} just changed",
+    "bar_fresh_other": "{{count}} issues from this chat · {{fresh}} just changed",
+    "waiting_you": "{{count}} need you",
+    "in_progress": "{{count}} in progress",
+    "done": "{{count}} done",
+    "title": "Issues from this chat",
+    "just_changed": "Just changed",
+    "opened": "Opened · {{to}}",
+    "needs_you": "needs you"
   }
 }

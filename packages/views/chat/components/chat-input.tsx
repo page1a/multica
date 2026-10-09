@@ -27,7 +27,14 @@ import { attachmentToDraftUpload, type DraftUpload } from "@multica/core/drafts"
 import { createLogger } from "@multica/core/logger";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
-import type { Attachment, ChatSendMode, Project } from "@multica/core/types";
+import type {
+  Attachment,
+  ChatLinkedProject,
+  ChatLinkedProjectRef,
+  ChatSendMode,
+  LinkedProjectOption,
+  Project,
+} from "@multica/core/types";
 import { agentSceneOf } from "@multica/core/agents";
 import { AgentSceneProvider } from "../../agents/components/agent-scene-context";
 import { ProjectPicker } from "../../projects/components/project-picker";
@@ -151,6 +158,13 @@ interface ChatInputProps {
    *  the composer only surfaces a warning next to the chip and in the
    *  project submenu. */
   projectContextUnsupported?: boolean;
+  /** Read-only projects from linked workspaces (DENE-1643). They render as
+   *  their own chips; a stale one (link revoked, project unshared) stays
+   *  visible, marked, until removed. */
+  linkedProjects?: ChatLinkedProject[];
+  linkedProjectOptions?: LinkedProjectOption[];
+  /** Called with the COMPLETE next linked set. */
+  onLinkedProjectsChange?: (refs: ChatLinkedProjectRef[]) => void;
   /** Monotonic nonce bumped by the owner whenever the compose box should grab
    *  keyboard focus — currently on "new chat" so the user can type right away.
    *  0 (the initial value) is inert, so a plain deep-link open never steals
@@ -194,6 +208,9 @@ export function ChatInput({
   onProjectsChange,
   isProjectUpdating,
   projectContextUnsupported,
+  linkedProjects = [],
+  linkedProjectOptions,
+  onLinkedProjectsChange,
   focusRequest,
   draftKeyOverride,
   editorKeyOverride,
@@ -709,7 +726,7 @@ export function ChatInput({
         )}
         aria-disabled={noAgent || undefined}
       >
-        {selectedProjects.length > 0 && (
+        {(selectedProjects.length > 0 || linkedProjects.length > 0) && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pt-2">
             {selectedProjects.map((selectedProject) => (
               <div
@@ -749,6 +766,33 @@ export function ChatInput({
                   }
                 />
               </div>
+            ))}
+            {linkedProjects.map((item) => (
+              <ClearablePillButton
+                key={`${item.link_id}/${item.project_id}`}
+                disabled={!projectSelectionEnabled}
+                title={item.available
+                  ? t(($) => $.input.linked_project_chip, { source: item.source_name })
+                  : t(($) => $.input.linked_project_stale_hint)}
+                onClear={() =>
+                  onLinkedProjectsChange?.(
+                    linkedProjects
+                      .filter((other) => other !== item)
+                      .map((other) => ({ link_id: other.link_id, project_id: other.project_id })),
+                  )
+                }
+                clearLabel={t(($) => $.input.remove_project_context)}
+                className={cn(
+                  "h-6 max-w-80 border-dashed border-surface-border bg-surface-raised font-medium",
+                  item.available ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                <span className="shrink-0" aria-hidden="true">{item.icon || "📁"}</span>
+                <span className={cn("min-w-0 truncate", !item.available && "line-through")}>{item.title}</span>
+                <span className="max-w-24 shrink-0 truncate font-normal text-muted-foreground">
+                  {item.available ? item.source_name : t(($) => $.input.linked_project_stale)}
+                </span>
+              </ClearablePillButton>
             ))}
             {projectContextUnsupported && (
               <span className="inline-flex min-w-0 items-center gap-1 text-caption text-warning">
@@ -805,6 +849,9 @@ export function ChatInput({
                 currentProjectId={currentProjectId}
                 onProjectsChange={projectSelectionEnabled ? onProjectsChange : undefined}
                 projectContextUnsupported={projectContextUnsupported}
+                linkedProjects={linkedProjects}
+                linkedProjectOptions={linkedProjectOptions}
+                onLinkedProjectsChange={projectSelectionEnabled ? onLinkedProjectsChange : undefined}
               />
             )}
             {leftAdornment}

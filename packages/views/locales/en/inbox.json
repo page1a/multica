@@ -77,7 +77,11 @@
     "stall_review_title": "This ticket is under a 24-hour stall review",
     "stall_processed_title": "This ticket was handled automatically",
     "stall_keep": "Keep ticket",
-    "stall_undo": "Undo handling"
+    "stall_undo": "Undo handling",
+    "link_projects": "Projects: {{projects}}",
+    "link_answer": "Review in Linked workspaces",
+    "link_open": "Open Linked workspaces",
+    "stall_action_failed": "Couldn't update the ticket"
   },
   "types": {
     "needs_you": "Needs your attention",
@@ -108,7 +112,10 @@
     "agent_access_approved": "Agent access approved",
     "agent_access_declined": "Agent access declined",
     "parking_unexplained": "Stopped without explanation",
-    "issue_stall_action": "Stall action"
+    "issue_stall_action": "Stall action",
+    "workspace_link_request": "Link request",
+    "workspace_link_accepted": "Link accepted",
+    "workspace_link_declined": "Link declined"
   },
   "labels": {
     "set_status_to": "Set status to",
@@ -126,7 +133,10 @@
     "children_done_stage": "Stage {{stage}}'s sub-issues finished",
     "access_requested_by": "{{requester}} asked to use {{agent}}",
     "access_approved_for": "Your request to use {{agent}} was approved",
-    "access_declined_for": "Your request to use {{agent}} was declined"
+    "access_declined_for": "Your request to use {{agent}} was declined",
+    "link_requested_by": "{{source}} wants to share projects with you",
+    "link_accepted_by": "{{target}} accepted your link",
+    "link_declined_by": "{{target}} declined your link"
   },
   "toasts": {
     "source_context_retry_started": "Retry started with the original context",

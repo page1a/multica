@@ -111,17 +111,39 @@ const TEST_TAG_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)-test\.(\d+)$/;
  * `null` when the feed carries no test release at all.
  */
 export function pickNewestTestReleaseTag(atomXml: string): string | null {
-  let best: { tag: string; key: number[] } | null = null;
+  return listTestReleaseTags(atomXml)[0] ?? null;
+}
+
+/** Every `vX.Y.Z-test.N` tag in the feed, newest first, duplicates dropped. */
+export function listTestReleaseTags(atomXml: string): string[] {
+  const found = new Map<string, number[]>();
   for (const match of atomXml.matchAll(/\/releases\/tag\/([^"'<>\s]+)/g)) {
     const tag = decodeURIComponent(match[1]);
     const parts = TEST_TAG_PATTERN.exec(tag);
     if (!parts) continue;
-    const key = parts.slice(1, 5).map(Number);
-    if (best === null || compareVersionKeys(key, best.key) > 0) {
-      best = { tag, key };
-    }
+    found.set(tag, parts.slice(1, 5).map(Number));
   }
-  return best?.tag ?? null;
+  return [...found.entries()]
+    .sort((a, b) => compareVersionKeys(b[1], a[1]))
+    .map(([tag]) => tag);
+}
+
+/**
+ * File name electron-updater requests for a channel on this platform:
+ * `test-mac.yml`, `test-x64-mac.yml`, `test.yml`, `test-linux-arm64.yml`.
+ * The channel part comes from `feedNameForReleaseChannel`, so probing a
+ * release for this file asks exactly what the generic provider will ask.
+ */
+export function testManifestFileName(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  const feed = feedNameForReleaseChannel("test", platform, arch) ?? "test";
+  if (platform === "darwin") return `${feed}-mac.yml`;
+  if (platform === "linux") {
+    return `${feed}-linux${arch === "arm64" ? "-arm64" : arch === "arm" ? "-armv7l" : ""}.yml`;
+  }
+  return `${feed}.yml`;
 }
 
 function compareVersionKeys(a: number[], b: number[]): number {
@@ -136,13 +158,17 @@ export function githubReleaseFeedOptions(): UpdateFeedOptions {
   return { provider: "github", owner, repo };
 }
 
+function releaseDownloadUrl(tag: string): string {
+  return `https://github.com/${RELEASE_REPO}/releases/download/${tag}`;
+}
+
 export function testReleaseFeedOptions(
   tag: string,
   channel: string,
 ): UpdateFeedOptions {
   return {
     provider: "generic",
-    url: `https://github.com/${RELEASE_REPO}/releases/download/${tag}`,
+    url: releaseDownloadUrl(tag),
     channel,
     // GitHub serves release assets from S3, which rejects multi-range
     // requests; electron-updater's own GitHub provider pins the same flag.
@@ -213,6 +239,11 @@ applyStableFeed(autoUpdater, "0.0.0");
 
 const STARTUP_CHECK_DELAY_MS = 5_000;
 const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+// A release is created when its tag is pushed; the manifests land minutes
+// later when the build finishes. Re-check on this short clock until they do.
+const PENDING_RELEASE_RECHECK_MS = 5 * 60 * 1000;
+// Newer tags walked back before giving up; a build window never spans more.
+const MAX_TEST_TAG_PROBES = 5;
 
 type RendererChannel =
   | "updater:checking"
@@ -322,6 +353,20 @@ export interface SetupAutoUpdaterOptions {
   ) => Promise<DownloadedInstaller>;
   /** Test seam: fetch the GitHub releases Atom feed as text. */
   fetchText?: (url: string) => Promise<string>;
+  /**
+   * Test seam: does this manifest URL exist yet? `false` only for a 404; any
+   * other failure rejects so a flaky network is not mistaken for "not built".
+   */
+  manifestExists?: (url: string) => Promise<boolean>;
+}
+
+async function manifestExistsWithFetch(url: string): Promise<boolean> {
+  const response = await fetch(url, { method: "HEAD" });
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    throw new Error(`HEAD ${url} failed: HTTP ${response.status}`);
+  }
+  return true;
 }
 
 async function fetchTextWithFetch(url: string): Promise<string> {
@@ -377,6 +422,8 @@ export function setupAutoUpdater(
     releaseChannel,
   });
   const fetchText = options.fetchText ?? fetchTextWithFetch;
+  const manifestExists = options.manifestExists ?? manifestExistsWithFetch;
+  let pendingRecheckTimer: ReturnType<typeof setTimeout> | null = null;
   // Which provider autoUpdater currently holds. The stable GitHub provider is
   // only rebuilt after a test feed replaced it, so clients that never leave
   // stable keep the exact app-update.yml path they have always used.
@@ -395,13 +442,33 @@ export function setupAutoUpdater(
   // Aim autoUpdater at the feed for the selected channel right before a
   // check. The test line has to be re-resolved every time because the newest
   // `-test.N` tag moves; stable only needs the provider restored once.
-  const prepareFeedForCheck = async (): Promise<void> => {
+  // Resolves "no-feed" when test releases exist but none has its manifest
+  // uploaded yet: nothing to ask electron-updater, so the check reports
+  // "up to date" instead of a 404.
+  const prepareFeedForCheck = async (): Promise<"ready" | "no-feed"> => {
     if (releaseChannel === "test") {
-      const tag = pickNewestTestReleaseTag(await fetchText(releasesAtomUrl()));
-      if (tag) {
-        applyTestFeed(autoUpdater, tag);
-        activeFeed = "test";
-        return;
+      const tags = listTestReleaseTags(await fetchText(releasesAtomUrl()));
+      if (tags.length > 0) {
+        const manifest = testManifestFileName();
+        for (const [index, tag] of tags.slice(0, MAX_TEST_TAG_PROBES).entries()) {
+          const url = `${releaseDownloadUrl(tag)}/${manifest}`;
+          if (await manifestExists(url)) {
+            if (index > 0) {
+              log.info(
+                `[updater] ${tags[0]} has no ${manifest} yet; using ${tag}, re-checking in ${PENDING_RELEASE_RECHECK_MS / 60_000} min`,
+              );
+              schedulePendingRecheck();
+            }
+            applyTestFeed(autoUpdater, tag);
+            activeFeed = "test";
+            return "ready";
+          }
+        }
+        log.info(
+          `[updater] no test release has ${manifest} uploaded yet; re-checking in ${PENDING_RELEASE_RECHECK_MS / 60_000} min`,
+        );
+        schedulePendingRecheck();
+        return "no-feed";
       }
       log.info(
         "[updater] no vX.Y.Z-test.N release published yet; checking the stable feed instead",
@@ -409,6 +476,21 @@ export function setupAutoUpdater(
     }
     applyStableFeed(autoUpdater, app.getVersion(), process.platform, process.arch, activeFeed === "test");
     activeFeed = "stable";
+    return "ready";
+  };
+
+  // One catch-up check for a release whose assets are still being uploaded.
+  // Not armed when automatic updates are off; a repeat that still finds the
+  // newest manifest missing re-arms itself through prepareFeedForCheck.
+  const schedulePendingRecheck = (): void => {
+    if (pendingRecheckTimer !== null) return;
+    pendingRecheckTimer = setTimeout(() => {
+      pendingRecheckTimer = null;
+      void preferencesReady.then(() => {
+        if (!automaticUpdatesEnabled || releaseChannel !== "test") return;
+        return checkForUpdatesOnce("periodic");
+      });
+    }, PENDING_RELEASE_RECHECK_MS);
   };
 
   const capabilitiesReady = (
@@ -501,7 +583,7 @@ export function setupAutoUpdater(
     sendToLiveRenderer(getMainWindow(), "updater:checking", { trigger });
     const p = capabilitiesReady
       .then(() => prepareFeedForCheck())
-      .then(() => autoUpdater.checkForUpdates())
+      .then((feed) => (feed === "ready" ? autoUpdater.checkForUpdates() : null))
       .then((result): UpdateCheckRecord => {
         // checkForUpdates resolves as soon as metadata is fetched; the actual
         // download (when autoDownload=true) is exposed on result.downloadPromise.
@@ -589,6 +671,10 @@ export function setupAutoUpdater(
     if (periodicTimer !== null) {
       clearInterval(periodicTimer);
       periodicTimer = null;
+    }
+    if (pendingRecheckTimer !== null) {
+      clearTimeout(pendingRecheckTimer);
+      pendingRecheckTimer = null;
     }
   };
 

@@ -139,6 +139,7 @@
   },
   "upload": {
     "failed": "{{filename}}을(를) 업로드하지 못했어요: {{reason}}",
+    "unreadable": "파일을 읽을 수 없어요. 기기에 저장한 뒤 다시 첨부해 주세요.",
     "in_progress": "업로드 중…",
     "interrupted": "업로드가 중단되었어요 — 파일이 저장되지 않았어요. 다시 첨부해 주세요.",
     "remove": "제거",

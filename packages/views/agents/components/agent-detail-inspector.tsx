@@ -38,6 +38,7 @@ import {
   type ModelCatalog,
 } from "./inspector/model-change-cleanup";
 import { RuntimePicker } from "./inspector/runtime-picker";
+import { DispatchProjectsField } from "./inspector/dispatch-projects-field";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
 import {
@@ -382,7 +383,9 @@ export function AgentDetailInspector({
                 ? t(($) => $.inspector.prop_work_enabled_hint)
                 : agent.work_pause.reason === "balance_exhausted"
                   ? t(($) => $.inspector.prop_work_pause_balance)
-                  : t(($) => $.inspector.prop_work_pause_quota)
+                  : agent.work_pause.reason === "auth_failure"
+                    ? t(($) => $.inspector.prop_work_pause_auth)
+                    : t(($) => $.inspector.prop_work_pause_quota)
             }
           >
             <Switch
@@ -439,6 +442,19 @@ export function AgentDetailInspector({
               value={agent.dispatch_mode}
               canEdit={canEditRuntime}
               onChange={(dispatchMode) => update({ dispatch_mode: dispatchMode })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.inspector.prop_dispatch_projects)}
+            description={t(($) => $.inspector.prop_dispatch_projects_hint)}
+            size="none"
+          >
+            {/* The seat's own setting: a following specialisation keeps it. */}
+            <DispatchProjectsField
+              wsId={agent.workspace_id}
+              value={agent.dispatch_projects}
+              canEdit={canEdit}
+              onChange={(dispatchProjects) => update({ dispatch_projects: dispatchProjects })}
             />
           </SettingsRow>
           <SettingsRow

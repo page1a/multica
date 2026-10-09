@@ -7,6 +7,9 @@ import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { ProjectsPage } from "./projects-page";
 
+const toastError = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn() } }));
+
 const mocks = vi.hoisted(() => ({
   projects: [] as Project[],
   members: [] as Array<{ user_id: string; name: string; role: string }>,
@@ -340,5 +343,20 @@ describe("ProjectsPage compact row navigation", () => {
     }
     expect(push).not.toHaveBeenCalled();
     open.mockRestore();
+  });
+});
+
+describe("ProjectsPage pin", () => {
+  it("says so when the server refuses the pin", async () => {
+    const user = userEvent.setup();
+    toastError.mockClear();
+    mocks.createPin.mockImplementation((_vars, opts?: { onError?: () => void }) => opts?.onError?.());
+    renderProjects();
+
+    await user.click(within(projectRow()).getByRole("button", { name: "Project actions" }));
+    await user.click(screen.getByText("Pin to sidebar"));
+
+    expect(mocks.createPin).toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith("Couldn't update the pin");
   });
 });

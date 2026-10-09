@@ -290,8 +290,13 @@ func issueCreateLong() string {
 		"is for one short line (the shell rewrites quotes, backticks and $() first).\n" +
 		"The title already serves as the H1, so start the body with prose or ##\n" +
 		"subheadings; add a # H1 only when the user asks for one.\n\n" +
+		"Status: leave it out (todo) for work that should start now; routing never\n" +
+		"picks up backlog. Use --status backlog only for work that waits on\n" +
+		"something, and say what with --waiting-for \"<one line>\" (agents are\n" +
+		"refused without it; staged sub-issues are exempt).\n\n" +
 		"Sub-issues: --parent <issue>; --status todo starts an agent-assigned child\n" +
-		"at once, --status backlog parks it, --stage <N> orders children in stages.\n\n" +
+		"at once, --status backlog --stage <N> parks a later stage until the stage\n" +
+		"before it finishes.\n\n" +
 		"Title style\n\n" + strings.TrimRight(titling.IssueTitleRules, "\n")
 }
 
@@ -394,8 +399,8 @@ func issueCloseLong() string {
 		"  --outcome blocked     needs one wait: --blocked-by / --wake-at /\n" +
 		"                        --wait-condition with --wait-timeout / --needs-human\n" +
 		"  --outcome cancelled   dropped on purpose; say why in --evidence\n" +
-		"  --outcome backlog     back to planning on purpose; say why in --evidence,\n" +
-		"                        no PR needed, nobody is woken\n" +
+		"  --outcome backlog     back to planning on purpose; --waiting-for says what it\n" +
+		"                        waits for (agents must), no PR needed, nobody is woken\n" +
 		"  --outcome todo        back to the ready list on purpose; say why in --evidence,\n" +
 		"                        no PR needed, nobody is woken\n" +
 		"  --outcome in_progress this round stops and the next one continues; --evidence\n" +
@@ -422,10 +427,16 @@ func issueCloseLong() string {
 		"Every close records a knowledge audit in that same transaction, including a\n" +
 		"ticket with no pull request. --knowledge-none declares that nothing qualified\n" +
 		"for project memory. Repeat --knowledge <key>=<summary> for each checklist slot\n" +
-		"this close wrote. Keys: " + strings.Join(projectmemory.LocationKeys(), ", ") + ".\n\n" +
+		"this close wrote. Keys: " + strings.Join(projectmemory.LocationKeys(), ", ") + ".\n" +
+		"On done/in_review the written slots must ship with this delivery: commit the\n" +
+		"files on this branch first. The CLI sends the paths git says it changes\n" +
+		"(against the parent's delivery branch, else the nearest main line) and the\n" +
+		"server refuses a slot no delivered file writes.\n\n" +
 		"Repeat --decision \"...\" for each decision this round settled; it joins the\n" +
 		"state card's 已拍板 list that `multica issue context <id>` shows the next owner.\n" +
-		"--summary becomes the card's 上一棒交代.\n\n" +
+		"--summary is the round's conclusion (结论) — what got done, or where it is\n" +
+		"stuck and who must do what; proof goes in --evidence. It becomes the card's\n" +
+		"上一棒交代 and the ticket's latest_summary in `multica project report`.\n\n" +
 		"Acceptance seat: pass with --outcome done --verdict pass when the checks this\n" +
 		"change owns are green and no named person still owes a decision\n" +
 		"(close.conclusion=awaiting_human). A check already red on the base branch is\n" +
@@ -464,8 +475,10 @@ var issueHandoffCmd = &cobra.Command{
 		"  --to dispatcher   let routing pick the next owner\n" +
 		"  --to <agent>      a named agent (name or id)\n\n" +
 		"A close already hands over what it closes: `issue close --outcome in_review`\n" +
-		"routes the acceptance seat itself. --summary tells the next owner where things\n" +
-		"stand (the state card's 上一棒交代); repeat --decision for each settled decision.\n" +
+		"routes the acceptance seat itself. --summary is the conclusion (结论): what got\n" +
+		"done, or where it is stuck and who must do what next. It is the state card's\n" +
+		"上一棒交代 and the latest_summary in `multica project report`; repeat --decision\n" +
+		"for each settled decision.\n" +
 		"Both are read back with `multica issue context <id>`. The response reports target_name,\n" +
 		"run_created and duplicate — quote them, do not restate them from memory.",
 	Args: exactArgs(1),
@@ -797,6 +810,8 @@ func validateIssueEnum(field, value string, allowed []string) error {
 }
 
 func init() {
+	addLinkedFlag(issueListCmd, issueGetCmd, issueChildrenCmd, issueCreateCmd, issueUpdateCmd, issueAssignCmd, issueStatusCmd,
+		issueCommentListCmd, issueCommentAddCmd, issueSearchCmd, issueLabelListCmd, issueLabelAddCmd, issueLabelRemoveCmd)
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
 	issueCmd.AddCommand(issueWaitCmd)
@@ -886,6 +901,7 @@ func init() {
 	issueCreateCmd.Flags().String("domain", "", "Issue domain: one of the project's domains, or 通用 for generic (default: the project's only domain). Routing and --per-quote pick the specialisation by it")
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
+	issueCreateCmd.Flags().String("waiting-for", "", "What this backlog issue is waiting for, one line (80 chars max). Required when an agent puts an issue in backlog; nothing to wait for means use todo")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
 	issueCreateCmd.Flags().Bool("goal", false, "Create a draft completion-line goal for this issue")
 	issueCreateCmd.Flags().String("routing-facts", "", `Routing facts as JSON, so routing skips the analysis call: {"scope":"small|module|cross_module","clarity":"clear|vague","risk":"low|medium|high","needs_human":false,"summary":"..."}`)
@@ -915,6 +931,7 @@ func init() {
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
+	issueUpdateCmd.Flags().String("waiting-for", "", "What this backlog issue is waiting for, one line (80 chars max). Required when an agent puts an issue in backlog; nothing to wait for means use todo")
 	issueUpdateCmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
 	issueUpdateCmd.Flags().String("duplicate-of", "", "Mark the issue as a duplicate of this original issue (key like MUL-123, or full UUID) and cancel it; --status, if given, must be cancelled, and description/attachment changes must go in a separate update")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
@@ -931,11 +948,13 @@ func init() {
 	issueStatusCmd.Flags().String("needs-human", "", "Member UUID a blocked issue is waiting on")
 	issueStatusCmd.Flags().String("block-kind", "", "Kind of stop for blocked: decision, permission, external, dependency or capacity (required for agents)")
 	issueStatusCmd.Flags().String("block-action", "", "One-line next step for blocked, at most 80 characters (required for agents)")
+	issueStatusCmd.Flags().String("waiting-for", "", "What this backlog issue is waiting for, one line (80 chars max). Required when an agent puts an issue in backlog; nothing to wait for means use todo")
 	registerIssueCloseFlags(issueCloseCmd)
 	registerIssueHandoffFlags(issueHandoffCmd)
 	registerIssueDisposeFlags(issueDisposeCmd)
 	issueStatusCmd.Flags().String("no-code", "", "Why this issue has no PR the platform can see: docs or research, or code merged outside GitHub (give the MR link). An agent moving an issue to in_review without a linked open/merged PR is refused unless this is given")
 	issueStatusBatchCmd.Flags().Bool("no-start", false, "Change status without starting agent runs")
+	issueStatusBatchCmd.Flags().String("waiting-for", "", "What this backlog issue is waiting for, one line (80 chars max). Required when an agent puts an issue in backlog; nothing to wait for means use todo")
 	issueStatusBatchCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue reorder
@@ -1443,6 +1462,13 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 			strVal(issue, "description"),
 		}}
 		cli.PrintTable(os.Stdout, headers, rows)
+		if chat, ok := issue["source_chat"].(map[string]any); ok {
+			if title := strVal(chat, "title"); title != "" {
+				fmt.Printf("\nFrom chat: %s (%s)\n", title, strVal(chat, "id"))
+			} else {
+				fmt.Printf("\nFrom chat: %s\n", strVal(chat, "id"))
+			}
+		}
 		return nil
 	}
 
@@ -1859,6 +1885,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if statusFlag != "" {
 		body["status"] = statusFlag
 	}
+	if v, _ := cmd.Flags().GetString("waiting-for"); strings.TrimSpace(v) != "" {
+		body["waiting_for"] = v
+	}
 	if priorityFlag != "" {
 		body["priority"] = priorityFlag
 	}
@@ -2118,6 +2147,9 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("no-code"); v != "" {
 		body["no_code_reason"] = v
+	}
+	if v, _ := cmd.Flags().GetString("waiting-for"); strings.TrimSpace(v) != "" {
+		body["waiting_for"] = v
 	}
 	if priorityChanged {
 		body["priority"] = priorityFlag
@@ -2405,6 +2437,7 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		{"block-kind", "block_kind"},
 		{"block-action", "block_action"},
 		{"no-code", "no_code_reason"},
+		{"waiting-for", "waiting_for"},
 	} {
 		if v, _ := cmd.Flags().GetString(pair.flag); v != "" {
 			body[pair.key] = v
@@ -2481,6 +2514,9 @@ func runIssueStatusBatch(cmd *cobra.Command, args []string) error {
 	if noStart {
 		updates["suppress_run"] = true
 	}
+	if v, _ := cmd.Flags().GetString("waiting-for"); strings.TrimSpace(v) != "" {
+		updates["waiting_for"] = v
+	}
 	body := map[string]any{"issue_ids": ids, "updates": updates}
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues/batch-update", body, &result); err != nil {
@@ -2518,7 +2554,8 @@ func registerIssueCloseFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("evidence-stdin", false, "Read the evidence body from stdin")
 	cmd.Flags().String("evidence-file", "", "Read the evidence body from a UTF-8 file inside the working directory")
 	cmd.Flags().Bool("allow-external-file", false, "Allow --evidence-file to read a path outside the current working directory")
-	cmd.Flags().String("summary", "", "One-line conclusion placed above the evidence; for blocked it is the close.block_action (80 chars max)")
+	cmd.Flags().String("waiting-for", "", "With --outcome backlog: what the issue waits for, one line (80 chars max; required for agents)")
+	cmd.Flags().String("summary", "", "One-line conclusion (结论): what got done, or where it is stuck and who must do what. Placed above the evidence; proof goes in --evidence. Shown in project report as latest_summary; for blocked it is the close.block_action (80 chars max)")
 	cmd.Flags().String("parent", "", "Comment ID to reply under; a comment-triggered run defaults to its trigger comment")
 	cmd.Flags().String("blocked-by", "", "Comma-separated issue identifiers this blocked issue is waiting on; on --outcome in_progress it says who continues")
 	cmd.Flags().String("wake-at", "", "RFC3339 time to wake a blocked issue for another look; on --outcome in_progress the patrol wakes the executor then")
@@ -2530,7 +2567,7 @@ func registerIssueCloseFlags(cmd *cobra.Command) {
 	cmd.Flags().String("verdict", "", "Acceptance verdict, reviewer only: pass (merges and closes)")
 	cmd.Flags().String("pr", "", "Pull or merge request URL to register with this close. A verified link is stored; an unverifiable link still closes and is marked 未核实")
 	cmd.Flags().Bool("knowledge-none", false, "Declare this close wrote no qualified project memory")
-	cmd.Flags().StringArray("knowledge", nil, "Project-memory change as <key>=<summary>; repeat for each checklist location")
+	cmd.Flags().StringArray("knowledge", nil, "Project-memory change as <key>[:<action>[:<entry>]]=<summary>; action is new, update, merge or supersede (required on a boss-layer sediment round); repeat for each change")
 	cmd.Flags().StringArray("decision", nil, "A decision settled this round, added to the state card's 已拍板 list (one line, 300 chars max; repeat for each)")
 	cmd.Flags().String("output", "json", "Output format: table or json")
 }
@@ -2538,7 +2575,7 @@ func registerIssueCloseFlags(cmd *cobra.Command) {
 // registerIssueHandoffFlags wires `issue handoff`; shared with its tests.
 func registerIssueHandoffFlags(cmd *cobra.Command) {
 	cmd.Flags().String("to", "", "reviewer, dispatcher, or an agent name/id (required)")
-	cmd.Flags().String("summary", "", "What the next owner needs to know; shown as the state card's 上一棒交代 (300 chars max)")
+	cmd.Flags().String("summary", "", "One-line conclusion (结论): what got done, or where it is stuck and who must do what next. Shown as the state card's 上一棒交代 and in project report as latest_summary; details go in a comment (300 chars max)")
 	cmd.Flags().StringArray("decision", nil, "A decision settled this round, added to the state card's 已拍板 list (repeat for each)")
 	cmd.Flags().String("output", "table", "Output format: table or json")
 }
@@ -2585,6 +2622,7 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 		{"needs-human", "needs_human"},
 		{"no-code", "no_code_reason"},
 		{"pr", "pr_url"},
+		{"waiting-for", "waiting_for"},
 	} {
 		if v, _ := cmd.Flags().GetString(pair.flag); strings.TrimSpace(v) != "" {
 			body[pair.key] = v
@@ -2595,6 +2633,19 @@ func runIssueClose(cmd *cobra.Command, args []string) error {
 	}
 	if decisions, _ := cmd.Flags().GetStringArray("decision"); len(decisions) > 0 {
 		body["decisions"] = decisions
+	}
+	if closeprotocol.KnowledgeMustShip(outcome, verdict) {
+		// The knowledge the audit claims has to ship with this delivery
+		// (DENE-1661): send what git says it changes, the server matches.
+		// The memory files it touches go along whatever the audit says, so
+		// the server can hold the map files to their size limit (DENE-1680).
+		files, memory := closeDeliveredFiles(ctx, client, issueRef.ID)
+		if files != nil && len(audit.Changes) > 0 {
+			body["delivered_files"] = *files
+		}
+		if memory != nil {
+			body["memory_files"] = *memory
+		}
 	}
 	if outcome == "done" || outcome == "in_review" {
 		// The PR refresh below can merge locally, which cannot be undone.
@@ -2743,17 +2794,25 @@ func knowledgeAuditFromFlags(cmd *cobra.Command) closeprotocol.KnowledgeAudit {
 	items, _ := cmd.Flags().GetStringArray("knowledge")
 	audit := closeprotocol.KnowledgeAudit{None: none}
 	for _, item := range items {
-		location, summary, ok := strings.Cut(item, "=")
-		if !ok {
-			location = item
-			summary = ""
-		}
-		audit.Changes = append(audit.Changes, closeprotocol.KnowledgeChange{
-			Location: location,
-			Summary:  summary,
-		})
+		audit.Changes = append(audit.Changes, parseKnowledgeItem(item))
 	}
 	return audit
+}
+
+// parseKnowledgeItem reads one --knowledge value:
+// <location>[:<action>[:<entry>]]=<summary>. The action says what the change
+// does to the entries already there (DENE-1680); the server checks it.
+func parseKnowledgeItem(item string) closeprotocol.KnowledgeChange {
+	key, summary, _ := strings.Cut(item, "=")
+	parts := strings.SplitN(key, ":", 3)
+	change := closeprotocol.KnowledgeChange{Location: parts[0], Summary: summary}
+	if len(parts) > 1 {
+		change.Action = parts[1]
+	}
+	if len(parts) > 2 {
+		change.Entry = parts[2]
+	}
+	return change
 }
 
 // preflightIssueClose asks the server's read-only close shape gate. A server
@@ -3586,7 +3645,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "SESSION", "SKILLS", "ERROR"}
+	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "SESSION", "SKILLS", "RELAY", "ERROR"}
 	rows := make([][]string, 0, len(runs))
 	for _, r := range runs {
 		started := strVal(r, "started_at")
@@ -3610,6 +3669,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 			completed,
 			runSessionLabel(r, fullID),
 			runSkillsLabel(r),
+			runRelayLabel(r),
 			errMsg,
 		})
 	}
@@ -3628,6 +3688,20 @@ func runSkillsLabel(r map[string]any) string {
 		}
 	}
 	return strings.Join(names, ",")
+}
+
+// runRelayLabel says where the work went after a failed run (DENE-1647):
+// "→ <seat>" when another seat took over, otherwise the relay outcome
+// (waiting, skipped_*). Empty when the run had no relay.
+func runRelayLabel(r map[string]any) string {
+	relay, _ := r["relay"].(map[string]any)
+	if relay == nil {
+		return ""
+	}
+	if name := strVal(relay, "to_agent_name"); name != "" {
+		return "→ " + name
+	}
+	return strVal(relay, "outcome")
 }
 
 func runIssueUsage(cmd *cobra.Command, args []string) error {

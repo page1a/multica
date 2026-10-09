@@ -16,6 +16,10 @@ const (
 	// the seat and start it, or turn the wait into a structured block a person
 	// can see. Waking the executor is never the answer here (DENE-869).
 	ActionSeat = "seat"
+	// ActionCoverReview is the in_review round whose last acceptance run
+	// failed and nothing ran since (DENE-1647): retry the seat once, move
+	// acceptance to another seat, or ask a person.
+	ActionCoverReview = "cover_review"
 )
 
 // BlockerView is the live state of one issue this record waits on.
@@ -63,6 +67,13 @@ type PatrolInput struct {
 	// not "none". A quiet in_review round with an empty slot is seated, not
 	// nudged — a nudge would land on the executor, who can only say "请验收".
 	ReviewerEmpty bool
+	// ReviewRunFailed means the newest run of this in_review round failed
+	// and none is in flight. ReviewFailures counts this round's failed runs;
+	// ReviewAsked is an open "acceptance seat failed" ask already waiting on
+	// a person.
+	ReviewRunFailed bool
+	ReviewFailures  int
+	ReviewAsked     bool
 	// Watched is `block.watched=1`. DENE-1002 only lets an in_progress row act
 	// on a clock when this ticket was deliberately parked there by
 	// `issue close --outcome in_progress`; a leftover failure wake on an
@@ -91,6 +102,9 @@ type Decision struct {
 	Unwatch bool
 	// CommentOnly leaves the sentence and does not enqueue a run.
 	CommentOnly bool
+	// Force moves acceptance off the seat instead of retrying it: its runs
+	// failed more than once this round.
+	Force bool
 	// Inherited names the red checks a merge decision let through because the
 	// same checks are already red on the base branch (DENE-892). BaseBranch is
 	// that branch.
@@ -180,6 +194,18 @@ func DecidePatrol(in PatrolInput) Decision {
 				Action: ActionSeat,
 				Reason: "待验收超过 30 分钟，但这张票没有验收席，执行人不是该被提醒的人。",
 			}
+		}
+		if in.Quiet >= QuietAfter && in.ReviewRunFailed && !in.ReviewerHuman && !in.ReviewAsked {
+			return Decision{
+				Action: ActionCoverReview,
+				Reason: "这一轮验收 run 失败后 30 分钟没有新的 run。",
+				Force:  in.ReviewFailures >= 2,
+			}
+		}
+		if in.ReviewRunFailed && in.ReviewAsked {
+			// A person already has the options; a nudge would wake the seat
+			// that just failed.
+			return Decision{Action: ActionHold}
 		}
 		if in.Quiet >= QuietAfter && !in.ReviewNudged {
 			d := Decision{
@@ -713,7 +739,7 @@ func (d Decision) FollowUp(now time.Time, blockedBy, waitingOn, woken string) (s
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if d.Action == ActionWake || d.Action == ActionRelease || d.Action == ActionSeat ||
+	if d.Action == ActionWake || d.Action == ActionRelease || d.Action == ActionSeat || d.Action == ActionCoverReview ||
 		d.Action == ActionRevive || d.Action == ActionEscalate {
 		set[KeyPatrolAt] = now.UTC().Format(time.RFC3339)
 	}

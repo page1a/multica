@@ -46,8 +46,11 @@ type IssueResponse struct {
 	Title        string                `json:"title"`
 	Progress     *ProgressResponse     `json:"progress"`
 	GoalProgress *GoalProgressResponse `json:"goal_progress,omitempty"`
-	Description  *string               `json:"description"`
-	Status       string                `json:"status"`
+	// SourceChat is the chat this issue was opened from (DENE-1665); set on
+	// the single-issue read only.
+	SourceChat  *IssueSourceChat `json:"source_chat,omitempty"`
+	Description *string          `json:"description"`
+	Status      string           `json:"status"`
 	// StatusCategory encodes lifecycle using the legacy seven-value wire enum. It is
 	// omitted when an endpoint cannot resolve a custom status, so consumers must
 	// fall back to their catalog rather than treat a blank as "no category".
@@ -2656,6 +2659,7 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
+	resp.SourceChat = h.issueSourceChat(r.Context(), r, issue)
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {
 		detailLabels = []LabelResponse{}
@@ -3355,6 +3359,10 @@ type CreateIssueRequest struct {
 
 	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
 
+	// WaitingFor is the one line a backlog ticket waits for (DENE-1638). An
+	// agent creating a backlog ticket without it is refused.
+	WaitingFor *string `json:"waiting_for,omitempty"`
+
 	// RoutingFacts lets the creator — usually an agent that just wrote the
 	// ticket and already knows its shape — supply the facts routing would
 	// otherwise ask the analysis model for (DENE-923). They are cached
@@ -3644,6 +3652,12 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Determine creator identity: agent (via X-Agent-ID header) or member.
 	creatorType, actualCreatorID := h.resolveActor(r, creatorID, workspaceID)
+	if h.isBacklogStatus(r.Context(), wsUUID, status) {
+		if reject := backlogWaitingForRejection(req.WaitingFor, creatorType, req.Stage != nil); reject != "" {
+			writeError(w, http.StatusBadRequest, reject)
+			return
+		}
+	}
 
 	// Optional origin stamping (quick-create / autopilot). Only the
 	// allowed origin types are accepted; anything else is rejected so a
@@ -3651,6 +3665,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// be provided together.
 	var originType pgtype.Text
 	var originID pgtype.UUID
+	var originChat pgtype.UUID
 	if req.OriginType != nil || req.OriginID != nil {
 		if req.OriginType == nil || req.OriginID == nil {
 			writeError(w, http.StatusBadRequest, "origin_type and origin_id must be provided together")
@@ -3691,8 +3706,18 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 				if task, terr := h.Queries.GetAgentTask(r.Context(), taskUUID); terr == nil && uuidToString(task.AgentID) == actualCreatorID {
 					originType = pgtype.Text{String: "agent_create", Valid: true}
 					originID = taskUUID
+					// A chat run's issue points back at its chat (DENE-1665)
+					// and must carry what the chat aligned on.
+					originChat = task.ChatSessionID
 				}
 			}
+		}
+	}
+
+	if originChat.Valid {
+		if msg := chatTicketDescriptionProblem(ptrToText(req.Description).String); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
 		}
 	}
 
@@ -3792,30 +3817,31 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		ProjectPinned:  projectPinned,
-		DomainID:       pickedDomain,
-		DomainPinned:   domainPinned,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		Stage:          ptrToInt4(req.Stage),
-		AttachmentIDs:  attachmentIDs,
-		LabelIDs:       labelIDs,
-		Properties:     properties,
-		AllowDuplicate: req.AllowDuplicate,
-		GoalMode:       req.GoalMode,
+		WorkspaceID:         wsUUID,
+		Title:               req.Title,
+		Description:         ptrToText(req.Description),
+		Status:              status,
+		Priority:            priority,
+		AssigneeType:        assigneeType,
+		AssigneeID:          assigneeID,
+		CreatorType:         creatorType,
+		CreatorID:           parseUUID(actualCreatorID),
+		ParentIssueID:       parentIssueID,
+		ProjectID:           projectID,
+		ProjectPinned:       projectPinned,
+		DomainID:            pickedDomain,
+		DomainPinned:        domainPinned,
+		StartDate:           startDate,
+		DueDate:             dueDate,
+		OriginType:          originType,
+		OriginID:            originID,
+		OriginChatSessionID: originChat,
+		Stage:               ptrToInt4(req.Stage),
+		AttachmentIDs:       attachmentIDs,
+		LabelIDs:            labelIDs,
+		Properties:          properties,
+		AllowDuplicate:      req.AllowDuplicate,
+		GoalMode:            req.GoalMode,
 
 		AssigneeSource:       ruling.Source,
 		AssigneeSourceUserID: ruling.SourceUser,
@@ -3895,6 +3921,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if issue.Status == "in_review" {
 		h.setIssueMetaString(r.Context(), issue, blockwait.KeyReviewRound, time.Now().UTC().Format(time.RFC3339))
 	}
+	issue = h.syncBacklogWaitingFor(r.Context(), issue, req.WaitingFor)
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)
@@ -3999,6 +4026,9 @@ type UpdateIssueRequest struct {
 	// research). The reason is echoed in the system comment; people are not
 	// gated and may leave it empty.
 	NoCodeReason *string `json:"no_code_reason,omitempty"`
+	// WaitingFor: see CreateIssueRequest.WaitingFor. Required when an agent
+	// moves a ticket into backlog.
+	WaitingFor *string `json:"waiting_for,omitempty"`
 	// DuplicateOfIssueID marks this issue as a duplicate of another issue in
 	// the same workspace (MUL-7349). A duplicate is an ordinary cancelled issue
 	// that remembers its original, so this also sets status to cancelled.
@@ -4356,6 +4386,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		blockRecord = rec
 		persistBlock = persist
 	}
+	if statusActorType != "" && h.isBacklogStatus(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard) && !h.isBacklogStatus(r.Context(), prevIssue.WorkspaceID, prevIssue.Status) {
+		if reject := backlogWaitingForRejection(req.WaitingFor, statusActorType, prevIssue.Stage.Valid || req.Stage != nil); reject != "" {
+			writeError(w, http.StatusBadRequest, reject)
+			return
+		}
+	}
 	if req.Priority != nil {
 		if !validateIssueEnum(w, "priority", *req.Priority, validIssuePriorities) {
 			return
@@ -4551,6 +4587,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		assigneeIgnore       bool
 		assigneeIgnoreReason string
 	)
+	// An agent's pick was not applied and the slot is still empty, so this
+	// write hands the ticket to routing (DENE-1613).
+	pickSetAside := false
 	if touchedType || touchedID {
 		if params.AssigneeType.Valid && params.AssigneeID.Valid {
 			actorType, actorID := h.resolveActor(r, userID, workspaceID)
@@ -4577,6 +4616,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 					if stampRuling.Source == "" {
 						stampRuling.Source = routing.SourceAgent
 					}
+					pickSetAside = true
 				}
 			}
 		} else if !params.AssigneeID.Valid {
@@ -4679,6 +4719,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if tr.noCode != "" {
 		h.setIssueMetaString(r.Context(), issue, "close.no_code_reason", tr.noCode)
+	}
+	if req.Status != nil || req.WaitingFor != nil {
+		issue = h.syncBacklogWaitingFor(r.Context(), issue, req.WaitingFor)
 	}
 	if stampRuling != nil {
 		issue = h.stampAssignee(r.Context(), issue, *stampRuling)
@@ -4798,12 +4841,18 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.persistBlockRecord(r.Context(), issue, blockRecord)
 		h.summonNeedsHuman(r.Context(), issue, blockRecord.NeedsHuman, actorType, actorID, "")
 	}
-	if statusChanged || titleChanged || descriptionChanged {
+	// Clearing the executor hands the ticket back to routing (DENE-1665: the
+	// chat ticket card's 改给智能体); the routing table decides per status.
+	executorCleared := prevIssue.AssigneeID.Valid && !issue.AssigneeID.Valid
+	if statusChanged || titleChanged || descriptionChanged || pickSetAside || executorCleared {
 		if statusChanged {
 			h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
+			h.postSourceChatReceipt(r.Context(), prevIssue, issue)
 			h.notifyWaitersOfIssueDone(r.Context(), prevIssue, issue)
 		}
-		// Route after content edits as well as status changes. The detached
+		// Route after content edits as well as status changes, and after an
+		// agent's pick was set aside: the reply says routing picks, so this
+		// write is what starts it. The detached
 		// pass pre-analyzes the new content, so runtime-backed analysis is warm
 		// before a later dispatch.
 		h.RouteIssueAsync(r, uuidToString(issue.WorkspaceID), uuidToString(issue.ID))
@@ -5597,6 +5646,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		// Whose pick is the executor (DENE-1033); same ruling as UpdateIssue.
 		var batchStamp *assignmentRuling
+		batchPickSetAside := false
 		if batchTouchedType || batchTouchedID {
 			if params.AssigneeType.Valid && params.AssigneeID.Valid {
 				pickActorType, pickActorID := h.resolveActor(r, userID, workspaceID)
@@ -5619,6 +5669,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 						if batchStamp.Source == "" {
 							batchStamp.Source = routing.SourceAgent
 						}
+						batchPickSetAside = true
 					}
 				}
 			} else if !params.AssigneeID.Valid {
@@ -5640,6 +5691,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				rejection = blockAttributionRejection(req.Updates, batchActorType)
 			}
 			if rejection != "" {
+				reject(issueID, rejection)
+				continue
+			}
+		}
+		if batchStatusKey != "" && h.isBacklogStatus(r.Context(), prevIssue.WorkspaceID, batchStatusKey) && !h.isBacklogStatus(r.Context(), prevIssue.WorkspaceID, prevIssue.Status) {
+			if rejection := backlogWaitingForRejection(req.Updates.WaitingFor, batchActorType, prevIssue.Stage.Valid || req.Updates.Stage != nil); rejection != "" {
 				reject(issueID, rejection)
 				continue
 			}
@@ -5696,6 +5753,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		if issue.Status == issuestatus.Blocked && prevIssue.Status != issuestatus.Blocked {
 			h.persistBlockAttribution(r.Context(), issue, req.Updates)
+		}
+		if batchStatusKey != "" || req.Updates.WaitingFor != nil {
+			issue = h.syncBacklogWaitingFor(r.Context(), issue, req.Updates.WaitingFor)
 		}
 		if batchTransition.persistBlock {
 			h.persistBlockRecord(r.Context(), issue, batchTransition.block)
@@ -5766,8 +5826,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// done/cancelled status still enters the stage barrier below. A literal
 		// comparison here left childDoneCompleted empty and silently skipped
 		// notifyParentsOfBatchChildDone entirely. (MUL-6243)
-		if statusChanged {
+		if statusChanged || batchPickSetAside {
 			h.RouteIssueAsync(r, uuidToString(issue.WorkspaceID), uuidToString(issue.ID))
+		}
+		if statusChanged {
+			h.postSourceChatReceipt(r.Context(), prevIssue, issue)
 			prevTerminal := isTerminalChildStatus(
 				issuestatus.Effective(r.Context(), h.Queries, prevIssue.WorkspaceID, prevIssue.Status))
 			nowTerminal := isTerminalChildStatus(

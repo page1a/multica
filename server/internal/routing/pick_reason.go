@@ -54,7 +54,7 @@ func heldPickReason(source string) PickReason {
 
 // executorPickReason is the reason for the executor in one assignment
 // comment, and the detail sentence that goes with it.
-func executorPickReason(issue Issue, needExecutor bool, executor *Seat, executorSource string) (PickReason, string) {
+func executorPickReason(issue Issue, needExecutor bool, executor *Seat, executorSource string, raised bool) (PickReason, string) {
 	if !needExecutor {
 		return heldPickReason(issue.AssigneeSource), heldExecutorLine(issue)
 	}
@@ -71,5 +71,8 @@ func executorPickReason(issue Issue, needExecutor bool, executor *Seat, executor
 	case pickFallback:
 		return PickReasonFallback, "判断不够确定或没有判断，落到兜底档"
 	}
-	return PickReasonTier, "判断模型定的" + executor.TierLabel + "档"
+	if raised {
+		return PickReasonTier, "按规则下限抬到的" + executor.TierLabel + "档"
+	}
+	return PickReasonTier, "规则表定的" + executor.TierLabel + "档"
 }

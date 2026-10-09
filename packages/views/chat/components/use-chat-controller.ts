@@ -36,6 +36,7 @@ import {
   useSetChatSessionArchived,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
+import { useChatLinkedProjects } from "./use-chat-linked-projects";
 import {
   chatSessionProjectIds,
   sameProjectIds,
@@ -307,6 +308,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     ? sessions.find((s) => s.id === activeSessionId)
     : null;
   const isSessionArchived = currentSession?.status === "archived";
+  const linkedProjects = useChatLinkedProjects(currentSession);
   // An open session's server-persisted set wins; only a new chat reads the
   // locally persisted draft set.
   const candidateProjectIds = useMemo(
@@ -483,7 +485,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
             agent_id: activeAgent.id,
             title: deriveChatTitle(titleSeed),
             project_ids: activeProjectIds,
+            linked_projects: linkedProjects.draftRefs,
           });
+          linkedProjects.clearDraft();
           return session.id;
         } finally {
           sessionPromiseRef.current = null;
@@ -496,6 +500,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       activeSessionId,
       activeAgent,
       activeProjectIds,
+      linkedProjects,
       createSession,
       sessions,
       sessionsLoaded,
@@ -895,7 +900,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
     activeProjectIds,
     projectContextUnsupported: projectContextSupport === false,
     isProjectUpdating:
-      setSessionProjects.isPending || (!!activeSessionId && !currentSession),
+      setSessionProjects.isPending ||
+      linkedProjects.isUpdating ||
+      (!!activeSessionId && !currentSession),
+    linkedProjects,
     currentSession,
     isSessionArchived,
     isAgentArchived,

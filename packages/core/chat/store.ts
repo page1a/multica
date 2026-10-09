@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { StorageAdapter } from "../types";
+import type { ChatLinkedProject, StorageAdapter } from "../types";
 import type { Attachment } from "../types/attachment";
 import { getCurrentSlug, registerForWorkspaceRehydration } from "../platform/workspace-storage";
 import { registerDraftCleanup } from "../drafts/cleanup-registry";
@@ -330,6 +330,9 @@ export interface ChatState {
    *  carry several projects at once (DENE-522). Existing sessions remain
    *  bound to their server-persisted set. */
   selectedProjectIds: string[];
+  /** Read-only linked projects for the next session (DENE-1643). Not
+   *  persisted: the link is re-checked when the chat is created anyway. */
+  selectedLinkedProjects: ChatLinkedProject[];
   /** The user picked a project inside the chat, so the floating window stops
    *  following the main UI's current project (DENE-603). Deliberately NOT
    *  persisted: a reload re-initialises the window, which criterion 5 defines
@@ -355,6 +358,8 @@ export interface ChatState {
   setSelectedAgentId: (id: string) => void;
   /** Replaces the whole draft set; callers pass the complete selection. */
   setSelectedProjectIds: (ids: string[]) => void;
+  /** Replaces the whole linked draft set. */
+  setSelectedLinkedProjects: (items: ChatLinkedProject[]) => void;
   /** Lock on a manual pick inside the chat, unlock on new chat / send /
    *  re-init so the window follows the main UI again. */
   setProjectContextLocked: (locked: boolean) => void;
@@ -424,6 +429,7 @@ export function createChatStore(options: ChatStoreOptions) {
     activeSessionId: storage.getItem(wsKey(SESSION_STORAGE_KEY)),
     selectedAgentId: initialAgentId,
     selectedProjectIds: readProjectIds(storage, wsKey(PROJECT_STORAGE_KEY)),
+    selectedLinkedProjects: [],
     projectContextLocked: false,
     inputDrafts: initialDraftSlots.inputDrafts,
     inputDraftAttachments: initialDraftSlots.inputDraftAttachments,
@@ -470,6 +476,9 @@ export function createChatStore(options: ChatStoreOptions) {
       if (ids.length > 0) storage.setItem(wsKey(PROJECT_STORAGE_KEY), JSON.stringify(ids));
       else storage.removeItem(wsKey(PROJECT_STORAGE_KEY));
       set({ selectedProjectIds: ids });
+    },
+    setSelectedLinkedProjects: (items) => {
+      set({ selectedLinkedProjects: items });
     },
     setProjectContextLocked: (locked) => {
       if (get().projectContextLocked === locked) return;
@@ -710,6 +719,7 @@ export function createChatStore(options: ChatStoreOptions) {
       activeSessionId: nextSession,
       selectedAgentId: nextAgent,
       selectedProjectIds: nextProjects,
+      selectedLinkedProjects: [],
       // A new workspace is a fresh context: follow its current project again.
       projectContextLocked: false,
       inputDrafts: nextDrafts,

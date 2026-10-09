@@ -1,0 +1,18 @@
+<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1679 子任务回执</title>
+<style>body{font:14px/1.6 system-ui,sans-serif;margin:0 auto;max-width:1100px;padding:16px;color:#222}
+h2{font-size:16px;margin:24px 0 8px}.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+figure{margin:0}img{max-width:100%;border:1px solid #ddd;border-radius:6px;display:block}
+.row figure{flex:1 1 180px;max-width:280px}figure.wide{max-width:100%}figcaption{color:#666;font-size:12px}
+pre{background:#f6f6f6;padding:10px;border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:12px}</style></head><body>
+<h1 style="font-size:18px">DENE-1679 父任务收到子任务的结论</h1>
+<p>一张父票拆三张子票，三张都完成后：状态卡「子任务回执」、来源聊天里父票的回执卡、CLI 都列出每张的结论、PR 和沉淀。</p>
+<h2>手机（375 / 390）</h2><div class="row"><figure><img src="issue-375.webp" alt="任务侧栏 375"><figcaption>任务侧栏 375</figcaption></figure><figure><img src="issue-390.webp" alt="任务侧栏 390"><figcaption>任务侧栏 390</figcaption></figure><figure><img src="chat-375.webp" alt="聊天回执卡 375"><figcaption>聊天回执卡 375</figcaption></figure><figure><img src="chat-390.webp" alt="聊天回执卡 390"><figcaption>聊天回执卡 390</figcaption></figure></div>
+<h2>平板（768）</h2><div class="row"><figure><img src="issue-768.webp" alt="任务侧栏 768"><figcaption>任务侧栏 768</figcaption></figure><figure><img src="chat-768.webp" alt="聊天回执卡 768"><figcaption>聊天回执卡 768</figcaption></figure></div>
+<h2>桌面（1280）</h2><figure class=wide><img src="issue-1280.webp" alt="任务页 1280"><figcaption>任务页 1280</figcaption></figure><br><figure class=wide><img src="chat-1280.webp" alt="聊天 1280"><figcaption>聊天 1280</figcaption></figure>
+<h2>CLI：multica issue context DEMO-1</h2><pre>子任务回执：
+  - DEMO-2 接口改走新令牌 — 已完成 · 登录接口改为签发短期令牌，旧令牌兼容一周后下线 · PR https://github.com/jeff-kunkun/multica/pull/1201（已合并）
+  - DEMO-3 界面加登录页 — 已完成 · 新增手机号登录页，375 宽下表单不截断，错误提示就地显示 · PR https://github.com/jeff-kunkun/multica/pull/1202（已合并）
+  - DEMO-4 文档写进 AGENTS.md — 已完成 · 登录流程和令牌轮换写进 AGENTS.md 与 docs/auth.md</pre>
+<p><code>--output json</code> 的 <code>children</code> 数组带同样字段（identifier、status、summary、pull_requests、knowledge）。</p>
+</body></html>

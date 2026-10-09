@@ -152,6 +152,24 @@ func (h *Handler) ApplyPlan(w http.ResponseWriter, r *http.Request) {
 	identity := req.Key
 
 	creatorType, creatorID := h.resolveActor(r, userID, workspaceID)
+	// A plan applied from a chat run points every issue back at that chat and
+	// carries what the chat aligned on, node by node (DENE-1665).
+	var originChat pgtype.UUID
+	if creatorType == "agent" {
+		originChat = h.chatSessionForTask(r.Context(), r, creatorID)
+	}
+	if originChat.Valid {
+		nodes := req.Children
+		if req.Parent != nil {
+			nodes = append([]ApplyPlanNode{*req.Parent}, nodes...)
+		}
+		for _, node := range nodes {
+			if msg := chatTicketDescriptionProblem(node.Description); msg != "" {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("%q: %s", strings.TrimSpace(node.Title), msg))
+				return
+			}
+		}
+	}
 	build := func(node ApplyPlanNode, status string, stage pgtype.Int4, nodeKey string) (service.IssueCreateParams, bool) {
 		priority := node.Priority
 		if priority == "" {
@@ -177,19 +195,20 @@ func (h *Handler) ApplyPlan(w http.ResponseWriter, r *http.Request) {
 			return service.IssueCreateParams{}, false
 		}
 		return service.IssueCreateParams{
-			WorkspaceID:    wsUUID,
-			Title:          strings.TrimSpace(node.Title),
-			Description:    pgtype.Text{String: node.Description, Valid: node.Description != ""},
-			Status:         status,
-			Priority:       priority,
-			AssigneeType:   assigneeType,
-			AssigneeID:     assigneeID,
-			CreatorType:    creatorType,
-			CreatorID:      parseUUID(creatorID),
-			Stage:          stage,
-			OriginType:     pgtype.Text{String: planOriginType, Valid: true},
-			OriginID:       planNodeID(wsUUID, identity, nodeKey),
-			AllowDuplicate: true,
+			WorkspaceID:         wsUUID,
+			Title:               strings.TrimSpace(node.Title),
+			Description:         pgtype.Text{String: node.Description, Valid: node.Description != ""},
+			Status:              status,
+			Priority:            priority,
+			AssigneeType:        assigneeType,
+			AssigneeID:          assigneeID,
+			CreatorType:         creatorType,
+			CreatorID:           parseUUID(creatorID),
+			Stage:               stage,
+			OriginType:          pgtype.Text{String: planOriginType, Valid: true},
+			OriginID:            planNodeID(wsUUID, identity, nodeKey),
+			OriginChatSessionID: originChat,
+			AllowDuplicate:      true,
 		}, true
 	}
 
@@ -504,7 +523,7 @@ func (h *Handler) AdvanceIssueStage(w http.ResponseWriter, r *http.Request) {
 		resp.Message = fmt.Sprintf("stage %d of %s promoted to todo: %s", stage, parentLabel, strings.Join(labels, ", "))
 		if parent.ProjectID.Valid {
 			reason := fmt.Sprintf("阶段推进：%s 进入第 %d 阶段", parentLabel, stage)
-			resp.SedimentError = h.noteMemoryProgress(r.Context(), parent.WorkspaceID, parent.ProjectID, reason)
+			resp.SedimentError = h.noteMemoryMilestone(r.Context(), parent.WorkspaceID, parent.ProjectID, reason, h.sedimentDigest(r.Context(), childrenBelowStage(children, stage)), &sedimentSource{Kind: "issue", ID: uuidToString(parent.ID)})
 		}
 	} else {
 		resp.Message = fmt.Sprintf("stage %d of %s was already promoted by a concurrent advance", stage, parentLabel)
@@ -548,4 +567,19 @@ func (h *Handler) promoteChildToTodo(ctx context.Context, child db.Issue, actorT
 	}
 	h.dispatchIssueRun(ctx, updated, trigger, actorType, actorID, "")
 	return updated, true, nil
+}
+
+// childrenBelowStage is the stage an advance just closed: the children of the
+// highest stage below the one being promoted. A first stage has none.
+func childrenBelowStage(children []db.Issue, stage int32) []db.Issue {
+	var prev int32
+	for _, c := range children {
+		if c.Stage.Valid && c.Stage.Int32 < stage && c.Stage.Int32 > prev {
+			prev = c.Stage.Int32
+		}
+	}
+	if prev == 0 {
+		return nil
+	}
+	return childrenInStage(children, prev)
 }

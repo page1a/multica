@@ -74,6 +74,12 @@ type Issue struct {
 	// Wait is what a blocked ticket says it is waiting on. Only the blocked
 	// row reads it, to answer from the record before asking any model.
 	Wait BlockWait
+
+	// Workers are the seats that finished a run on this ticket. Read only
+	// while it is in review: a substitute reviewer must not be one of them,
+	// because during review the executor slot already names the reviewer
+	// and no longer says who did the work (DENE-1647).
+	Workers []string
 }
 
 // BlockWait is the slice of a ticket's wait record the blocked row can read

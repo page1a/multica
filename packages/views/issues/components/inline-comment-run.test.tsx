@@ -77,6 +77,18 @@ describe("InlineCommentRun", () => {
     expect(document.querySelector("[data-run-skills]")).toBeNull();
   });
 
+  it("says where a failed run's work went", () => {
+    const failed = { status: "failed" as const, completed_at: "2026-09-07T00:05:00Z", error: "401" };
+    setup(task({ ...failed, relay: { outcome: "relayed", to_agent_name: "Piccolo" } }), true);
+    expect(screen.getByText("Handed to Piccolo after the failure")).toBeInTheDocument();
+    cleanup();
+    setup(task({ ...failed, relay: { outcome: "waiting" } }), true);
+    expect(screen.getByText("No seat could take over; waiting for a person")).toBeInTheDocument();
+    cleanup();
+    setup(task({ ...failed, relay: { outcome: "skipped_active" } }), true);
+    expect(document.querySelector("[data-run-relay]")).toBeNull();
+  });
+
   it("places a delivered steer between the steps it arrived between", async () => {
     vi.mocked(api.listTaskMessages).mockResolvedValue([
       { task_id: id, issue_id: "issue", seq: 1, type: "tool_use", tool: "exec_command", input: { command: "cat login.tsx" }, created_at: "2026-09-07T00:00:05Z" },

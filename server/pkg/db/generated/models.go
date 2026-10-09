@@ -48,23 +48,24 @@ type Agent struct {
 	// Composio toolkit slugs this agent is allowed to mount as MCP. NULL or empty array = no MCP overlay. Mounted for any run that passes the agent invocation-permission gate (MUL-3963); the overlay uses the agent OWNER's active Composio connection, so sharing the agent (public_to) shares these apps with whoever may invoke it. No longer gated on originator == owner. Stored as TEXT[] so the dispatch path can intersect against the owner's active connections with a single SQL ANY() filter.
 	ComposioToolkitAllowlist []string `json:"composio_toolkit_allowlist"`
 	// Agent invocation permission mode (MUL-3963). private = owner only; public_to = allow-list in agent_invocation_target. Replaces visibility as the authorization source for triggering runs; visibility is now a derived legacy field. Default private = deny-by-default.
-	PermissionMode        string      `json:"permission_mode"`
-	Kind                  string      `json:"kind"`
-	SystemKey             pgtype.Text `json:"system_key"`
-	DisabledRuntimeSkills []byte      `json:"disabled_runtime_skills"`
-	ServiceTier           pgtype.Text `json:"service_tier"`
-	ConversationStarters  []byte      `json:"conversation_starters"`
-	SwitchableModels      []byte      `json:"switchable_models"`
-	AutoRetryEnabled      bool        `json:"auto_retry_enabled"`
-	ParentAgentID         pgtype.UUID `json:"parent_agent_id"`
-	RuntimeInherited      bool        `json:"runtime_inherited"`
-	RoutingTier           pgtype.Text `json:"routing_tier"`
-	WorkEnabled           bool        `json:"work_enabled"`
-	PlanLimits            []byte      `json:"plan_limits"`
-	DoorbellEnabled       bool        `json:"doorbell_enabled"`
-	RoutingUsage          string      `json:"routing_usage"`
-	DomainID              pgtype.UUID `json:"domain_id"`
-	DispatchMode          string      `json:"dispatch_mode"`
+	PermissionMode        string        `json:"permission_mode"`
+	Kind                  string        `json:"kind"`
+	SystemKey             pgtype.Text   `json:"system_key"`
+	DisabledRuntimeSkills []byte        `json:"disabled_runtime_skills"`
+	ServiceTier           pgtype.Text   `json:"service_tier"`
+	ConversationStarters  []byte        `json:"conversation_starters"`
+	SwitchableModels      []byte        `json:"switchable_models"`
+	AutoRetryEnabled      bool          `json:"auto_retry_enabled"`
+	ParentAgentID         pgtype.UUID   `json:"parent_agent_id"`
+	RuntimeInherited      bool          `json:"runtime_inherited"`
+	RoutingTier           pgtype.Text   `json:"routing_tier"`
+	WorkEnabled           bool          `json:"work_enabled"`
+	PlanLimits            []byte        `json:"plan_limits"`
+	DoorbellEnabled       bool          `json:"doorbell_enabled"`
+	RoutingUsage          string        `json:"routing_usage"`
+	DomainID              pgtype.UUID   `json:"domain_id"`
+	DispatchMode          string        `json:"dispatch_mode"`
+	DispatchProjects      []pgtype.UUID `json:"dispatch_projects"`
 }
 
 type AgentAccessPass struct {
@@ -343,6 +344,22 @@ type AutopilotCollaborator struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	GrantedBy   pgtype.UUID        `json:"granted_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AutopilotLinkedChange struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AutopilotID      pgtype.UUID        `json:"autopilot_id"`
+	LinkID           pgtype.UUID        `json:"link_id"`
+	Route            string             `json:"route"`
+	ActorID          pgtype.UUID        `json:"actor_id"`
+	ViaWorkspaceID   pgtype.UUID        `json:"via_workspace_id"`
+	ViaWorkspaceName string             `json:"via_workspace_name"`
+	ViaSlug          string             `json:"via_slug"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	AgentName        string             `json:"agent_name"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type AutopilotQuotaPeriod struct {
@@ -691,6 +708,18 @@ type ChatSessionLinkReadAudit struct {
 	ReaderAgentID     pgtype.UUID        `json:"reader_agent_id"`
 	ReaderTaskID      pgtype.UUID        `json:"reader_task_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type ChatSessionLinkedProject struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	LinkID        pgtype.UUID        `json:"link_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	Title         string             `json:"title"`
+	SourceName    string             `json:"source_name"`
+	Position      int32              `json:"position"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type ChatSessionProgress struct {
@@ -1080,6 +1109,7 @@ type Issue struct {
 	ProgressUpdatedAt    pgtype.Timestamptz `json:"progress_updated_at"`
 	DuplicateOfIssueID   pgtype.UUID        `json:"duplicate_of_issue_id"`
 	DomainID             pgtype.UUID        `json:"domain_id"`
+	OriginChatSessionID  pgtype.UUID        `json:"origin_chat_session_id"`
 }
 
 type IssueChildEvent struct {
@@ -1473,6 +1503,25 @@ type IssueWakeupReceipt struct {
 	CoalesceKey pgtype.Text        `json:"coalesce_key"`
 }
 
+type KnowledgeSediment struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	Changes       []byte             `json:"changes"`
+	Verified      bool               `json:"verified"`
+	Mainline      string             `json:"mainline"`
+	Commits       []byte             `json:"commits"`
+	PrUrl         string             `json:"pr_url"`
+	AuthorType    string             `json:"author_type"`
+	AuthorID      pgtype.UUID        `json:"author_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	Layer         string             `json:"layer"`
+	Sources       []byte             `json:"sources"`
+	MemoryFiles   []byte             `json:"memory_files"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -1762,6 +1811,21 @@ type ProjectMemoryStatus struct {
 	ModifiedAt   pgtype.Timestamptz `json:"modified_at"`
 	ObservedAt   pgtype.Timestamptz `json:"observed_at"`
 	Error        pgtype.Text        `json:"error"`
+	MainlineRef  pgtype.Text        `json:"mainline_ref"`
+}
+
+type ProjectReportHeard struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	UserID        pgtype.UUID        `json:"user_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	HeardSince    pgtype.Timestamptz `json:"heard_since"`
+	HeardUntil    pgtype.Timestamptz `json:"heard_until"`
+	ItemCount     int32              `json:"item_count"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	Actions       []byte             `json:"actions"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type ProjectResource struct {
@@ -2302,6 +2366,7 @@ type WorkspaceLink struct {
 	AcceptedBy        pgtype.UUID        `json:"accepted_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	AcceptedAt        pgtype.Timestamptz `json:"accepted_at"`
+	Managed           bool               `json:"managed"`
 }
 
 type WorkspaceLinkAudit struct {

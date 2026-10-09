@@ -2,18 +2,21 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@multica/ui/components/ui/button";
-import { Loader2, Pause, Play, ListPlus, ArrowUp } from "lucide-react";
+import { Loader2, Pause, Play, ArrowUp } from "lucide-react";
 import { api } from "@multica/core/api";
 import type { WorkThreadSnapshot } from "@multica/core/types/work_thread";
 import { useState } from "react";
+import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 
 interface Props {
   kind: "issue" | "chat";
   id: string;
+  /** Outer spacing; applied only when the panel has something to show. */
+  className?: string;
 }
 
-export function WorkThreadPanel({ kind, id }: Props) {
+export function WorkThreadPanel({ kind, id, className }: Props) {
   const { t } = useT("common");
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -24,26 +27,32 @@ export function WorkThreadPanel({ kind, id }: Props) {
     enabled: !!id,
     refetchInterval: 5_000,
   });
-  if (!snapshot) return null;
+  const queued = snapshot?.queued_inputs.length ?? 0;
+  // Only show up when there is something to do here. Queuing new input
+  // belongs to the comment / chat composer, which carries the actual text.
+  if (!snapshot || (!snapshot.current_turn && !snapshot.can_resume && !queued)) return null;
 
-  const action = async (name: "continue" | "interrupt" | "queue" | "prioritize", taskId?: string) => {
+  const action = async (name: "continue" | "interrupt" | "prioritize", taskId?: string) => {
     setBusy(true);
     try {
-      if (kind === "issue") await api.issueWorkThreadAction(id, name, name === "queue" ? "Queued from Work Thread controls" : undefined, taskId);
-      else if (name !== "prioritize") await api.chatWorkThreadAction(id, name, name === "queue" ? "Queued from Work Thread controls" : undefined);
+      if (kind === "issue") await api.issueWorkThreadAction(id, name, undefined, taskId);
+      else if (name !== "prioritize") await api.chatWorkThreadAction(id, name);
       await queryClient.invalidateQueries({ queryKey });
     } finally {
       setBusy(false);
     }
   };
-  const stateLabel = snapshot.state.replaceAll("_", " ");
-  const queued = snapshot.queued_inputs.length;
+  const labels = [
+    snapshot.can_resume ? t(($) => $.work_thread.resumable) : null,
+    queued ? t(($) => $.work_thread.queued_count, { count: queued }) : null,
+  ].filter(Boolean);
   return (
-    <div className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border bg-muted/30 px-2 py-1" data-testid={`work-thread-${kind}`}>
-      <span className="text-caption text-muted-foreground" title={snapshot.thread_id}>
-        {t(($) => $.work_thread.thread, { state: stateLabel })}
-        {queued ? ` · ${t(($) => $.work_thread.queued_count, { count: queued })}` : ""}
-      </span>
+    <div className={cn("flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border bg-muted/30 px-2 py-1", className)} data-testid={`work-thread-${kind}`}>
+      {labels.length > 0 && (
+        <span className="text-caption text-muted-foreground" title={snapshot.thread_id}>
+          {labels.join(" · ")}
+        </span>
+      )}
       {snapshot.can_resume && (
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => action("continue")} aria-label={t(($) => $.work_thread.continue_aria)}>
           <Play className="mr-1 h-3.5 w-3.5" />
@@ -56,10 +65,6 @@ export function WorkThreadPanel({ kind, id }: Props) {
           {t(($) => $.work_thread.interrupt)}
         </Button>
       )}
-      <Button size="sm" variant="ghost" disabled={busy} onClick={() => action("queue")} aria-label={t(($) => $.work_thread.queue_aria)}>
-        <ListPlus className="mr-1 h-3.5 w-3.5" />
-        {t(($) => $.work_thread.queue)}
-      </Button>
       {kind === "issue" && snapshot.queued_inputs.map((input) => (
         <Button key={input.id} size="sm" variant="ghost" disabled={busy} onClick={() => action("prioritize", input.id)} aria-label={t(($) => $.work_thread.prioritize_aria, { id: input.id })} title={input.summary}>
           <ArrowUp className="mr-1 h-3.5 w-3.5" />

@@ -65,7 +65,9 @@
     "open_on_web": "Open on web",
     "delete_comment": "Delete comment",
     "edit_comment": "Edit comment",
-    "no_runs": "No runs yet"
+    "no_runs": "No runs yet",
+    "from_chat": "From chat",
+    "from_chat_hidden": "From a chat you can't see"
   },
   "new": {
     "title": "New issue",
@@ -81,6 +83,7 @@
   },
   "activity": {
     "created": "created the issue",
+    "linked_write": "acted on this issue via {{workspace}} · {{agent}}",
     "status_changed": "changed status: {{from}} → {{to}}",
     "priority_changed": "changed priority: {{from}} → {{to}}",
     "self_assigned": "self-assigned",
@@ -124,6 +127,7 @@
     "all": "No issues in this workspace.",
     "members": "No issues assigned to a member."
   },
+  "waiting_for": "Waiting for: {{reason}}",
   "driver": {
     "none": "Nobody is moving this",
     "revived": "rerun {{count}}×",
@@ -294,6 +298,8 @@
   "cancel.cancel_task": "Cancel run",
   "state_card": {
     "section_title": "State card",
+    "children": "Sub-task results",
+    "children_pr_merged": "merged",
     "decisions": "Settled",
     "decisions_empty": "Nothing settled yet",
     "decision_add": "Add a decision",

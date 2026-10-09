@@ -62,6 +62,11 @@ type APIClient struct {
 	TaskID     string
 	HTTPClient *http.Client
 
+	// LinkedWorkspace, when set, travels as X-Linked-Workspace: the request
+	// is for that linked source workspace through a managed link (DENE-1663).
+	// The server decides everything; with a non-task credential it is ignored.
+	LinkedWorkspace string
+
 	// LocalCopyURL is the hosting daemon's local-outputs endpoint
 	// (http://127.0.0.1:<port>/outputs), set only inside a daemon-managed task.
 	// Every successful upload then leaves a copy there, keyed by attachment id,
@@ -350,6 +355,9 @@ func (c *APIClient) setHeaders(req *http.Request) {
 	}
 	if c.TaskID != "" {
 		req.Header.Set("X-Task-ID", c.TaskID)
+	}
+	if c.LinkedWorkspace != "" {
+		req.Header.Set("X-Linked-Workspace", c.LinkedWorkspace)
 	}
 
 	platform := c.Platform

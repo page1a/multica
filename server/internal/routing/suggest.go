@@ -31,7 +31,7 @@ type Suggestion struct {
 // the judge cannot place confidently comes back empty rather than on the
 // fallback rung — routeTodo falls back because an unheld ticket is invisible,
 // while a draft row is on screen in front of the person who will pick.
-func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, projectDomains []string, rows []SuggestRow) ([]Suggestion, error) {
+func (r *Router) Suggest(ctx context.Context, workspaceID, projectID, projectName string, projectDomains []string, rows []SuggestRow) ([]Suggestion, error) {
 	out := make([]Suggestion, len(rows))
 	fill := func(reason string) []Suggestion {
 		for i := range out {
@@ -60,6 +60,7 @@ func (r *Router) Suggest(ctx context.Context, workspaceID, projectName string, p
 	if err != nil {
 		return fill("roster unreadable"), err
 	}
+	roster = ForProject(roster, projectID)
 	candidates := ladder.SceneCandidates(scene, roster)
 	if len(candidates) == 0 {
 		return fill("ladder has no seat in this workspace"), nil

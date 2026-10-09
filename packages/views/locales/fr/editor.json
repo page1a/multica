@@ -152,6 +152,7 @@
   },
   "upload": {
     "failed": "Impossible d'envoyer {{filename}} : {{reason}}",
+    "unreadable": "le fichier est illisible. Enregistrez-le sur le disque puis joignez-le de nouveau.",
     "in_progress": "Envoi…",
     "interrupted": "Envoi interrompu — le fichier n'a pas été enregistré. Joignez-le de nouveau.",
     "remove": "Supprimer",

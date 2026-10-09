@@ -85,3 +85,16 @@ func TestRunChatHandoffPostsTarget(t *testing.T) {
 		t.Fatalf("request = %s to=%q", gotPath, gotTo)
 	}
 }
+
+func TestChatTicketResultShowsReceipt(t *testing.T) {
+	ticket := map[string]any{
+		"identifier": "DENE-9", "status": "done", "summary": "改走新令牌",
+		"pull_requests": []any{map[string]any{"number": float64(12), "url": "https://x/pull/12", "state": "merged"}},
+	}
+	if got := chatTicketResult(ticket); got != "改走新令牌 · PR #12 merged" {
+		t.Fatalf("result = %q", got)
+	}
+	if got := chatTicketResult(map[string]any{"status": "in_progress"}); got != "-" {
+		t.Fatalf("empty result = %q", got)
+	}
+}

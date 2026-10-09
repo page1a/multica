@@ -5,18 +5,22 @@ import { useQuery } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { issueContextOptions } from "@multica/core/issues/queries";
 import { useIssueDecisionMutations } from "@multica/core/issues/mutations";
-import type { StateCardDecision } from "@multica/core/types";
+import { useWorkspacePaths } from "@multica/core/paths";
+import type { StateCardChildReceipt, StateCardDecision } from "@multica/core/types";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { useT, useTimeAgo } from "../../i18n";
+import { AppLink } from "../../navigation";
+import { StatusIcon } from "./status-icon";
 
 /**
  * Sidebar state card (DENE-1328): what was settled, the last baton, and the
  * threads new since the viewer was last here. The card is derived by the
  * server — the same one `multica issue context` prints for agents. Its goal
  * and "where it stands" parts are already on this page (title, goal section,
- * close record), so only the three parts that are not render here.
+ * close record), so only the parts that are not render here — plus each
+ * sub-task's receipt (DENE-1679).
  */
 export function IssueStateCardSection({
   wsId,
@@ -44,6 +48,14 @@ export function IssueStateCardSection({
         {t(($) => $.state_card.section_title)}
       </div>
       <div className="flex flex-col gap-3 pl-2">
+        {card.source?.excerpt ? (
+          <Row label={t(($) => $.state_card.source_quote)}>
+            <span className="break-words text-foreground" data-testid="issue-state-card-source">
+              {card.source.excerpt}
+            </span>
+          </Row>
+        ) : null}
+
         <DecisionList wsId={wsId} issueId={issueId} decisions={card.decisions} />
 
         <Row label={t(($) => $.state_card.baton)}>
@@ -66,6 +78,8 @@ export function IssueStateCardSection({
             <span className="text-muted-foreground">{t(($) => $.state_card.baton_none)}</span>
           )}
         </Row>
+
+        {card.children && card.children.length > 0 ? <ChildReceiptList receipts={card.children} /> : null}
 
         <Row
           label={
@@ -102,6 +116,43 @@ export function IssueStateCardSection({
         </Row>
       </div>
     </section>
+  );
+}
+
+function ChildReceiptList({ receipts }: { receipts: StateCardChildReceipt[] }) {
+  const { t } = useT("issues");
+  const paths = useWorkspacePaths();
+  return (
+    <Row label={t(($) => $.state_card.children)}>
+      <ul className="flex flex-col gap-1.5" data-testid="issue-state-card-children">
+        {receipts.map((r) => (
+          <li key={r.issue_id} className="flex min-w-0 items-start gap-1.5">
+            <StatusIcon status={r.status} className="mt-0.5 size-3 shrink-0" />
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <AppLink href={paths.issueDetail(r.issue_id)} className="truncate text-foreground hover:underline">
+                {r.identifier} {r.title}
+              </AppLink>
+              {r.summary ? <span className="line-clamp-2 break-words text-foreground">{r.summary}</span> : null}
+              {r.pull_requests.length > 0 || r.knowledge ? (
+                <span className="break-words text-muted-foreground">
+                  {r.pull_requests.map((pr, i) => (
+                    <span key={pr.url}>
+                      {i > 0 ? "，" : null}
+                      <a href={pr.url} target="_blank" rel="noreferrer" className="hover:text-foreground hover:underline">
+                        {pr.number > 0 ? `#${pr.number}` : "PR"}
+                      </a>
+                      {pr.state === "merged" ? ` ${t(($) => $.state_card.children_pr_merged)}` : null}
+                    </span>
+                  ))}
+                  {r.pull_requests.length > 0 && r.knowledge ? " · " : null}
+                  {r.knowledge ? <span className="line-clamp-1">{r.knowledge}</span> : null}
+                </span>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Row>
   );
 }
 

@@ -248,5 +248,46 @@ describe("SubIssueCloseStrip", () => {
       />,
     );
     expect(chip("close.knowledge_audit")).toHaveTextContent("Knowledge: agents");
+
+    const closed = {
+      "close.conclusion": "delivered",
+      "close.status": "done",
+      "close.evidence_comment_id": "comment-1",
+      "close.next_owner_type": "none",
+      "close.next_owner_id": "",
+      "close.wake_action": "none",
+      "close.waiting_on": "",
+      "close.at": "2026-09-15T12:00:00Z",
+    };
+    rerender(
+      <SubIssueCloseStrip
+        issue={issue({
+          status: "done",
+          metadata: {
+            ...closed,
+            "close.knowledge_audit": JSON.stringify({
+              changes: [{ location: "context", summary: "term", files: ["CONTEXT.md"] }],
+            }),
+          },
+        })}
+      />,
+    );
+    expect(chip("close.knowledge_audit")).toHaveTextContent("Knowledge: CONTEXT.md");
+
+    rerender(
+      <SubIssueCloseStrip
+        issue={issue({
+          status: "done",
+          metadata: {
+            ...closed,
+            "close.knowledge_audit": JSON.stringify({
+              changes: [{ location: "agents", summary: "seed" }],
+              unverified: true,
+            }),
+          },
+        })}
+      />,
+    );
+    expect(chip("close.knowledge_audit")).toHaveTextContent("Knowledge: agents (delivery not checked)");
   });
 });

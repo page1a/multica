@@ -53,3 +53,54 @@ func TestCanonicalKnowledgeAuditRejectsMissingAndMixed(t *testing.T) {
 		t.Fatalf("mixed = %v", err)
 	}
 }
+
+func TestBindDeliveredFilesRecordsTheFilesThatWriteEachSlot(t *testing.T) {
+	audit := KnowledgeAudit{Changes: []KnowledgeChange{{Location: "context", Summary: "词条"}, {Location: "adr", Summary: "新决定"}}}
+	delivered := []string{"server/x.go", "CONTEXT.md", "docs/adr/0009-y.md", "./docs/adr/0010-z.md"}
+	bound, err := BindDeliveredFiles(audit, &delivered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bound.Changes[0].Files; len(got) != 1 || got[0] != "CONTEXT.md" {
+		t.Fatalf("context files = %v", got)
+	}
+	if got := bound.Changes[1].Files; len(got) != 2 || got[0] != "docs/adr/0009-y.md" || got[1] != "docs/adr/0010-z.md" {
+		t.Fatalf("adr files = %v", got)
+	}
+	if bound.Unverified {
+		t.Fatal("a checked audit is not unverified")
+	}
+}
+
+func TestBindDeliveredFilesRefusesASlotNoDeliveredFileWrites(t *testing.T) {
+	audit := KnowledgeAudit{Changes: []KnowledgeChange{{Location: "agents", Summary: "新规则"}}}
+	delivered := []string{"server/x.go", "docs/AGENTS-notes.md"}
+	_, err := BindDeliveredFiles(audit, &delivered)
+	if err == nil || !strings.Contains(err.Error(), "agents（AGENTS.md）") || !strings.Contains(err.Error(), "--knowledge-none") {
+		t.Fatalf("err = %v", err)
+	}
+	empty := []string{}
+	if _, err := BindDeliveredFiles(audit, &empty); err == nil {
+		t.Fatal("an empty delivery cannot carry a memory change")
+	}
+}
+
+func TestBindDeliveredFilesWithoutAListMarksUnverified(t *testing.T) {
+	audit := KnowledgeAudit{Changes: []KnowledgeChange{{Location: "agents", Summary: "新规则"}}}
+	bound, err := BindDeliveredFiles(audit, nil)
+	if err != nil || !bound.Unverified {
+		t.Fatalf("bound = %+v err = %v", bound, err)
+	}
+	none, err := BindDeliveredFiles(KnowledgeAudit{None: true}, nil)
+	if err != nil || none.Unverified {
+		t.Fatalf("无够格知识 needs no files: %+v %v", none, err)
+	}
+}
+
+func TestStripKnowledgeEvidenceDropsCallerClaimedProof(t *testing.T) {
+	claimed := KnowledgeAudit{Changes: []KnowledgeChange{{Location: "agents", Summary: "s", Files: []string{"AGENTS.md"}}}, Unverified: true}
+	got := StripKnowledgeEvidence(claimed)
+	if got.Unverified || got.Changes[0].Files != nil {
+		t.Fatalf("got = %+v", got)
+	}
+}

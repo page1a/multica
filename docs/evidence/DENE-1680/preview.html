@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1680 项目记忆：老板层沉淀</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#222}h1{font-size:18px}h2{font-size:15px;margin-top:28px}
+.row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}figure{margin:0}img{max-width:100%;border:1px solid #ddd;border-radius:6px}
+figcaption{color:#777;font-size:12px}pre{background:#f6f6f6;padding:12px;overflow-x:auto;font-size:12px}</style>
+<h1>项目记忆卡片 · 最近沉淀</h1>
+<p>老板层沉淀多一行「汇总自 DEV-1」，每条改动写明动作；执行层沉淀照旧只列文件。截图来自本地真实页面，数据为示例。</p>
+<h2>四档宽度（卡片）</h2><div class="row"><figure><img src="card-375.png" style="width:360px"><figcaption>375px</figcaption></figure><figure><img src="card-390.png" style="width:360px"><figcaption>390px</figcaption></figure><figure><img src="card-768.png" style="width:360px"><figcaption>768px</figcaption></figure><figure><img src="card-1280.png" style="width:360px"><figcaption>1280px</figcaption></figure></div>
+<h2>手机 390px（右侧面板打开）</h2><img src="project-memory-390.png" style="width:390px">
+<h2>桌面 1280px</h2><img src="project-memory-1280.webp" style="width:100%;max-width:1280px">
+<h2>CLI：multica project memory status --output table</h2><pre>KEY             PATH                    LOCAL    MODIFIED
+agents          AGENTS.md               missing  
+context         CONTEXT.md              missing  
+adr             docs/adr/               missing  
+docs_index      docs/README.md          missing  
+evidence_index  docs/evidence/INDEX.md  missing  
+
+Recent sediments:
+  2026-10-08T10:40:29-05:00  boss    DEV-5 &lt;- DEV-1  agents:update「工作单（本 fork）」; agents:supersede「旧的手工派单」; context:merge「沉淀记录」
+  2026-10-08T08:45:29-05:00  worker  DEV-6  context
+</pre>
+</html>

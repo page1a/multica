@@ -1,9 +1,9 @@
 -- name: UpsertProjectMemoryStatus :one
 INSERT INTO project_memory_status (
     project_id, workspace_id, location_key, path, exists_on_disk,
-    is_directory, modified_at, observed_at, error
+    is_directory, modified_at, observed_at, error, mainline_ref
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 )
 ON CONFLICT (project_id, location_key) DO UPDATE SET
     workspace_id = EXCLUDED.workspace_id,
@@ -12,7 +12,8 @@ ON CONFLICT (project_id, location_key) DO UPDATE SET
     is_directory = EXCLUDED.is_directory,
     modified_at = EXCLUDED.modified_at,
     observed_at = EXCLUDED.observed_at,
-    error = EXCLUDED.error
+    error = EXCLUDED.error,
+    mainline_ref = EXCLUDED.mainline_ref
 RETURNING *;
 
 -- name: ListProjectMemoryStatus :many

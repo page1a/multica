@@ -73,13 +73,13 @@ export function SquadDetailPage() {
   const squadId = pathname.split("/").pop() ?? "";
 
   const { data: squad, refetch: refetchSquad } = useQuery<Squad>({
-    queryKey: [...workspaceKeys.squads(wsId), squadId],
+    queryKey: workspaceKeys.squad(wsId, squadId),
     queryFn: () => api.getSquad(squadId),
     enabled: !!workspace?.id && !!squadId,
   });
 
   const { data: members = [], refetch: refetchMembers } = useQuery<SquadMember[]>({
-    queryKey: [...workspaceKeys.squads(wsId), squadId, "members"],
+    queryKey: workspaceKeys.squadMembers(wsId, squadId),
     queryFn: () => api.listSquadMembers(squadId),
     enabled: !!workspace?.id && !!squadId,
   });
@@ -125,6 +125,10 @@ export function SquadDetailPage() {
       refetchMembers();
       queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
     },
+    // The single report for every field saved through here: name, description,
+    // avatar and instructions. Their editors only keep themselves open.
+    onError: (err) =>
+      toast.error(err instanceof Error && err.message ? err.message : t(($) => $.name_editor.save_failed)),
   });
 
   const addMemberMut = useMutation({
@@ -446,8 +450,8 @@ function InlineEditPopover({
       await onSave(draft);
       setOpen(false);
       toast.success(t(($) => $.name_editor.saved));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.name_editor.save_failed));
+    } catch {
+      // Reported by the parent's mutation; stay open so the draft isn't lost.
     } finally {
       setSaving(false);
     }

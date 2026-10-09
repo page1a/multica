@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,10 +10,13 @@ const api = vi.hoisted(() => ({
   listProjectMembers: vi.fn(),
   previewProjectVisibility: vi.fn(),
   setProjectVisibility: vi.fn(),
+  getSharingAccess: vi.fn(),
 }));
+const toastError = vi.hoisted(() => vi.fn());
 const memberState = vi.hoisted(() => ({ role: "admin" as string, userId: "u-admin" }));
 
 vi.mock("@multica/core/api", () => ({ api }));
+vi.mock("sonner", () => ({ toast: { error: toastError } }));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ id: "ws-1", slug: "acme" }),
 }));
@@ -26,13 +29,21 @@ vi.mock("../../common/share-scope-dialog", () => ({
   ),
 }));
 
+import { visibilityKeys } from "@multica/core/visibility";
 import { ProjectSharingTab } from "./project-sharing-tab";
 
 const project = { id: "p1", workspace_id: "ws-1", title: "Roadmap", description: null, icon: null, status: "planned", priority: "none", lead_type: "member", lead_id: "u-creator", created_by: "u-creator", start_date: null, due_date: null, created_at: "2026-01-01", updated_at: "2026-01-01", issue_count: 2, done_count: 0, resource_count: 1, visibility: "private" as const };
 
+// Stands in for an issue's share button elsewhere on screen: it reads the shared access cache.
+const issueShareButton = vi.fn(async () => ({ visibility: "private", audience_size: 1, can_change: true, reason: null }));
+function IssueShareButton() {
+  useQuery({ queryKey: visibilityKeys.access("ws-1", "issue", "i1"), queryFn: issueShareButton, staleTime: Infinity });
+  return null;
+}
+
 function renderTab() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderWithI18n(<QueryClientProvider client={queryClient}><ProjectSharingTab /></QueryClientProvider>);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  return renderWithI18n(<QueryClientProvider client={queryClient}><ProjectSharingTab /><IssueShareButton /></QueryClientProvider>);
 }
 
 beforeEach(() => {
@@ -46,7 +57,8 @@ beforeEach(() => {
   ]);
   api.listProjectMembers.mockResolvedValue([{ member_id: "u-member", id: "pm1", project_id: "p1", workspace_id: "ws-1", added_by: null, created_at: "2026-01-01", name: "Member", email: "member@example.com", avatar_url: null }]);
   api.previewProjectVisibility.mockResolvedValue({ project_id: "p1", visibility: "private", affected_count: 7, previously_private_count: 3 });
-  api.setProjectVisibility.mockResolvedValue({});
+  api.setProjectVisibility.mockResolvedValue({ visibility: "workspace" });
+  api.getSharingAccess.mockResolvedValue({ visibility: "private", audience_size: 1, can_change: true, reason: null });
 });
 
 describe("ProjectSharingTab", () => {
@@ -74,17 +86,47 @@ describe("ProjectSharingTab", () => {
     expect(await screen.findByText(/update 7 resources, including 3/)).toBeInTheDocument();
   });
 
-  it("lets a project creator edit while guests remain read-only", async () => {
+  it("follows the server's answer on who may change a project's sharing", async () => {
+    // A member who is not the creator, but leads the project through their own agent.
     memberState.role = "member";
-    memberState.userId = "u-creator";
+    memberState.userId = "u-agent-owner";
     renderTab();
     expect(await screen.findByRole("combobox", { name: "Change sharing for Roadmap" })).not.toBeDisabled();
 
     cleanup();
+    // Looks like the creator to the client, but the server refuses.
+    memberState.userId = "u-creator";
+    api.getSharingAccess.mockResolvedValue({ visibility: "private", audience_size: 1, can_change: false, reason: "not_creator" });
+    renderTab();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Change sharing for Roadmap" })).toBeDisabled());
+    expect(screen.getByText("Only the creator or a workspace admin can change this project’s sharing.")).toBeInTheDocument();
+  });
+
+  it("keeps guests read-only", async () => {
     memberState.role = "guest";
     memberState.userId = "u-guest";
+    api.getSharingAccess.mockResolvedValue({ visibility: "private", audience_size: 1, can_change: false, reason: "guest" });
     renderTab();
-    expect(await screen.findByRole("combobox", { name: "Change sharing for Roadmap" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Change sharing for Roadmap" })).toBeDisabled());
+  });
+
+  it("refreshes other share buttons after the scope changes", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await waitFor(() => expect(issueShareButton).toHaveBeenCalledTimes(1));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Change sharing for Roadmap" }), "workspace");
+    await user.click(await screen.findByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(api.setProjectVisibility).toHaveBeenCalledWith("p1", "workspace"));
+    await waitFor(() => expect(issueShareButton).toHaveBeenCalledTimes(2));
+  });
+
+  it("says why when the server refuses the change", async () => {
+    api.setProjectVisibility.mockRejectedValue(new Error("you cannot change this project's sharing scope"));
+    const user = userEvent.setup();
+    renderTab();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Change sharing for Roadmap" }), "workspace");
+    await user.click(await screen.findByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("you cannot change this project's sharing scope"));
   });
 
   it("opens the people picker when a specific-people project has nobody picked", async () => {

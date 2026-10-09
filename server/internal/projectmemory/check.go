@@ -5,8 +5,10 @@ package projectmemory
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -67,6 +69,9 @@ type LocationResult struct {
 	IsDirectory bool       `json:"is_directory"`
 	ModifiedAt  *time.Time `json:"modified_at,omitempty"`
 	Error       string     `json:"error,omitempty"`
+	// MainlineRef names the remote ref that already has a slot the directory
+	// lacks: the directory is behind, the memory itself exists (DENE-1660).
+	MainlineRef string `json:"mainline_ref,omitempty"`
 }
 
 // Check stats only. It never creates, opens for writing, or changes anything
@@ -105,4 +110,41 @@ func MissingKeys(results []LocationResult) []string {
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+// MatchFiles returns the delivered paths that write the checklist slot key.
+// A map file counts wherever it sits (a nested AGENTS.md is still the map);
+// the indexes and the ADR directory count under any docs/ root, so a
+// monorepo package keeping its own docs/ is matched too.
+func MatchFiles(key string, files []string) []string {
+	var matched []string
+	for _, raw := range files {
+		file := strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(raw)), "./")
+		if file == "" {
+			continue
+		}
+		if matchesLocation(key, file) {
+			matched = append(matched, file)
+		}
+	}
+	sort.Strings(matched)
+	return matched
+}
+
+func matchesLocation(key, file string) bool {
+	base := path.Base(file)
+	underRoot := func(p string) bool { return file == p || strings.HasSuffix(file, "/"+p) }
+	switch key {
+	case LocationAgents:
+		return base == "AGENTS.md"
+	case LocationContext:
+		return base == "CONTEXT.md"
+	case LocationADR:
+		return strings.HasPrefix(file, "docs/adr/") || strings.Contains(file, "/docs/adr/")
+	case LocationDocs:
+		return underRoot("docs/README.md")
+	case LocationEvidence:
+		return underRoot("docs/evidence/INDEX.md")
+	}
+	return false
 }

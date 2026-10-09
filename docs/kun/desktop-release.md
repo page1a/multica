@@ -146,6 +146,10 @@ scripts/desktop-release.sh cut --channel test
 
 两种 tag 都会触发 `.github/workflows/desktop-release.yml`（它的 tag 正则已经接受 `-suffix`），构建、上传、逐个核对资产的流程完全一样，差别只在写出哪一组 yml。
 
+### 发版空窗：Release 已建、清单未传完
+
+`prepare` 在推 tag 时就建好 Release，`test-mac.yml` 等清单要等构建跑完才上传，中间有几分钟空窗（DENE-1688，`v0.6.3-test.1` 实际撞上过）。测试通道的客户端探候选 tag 的清单（`updater.ts` 的 `testManifestFileName`），最新 tag 缺清单就回退上一版并 5 分钟后补查，全缺则报「已是最新」，不再整次 404、也不干等 1 小时。正式通道仍有同类空窗：`/releases/latest` 立刻指向新建的空 Release，`latest-mac.yml` 404，要等清单上传后下次检查才恢复。
+
 ### macOS 自动更新的硬限制
 
 CI 出的 macOS 包是 **ad-hoc 签名、未公证**（`CSC_IDENTITY_AUTO_DISCOVERY: "false"`）。Squirrel.Mac 在安装更新前会校验新包的代码签名与正在运行的 app 是否同源，ad-hoc 签名必然对不上——所以**只要没有 Apple Developer ID 证书，macOS 的静默自动更新在任何通道上都不会成功**。这不是代码缺陷，改 updater 代码也修不好。

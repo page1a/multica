@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/receipt"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -377,7 +378,13 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	prefix := h.getIssuePrefix(ctx, completed.WorkspaceID)
 	identifier := prefix + "-" + strconv.Itoa(int(completed.Number))
 	childID := uuidToString(completed.ID)
-	title := sanitizeChildTitleForSystemComment(completed.Title)
+	// The comment stays on the parent for all its readers, so a child some of
+	// them cannot see goes unnamed (DENE-1687).
+	visible := h.visibleWithParent(ctx, parent)
+	named := "(not visible to everyone here)"
+	if visible(completed) {
+		named = fmt.Sprintf("[%s](mention://issue/%s) — \"%s\"", identifier, childID, sanitizeChildTitleForSystemComment(completed.Title))
+	}
 	parentID := uuidToString(parent.ID)
 	completedStatus := statuses.status(completed)
 	wrapUp := parentWrapUpInstruction(parent)
@@ -411,13 +418,13 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 			// the dependency warning through advanceHasCancelled above.
 			if batch {
 				content = fmt.Sprintf(
-					"%sStage %d of this issue is complete — its sub-issues just finished together in a batch update, most recently [%s](mention://issue/%s) — \"%s\". Stage progress — %s.%s",
-					mentionPrefix, closedStage, identifier, childID, title, summary, advance,
+					"%sStage %d of this issue is complete — its sub-issues just finished together in a batch update, most recently %s. Stage progress — %s.%s",
+					mentionPrefix, closedStage, named, summary, advance,
 				)
 			} else {
 				content = fmt.Sprintf(
-					"%sStage %d of this issue is complete — its last sub-issue [%s](mention://issue/%s) — \"%s\" — just finished. Stage progress — %s.%s",
-					mentionPrefix, closedStage, identifier, childID, title, summary, advance,
+					"%sStage %d of this issue is complete — its last sub-issue %s — just finished. Stage progress — %s.%s",
+					mentionPrefix, closedStage, named, summary, advance,
 				)
 			}
 		} else if batch {
@@ -426,8 +433,8 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 				lastAction = "was cancelled"
 			}
 			content = fmt.Sprintf(
-				"%sStage %d of this issue is closed — its sub-issues reached terminal states together in a batch update; most recently, [%s](mention://issue/%s) — \"%s\" — %s. Stage progress — %s.%s",
-				mentionPrefix, closedStage, identifier, childID, title, lastAction, summary, advance,
+				"%sStage %d of this issue is closed — its sub-issues reached terminal states together in a batch update; most recently, %s — %s. Stage progress — %s.%s",
+				mentionPrefix, closedStage, named, lastAction, summary, advance,
 			)
 		} else {
 			lastAction := "just finished"
@@ -435,8 +442,8 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 				lastAction = "was just cancelled"
 			}
 			content = fmt.Sprintf(
-				"%sStage %d of this issue is closed — its last sub-issue [%s](mention://issue/%s) — \"%s\" — %s. Stage progress — %s.%s",
-				mentionPrefix, closedStage, identifier, childID, title, lastAction, summary, advance,
+				"%sStage %d of this issue is closed — its last sub-issue %s — %s. Stage progress — %s.%s",
+				mentionPrefix, closedStage, named, lastAction, summary, advance,
 			)
 		}
 	} else {
@@ -445,13 +452,13 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 			// Keep the historical no-cancellation wording byte-identical.
 			if batch {
 				content = fmt.Sprintf(
-					"%sAll sub-issues are complete — they just finished together in a batch update, most recently [%s](mention://issue/%s) — \"%s\".%s",
-					mentionPrefix, identifier, childID, title, wrapUp,
+					"%sAll sub-issues are complete — they just finished together in a batch update, most recently %s.%s",
+					mentionPrefix, named, wrapUp,
 				)
 			} else {
 				content = fmt.Sprintf(
-					"%sAll sub-issues are complete — the last one, [%s](mention://issue/%s) — \"%s\", just finished.%s",
-					mentionPrefix, identifier, childID, title, wrapUp,
+					"%sAll sub-issues are complete — the last one, %s, just finished.%s",
+					mentionPrefix, named, wrapUp,
 				)
 			}
 		} else {
@@ -466,13 +473,13 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 					lastAction = "was just cancelled"
 				}
 				content = fmt.Sprintf(
-					"%sAll sub-issues are closed — the last one, [%s](mention://issue/%s) — \"%s\", %s.%s%s",
-					mentionPrefix, identifier, childID, title, lastAction, warning, wrapUp,
+					"%sAll sub-issues are closed — the last one, %s, %s.%s%s",
+					mentionPrefix, named, lastAction, warning, wrapUp,
 				)
 			} else {
 				content = fmt.Sprintf(
-					"%sAll sub-issues are closed — they reached terminal states together in a batch update; most recently, [%s](mention://issue/%s) — \"%s\" — %s.%s%s",
-					mentionPrefix, identifier, childID, title, lastAction, warning, wrapUp,
+					"%sAll sub-issues are closed — they reached terminal states together in a batch update; most recently, %s — %s.%s%s",
+					mentionPrefix, named, lastAction, warning, wrapUp,
 				)
 			}
 		}
@@ -486,6 +493,9 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 		}
 	}
 	content += plan.note
+	if digest := h.childDoneDigest(ctx, parent, children, staged, closedStage, batchCompleted, statuses, visible); digest != "" {
+		content += "\n\n" + digest
+	}
 
 	// author_type='system', author_id=zero UUID. The zero UUID is a valid 16
 	// byte value and the column is NOT NULL; frontend code should branch on
@@ -543,6 +553,31 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 		return
 	}
 	h.dispatchParentAssigneeTrigger(ctx, parent, comment)
+}
+
+// childDoneDigest is the closed barrier's sub-task receipts (DENE-1679): the
+// parent hears each child's conclusion, pull requests and knowledge, not only
+// that they finished. A staged set lists the closed stage plus any child this
+// batch finished; an unstaged set lists every child. Mention links inside a
+// close summary are made inert, like the child title above.
+func (h *Handler) childDoneDigest(ctx context.Context, parent db.Issue, children []db.Issue, staged bool, closedStage int32, batchCompleted []db.Issue, statuses resolvedChildStatuses, visible func(db.Issue) bool) string {
+	inBatch := map[pgtype.UUID]bool{}
+	for _, c := range batchCompleted {
+		inBatch[c.ID] = true
+	}
+	// The statuses this pass already resolved; reading the catalog again
+	// would cost a second read per notification.
+	receipts := h.receiptsOf(ctx, parent.WorkspaceID, children, func(c db.Issue) bool {
+		if staged && !(c.Stage.Valid && c.Stage.Int32 == closedStage) && !inBatch[c.ID] {
+			return false
+		}
+		return visible(c)
+	}, statuses.status)
+	for i := range receipts {
+		receipts[i].Summary = sanitizeChildTitleForSystemComment(receipts[i].Summary)
+		receipts[i].Knowledge = sanitizeChildTitleForSystemComment(receipts[i].Knowledge)
+	}
+	return receipt.Digest(receipts)
 }
 
 // isTerminalChildStatus reports whether a child issue status counts as

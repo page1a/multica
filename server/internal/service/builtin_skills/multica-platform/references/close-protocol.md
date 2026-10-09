@@ -22,14 +22,17 @@ multica issue close <id> --outcome done      --evidence-file ./close.md         
 multica issue close <id> --outcome in_review --evidence-file ./close.md            # top-level, awaiting acceptance: needs a linked PR (or --no-code <reason>); empty reviewer slot is filled, then routing hands over
 multica issue close <id> --outcome blocked   --evidence-file ./close.md --blocked-by DENE-196   # or --wake-at / --wait-condition + --wait-timeout / --needs-human
 multica issue close <id> --outcome cancelled --evidence-file ./close.md            # dropped on purpose: say why in the evidence
-multica issue close <id> --outcome backlog   --evidence-file ./close.md            # back to planning on purpose (DENE-1002): a reason, no PR, nobody woken
+multica issue close <id> --outcome backlog   --evidence-file ./close.md --waiting-for "公司注册办好"   # back to planning on purpose (DENE-1002): what it waits for, no PR, nobody woken
 multica issue close <id> --outcome todo      --evidence-file ./close.md            # back to the ready list on purpose: same shape as backlog
 multica issue close <id> --outcome in_progress --evidence-file ./close.md --wake-at 2026-10-01T09:00:00Z   # stay in progress, and say who continues
 multica issue close <id> --outcome done --verdict pass --evidence-file ./close.md  # acceptance seat: merge the open PR, then done
 ```
 
 - `--evidence` (or `--evidence-file` / `--evidence-stdin`) is required: the PR
-  link, test conclusion, or blocker it rests on. `--summary` goes above it.
+  link, test conclusion, or blocker it rests on. `--summary` goes above it:
+  one conclusion line — what got done, or where it is stuck and who must do
+  what. Proof stays in the evidence. Engineering words are fine; the line is
+  what `project report` hands on as `latest_summary`.
   Keep `--parent` when this turn has a trigger; a comment-triggered run on the
   same issue defaults to that thread. Headings inside the evidence, in this
   order: `## 结论` / `## 状态` / `## 证据` / `## 下一责任人` / `## 唤醒动作`.
@@ -47,7 +50,8 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
 - `--outcome backlog` / `--outcome todo` are the deliberate return: the
   ticket goes back to `backlog` / `todo` with a `deferred` conclusion, a
   `none` next owner and no wake. It needs no PR (nothing shipped) — the
-  evidence says why the work goes back. This is the right close for "a reason,
+  evidence says why the work goes back, and a backlog close names what it
+  waits for with `--waiting-for` (agents are refused without it). This is the right close for "a reason,
   no continuation"; do not park a ticket in `in_progress` for it.
 - `--outcome in_progress` keeps the ticket in flight while this run stops:
   conclusion `continuing`, and it **must** name who continues, using the same
@@ -104,6 +108,28 @@ multica issue close <id> --outcome done --verdict pass --evidence-file ./close.m
   knowledge is a valid close. This key is not one of the original eight:
   older closes stay readable without it. A heading in a pull-request body is
   not a second gate.
+- Knowledge ships with the delivery (DENE-1661). On `done` / `in_review`
+  without a verdict, every slot named by `--knowledge` must be written by a
+  file this delivery changes: commit the AGENTS.md / CONTEXT.md / docs edits
+  on the task branch before closing. The CLI sends `delivered_files` (what git
+  says the branch changes against the parent's delivery branch, else the
+  nearest main line) and the server refuses a slot no delivered file writes;
+  nothing is written. A close that sends no list (the web, an older CLI) keeps
+  the audit marked `unverified` with a warning. The bound files are stored on
+  each change (`files`) and as a sediment record the project page lists. A
+  verdict pass, blocked, or parked close is not held to this.
+- Memory hygiene (DENE-1680). A slot may carry an action:
+  `--knowledge <key>:update:<entry>=…` (rewrote an existing entry),
+  `<key>:merge:<entry>=…` (new entry marked to merge into one),
+  `<key>:supersede:<entry>=<replaced by what>` (the old entry is marked
+  「已被 X 取代」 in the file, not deleted), `<key>:new=…` (nothing related
+  existed). Look for the existing entry before writing. On a boss-layer
+  round (a sediment ticket opened because a parent's children all finished,
+  a stage advanced, or the project completed — its description says so)
+  every slot needs an action, and removing existing lines needs `update` or
+  `supersede`. Everywhere, `supersede` needs the mark in the delivered file,
+  and a map file (AGENTS.md, CONTEXT.md, the docs and evidence indexes) over
+  32 KiB refuses the close; the refusal names the sections to merge or drop.
 - The reply reports the status actually written, whether the PR merged, and
   who is woken. Quote it; do not restate it from memory.
 
@@ -121,7 +147,8 @@ A close already hands over what it closes: `--outcome in_review` routes the
 seat itself, so do not follow it with `handoff --to reviewer`.
 
 Both calls take a repeatable `--decision "..."` for what this round settled,
-and `handoff` takes `--summary` for what the next owner needs to know. The
+and `handoff` takes `--summary`: the same kind of conclusion line — what got
+done, or where it is stuck and who must do what next. The
 next owner reads both back with `multica issue context <id>`
 (`references/state-card.md`).
 

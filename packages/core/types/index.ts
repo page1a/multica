@@ -1,10 +1,11 @@
-export type { Issue, IssueStatus, BuiltInIssueStatus, IssuePriority, IssueAssigneeType, IssueAssigneeSource, IssueReviewerType, IssueMetadata, IssueMetadataValue, IssueAgentGuardResponse, IssueDriver, IssueDriverKind, IssueDisposeAction, IssueDisposeRequest, IssueDisposeResponse, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext, IssueDuplicateOf } from "./issue";
+export type { Issue, IssueStatus, BuiltInIssueStatus, IssuePriority, IssueAssigneeType, IssueAssigneeSource, IssueReviewerType, IssueMetadata, IssueMetadataValue, IssueAgentGuardResponse, IssueDriver, IssueDriverKind, IssueDisposeAction, IssueDisposeRequest, IssueDisposeResponse, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext, IssueSourceChat, IssueDuplicateOf } from "./issue";
 export type { Progress, ProgressTone } from "./progress";
 export type {
   IssueStateCard,
   StateCardBaton,
   StateCardChanges,
   StateCardCheck,
+  StateCardChildReceipt,
   StateCardDecision,
   StateCardNow,
   StateCardThread,
@@ -235,6 +236,8 @@ export type {
   CancelTaskResponse,
   ChatDraftRestore,
   ChatDraftRestoresResponse,
+  ChatTicket,
+  ChatTicketsResponse,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
@@ -243,6 +246,13 @@ export type {
   ProjectMemoryChecklistItem,
   ProjectMemoryIssue,
   ProjectMemoryStatus,
+  ProjectMemoryMonitor,
+  MonitorWrite,
+  MonitorUnsettled,
+  MonitorRound,
+  MonitorChat,
+  MonitorChatTicket,
+  KnowledgeSediment,
   ProjectStatus,
   ProjectPriority,
   CreateProjectRequest,
@@ -260,6 +270,10 @@ export type {
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
+  ProjectReport,
+  ProjectReportItem,
+  ProjectReportPhase,
+  ProjectReportSourceChat,
 } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
@@ -462,6 +476,10 @@ export type {
   LinkedViewIssue,
   LinkedViewStatus,
   LinkedViewParams,
+  LinkedResource,
+  LinkedProjectOption,
+  ChatLinkedProjectRef,
+  ChatLinkedProject,
   WorkspaceLinkLookup,
   WorkspaceLinkDirection,
 } from "./workspace-link";

@@ -34,6 +34,15 @@ vi.mock("../../i18n", () => ({
   useTimeAgo: () => () => "1m ago",
 }));
 
+vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({ issueDetail: (id: string) => `/acme/issues/${id}` }),
+}));
+vi.mock("../../navigation", () => ({
+  AppLink: ({ href, children, className }: { href: string; children: ReactNode; className?: string }) => (
+    <a href={href} className={className}>{children}</a>
+  ),
+}));
+
 import { IssueStateCardSection } from "./issue-state-card";
 
 const base: IssueStateCard = {
@@ -69,6 +78,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("IssueStateCardSection", () => {
+  it("quotes what the source chat asked for, and hides the row without a quote", async () => {
+    state.card.mockResolvedValue({ ...base, source: { chat_session_id: "c-1", chat_title: "登录改造", excerpt: "把登录改成新令牌" } });
+    renderCard();
+    await waitFor(() => expect(screen.getByTestId("issue-state-card-source").textContent).toBe("把登录改成新令牌"));
+    expect(screen.getByText("state_card.source_quote")).toBeTruthy();
+    cleanup();
+    state.card.mockResolvedValue({ ...base, source: null });
+    renderCard();
+    await waitFor(() => expect(screen.getByText("拍板单独建表")).toBeTruthy());
+    expect(screen.queryByTestId("issue-state-card-source")).toBeNull();
+  });
+
   it("shows decisions, the baton and the viewer's new threads", async () => {
     state.card.mockResolvedValue(base);
     const onJump = renderCard();
@@ -122,5 +143,27 @@ describe("IssueStateCardSection", () => {
     expect(screen.getByText("state_card.baton_none")).toBeTruthy();
     expect(screen.getByText("state_card.changes_first")).toBeTruthy();
     expect(screen.getByText("state_card.changes_none")).toBeTruthy();
+  });
+
+  it("lists each sub-task's conclusion and pull request, and hides the row without children", async () => {
+    state.card.mockResolvedValue({
+      ...base,
+      children: [
+        { issue_id: "c-1", identifier: "DENE-2", title: "接口", status: "done", summary: "接口做完", knowledge: "", pull_requests: [{ number: 5, url: "https://x/pull/5", state: "merged" }] },
+        { issue_id: "c-2", identifier: "DENE-3", title: "界面", status: "cancelled", pull_requests: [] },
+      ],
+    });
+    renderCard();
+    const list = await screen.findByTestId("issue-state-card-children");
+    expect(list.textContent).toContain("DENE-2 接口");
+    expect(list.textContent).toContain("接口做完");
+    expect(list.querySelector('a[href="https://x/pull/5"]')?.textContent).toBe("#5");
+    expect(list.querySelector('a[href="/acme/issues/c-2"]')).not.toBeNull();
+    cleanup();
+
+    state.card.mockResolvedValue({ ...base, children: [] });
+    renderCard();
+    await screen.findByTestId("issue-state-card");
+    expect(screen.queryByTestId("issue-state-card-children")).toBeNull();
   });
 });

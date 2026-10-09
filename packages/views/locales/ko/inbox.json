@@ -74,7 +74,11 @@
     "stall_review_title": "이 티켓은 24시간 정체 검토 중입니다",
     "stall_processed_title": "이 티켓은 시스템에서 자동 처리되었습니다",
     "stall_keep": "유지",
-    "stall_undo": "처리 취소"
+    "stall_undo": "처리 취소",
+    "link_projects": "프로젝트: {{projects}}",
+    "link_answer": "연결된 워크스페이스에서 처리",
+    "link_open": "연결된 워크스페이스 열기",
+    "stall_action_failed": "티켓을 업데이트하지 못했습니다"
   },
   "types": {
     "needs_you": "확인이 필요합니다",
@@ -105,7 +109,10 @@
     "agent_access_approved": "에이전트 사용 승인됨",
     "agent_access_declined": "에이전트 사용 거절됨",
     "parking_unexplained": "설명 없이 멈춤",
-    "issue_stall_action": "정체 처리"
+    "issue_stall_action": "정체 처리",
+    "workspace_link_request": "연결 요청",
+    "workspace_link_accepted": "연결 수락됨",
+    "workspace_link_declined": "연결 거절됨"
   },
   "labels": {
     "set_status_to": "상태 변경:",
@@ -123,7 +130,10 @@
     "children_done_stage": "{{stage}}단계 하위 태스크가 모두 끝났습니다",
     "access_requested_by": "{{requester}}님이 {{agent}} 사용을 요청했습니다",
     "access_approved_for": "{{agent}} 사용 요청이 승인되었습니다",
-    "access_declined_for": "{{agent}} 사용 요청이 거절되었습니다"
+    "access_declined_for": "{{agent}} 사용 요청이 거절되었습니다",
+    "link_requested_by": "{{source}}에서 프로젝트를 공유하려고 합니다",
+    "link_accepted_by": "{{target}}에서 연결을 수락했습니다",
+    "link_declined_by": "{{target}}에서 연결을 거절했습니다"
   },
   "toasts": {
     "source_context_retry_started": "원본 컨텍스트로 재시도를 시작했습니다",

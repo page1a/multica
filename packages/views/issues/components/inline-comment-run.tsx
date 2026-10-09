@@ -71,6 +71,7 @@ function PlacedRunSessionCaption({ task }: { task: AgentTask }) {
   return <>
     <RunSessionCaption lineage={lineage} className="pb-1.5" />
     <RunSkillsLine names={task.skills_used ?? []} className="pb-1.5" />
+    <RunRelayLine relay={task.relay} className="pb-1.5" />
   </>;
 }
 
@@ -80,6 +81,16 @@ function RunSkillsLine({ names, className }: { names: string[]; className?: stri
   return <p className={cn("break-words text-caption text-muted-foreground", className)} data-run-skills>
     {t(($) => $.inline_run.skills_used, { names: names.join("、") })}
   </p>;
+}
+
+// Where the work went after this run failed on a broken seat (DENE-1647).
+function RunRelayLine({ relay, className }: { relay?: AgentTask["relay"]; className?: string }) {
+  const { t } = useT("issues");
+  const text = relay?.to_agent_name ? t(($) => $.inline_run.relayed_to, { name: relay.to_agent_name })
+    : relay?.outcome === "waiting" ? t(($) => $.inline_run.relay_waiting)
+    : "";
+  if (!text) return null;
+  return <p className={cn("break-words text-caption text-muted-foreground", className)} data-run-relay>{text}</p>;
 }
 
 export function InlineCommentRun({ run, className, viewState, showIdentity = false, presentation = "inline", replyTo, replacesFailureNotice = false }: {
@@ -252,6 +263,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
       <div className={cn(showIdentity && "pl-8")}>
         <RunSessionCaption lineage={sessionLineage} />
         <RunSkillsLine names={skillsUsed} />
+        <RunRelayLine relay={task.relay} />
         {replyTo}
         {output && <div className="mt-2 text-body"><ReadonlyContent content={redactSecrets(output)} /></div>}
         {needsAction && rawError && <p title={rawError}

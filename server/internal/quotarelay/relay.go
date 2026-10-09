@@ -33,6 +33,13 @@ const (
 	// capacity miss it never comes back by itself: someone has to top up or
 	// switch the account, then turn the seat back on.
 	KindBalanceExhausted Kind = "balance_exhausted"
+	// KindAuthFailure is a seat whose provider login was refused (401/403,
+	// expired token, revoked key). Every run on that seat fails the same way
+	// until someone logs in again, so the seat stops taking work and the
+	// issue moves to a healthy seat in the same role (DENE-1647). The breaker
+	// reopens the seat after an hour in case the login was fixed elsewhere;
+	// turning the seat back on clears it at once.
+	KindAuthFailure Kind = "auth_failure"
 )
 
 const (
@@ -46,6 +53,8 @@ const (
 	sessionQuotaWindow        = 5 * time.Hour
 	ConditionCapacityCooldown = "provider capacity cooldown"
 	ConditionManual           = "top up or switch the account, then re-enable the seat"
+	ConditionAuthCooldown     = "provider login retry window; re-enable the seat after fixing the login"
+	authRetryWindow           = time.Hour
 	modelQuotaWindow          = time.Hour
 
 	// manualRecoverAfter parks a balance breaker's recover_at far enough out
@@ -87,9 +96,9 @@ func (p Plan) Scope() string {
 	return ScopeAgent
 }
 
-// ShouldInspect reports whether a failed task should enter the relay. Only
-// quota exhaustion does: weekly windows, a specialisation's own model window,
-// and an empty balance. A capacity or rate-limit failure never does
+// ShouldInspect reports whether a failed task should enter the relay. Quota
+// exhaustion does — weekly windows, a specialisation's own model window, and
+// an empty balance — and so does a refused provider login. A capacity or rate-limit failure never does
 // (DENE-1093) — it is retried in place and leaves the seat open.
 func ShouldInspect(failureReason, errorText string) bool {
 	_, ok := PlanFor(failureReason, errorText, Binding{}, time.Time{})
@@ -110,6 +119,13 @@ func IsCapacityFailure(reason, text string) bool {
 func PlanFor(failureReason, errorText string, binding Binding, now time.Time) (Plan, bool) {
 	if isCapacityFailure(failureReason, errorText) {
 		return Plan{}, false
+	}
+	if isAuthFailure(failureReason, errorText) {
+		plan := Plan{Kind: KindAuthFailure, Condition: ConditionAuthCooldown}
+		if !now.IsZero() {
+			plan.RecoverAt = now.Add(authRetryWindow)
+		}
+		return plan, true
 	}
 	if !isQuotaFailure(failureReason, errorText) {
 		return Plan{}, false
@@ -159,6 +175,23 @@ func isQuotaFailure(reason, text string) bool {
 	switch reason {
 	case "", "agent_error", string(taskfailure.ReasonAgentUnknown):
 		return taskfailure.Classify(text) == taskfailure.ReasonAgentProviderQuotaLimit
+	default:
+		return false
+	}
+}
+
+// IsAuthFailure reports a refused provider login (401/403).
+func IsAuthFailure(reason, text string) bool {
+	return isAuthFailure(reason, text)
+}
+
+func isAuthFailure(reason, text string) bool {
+	if reason == string(taskfailure.ReasonAgentProviderAuthOrAccess) {
+		return true
+	}
+	switch reason {
+	case "", "agent_error", string(taskfailure.ReasonAgentUnknown):
+		return taskfailure.Classify(text) == taskfailure.ReasonAgentProviderAuthOrAccess
 	default:
 		return false
 	}
@@ -349,7 +382,11 @@ func nextWeeklyReset(now time.Time) time.Time {
 // dropping a rung is how a tier that has only the same house still gets
 // the work done.
 type Seat struct {
-	ID         string
+	ID string
+	// Projects is the seat's project limit (DENE-1648); empty serves every
+	// project. The roster is shared across tickets, so Eligible ignores it
+	// and the caller applies it per ticket.
+	Projects   []string
 	Name       string
 	Tier       string
 	Direction  string

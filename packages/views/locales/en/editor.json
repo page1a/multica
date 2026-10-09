@@ -152,6 +152,7 @@
   },
   "upload": {
     "failed": "Couldn't upload {{filename}}: {{reason}}",
+    "unreadable": "the file can't be read. Save it to disk and attach it again.",
     "in_progress": "Uploading…",
     "interrupted": "Upload interrupted — the file wasn’t saved. Attach it again.",
     "remove": "Remove",

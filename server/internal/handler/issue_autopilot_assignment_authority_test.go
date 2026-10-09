@@ -125,7 +125,7 @@ func topLevelIssueRequest(t *testing.T, assigneeType, assigneeID, status, actorA
 func autopilotChildIssueRequest(t *testing.T, assigneeType, assigneeID, parentIssueID, status, actorAgentID, taskID string) *http.Request {
 	t.Helper()
 
-	r := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	body := map[string]any{
 		"title":           "autopilot private-assignee child " + t.Name(),
 		"status":          status,
 		"priority":        "low",
@@ -133,7 +133,12 @@ func autopilotChildIssueRequest(t *testing.T, assigneeType, assigneeID, parentIs
 		"assignee_id":     assigneeID,
 		"parent_issue_id": parentIssueID,
 		"allow_duplicate": true,
-	})
+	}
+	if status == "backlog" {
+		// An agent parking a ticket says what it waits for (DENE-1638).
+		body["waiting_for"] = "前一步做完"
+	}
+	r := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, body)
 	if actorAgentID != "" {
 		r.Header.Set("X-Agent-ID", actorAgentID)
 	}

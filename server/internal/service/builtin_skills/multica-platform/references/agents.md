@@ -74,6 +74,16 @@ multica agent list --output json                                             # e
 
 A following specialisation inherits it with the tier and usage.
 
+A seat can also be **limited to projects** (`dispatch_projects`, DENE-1648):
+automatic dispatch — routing, quota relay, seat relay — picks it only for
+issues in those projects. Empty means every project. @mention, assignment and
+delegation are not limited. Not inherited by followers.
+
+```bash
+multica agent update <agent-id> --dispatch-projects IPA-input,game --output json   # titles, ids or id prefixes
+multica agent update <agent-id> --dispatch-projects "" --output json               # every project again
+```
+
 A full model is not a closed seat (DENE-1093). A run that fails with
 `agent_error.provider_capacity_or_rate_limit` keeps the seat open and retries
 in place on the same agent, resuming the same session, after 30s, 1m, 2m, 5m
@@ -82,6 +92,15 @@ done, cancelled, halted, or reassigned. While it waits, `multica issue get`
 and `multica issue runs` (`--output json`) carry `capacity_retry`
 (`{task_id, retry, next_at}`). Only real quota exhaustion (weekly / model
 limits, `402` / balance) closes the seat and relays the issue.
+
+A `401`/`403` (`agent_error.provider_auth_or_access`) also closes the seat
+(DENE-1647): `work_pause.reason` is `auth_failure`, it retries on its own
+after an hour, and switching the seat back on clears it at once. The relay
+keeps the role: a failed acceptance run hands acceptance to another seat that
+did not work on the ticket, and the ticket stays `in_review`. With no seat to
+cover, the ticket stays put and the creator gets an options ask (换席位 /
+我来验 / 直接关票). `multica issue runs` shows where each failed run went in
+its RELAY column (`relay` in `--output json`).
 
 `agent get` returns the persisted agent including `runtime_id`, `model`,
 `thinking_level`, `service_tier`, `custom_args`, `has_custom_env`,
@@ -203,6 +222,7 @@ the child own its runtime instead of following the base role's.
 | `max_concurrent_tasks` | `max_concurrent_tasks` | integer from 1 through 50; out-of-range values return 400 | scheduler task cap; defaults to `6` |
 | `work_enabled` | `work_enabled` | boolean; omitted on update preserves | reversible seat gate (DENE-714). Default `true`. `false` keeps the seat in the list but routing will not pick it, assignment will not wake it, and claim will not take a new run. Running tasks are not cancelled. A base role sets its direct specialisations to the same value, both off and on. Turning a seat on requeues its stranded `todo` / `in_progress` issues. CLI: `agent update --work-enabled=true\|false`. Distinct from archive |
 | `dispatch_mode` | `dispatch_mode` | `auto` (default) or `mention_only`; omitted on update preserves; anything else returns 400 | automatic-dispatch gate (DENE-1600). `mention_only` keeps the tier but routing, quota relay and seat relay never select it; @mention, assignment and delegation still run it. Followers inherit it. CLI: `agent update --dispatch-mode auto\|mention_only` |
+| `dispatch_projects` | `dispatch_projects` | project ids of this workspace; omitted on update preserves, `[]` clears; an unknown id returns 400 | automatic dispatch only picks the seat for issues in these projects (DENE-1648); empty = every project. @mention, assignment and delegation are not limited. Not inherited by followers. CLI: `agent update --dispatch-projects <titles\|ids>` |
 
 Defaults when omitted or explicitly `null`: `max_concurrent_tasks` → `6`.
 Other defaults when omitted: `runtime_config` → `{}`, `custom_env` → `{}`,

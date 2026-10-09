@@ -1952,6 +1952,7 @@
     "gateway_key_placeholder": "sk-…",
     "gateway_key_stored": "キーを保存済み",
     "gateway_key_save": "キーを保存",
+    "gateway_key_save_error": "キーを保存できませんでした。もう一度お試しください。",
     "gateway_key_clear": "クリア",
     "gateway_pair_incomplete": "エンドポイントとキーの両方を入力してください。片方だけならデプロイ共用のエンドポイントを使います。",
     "gateway_default_model": "そのデプロイ自体の既定モデルは {{model}} です。",
@@ -1959,6 +1960,7 @@
     "filters_placeholder": "利用できない席は割り当てから外れます。",
     "health_checking": "確認中…",
     "health_recheck": "再チェック",
+    "health_recheck_failed": "再チェックできませんでした。もう一度お試しください。",
     "health_connected": "接続済み · {{when}}に自己チェック",
     "health_never_checked": "サーバー起動以降、まだ呼び出していません",
     "health_retry_in": "約 {{minutes}} 分後に再試行",
@@ -2014,10 +2016,10 @@
     "seats_work_off": "作業オフのためルーティング対象外",
     "seats_runtime_unknown": "不明なランタイム",
     "judge_title": "判定モデル",
-    "judge_description": "ティア（弱 / 中 / 強 / 最強）を確率付きで選びます。分析モデルがオンのときは、整理された事実だけを見ます。",
+    "judge_description": "分析モデルの回答を見て、ルール表のティアを理由付きで1段だけ上げられます。下げることはできません。",
     "judge_enabled_label": "判定モデルを使う",
     "analysis_title": "分析モデル",
-    "analysis_description": "チケット全体を読み、いくつかの事実にまとめます：変更範囲、要件の明確さ、失敗のコスト、人の判断が必要か。止まったチケットには、どこで詰まっているかを書きます。",
+    "analysis_description": "チケット全体を読み、4つの選択式の質問に答えます：変更範囲、要件の明確さ、失敗のコスト、人の判断が必要か。止まったチケットには、どこで詰まっているかを書きます。",
     "analysis_enabled_label": "分析モデルを使う",
     "analysis_source_label": "ソース",
     "analysis_source_description": "API ゲートウェイまたはサブスクライブ済みランタイムを選択します。",
@@ -2031,10 +2033,16 @@
     "analysis_key_label": "分析モデルの API キー",
     "modes": {
       "none": "どちらもオフ：モデルは呼ばれず、すべてのチケットがフォールバックのティアになります。",
-      "analysis": "分析のみ：分析モデルがティアを選び、しきい値はその自己申告の信頼度に適用されます。",
-      "analysis_judge": "両方オン：分析モデルが事実をまとめ、判定モデルがそれをもとにティアを選びます。",
-      "judge": "判定のみ：判定モデルがチケットを読んでティアを選びます。"
-    }
+      "analysis": "分析のみ：分析モデルが質問に答え、ルール表がティアを決めます。",
+      "analysis_judge": "両方オン：ルール表がティアを決め、判定モデルは最大1段上げられます。下げられません。",
+      "judge": "判定のみ：質問に答える者がいないため、ルール表の「答えられない」行でティアが決まり、判定モデルは1段上げられます。"
+    },
+    "rules_title": "ティアのルール",
+    "rules_description": "分析モデルの回答後、上から最初に一致したルールでティアが決まります。",
+    "rules_any_unknown": "いずれかの質問に答えられない",
+    "rules_catch_all": "上のどれにも一致しない",
+    "rules_review": "{{tier}}、レビューあり",
+    "rules_no_review": "{{tier}}、レビューなし"
   },
   "project_sharing": {
     "title": "権限と共有",

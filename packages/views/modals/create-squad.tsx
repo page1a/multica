@@ -122,7 +122,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
           }),
         );
         queryClient.invalidateQueries({
-          queryKey: [...workspaceKeys.squads(wsId), squad.id, "members"],
+          queryKey: workspaceKeys.squadMembers(wsId, squad.id),
         });
       }
 

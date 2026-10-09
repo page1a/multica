@@ -62,6 +62,15 @@ type Outcome struct {
 	Mentioned bool
 	// Commented reports whether this call posted a routing comment.
 	Commented bool
+	// Tier is the executor tier this call's decision named; JudgedTier is
+	// the model's own tier when the rule floor raised it (DENE-1648), empty
+	// when it stood.
+	Tier       string
+	JudgedTier string
+	// Trace is the decision log of the todo row (DENE-1677): the questions,
+	// the matched rule, the judge's part, and the seats written. Nil when no
+	// decision was made on this call.
+	Trace *Trace
 }
 
 // Router is the module both entry points call. The HTTP hooks call Route
@@ -73,9 +82,11 @@ type Router struct {
 	Judge Judge
 	// Analyst is the analysis role. Nil means this build cannot run it, and a
 	// workspace that switched it on gets the unavailable path.
-	Analyst          Analyst
-	Breaker          *Breaker
-	Ladder           Ladder
+	Analyst Analyst
+	Breaker *Breaker
+	Ladder  Ladder
+	// Rules is the rule table; empty means DefaultRules.
+	Rules            RuleTable
 	Log              *slog.Logger
 	analysisFailures sync.Map // content key -> time.Time
 }
@@ -285,6 +296,7 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	if err != nil {
 		return Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "roster unreadable"}, err
 	}
+	roster = ForProject(roster, issue.ProjectID)
 	candidates := ladder.SceneCandidates(scene, roster)
 	if len(candidates) == 0 {
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "ladder has no seat in this workspace"}, nil
@@ -333,6 +345,8 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 			r.Breaker.Succeed(workspaceID)
 		}
 		dec, verdict = d, d.Verdict
+		out.Tier, out.JudgedTier = d.Verdict.ExecutorTier, d.RaisedFrom
+		out.Trace = d.Trace
 	}
 
 	threshold := settings.Threshold()
@@ -358,6 +372,9 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	var load LoadPick
 	if labelled && !labelSeatOK {
 		notes = append(notes, "labelled tier "+requestedTier+" was not eligible")
+	}
+	if j := judgeNote(dec.Trace); j != "" {
+		notes = append(notes, j)
 	}
 	if needExecutor {
 		if len(fresh) == 0 {
@@ -419,6 +436,10 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	humanSignoff := needReviewer && verdict.Reviewer == ReviewerHuman
 	if needReviewer {
 		ref, ok := r.decideReviewer(verdict, ladder, scene, roster, fresh, executor, issue)
+		if ok && verdict.Reviewer == ReviewerSeat && verdict.ReviewerTier == "" {
+			// The table's check landed where the ladder put it; say why.
+			_, fallbackWhy = r.fallbackReviewer(ladder, scene, roster, fresh, executor, issue)
+		}
 		why := ""
 		switch {
 		case !ok && humanSignoff:
@@ -431,7 +452,13 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 			ok = false
 			why = "confidence " + pct(verdict.ReviewerConfidence) + " < threshold " + pct(threshold)
 		}
-		if !ok {
+		switch {
+		case !ok && settings.JudgedReview && unsureReviewer(verdict, dec, threshold):
+			// 按判断配验收: only a confident call for a check fills a seat.
+			// Without one the executor merges and closes on its own.
+			ref = ReviewerRef{Kind: ReviewerNoReview}
+			notes = append(notes, "reviewer left to the executor under judged review: "+why)
+		case !ok:
 			var ladderWhy string
 			ref, ladderWhy = r.fallbackReviewer(ladder, scene, roster, fresh, executor, issue)
 			reviewerFallback = true
@@ -469,6 +496,14 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		out.Action = ActionAssigned
 	}
 	out.Reason = strings.Join(notes, "; ")
+	if out.Trace != nil {
+		if executor != nil {
+			out.Trace.Seat = executor.Name
+		}
+		if !reviewer.Empty() {
+			out.Trace.Reviewer = reviewer.Label()
+		}
+	}
 
 	// --- notify ----------------------------------------------------------
 	// The one condition that earns an @: the ticket is in a state where
@@ -494,6 +529,15 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	}
 
 	return r.deliver(ctx, workspaceID, issue, KindAssignment, body, notify, out)
+}
+
+// judgeNote names a judge answer the rule table did not take, so a hook or
+// CLI reading Reason sees the drift without opening the comment.
+func judgeNote(t *Trace) string {
+	if t == nil || t.Judge == nil || t.Judge.Effect != JudgeIgnored {
+		return ""
+	}
+	return "judge answer \"" + t.Judge.Tier + "\" not used: " + t.Judge.Why
 }
 
 // Where the executor seat came from, for the decision comment.
@@ -557,7 +601,7 @@ func (r *Router) continuation(ctx context.Context, workspaceID string, settings 
 	seats := make(map[string]ContinuationSeat, len(ids))
 	for _, id := range ids {
 		agent, onRoster := agentByID(roster, id)
-		_, unpickable := SeatSelectable(agent.State, SelectContext{})
+		_, unpickable := SeatSelectable(agent.State, SelectContext{ProjectID: agent.project})
 		seats[id] = ContinuationSeat{
 			Seat:         seatFromRoster(ladder, roster, id),
 			OnRoster:     onRoster,
@@ -635,6 +679,7 @@ func (r *Router) PickAcceptanceSeat(ctx context.Context, workspaceID string, iss
 	if err != nil {
 		return ReviewerRef{}, "读不到席位名册", false
 	}
+	roster = ForProject(roster, issue.ProjectID)
 	candidates := ladder.SceneCandidates(scene, roster)
 	ref, why := r.fallbackReviewer(ladder, scene, roster, candidates, nil, issue)
 	if ref.Kind != ReviewerAgent || ref.ID == "" || ref.ID == issue.AssigneeID {
@@ -771,6 +816,13 @@ func (r *Router) decideReviewer(v Verdict, ladder Ladder, scene Scene, roster ma
 		// fallback, exactly as it does for any other unusable answer.
 		return ReviewerRef{}, false
 	case ReviewerSeat:
+		if v.ReviewerTier == "" {
+			// The rule table asks for a check and leaves the seat to the
+			// ladder: the holder's rung in another model family, or one
+			// rung down (DENE-1677).
+			ref, _ := r.fallbackReviewer(ladder, scene, roster, candidates, executor, issue)
+			return ref, !ref.Empty()
+		}
 		seat, ok := SeatByTier(candidates, v.ReviewerTier)
 		if !ok {
 			return ReviewerRef{}, false
@@ -791,6 +843,18 @@ func (r *Router) decideReviewer(v Verdict, ladder Ladder, scene Scene, roster ma
 		return seatReviewer(seat), true
 	}
 	return ReviewerRef{}, false
+}
+
+// unsureReviewer reports a reviewer verdict that 按判断配验收 reads as "no
+// confident call for a check": the model answered, did not ask for a person,
+// and either did not want a check or wanted one below the threshold. A
+// confident seat answer whose tier has no seat here still asked for a check,
+// and no answer at all is nobody's judgement, so both keep the fallback seat.
+func unsureReviewer(v Verdict, dec decision, threshold float64) bool {
+	if dec.Decider == DeciderNone || v.Reviewer == ReviewerHuman {
+		return false
+	}
+	return v.Reviewer == ReviewerNone || v.ReviewerConfidence < threshold
 }
 
 // routeInReview hands the ticket to whoever accepts it. This row does not fill
@@ -926,6 +990,7 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 	if err != nil {
 		return out, err
 	}
+	roster = ForProject(roster, issue.ProjectID)
 	seatAgent, ok := agentByID(roster, issue.Reviewer.ID)
 	if !ok {
 		card, found, err := r.Store.OffRosterSeat(ctx, workspaceID, issue.Reviewer.ID)
@@ -940,7 +1005,7 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 				ReviewerWritten: out.ReviewerWritten,
 			}, nil
 		}
-		return r.handOffToSubstitute(ctx, workspaceID, settings, issue, roster, card, out)
+		return r.handOffToSubstitute(ctx, workspaceID, settings, issue, roster, card, out, false)
 	}
 	facts, err := r.Store.RoutingFacts(ctx, workspaceID, []string{seatAgent.ID}, settings.ProviderKeys())
 	if err != nil {
@@ -948,7 +1013,7 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 	}
 	if snap, ok := facts.Seats[seatAgent.ID]; ok && Unselectable(snap.Availability) {
 		if snap.Availability == AvailabilityDisabled {
-			return r.handOffToSubstitute(ctx, workspaceID, settings, issue, roster, seatAgent, out)
+			return r.handOffToSubstitute(ctx, workspaceID, settings, issue, roster, seatAgent, out, false)
 		}
 		return Outcome{State: StateEnabled, Action: ActionNoop, Reason: "reviewer seat is not eligible"}, nil
 	}
@@ -966,7 +1031,10 @@ func (r *Router) routeInReview(ctx context.Context, workspaceID string, settings
 // handOffToSubstitute covers an acceptance wake whose reviewer cannot take
 // work. The slot already names them, so they stay the designated reviewer:
 // recovery may give the ticket back only before the cover has started.
-func (r *Router) handOffToSubstitute(ctx context.Context, workspaceID string, settings Settings, issue Issue, roster map[string]Agent, disabled Agent, out Outcome) (Outcome, error) {
+//
+// failed is true when the seat is still switched on but its acceptance runs
+// keep failing (DENE-1647); only the wording differs.
+func (r *Router) handOffToSubstitute(ctx context.Context, workspaceID string, settings Settings, issue Issue, roster map[string]Agent, disabled Agent, out Outcome, failed bool) (Outcome, error) {
 	ladder := r.Ladder.For(settings)
 	scene := ladder.IssueScene(issue)
 	holder := seatFromRoster(ladder, map[string]Agent{disabled.Name: disabled}, disabled.ID)
@@ -980,10 +1048,20 @@ func (r *Router) handOffToSubstitute(ctx context.Context, workspaceID string, se
 	if issue.AssigneeType == "agent" && issue.AssigneeID != "" && issue.AssigneeID != disabled.ID {
 		avoid = append(avoid, issue.AssigneeID)
 	}
+	for _, id := range issue.Workers {
+		if id != disabled.ID {
+			avoid = append(avoid, id)
+		}
+	}
 	replacement, steppedDown, ok := SubstituteSeat(ladder, holder, roster, avoid, scene)
 	if !ok {
 		body := disabledReviewerStuck(disabled.Name)
-		stuck, err := r.deliver(ctx, workspaceID, issue, CommentKind("reviewer_off:"+disabled.ID), body, true, out)
+		kind := CommentKind("reviewer_off:" + disabled.ID)
+		if failed {
+			body = failedReviewerStuck(disabled.Name)
+			kind = CommentKind("reviewer_failed:" + disabled.ID)
+		}
+		stuck, err := r.deliver(ctx, workspaceID, issue, kind, body, true, out)
 		if err != nil {
 			return stuck, err
 		}
@@ -1020,6 +1098,9 @@ func (r *Router) handOffToSubstitute(ctx context.Context, workspaceID string, se
 		return out, err
 	}
 	note := disabledReviewerNote(disabled.Name, replacement.Name, steppedDown)
+	if failed {
+		note = failedReviewerNote(disabled.Name, replacement.Name, steppedDown)
+	}
 	body := note + "\n\n" + r.handoffComment(issue, replacement.Name, false)
 	delivered, err := r.deliver(ctx, workspaceID, issue, KindHandoff, body, false, out)
 	if err != nil {
@@ -1061,6 +1142,7 @@ func (r *Router) decideReviewerNow(ctx context.Context, workspaceID string, sett
 	if err != nil {
 		return ReviewerRef{}, Outcome{State: StateEnabled, Action: ActionSkipped, Reason: "roster unreadable"}, err
 	}
+	roster = ForProject(roster, issue.ProjectID)
 	candidates := ladder.SceneCandidates(scene, roster)
 	if len(candidates) == 0 {
 		return ReviewerRef{}, noop("ladder has no seat in this workspace"), nil
@@ -1187,6 +1269,7 @@ func (r *Router) routeBlocked(ctx context.Context, workspaceID string, settings 
 	if err != nil {
 		return out, err
 	}
+	roster = ForProject(roster, issue.ProjectID)
 	candidates := ladder.SceneCandidates(scene, roster)
 	_, state, err := r.decisionContext(ctx, workspaceID, settings, issue, scene, candidates)
 	if err != nil {

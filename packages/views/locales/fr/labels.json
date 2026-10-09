@@ -5,6 +5,7 @@
     "add": "Ajouter des étiquettes",
     "search": "Rechercher des étiquettes...",
     "no_labels": "Créez d'abord des étiquettes dans les Paramètres",
-    "no_results": "Aucune étiquette correspondante"
+    "no_results": "Aucune étiquette correspondante",
+    "save_failed": "Impossible de mettre à jour les étiquettes"
   }
 }

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestStageAdvancePromotesWhenParentSeatIsOff(t *testing.T) {
@@ -211,7 +211,7 @@ func TestSeatRelaySkipsMentionOnlySeat(t *testing.T) {
 	}
 	wsID := parseUUID(testWorkspaceID)
 
-	got, _, ok := testHandler.substituteAgent(ctx, wsID, failed, nil, routing.GenericScene)
+	got, _, ok := testHandler.substituteAgent(ctx, wsID, failed, nil, db.Issue{WorkspaceID: wsID})
 	if !ok || uuidToString(got.ID) != cover {
 		t.Fatalf("auto control: substitute = %s ok=%v, want 布尔玛 %s", uuidToString(got.ID), ok, cover)
 	}
@@ -219,7 +219,7 @@ func TestSeatRelaySkipsMentionOnlySeat(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `UPDATE agent SET dispatch_mode = 'mention_only' WHERE id = $1`, cover); err != nil {
 		t.Fatal(err)
 	}
-	got, _, ok = testHandler.substituteAgent(ctx, wsID, failed, nil, routing.GenericScene)
+	got, _, ok = testHandler.substituteAgent(ctx, wsID, failed, nil, db.Issue{WorkspaceID: wsID})
 	if ok && uuidToString(got.ID) == cover {
 		t.Fatal("seat relay picked a mention_only seat")
 	}

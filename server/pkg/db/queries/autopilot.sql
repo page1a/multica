@@ -808,3 +808,22 @@ SELECT EXISTS (
 -- Powers the per-row can_write flag on the list endpoint without an N+1.
 SELECT autopilot_id FROM autopilot_collaborator
 WHERE user_type = 'member' AND user_id = $1;
+
+-- name: InsertAutopilotLinkedChange :exec
+-- DENE-1663: one write to this autopilot made through a managed workspace
+-- link. Only internal/workspacelink writes these.
+INSERT INTO autopilot_linked_change (
+    workspace_id, autopilot_id, link_id, route, actor_id,
+    via_workspace_id, via_workspace_name, via_slug, agent_id, agent_name, task_id
+) VALUES (
+    @workspace_id, @autopilot_id, @link_id, @route, @actor_id,
+    @via_workspace_id, @via_workspace_name, @via_slug, @agent_id, @agent_name, @task_id
+);
+
+-- name: ListAutopilotLinkedChanges :many
+SELECT c.*, COALESCE(u.name, '')::text AS actor_name
+FROM autopilot_linked_change c
+LEFT JOIN "user" u ON u.id = c.actor_id
+WHERE c.autopilot_id = $1
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT $2;

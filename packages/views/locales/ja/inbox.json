@@ -74,7 +74,11 @@
     "stall_review_title": "このチケットは24時間の停滞レビュー中です",
     "stall_processed_title": "このチケットはシステムで自動処理されました",
     "stall_keep": "保持する",
-    "stall_undo": "処理を取り消す"
+    "stall_undo": "処理を取り消す",
+    "link_projects": "プロジェクト：{{projects}}",
+    "link_answer": "連携ワークスペースで確認",
+    "link_open": "連携ワークスペースを開く",
+    "stall_action_failed": "チケットを更新できませんでした"
   },
   "types": {
     "needs_you": "対応が必要です",
@@ -105,7 +109,10 @@
     "agent_access_approved": "エージェント利用が承認されました",
     "agent_access_declined": "エージェント利用が拒否されました",
     "parking_unexplained": "理由なく停止",
-    "issue_stall_action": "停滞処理"
+    "issue_stall_action": "停滞処理",
+    "workspace_link_request": "連携リクエスト",
+    "workspace_link_accepted": "連携が承認されました",
+    "workspace_link_declined": "連携が拒否されました"
   },
   "labels": {
     "set_status_to": "ステータスを変更:",
@@ -123,7 +130,10 @@
     "children_done_stage": "ステージ {{stage}} のサブタスクがすべて終わりました",
     "access_requested_by": "{{requester}} が {{agent}} の利用を申請",
     "access_approved_for": "{{agent}} の利用申請が承認されました",
-    "access_declined_for": "{{agent}} の利用申請が拒否されました"
+    "access_declined_for": "{{agent}} の利用申請が拒否されました",
+    "link_requested_by": "{{source}} がプロジェクトの共有を希望しています",
+    "link_accepted_by": "{{target}} が連携を承認しました",
+    "link_declined_by": "{{target}} が連携を拒否しました"
   },
   "toasts": {
     "source_context_retry_started": "元のコンテキストで再試行を開始しました",

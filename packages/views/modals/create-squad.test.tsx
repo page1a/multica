@@ -47,7 +47,10 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
-  workspaceKeys: { squads: (id: string) => ["squads", id] },
+  workspaceKeys: {
+    squads: (id: string) => ["squads", id],
+    squadMembers: (id: string, squadId: string) => ["squads", id, squadId, "members"],
+  },
 }));
 
 vi.mock("@multica/core/api", () => ({

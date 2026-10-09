@@ -94,7 +94,7 @@ func (h *Handler) stateCardForRun(ctx context.Context, issue db.Issue, agent db.
 	default:
 		return "", ""
 	}
-	card, err := h.buildStateCard(ctx, issue, statecard.Caller{Type: "agent", ID: uuidToString(agent.ID)}, task.ID, nil)
+	card, err := h.buildStateCard(ctx, issue, statecard.Caller{Type: "agent", ID: uuidToString(agent.ID)}, taskSourceViewer(task), task.ID, nil)
 	if err != nil {
 		slog.Warn("claim: build state card failed", "task_id", uuidToString(task.ID), "error", err)
 		return "", ""

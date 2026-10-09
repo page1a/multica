@@ -774,6 +774,22 @@ func (q *Queries) DeleteChatSession(ctx context.Context, arg DeleteChatSessionPa
 	return err
 }
 
+const deleteChatSessionLinkedProjectsForSession = `-- name: DeleteChatSessionLinkedProjectsForSession :exec
+DELETE FROM chat_session_linked_project
+WHERE chat_session_id = $1 AND workspace_id = $2
+`
+
+type DeleteChatSessionLinkedProjectsForSessionParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+// Replace semantics, same as DeleteChatSessionProjectsForSession.
+func (q *Queries) DeleteChatSessionLinkedProjectsForSession(ctx context.Context, arg DeleteChatSessionLinkedProjectsForSessionParams) error {
+	_, err := q.db.Exec(ctx, deleteChatSessionLinkedProjectsForSession, arg.ChatSessionID, arg.WorkspaceID)
+	return err
+}
+
 const deleteChatSessionProjectsForProject = `-- name: DeleteChatSessionProjectsForProject :exec
 DELETE FROM chat_session_project
 WHERE project_id = $1 AND workspace_id = $2
@@ -1770,6 +1786,35 @@ func (q *Queries) InitializeChatSessionTitle(ctx context.Context, arg Initialize
 	return i, err
 }
 
+const insertChatSessionLinkedProject = `-- name: InsertChatSessionLinkedProject :exec
+INSERT INTO chat_session_linked_project (workspace_id, chat_session_id, link_id, project_id, title, source_name, position)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (chat_session_id, link_id, project_id) DO NOTHING
+`
+
+type InsertChatSessionLinkedProjectParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	LinkID        pgtype.UUID `json:"link_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	Title         string      `json:"title"`
+	SourceName    string      `json:"source_name"`
+	Position      int32       `json:"position"`
+}
+
+func (q *Queries) InsertChatSessionLinkedProject(ctx context.Context, arg InsertChatSessionLinkedProjectParams) error {
+	_, err := q.db.Exec(ctx, insertChatSessionLinkedProject,
+		arg.WorkspaceID,
+		arg.ChatSessionID,
+		arg.LinkID,
+		arg.ProjectID,
+		arg.Title,
+		arg.SourceName,
+		arg.Position,
+	)
+	return err
+}
+
 const insertChatSessionProject = `-- name: InsertChatSessionProject :exec
 INSERT INTO chat_session_project (workspace_id, chat_session_id, project_id, position)
 VALUES ($1, $2, $3, $4)
@@ -2674,6 +2719,45 @@ func (q *Queries) ListChatMessagesPageForChannelContext(ctx context.Context, arg
 			&i.ChannelOutboundMessageIds,
 			&i.SenderUserID,
 			&i.LinkedSessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSessionLinkedProjectsForSessions = `-- name: ListChatSessionLinkedProjectsForSessions :many
+SELECT id, workspace_id, chat_session_id, link_id, project_id, title, source_name, position, created_at FROM chat_session_linked_project
+WHERE chat_session_id = ANY($1::uuid[])
+ORDER BY chat_session_id, position ASC, created_at ASC, id ASC
+`
+
+// DENE-1643: the read-only linked projects of every session on a page, in
+// selection order. Whether each is still reachable is decided by
+// internal/workspacelink, never by this row.
+func (q *Queries) ListChatSessionLinkedProjectsForSessions(ctx context.Context, chatSessionIds []pgtype.UUID) ([]ChatSessionLinkedProject, error) {
+	rows, err := q.db.Query(ctx, listChatSessionLinkedProjectsForSessions, chatSessionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatSessionLinkedProject{}
+	for rows.Next() {
+		var i ChatSessionLinkedProject
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ChatSessionID,
+			&i.LinkID,
+			&i.ProjectID,
+			&i.Title,
+			&i.SourceName,
+			&i.Position,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

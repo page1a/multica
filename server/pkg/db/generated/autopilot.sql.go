@@ -1178,6 +1178,49 @@ func (q *Queries) GetWebhookTriggerByToken(ctx context.Context, webhookToken pgt
 	return i, err
 }
 
+const insertAutopilotLinkedChange = `-- name: InsertAutopilotLinkedChange :exec
+INSERT INTO autopilot_linked_change (
+    workspace_id, autopilot_id, link_id, route, actor_id,
+    via_workspace_id, via_workspace_name, via_slug, agent_id, agent_name, task_id
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10, $11
+)
+`
+
+type InsertAutopilotLinkedChangeParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	AutopilotID      pgtype.UUID `json:"autopilot_id"`
+	LinkID           pgtype.UUID `json:"link_id"`
+	Route            string      `json:"route"`
+	ActorID          pgtype.UUID `json:"actor_id"`
+	ViaWorkspaceID   pgtype.UUID `json:"via_workspace_id"`
+	ViaWorkspaceName string      `json:"via_workspace_name"`
+	ViaSlug          string      `json:"via_slug"`
+	AgentID          pgtype.UUID `json:"agent_id"`
+	AgentName        string      `json:"agent_name"`
+	TaskID           pgtype.UUID `json:"task_id"`
+}
+
+// DENE-1663: one write to this autopilot made through a managed workspace
+// link. Only internal/workspacelink writes these.
+func (q *Queries) InsertAutopilotLinkedChange(ctx context.Context, arg InsertAutopilotLinkedChangeParams) error {
+	_, err := q.db.Exec(ctx, insertAutopilotLinkedChange,
+		arg.WorkspaceID,
+		arg.AutopilotID,
+		arg.LinkID,
+		arg.Route,
+		arg.ActorID,
+		arg.ViaWorkspaceID,
+		arg.ViaWorkspaceName,
+		arg.ViaSlug,
+		arg.AgentID,
+		arg.AgentName,
+		arg.TaskID,
+	)
+	return err
+}
+
 const isAutopilotCollaborator = `-- name: IsAutopilotCollaborator :one
 SELECT EXISTS (
     SELECT 1 FROM autopilot_collaborator
@@ -1253,6 +1296,72 @@ func (q *Queries) ListAutopilotIDsForCollaborator(ctx context.Context, userID pg
 			return nil, err
 		}
 		items = append(items, autopilot_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAutopilotLinkedChanges = `-- name: ListAutopilotLinkedChanges :many
+SELECT c.id, c.workspace_id, c.autopilot_id, c.link_id, c.route, c.actor_id, c.via_workspace_id, c.via_workspace_name, c.via_slug, c.agent_id, c.agent_name, c.task_id, c.created_at, COALESCE(u.name, '')::text AS actor_name
+FROM autopilot_linked_change c
+LEFT JOIN "user" u ON u.id = c.actor_id
+WHERE c.autopilot_id = $1
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT $2
+`
+
+type ListAutopilotLinkedChangesParams struct {
+	AutopilotID pgtype.UUID `json:"autopilot_id"`
+	Limit       int32       `json:"limit"`
+}
+
+type ListAutopilotLinkedChangesRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AutopilotID      pgtype.UUID        `json:"autopilot_id"`
+	LinkID           pgtype.UUID        `json:"link_id"`
+	Route            string             `json:"route"`
+	ActorID          pgtype.UUID        `json:"actor_id"`
+	ViaWorkspaceID   pgtype.UUID        `json:"via_workspace_id"`
+	ViaWorkspaceName string             `json:"via_workspace_name"`
+	ViaSlug          string             `json:"via_slug"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	AgentName        string             `json:"agent_name"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ActorName        string             `json:"actor_name"`
+}
+
+func (q *Queries) ListAutopilotLinkedChanges(ctx context.Context, arg ListAutopilotLinkedChangesParams) ([]ListAutopilotLinkedChangesRow, error) {
+	rows, err := q.db.Query(ctx, listAutopilotLinkedChanges, arg.AutopilotID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAutopilotLinkedChangesRow{}
+	for rows.Next() {
+		var i ListAutopilotLinkedChangesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AutopilotID,
+			&i.LinkID,
+			&i.Route,
+			&i.ActorID,
+			&i.ViaWorkspaceID,
+			&i.ViaWorkspaceName,
+			&i.ViaSlug,
+			&i.AgentID,
+			&i.AgentName,
+			&i.TaskID,
+			&i.CreatedAt,
+			&i.ActorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

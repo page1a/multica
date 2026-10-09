@@ -1052,3 +1052,47 @@ WHERE workspace_id = $1 AND project_id = $2;
 -- and tightening to private is the only answer that shows nobody more.
 UPDATE issue SET visibility = 'private', updated_at = now()
 WHERE workspace_id = $1 AND project_id = $2 AND visibility = 'project';
+
+-- name: ReviewRoundRunState :one
+-- DENE-1647 patrol input: the newest run of this review round and how many
+-- of the round's runs failed. A failed newest run with nothing after it is a
+-- stalled acceptance, whatever the quiet clock says about comments.
+SELECT
+    COALESCE((
+        SELECT t.status FROM agent_task_queue t
+        WHERE t.issue_id = sqlc.arg('issue_id')::uuid
+          AND t.created_at >= sqlc.arg('since')::timestamptz
+        ORDER BY t.created_at DESC, t.id DESC
+        LIMIT 1
+    ), '')::text AS last_status,
+    (
+        SELECT count(*) FROM agent_task_queue t
+        WHERE t.issue_id = sqlc.arg('issue_id')::uuid
+          AND t.created_at >= sqlc.arg('since')::timestamptz
+          AND t.status = 'failed'
+    )::int AS failed_runs;
+
+-- name: SetIssueOriginChatSession :one
+-- Records the chat an issue was opened from (DENE-1665). Written in the create
+-- transaction, never afterwards.
+UPDATE issue SET origin_chat_session_id = sqlc.arg('chat_session_id')::uuid
+WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: ListIssuesByOriginChatSession :many
+-- The issues a chat opened, oldest first (`multica chat tickets`).
+SELECT * FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND origin_chat_session_id = sqlc.arg('chat_session_id')::uuid
+ORDER BY created_at ASC, id ASC
+LIMIT 200;
+
+-- name: ListProjectChatDispatchedIssues :many
+-- The project monitor's chat flow (DENE-1681): tickets in the project opened
+-- from a chat, touched in the window or still open, newest first.
+SELECT * FROM issue
+WHERE workspace_id = @workspace_id AND project_id = @project_id
+  AND origin_chat_session_id IS NOT NULL
+  AND (updated_at >= @since OR status NOT IN ('done', 'cancelled'))
+ORDER BY created_at DESC, id DESC
+LIMIT @row_limit;

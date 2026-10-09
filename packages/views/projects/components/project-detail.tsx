@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { Check, ChevronRight, Link2, MessageSquare, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
+import { Check, ChevronRight, Headphones, Link2, MessageSquare, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -23,7 +23,7 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { currentPath, useNavigation } from "../../navigation";
+import { AppLink, currentPath, useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, ReadonlyContent, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
@@ -109,6 +109,7 @@ function PropRow({
 
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
+  const { t: tChat } = useT("chat");
   const { isGuest } = useGuestReadOnly();
   const statusLabels = useProjectStatusLabels();
   const priorityLabels = useProjectPriorityLabels();
@@ -537,16 +538,38 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             leaf={<span className="truncate font-medium text-foreground">{project.title}</span>}
             actions={
               <>
+              {/* "听汇报" opens a chat in this project that tells the report (DENE-1667). */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1 text-muted-foreground"
+                title={t(($) => $.detail.hear_report_hint)}
+                aria-label={t(($) => $.detail.hear_report)}
+                nativeButton={false}
+                render={
+                  <AppLink
+                    href={wsPaths.chatWithPrompt(
+                      tChat(($) => $.report.hear_prompt, { project: project.title }),
+                      project.id,
+                    )}
+                    data-testid="project-hear-report"
+                  />
+                }
+              >
+                <Headphones className="size-4" />
+                <span className="hidden sm:inline">{t(($) => $.detail.hear_report)}</span>
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"
                 className={cn("text-muted-foreground", isPinned && "text-foreground")}
                 title={isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}
                 onClick={() => {
+                  const onError = () => toast.error(t(($) => $.page.pin_failed));
                   if (isPinned) {
-                    deletePinMut.mutate({ itemType: "project", itemId: projectId });
+                    deletePinMut.mutate({ itemType: "project", itemId: projectId }, { onError });
                   } else {
-                    createPin.mutate({ item_type: "project", item_id: projectId });
+                    createPin.mutate({ item_type: "project", item_id: projectId }, { onError });
                   }
                 }}
               >

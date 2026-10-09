@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1670 沉淀实页与完整链路验收</title>
+<style>
+  body { font: 14px/1.6 -apple-system, "PingFang SC", sans-serif; color: #222; max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 28px; }
+  table { border-collapse: collapse; width: 100%; } td, th { border-bottom: 1px solid #e5e5e5; padding: 6px 8px; text-align: left; vertical-align: top; }
+  code { font-size: 12px; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+  .shots { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+  .shots figure { margin: 0; } .shots img { border: 1px solid #ddd; display: block; }
+  .m img { width: 195px; } .t img { width: 384px; } .d img { width: 100%; max-width: 640px; }
+  figcaption { font-size: 12px; color: #666; }
+  .ok { color: #15803d; } .no { color: #b45309; }
+</style>
+</head>
+<body>
+<h1>DENE-1670 沉淀实页与完整链路验收</h1>
+
+<h2>候选与环境</h2>
+<table>
+  <tr><th>候选代码</th><td>服务端与 CLI：<code>718ab9be6a</code>（父交付线 <code>agent/delivery/dene-1659</code>，<code>/health</code> 报 commit 718ab9be6a）。页面：718ab9be6a + 本票 <code>500bb9cb78</code>（最近沉淀的文件另起一行完整换行）。</td></tr>
+  <tr><th>环境</th><td>本票 worktree 的管理环境 <code>dene_1670_b7a894d98087-784</code>，经 <code>make worktree-env</code> + <code>make up C=api,web</code> 启动：API <code>localhost:18864</code>（pid 58750）、Web <code>localhost:13784</code>（pid 58950，next dev，cwd 为本 worktree 的 apps/web），独立库 <code>multica_dene_1670_b7a894d98087_784</code>。<code>make status</code> 把 web 标成 mismatch，但监听进程就是 make up 起的 58950。</td></tr>
+  <tr><th>CLI</th><td>从候选源码编出的 <code>multica</code>，清空全部 <code>MULTICA_*</code>、HOME 指向临时目录，只连本地候选服务（<code>scripts/m.sh</code>）。身份是本地 dev 用户（验证码登录）。</td></tr>
+  <tr><th>测试数据</th><td>新建工作区「沉淀验收」(SED)、项目「沉淀验收项目」；测试 git 仓库都在临时目录（本地仓库 + 一个裸仓库当远端），没有碰 ai100 / tarot。</td></tr>
+  <tr><th>直接写库的部分</th><td>只有夹具：一个运行时、一个智能体、三条聊天会话（worktree 里起不了 daemon，聊天没法真开）；另把 dev 用户标为已完成引导。所有沉淀记录都由 CLI → 服务端写入，没有手插。</td></tr>
+  <tr><th>浏览器</th><td>Ego Lite（jev-ego），CDP 设视口 375 / 390（mobile）、768 / 1280，宽度经 <code>innerWidth</code> 核对（站点默认 110% 缩放已抵消），截图用 CDP 原生截图。</td></tr>
+</table>
+
+<h2>聊天沉淀完整链路（CLI → 候选服务端 → 数据库 → 查询 / 页面）</h2>
+<table>
+  <tr><th>场景</th><th>做法</th><th>结果</th></tr>
+  <tr><td>本地仓库合入主线</td><td>无远端仓库，在 <code>chat/80f77278</code> 分支提交 AGENTS.md、CONTEXT.md，执行 <code>multica chat sediment --knowledge agents=… --knowledge context=…</code></td>
+      <td class="ok">退出 0；「已把 chat/80f77278 合进 main」，main 上多出合并提交 <code>7c345ba Chat 80f77278: 沉淀 agents, context</code>；记录 mainline=main、commits=[b19d72d…, 7c345ba…]、verified=true</td></tr>
+  <tr><td>远端仓库未推送</td><td>有 origin 的仓库，本地 main 提交 AGENTS.md、docs/README.md 但不推，执行 sediment</td>
+      <td class="ok">退出 1：「没有记，远端的 main 还没收到这些提交…」；执行前后该聊天的 <code>knowledge_sediment</code> 行数都是 0；远端 main 仍是 d37ee88</td></tr>
+  <tr><td>推送后重试</td><td><code>git push origin main</code> 后同一命令再执行</td>
+      <td class="ok">退出 0；记录 1 行，mainline=main，commits 含本地 HEAD bcba4b6</td></tr>
+  <tr><td>长文件名</td><td>本地仓库再开 <code>chat/2fe1c21b</code>，写一个 100+ 字符的 ADR 文件名与 docs/evidence/INDEX.md</td>
+      <td class="ok">退出 0，合入 main；<code>chat sediment --history</code> 列出这条</td></tr>
+  <tr><td>收口条两种状态</td><td>同一 CLI 对 SED-3、SED-4 执行真实 <code>multica issue close --outcome done --knowledge …</code>：SED-3 在测试仓库的分支里收口，SED-4 在非 git 目录收口</td>
+      <td class="ok">SED-3 的知识审计绑定 CONTEXT.md、记录 verified=true；SED-4 提示「没带交付文件清单」，审计带 unverified、记录 verified=false</td></tr>
+  <tr><td>查询</td><td><code>multica project memory status &lt;项目&gt;</code></td>
+      <td class="ok">recent_sediments 返回上面 5 条（3 条聊天、2 条收口），来源标题、文件、核对状态都对</td></tr>
+</table>
+<p>复现脚本在 <code>scripts/</code>，执行结果见上表；原始 chain.log 未随交付保存。PR 路径（<code>--pr</code>）要真 GitHub PR，本票没跑，靠 718ab9be6a 的单测。</p>
+
+<h2>页面</h2>
+<p>项目记忆卡片在项目详情的右侧栏；375 / 390 / 768 时右侧栏是抽屉，点右上角面板按钮打开。每档都核对过：五条沉淀都在、SED-4 显示「未核对」、文件不截断、<code>scrollWidth == innerWidth</code>（不横向溢出）、抽屉按 Esc 和点遮罩都能关。逐项数据见 <a href="page-checks.json">page-checks.json</a>。</p>
+<p>验收中发现并修掉一处：原来的文件列和来源挤在一行并截断，手机上没法悬停看全名（长 ADR 只剩「docs/adr/…」）。<code>500bb9cb78</code> 把文件放到第二行，在路径内部折行；截图都是修正后的。</p>
+<div class="shots">
+  <figure class="m"><img src="project-memory-375.png" alt=""><figcaption>375 抽屉内卡片</figcaption></figure>
+  <figure class="m"><img src="project-memory-390.png" alt=""><figcaption>390 抽屉内卡片</figcaption></figure>
+  <figure class="m"><img src="project-closed-390.png" alt=""><figcaption>390 点遮罩关闭后</figcaption></figure>
+  <figure class="t"><img src="project-memory-768.png" alt=""><figcaption>768 抽屉内卡片</figcaption></figure>
+</div>
+<div class="shots"><figure class="d"><img src="project-memory-1280.png" alt=""><figcaption>1280 右侧栏常驻</figcaption></figure></div>
+
+<h2>来源跳转（390）</h2>
+<div class="shots">
+  <figure class="m"><img src="jump-chat-390.png" alt=""><figcaption>点「聊天 沉淀：超长文件名…」→ /dev/chat/2fe1c21b…，标题下显示「已沉淀进 main：…」</figcaption></figure>
+  <figure class="m"><img src="jump-issue-390.png" alt=""><figcaption>点「SED-3」→ /dev/issues/SED-3</figcaption></figure>
+</div>
+
+<h2>收口条</h2>
+<p>父票 SED-2 的子任务列表：SED-3 显示「知识：CONTEXT.md」（实际写入的文件），SED-4 显示「知识：agents（未核对交付）」；四档都不溢出。</p>
+<div class="shots">
+  <figure class="m"><img src="close-strip-375.png" alt=""><figcaption>375</figcaption></figure>
+  <figure class="m"><img src="close-strip-390.png" alt=""><figcaption>390</figcaption></figure>
+  <figure class="t"><img src="close-strip-768.png" alt=""><figcaption>768</figcaption></figure>
+</div>
+<div class="shots"><figure class="d"><img src="close-strip-1280.png" alt=""><figcaption>1280</figcaption></figure></div>
+
+<h2>范围说明</h2>
+<ul>
+  <li>Desktop：项目记忆卡片与收口条都是 <code>packages/views</code> 共享组件，Desktop 走同一个项目详情页与任务详情页，入口相同，这里用 Web 实页代验。</li>
+  <li>原生 App：<code>apps/mobile</code> 没有项目记忆卡片和子票收口条这一屏，沿用 PR #587 的说明。</li>
+  <li>没有验生产；部署后的烟测另做。</li>
+</ul>
+
+<h2>回收</h2>
+<p>验收完执行 <code>make destroy</code>（停 api/web、删本环境数据库、释放槽位），临时目录里的测试仓库一并删除。</p>
+</body>
+</html>

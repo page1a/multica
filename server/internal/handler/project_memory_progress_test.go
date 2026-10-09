@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/projectmemory"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -556,8 +557,10 @@ func TestProjectMemoryCheck_SedimentSeatLifecycle(t *testing.T) {
 	// 1. Initial state: seat not configured
 	pinSedimentSeat(t, "")
 
+	localDir := bindMemoryLocalDirectory(t, projectID)
 	callCheck := func() ProjectMemoryResponse {
 		req := withURLParam(newRequest(http.MethodPost, "/api/projects/"+projectID+"/memory/check", map[string]any{
+			"path": localDir,
 			"locations": []map[string]any{
 				{"key": "agents", "path": "AGENTS.md", "exists": false},
 			},
@@ -612,5 +615,193 @@ func TestProjectMemoryCheck_SedimentSeatLifecycle(t *testing.T) {
 	}
 	if resp.SedimentError == nil || *resp.SedimentError != "memory.sediment_agent is not configured" {
 		t.Fatalf("want 'memory.sediment_agent is not configured' after clear, got %v", resp.SedimentError)
+	}
+}
+
+func bindMemoryLocalDirectory(t *testing.T, projectID string) string {
+	t.Helper()
+	dir := "/tmp/memory-local-" + strings.ReplaceAll(t.Name(), "/", "-")
+	dbfx.Exec(t, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position)
+		VALUES ($1, $2, 'local_directory', jsonb_build_object('local_path', $3::text), 'local', 0)
+	`, projectID, testWorkspaceID, dir)
+	return dir
+}
+
+func memoryObservation(present map[string]bool, mainline map[string]string) []projectmemory.LocationResult {
+	results := make([]projectmemory.LocationResult, 0, len(projectmemory.Locations()))
+	for _, location := range projectmemory.Locations() {
+		results = append(results, projectmemory.LocationResult{
+			Location: location, Exists: present[location.Key], MainlineRef: mainline[location.Key],
+		})
+	}
+	return results
+}
+
+func allMemoryPresentExcept(keys ...string) map[string]bool {
+	present := map[string]bool{}
+	for _, key := range projectmemory.LocationKeys() {
+		present[key] = true
+	}
+	for _, key := range keys {
+		present[key] = false
+	}
+	return present
+}
+
+// DENE-1660: the local directory keeps lacking two slots the executor wrote
+// in its own worktree. Once that round closes, the same gap reported again
+// must not open another ticket; a new missing slot must.
+func TestProjectMemoryClosedRoundHoldsSameGap(t *testing.T) {
+	memoryProgressReady(t)
+	openSedimentSeat(t)
+	projectID := dbfx.Project(t, "memory gap cooldown project")
+	forgetSediment(t, projectID)
+	syncIssueCounter(t)
+	project := loadTestProject(t, projectID)
+	ctx := context.Background()
+
+	gap := allMemoryPresentExcept(projectmemory.LocationDocs, projectmemory.LocationEvidence)
+	if _, err := testHandler.observeLocalMemory(ctx, project, memoryObservation(gap, nil)); err != nil {
+		t.Fatal(err)
+	}
+	ids := sedimentIDs(t, projectID)
+	if len(ids) != 1 {
+		t.Fatalf("first gap opened %d rounds, want 1", len(ids))
+	}
+	dbfx.Exec(t, `UPDATE issue SET status = 'done' WHERE id = $1`, ids[0])
+
+	// Same gap, and a smaller one, after the round closed: held back.
+	for _, observed := range []map[string]bool{gap, allMemoryPresentExcept(projectmemory.LocationDocs)} {
+		resp, err := testHandler.observeLocalMemory(ctx, project, memoryObservation(observed, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := countSediment(t, projectID); n != 1 {
+			t.Fatalf("closed round with the same gap reopened: %d rounds", n)
+		}
+		if resp.SedimentError != nil {
+			t.Fatalf("held-back gap reported an error: %s", *resp.SedimentError)
+		}
+	}
+
+	// A new missing slot opens a fresh round.
+	syncIssueCounter(t)
+	wider := allMemoryPresentExcept(projectmemory.LocationDocs, projectmemory.LocationEvidence, projectmemory.LocationContext)
+	if _, err := testHandler.observeLocalMemory(ctx, project, memoryObservation(wider, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if n := countSediment(t, projectID); n != 2 {
+		t.Fatalf("changed gap opened %d rounds in total, want 2", n)
+	}
+}
+
+func TestProjectMemoryGapReopensAfterCooldown(t *testing.T) {
+	memoryProgressReady(t)
+	openSedimentSeat(t)
+	projectID := dbfx.Project(t, "memory gap cooldown expiry project")
+	forgetSediment(t, projectID)
+	syncIssueCounter(t)
+	project := loadTestProject(t, projectID)
+	ctx := context.Background()
+
+	gap := allMemoryPresentExcept(projectmemory.LocationDocs)
+	if _, err := testHandler.observeLocalMemory(ctx, project, memoryObservation(gap, nil)); err != nil {
+		t.Fatal(err)
+	}
+	ids := sedimentIDs(t, projectID)
+	if len(ids) != 1 {
+		t.Fatalf("first gap opened %d rounds, want 1", len(ids))
+	}
+	dbfx.Exec(t, `UPDATE issue SET status = 'done', updated_at = now() - interval '8 days' WHERE id = $1`, ids[0])
+	syncIssueCounter(t)
+	if _, err := testHandler.observeLocalMemory(ctx, project, memoryObservation(gap, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if n := countSediment(t, projectID); n != 2 {
+		t.Fatalf("gap after cooldown opened %d rounds in total, want 2", n)
+	}
+}
+
+// A worktree self-check never overwrites the local directory's observation
+// and never opens a round; the local directory itself still counts.
+func TestProjectMemoryWorktreeCheckIsNotAnObservation(t *testing.T) {
+	memoryProgressReady(t)
+	openSedimentSeat(t)
+	projectID := dbfx.Project(t, "memory worktree check project")
+	forgetSediment(t, projectID)
+	syncIssueCounter(t)
+	localDir := bindMemoryLocalDirectory(t, projectID)
+	project := loadTestProject(t, projectID)
+
+	if _, err := testHandler.observeLocalMemory(context.Background(), project,
+		memoryObservation(allMemoryPresentExcept(projectmemory.LocationDocs), nil)); err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string, observed map[string]bool) ProjectMemoryResponse {
+		results := memoryObservation(observed, nil)
+		req := withURLParam(newRequest(http.MethodPost, "/api/projects/"+projectID+"/memory/check", map[string]any{
+			"path": path, "locations": results,
+		}), "id", projectID)
+		rec := httptest.NewRecorder()
+		testHandler.PostProjectMemoryCheck(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("check code = %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp ProjectMemoryResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	resp := post("/tmp/some-agent-worktree", allMemoryPresentExcept())
+	if resp.WorktreeCheck == nil || len(resp.WorktreeCheck.Missing) != 0 || resp.WorktreeCheck.Path != "/tmp/some-agent-worktree" {
+		t.Fatalf("worktree check = %#v, want a complete self-check echoed back", resp.WorktreeCheck)
+	}
+	if len(resp.Missing) != 1 || resp.Missing[0] != projectmemory.LocationDocs || resp.Source != "local_directory" {
+		t.Fatalf("local observation = %v from %q, want docs_index still missing locally", resp.Missing, resp.Source)
+	}
+
+	resp = post(localDir+"/", allMemoryPresentExcept())
+	if resp.WorktreeCheck != nil || len(resp.Missing) != 0 {
+		t.Fatalf("local directory check = %#v missing %v, want an observation with nothing missing", resp.WorktreeCheck, resp.Missing)
+	}
+}
+
+// A slot the remote mainline already has is reported as "sync the local
+// directory", not as something to write again.
+func TestProjectMemoryBehindMainlineSaysSync(t *testing.T) {
+	memoryProgressReady(t)
+	openSedimentSeat(t)
+	projectID := dbfx.Project(t, "memory behind mainline project")
+	forgetSediment(t, projectID)
+	syncIssueCounter(t)
+	project := loadTestProject(t, projectID)
+
+	resp, err := testHandler.observeLocalMemory(context.Background(), project, memoryObservation(
+		allMemoryPresentExcept(projectmemory.LocationDocs, projectmemory.LocationEvidence),
+		map[string]string{projectmemory.LocationDocs: "origin/dev"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs ProjectMemoryLocation
+	for _, location := range resp.Locations {
+		if location.Key == projectmemory.LocationDocs {
+			docs = location
+		}
+	}
+	if docs.MainlineRef == nil || *docs.MainlineRef != "origin/dev" {
+		t.Fatalf("docs_index mainline_ref = %v, want origin/dev", docs.MainlineRef)
+	}
+	ids := sedimentIDs(t, projectID)
+	if len(ids) != 1 {
+		t.Fatalf("rounds = %d, want 1", len(ids))
+	}
+	desc := issueDescription(t, ids[0])
+	if !strings.Contains(desc, "本地目录落后，需要同步") || !strings.Contains(desc, "origin/dev 已有 docs_index") ||
+		!strings.Contains(desc, "缺少项目记忆位置：evidence_index") {
+		t.Fatalf("description does not separate behind from missing:\n%s", desc)
 	}
 }

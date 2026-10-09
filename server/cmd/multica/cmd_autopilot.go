@@ -68,6 +68,16 @@ var autopilotRunsCmd = &cobra.Command{
 	RunE:  runAutopilotRuns,
 }
 
+var autopilotLinkedChangesCmd = &cobra.Command{
+	Use:   "linked-changes <id>",
+	Short: "List writes to an autopilot made through a managed workspace link",
+	Long: `List writes to an autopilot that a linked workspace's agent made on
+someone's behalf: who started the run, from which workspace, and which agent.
+Newest first.`,
+	Args: exactArgs(1),
+	RunE: runAutopilotLinkedChanges,
+}
+
 var autopilotTriggerAddCmd = &cobra.Command{
 	Use:   "trigger-add <autopilot-id>",
 	Short: "Add a schedule or webhook trigger to an autopilot",
@@ -104,6 +114,8 @@ var autopilotTriggerRotateURLCmd = &cobra.Command{
 }
 
 func init() {
+	addLinkedFlag(autopilotListCmd, autopilotGetCmd, autopilotCreateCmd, autopilotUpdateCmd, autopilotDeleteCmd, autopilotTriggerCmd,
+		autopilotRunsCmd, autopilotLinkedChangesCmd, autopilotTriggerAddCmd, autopilotTriggerListCmd, autopilotTriggerUpdateCmd, autopilotTriggerDeleteCmd)
 	autopilotCmd.AddCommand(autopilotListCmd)
 	autopilotCmd.AddCommand(autopilotGetCmd)
 	autopilotCmd.AddCommand(autopilotCreateCmd)
@@ -111,6 +123,7 @@ func init() {
 	autopilotCmd.AddCommand(autopilotDeleteCmd)
 	autopilotCmd.AddCommand(autopilotTriggerCmd)
 	autopilotCmd.AddCommand(autopilotRunsCmd)
+	autopilotCmd.AddCommand(autopilotLinkedChangesCmd)
 	autopilotCmd.AddCommand(autopilotTriggerAddCmd)
 	autopilotCmd.AddCommand(autopilotTriggerListCmd)
 	autopilotCmd.AddCommand(autopilotTriggerUpdateCmd)
@@ -158,6 +171,8 @@ func init() {
 	autopilotRunsCmd.Flags().Int("limit", 20, "Max number of runs to return")
 	autopilotRunsCmd.Flags().Int("offset", 0, "Pagination offset")
 	autopilotRunsCmd.Flags().String("output", "table", "Output format: table or json")
+	autopilotLinkedChangesCmd.Flags().Int("limit", 50, "Max number of changes to return (up to 200)")
+	autopilotLinkedChangesCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// trigger-add — supports schedule and webhook
 	autopilotTriggerAddCmd.Flags().String("kind", "schedule", "Trigger kind: schedule or webhook")
@@ -663,6 +678,51 @@ func autopilotWriteRequestError(action string, err error) error {
 // than be reported as a successful trigger.
 func autopilotRunStarted(status string) bool {
 	return status == "issue_created" || status == "running"
+}
+
+func runAutopilotLinkedChanges(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve autopilot: %w", err)
+	}
+	path := "/api/autopilots/" + autopilotRef.ID + "/linked-changes"
+	if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
+		path += fmt.Sprintf("?limit=%d", v)
+	}
+
+	var resp struct {
+		Changes []map[string]any `json:"changes"`
+	}
+	if err := client.GetJSON(ctx, path, &resp); err != nil {
+		return fmt.Errorf("list linked changes: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, resp)
+	}
+
+	headers := []string{"AT", "CHANGE", "BY", "VIA", "AGENT"}
+	rows := make([][]string, 0, len(resp.Changes))
+	for _, c := range resp.Changes {
+		rows = append(rows, []string{
+			strVal(c, "created_at"),
+			strings.TrimPrefix(strVal(c, "route"), "autopilot."),
+			strVal(c, "actor_name"),
+			strVal(c, "via_slug"),
+			strVal(c, "agent_name"),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
 }
 
 func runAutopilotRuns(cmd *cobra.Command, args []string) error {

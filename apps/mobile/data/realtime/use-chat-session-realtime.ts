@@ -22,8 +22,12 @@
  *                                  message that must show up)
  *   - chat:session_deleted      → fire onSessionDeleted() so the screen
  *                                  can drop the active id and unwind UI
+ *   - issue:created / updated /
+ *     deleted / invalidated     → invalidate this session's ticket card
+ *                                  (DENE-1665; the payload cannot say which
+ *                                  chat opened the issue, so refetch)
  *   - reconnect                 → invalidate this session's messages +
- *                                  pendingTask
+ *                                  pendingTask + tickets
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { chatKeys } from "@/data/queries/chat";
@@ -44,7 +48,7 @@ export function useChatSessionRealtime(
   const qc = useQueryClient();
 
   useWSSubscriptions(
-    (ws) => {
+    (ws, wsId) => {
       if (!sessionId) return;
 
       const isMine = (p: { chat_session_id?: string }) =>
@@ -53,6 +57,9 @@ export function useChatSessionRealtime(
       const invalidateMine = () => {
         qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+      };
+      const invalidateTickets = () => {
+        qc.invalidateQueries({ queryKey: chatKeys.tickets(wsId, sessionId) });
       };
 
       return [
@@ -119,7 +126,16 @@ export function useChatSessionRealtime(
           if (!isMine(payload)) return;
           appendTaskMessage(qc, payload);
         }),
-        ws.onReconnect(invalidateMine),
+        // The ticket card shows its issues' status and executor; an issue
+        // event may be one of them or a new one this chat just opened.
+        ws.on("issue:created", invalidateTickets),
+        ws.on("issue:updated", invalidateTickets),
+        ws.on("issue:deleted", invalidateTickets),
+        ws.on("issue:invalidated", invalidateTickets),
+        ws.onReconnect(() => {
+          invalidateMine();
+          invalidateTickets();
+        }),
       ];
     },
     [sessionId, qc, onSessionDeleted],

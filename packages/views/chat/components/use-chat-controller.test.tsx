@@ -72,6 +72,14 @@ const h = vi.hoisted(() => {
     consumeRestoreMutate: vi.fn(),
     setProjectMutate: vi.fn(),
     removeFromCaches: vi.fn(),
+    linkedProjects: {
+      items: [],
+      options: [],
+      onChange: vi.fn(),
+      isUpdating: false,
+      draftRefs: [] as { link_id: string; project_id: string }[],
+      clearDraft: vi.fn(),
+    },
     // useQuery reads these so each test can vary the loaded data.
     sessions: [] as ChatSession[],
     agents: [] as Agent[],
@@ -144,6 +152,9 @@ vi.mock("@multica/core/chat/mutations", () => ({
     isPending: false,
   }),
   useConsumeChatDraftRestore: () => ({ mutate: h.consumeRestoreMutate }),
+}));
+vi.mock("./use-chat-linked-projects", () => ({
+  useChatLinkedProjects: () => h.linkedProjects,
 }));
 vi.mock("../../common/use-app-foreground", () => ({
   useAppForeground: () => h.appForeground.value,
@@ -394,6 +405,32 @@ describe("useChatController project context", () => {
     expect(h.createSessionMutate).toHaveBeenCalledWith(
       expect.objectContaining({ project_ids: [project.id, otherProject.id] }),
     );
+  });
+
+  it("sends the read-only linked draft with the lazy create, then clears it", async () => {
+    h.store.activeSessionId = null;
+    h.store.selectedAgentId = agentA.id;
+    h.sessions = [];
+    h.agents = [agentA];
+    const ref = { link_id: "link-1", project_id: "shared-1" };
+    h.linkedProjects.draftRefs = [ref];
+    h.linkedProjects.clearDraft.mockClear();
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      message_id: "message-1",
+      task_id: "task-1",
+      created_at: new Date(0).toISOString(),
+    } as Awaited<ReturnType<typeof api.sendChatMessage>>);
+
+    const { result } = renderHook(() => useChatController());
+    await act(async () => {
+      await result.current.handleSend("hello", undefined, vi.fn());
+    });
+    h.linkedProjects.draftRefs = [];
+
+    expect(h.createSessionMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ linked_projects: [ref] }),
+    );
+    expect(h.linkedProjects.clearDraft).toHaveBeenCalled();
   });
 
   it("does not inherit the current session projects when starting a new chat", () => {

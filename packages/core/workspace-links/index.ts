@@ -1,5 +1,6 @@
 export {
   LINKED_VIEW_REFRESH_MS,
+  linkedProjectOptionsOptions,
   linkedViewOptions,
   workspaceLinkAuditOptions,
   workspaceLinkKeys,

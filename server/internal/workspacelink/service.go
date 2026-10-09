@@ -41,6 +41,8 @@ type Service struct {
 	tx TxStarter
 	// now is swappable for tests.
 	now func() time.Time
+	// memoryLine renders a shared project's memory line (WithMemoryLine).
+	memoryLine MemoryLineFunc
 }
 
 // New builds a Service over the shared queries and pool.
@@ -59,13 +61,19 @@ type Link struct {
 	Target WorkspaceRef `json:"target"`
 	// Projects is only filled for the source side's managers; the viewer
 	// learns what is shared through View, which re-checks it.
-	Projects   []ProjectRef `json:"projects"`
-	CreatedAt  string       `json:"created_at"`
-	AcceptedAt *string      `json:"accepted_at"`
+	Projects []ProjectRef `json:"projects"`
+	// Managed: the source lets the viewer's agents manage its issues and
+	// autopilots for their run's originator (DENE-1663).
+	Managed    bool    `json:"managed"`
+	CreatedAt  string  `json:"created_at"`
+	AcceptedAt *string `json:"accepted_at"`
 }
 
 // WorkspaceRef names a workspace without exposing anything inside it.
 type WorkspaceRef struct {
+	// ID is filled on the link list only: `--linked` needs the source's id
+	// to address it.
+	ID        string  `json:"id,omitempty"`
 	Name      string  `json:"name"`
 	Slug      string  `json:"slug"`
 	AvatarURL *string `json:"avatar_url"`
@@ -91,10 +99,13 @@ type AuditEntry struct {
 }
 
 // Patch is an Update request. Exactly one field is set: the source changes
-// projects, the viewer accepts. No caller is on both sides of a link.
+// projects or switches managed access, the viewer accepts. No caller is on
+// both sides of a link.
 type Patch struct {
 	ProjectIDs *[]pgtype.UUID
 	Accept     bool
+	// Managed switches managed access (DENE-1663).
+	Managed *bool
 }
 
 // sideOf answers how ws relates to a link.
@@ -129,7 +140,9 @@ func (s *Service) load(ctx context.Context, q *db.Queries, ws, linkID pgtype.UUI
 // management list (both directions, pending ones, the source's project
 // picks). Everyone else who may read — members and agents — gets only the
 // active links their workspace views, which is what the sidebar and the
-// `workspace link list` command need to reach View. Guests get nothing.
+// `workspace link list` command need to reach View, plus — for an agent of an
+// owner or admin — the offers waiting for this workspace's answer. Guests get
+// nothing.
 func (s *Service) List(ctx context.Context, actorWS pgtype.UUID, actor Actor) ([]Link, error) {
 	rows, err := s.q.ListWorkspaceLinksForWorkspace(ctx, actorWS)
 	if err != nil {
@@ -143,17 +156,20 @@ func (s *Service) List(ctx context.Context, actorWS pgtype.UUID, actor Actor) ([
 		}
 		side := sideOf(link, actorWS)
 		manage := Decide(OpManage, side, actor)
-		if !manage && !(Decide(OpView, side, actor) && row.Status == "active") {
+		readable := Decide(OpView, side, actor) && row.Status == "active"
+		waiting := Decide(OpSeePending, side, actor) && row.Status == "pending"
+		if !manage && !readable && !waiting {
 			continue
 		}
 		out := Link{
 			ID:     util.UUIDToString(row.ID),
 			Side:   side,
 			Status: row.Status,
-			Source: WorkspaceRef{Name: row.SourceName, Slug: row.SourceSlug, AvatarURL: util.TextToPtr(row.SourceAvatarUrl)},
-			Target: WorkspaceRef{Name: row.TargetName, Slug: row.TargetSlug, AvatarURL: util.TextToPtr(row.TargetAvatarUrl)},
+			Source: WorkspaceRef{ID: util.UUIDToString(row.SourceWorkspaceID), Name: row.SourceName, Slug: row.SourceSlug, AvatarURL: util.TextToPtr(row.SourceAvatarUrl)},
+			Target: WorkspaceRef{ID: util.UUIDToString(row.TargetWorkspaceID), Name: row.TargetName, Slug: row.TargetSlug, AvatarURL: util.TextToPtr(row.TargetAvatarUrl)},
 
 			Projects:   []ProjectRef{},
+			Managed:    row.Managed,
 			CreatedAt:  util.TimestampToString(row.CreatedAt),
 			AcceptedAt: timestampPtr(row.AcceptedAt),
 		}
@@ -255,13 +271,22 @@ func (s *Service) Create(ctx context.Context, actorWS pgtype.UUID, actorUser pgt
 // Update changes the projects a link exposes (source owner) or accepts it
 // (viewer owner/admin).
 func (s *Service) Update(ctx context.Context, actorWS pgtype.UUID, actorUser pgtype.UUID, actor Actor, linkID pgtype.UUID, patch Patch) (Link, error) {
-	if (patch.ProjectIDs == nil) == !patch.Accept {
-		return Link{}, invalid("pass either a project list or accept, not both or neither")
+	set := 0
+	for _, on := range []bool{patch.ProjectIDs != nil, patch.Accept, patch.Managed != nil} {
+		if on {
+			set++
+		}
+	}
+	if set != 1 {
+		return Link{}, invalid("pass exactly one of a project list, accept or managed")
 	}
 	err := s.inTx(ctx, func(q *db.Queries) error {
 		link, side, err := s.load(ctx, q, actorWS, linkID)
 		if err != nil {
 			return err
+		}
+		if patch.Managed != nil {
+			return s.setManaged(ctx, q, link, side, actorWS, actorUser, actor, *patch.Managed)
 		}
 		if patch.Accept {
 			if !Decide(OpAccept, side, actor) {

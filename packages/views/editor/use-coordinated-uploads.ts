@@ -56,6 +56,7 @@ import {
   type UploadResult,
 } from "@multica/core/hooks/use-file-upload";
 import { MAX_FILE_SIZE } from "@multica/core/constants/upload";
+import { UnreadableFileError } from "@multica/core/attachments";
 import { useT } from "../i18n";
 import type { UploadGate } from "./use-upload-gate";
 import type { ContentEditorRef } from "./content-editor";
@@ -446,7 +447,10 @@ export function useCoordinatedUploads(
               }
               resolve(toUploadResult(outcome.attachment));
             } else {
-              const reason = outcome.error.message;
+              const reason =
+                outcome.error instanceof UnreadableFileError
+                  ? t(($) => $.upload.unreadable)
+                  : outcome.error.message;
               // A failure leaves NOTHING behind. The toast below has already
               // said it, at the moment it happened, and the file is still on
               // disk — a chip adds no information and cannot retry (the bytes

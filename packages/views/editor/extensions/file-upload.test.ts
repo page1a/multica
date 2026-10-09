@@ -13,6 +13,7 @@ import {
   settleUploadNode,
   pastedTextSource,
   PASTED_TEXT_FILENAME,
+  recoverUnreadablePaste,
 } from "./file-upload";
 
 const BLOB_URL = "blob:test-image";
@@ -415,6 +416,24 @@ describe("paste-as-file", () => {
     );
   });
 
+  it("uploads the clipboard's image when the pasted file cannot be read", async () => {
+    const image = new Blob(["png-bytes"], { type: "image/png" });
+    stubClipboard({
+      read: async () => [{ types: ["image/png"], getType: async () => image }],
+    });
+    const handler = vi.fn(async (_file: File) => null);
+    const editor = makePasteEditor({ handler });
+
+    expect(paste(editor, { files: [unreadableFile("telegram-cloud-photo.jpg")] })).toBe(true);
+
+    await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+    const file = handler.mock.calls[0]![0];
+    expect(file.name).toBe("telegram-cloud-photo.png");
+    expect(file.type).toBe("image/png");
+    await expect(file.text()).resolves.toBe("png-bytes");
+    restoreClipboard();
+  });
+
   it("leaves a paste at or below the threshold as ordinary text", () => {
     const handler = vi.fn(async () => null);
     const editor = makePasteEditor({ handler, threshold: THRESHOLD });
@@ -521,5 +540,50 @@ describe("paste-as-file", () => {
     // Opening a fence IS the request to show the thing inline.
     expect(paste(editor, { text: "x".repeat(THRESHOLD + 1) })).toBe(false);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+/** Replace only `navigator.clipboard`; the editor still reads the rest of navigator. */
+function stubClipboard(clipboard: { read: (...args: unknown[]) => unknown }) {
+  Object.defineProperty(navigator, "clipboard", { value: clipboard, configurable: true });
+}
+
+function restoreClipboard() {
+  delete (navigator as { clipboard?: unknown }).clipboard;
+}
+
+/** A pasted Telegram photo: a name and a size, but every read rejects. */
+function unreadableFile(name: string): File {
+  const file = new File(["jpeg"], name, { type: "image/jpeg" });
+  vi.spyOn(file, "slice").mockReturnValue({
+    arrayBuffer: () => Promise.reject(new DOMException("unreadable", "NotReadableError")),
+  } as unknown as Blob);
+  return file;
+}
+
+describe("recoverUnreadablePaste", () => {
+  afterEach(() => restoreClipboard());
+
+  it("keeps a readable file without touching the clipboard", async () => {
+    const read = vi.fn();
+    stubClipboard({ read });
+    const file = new File(["ok"], "photo.png", { type: "image/png" });
+
+    await expect(recoverUnreadablePaste(file)).resolves.toBe(file);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("returns the original when the clipboard cannot be read", async () => {
+    stubClipboard({ read: () => Promise.reject(new DOMException("denied", "NotAllowedError")) });
+    const file = unreadableFile("photo.jpg");
+
+    await expect(recoverUnreadablePaste(file)).resolves.toBe(file);
+  });
+
+  it("returns the original when the clipboard holds no image", async () => {
+    stubClipboard({ read: async () => [{ types: ["text/plain"], getType: vi.fn() }] });
+    const file = unreadableFile("photo.jpg");
+
+    await expect(recoverUnreadablePaste(file)).resolves.toBe(file);
   });
 });

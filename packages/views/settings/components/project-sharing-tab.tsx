@@ -3,9 +3,13 @@
 import { useMemo, useState } from "react";
 import { FolderKanban, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@multica/core/api";
-import { projectKeys, projectListOptions } from "@multica/core/projects";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { projectListOptions, projectMembersOptions } from "@multica/core/projects";
+import {
+  projectVisibilityPreviewOptions,
+  sharingAccessOptions,
+  useSetProjectVisibility,
+} from "@multica/core/visibility";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useCurrentMember } from "@multica/core/permissions";
 import { useCurrentWorkspace } from "@multica/core/paths";
@@ -22,42 +26,32 @@ type Visibility = "private" | "project" | "workspace";
 
 export function ProjectSharingTab() {
   const { t } = useT("settings");
+  const { t: tc } = useT("common");
   const workspace = useCurrentWorkspace();
   const wsId = workspace?.id ?? "";
-  const { role, userId, isLoading: memberLoading } = useCurrentMember(wsId);
+  const { role, isLoading: memberLoading } = useCurrentMember(wsId);
   const { data: projects = [], isLoading } = useQuery({ ...projectListOptions(wsId), enabled: !!wsId });
   const { data: members = [] } = useQuery({ ...memberListOptions(wsId), enabled: !!wsId });
   const memberQueries = useQueries({
-    queries: projects.map((project) => ({
-      queryKey: [...projectKeys.detail(wsId, project.id), "members"],
-      queryFn: () => api.listProjectMembers(project.id),
-      enabled: !!wsId,
-    })),
+    queries: projects.map((project) => ({ ...projectMembersOptions(wsId, project.id), enabled: !!wsId })),
   });
   const previews = useQueries({
-    queries: projects.map((project) => ({
-      queryKey: [...projectKeys.detail(wsId, project.id), "visibility-preview"],
-      queryFn: () => api.previewProjectVisibility(project.id),
-      enabled: !!wsId,
-    })),
+    queries: projects.map((project) => projectVisibilityPreviewOptions(project.id, !!wsId)),
   });
-  const qc = useQueryClient();
+  // Who may change each project's scope is the server's answer, not a client copy of its rule.
+  const accessQueries = useQueries({
+    queries: projects.map((project) => sharingAccessOptions(wsId, "project", project.id, !!wsId)),
+  });
   const [pending, setPending] = useState<{ id: string; title: string; visibility: Visibility } | null>(null);
   const [pickingFor, setPickingFor] = useState<{ id: string; title: string; visibility: Visibility; initialScope?: Visibility } | null>(null);
-  const mutation = useMutation({
-    mutationFn: ({ id, visibility }: { id: string; visibility: Visibility }) => api.setProjectVisibility(id, visibility),
-    onSuccess: (_result, vars) => {
-      qc.invalidateQueries({ queryKey: projectKeys.list(wsId) });
-      qc.invalidateQueries({ queryKey: [...projectKeys.detail(wsId, vars.id), "visibility-preview"] });
-      setPending(null);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error && error.message ? error.message : t(($) => $.project_sharing.save_failed));
-    },
-  });
-  const canManageProject = (project: (typeof projects)[number]) =>
-    role === "owner" || role === "admin" ||
-    (role === "member" && project.created_by === userId);
+  const mutation = useSetProjectVisibility(wsId);
+  const apply = (id: string, visibility: Visibility) =>
+    mutation.mutate({ projectId: id, visibility }, {
+      onSuccess: () => setPending(null),
+      onError: (error) => {
+        toast.error(error instanceof Error && error.message ? error.message : t(($) => $.project_sharing.save_failed));
+      },
+    });
 
   const labels = useMemo(() => ({
     private: t(($) => $.project_sharing.visibility_private),
@@ -82,7 +76,8 @@ export function ProjectSharingTab() {
               members.some((member) => member.user_id === projectMember.member_id && member.role === "guest"),
             ).length;
             const visibility = (project.visibility ?? "private") as Visibility;
-            const canManage = canManageProject(project);
+            const access = accessQueries[index]?.data;
+            const canManage = access?.can_change === true;
             return (
               <Card key={project.id} data-testid="project-sharing-row">
                 <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -96,6 +91,9 @@ export function ProjectSharingTab() {
                         {projectMembers.length === 0 ? <>{t(($) => $.project_sharing.no_members)} </> : null}
                         {canManage ? <button type="button" className="underline" onClick={() => setPickingFor({ id: project.id, title: project.title, visibility })}>{t(($) => $.project_sharing.manage_members)}</button> : null}
                       </p>
+                    ) : null}
+                    {access?.can_change === false && access.reason === "not_creator" ? (
+                      <p className="mt-2 text-caption text-muted-foreground">{tc(($) => $.share_guide.cannot_change_not_creator.project)}</p>
                     ) : null}
                   </div>
                   <select aria-label={t(($) => $.project_sharing.change_for, { name: project.title })} className="h-9 rounded-md border border-input bg-background px-3 text-body" value={visibility} disabled={!canManage || mutation.isPending} onChange={(event) => {
@@ -127,7 +125,7 @@ export function ProjectSharingTab() {
           <AlertDialogHeader><AlertDialogTitle>{t(($) => $.project_sharing.confirm_title, { name: pending?.title ?? "" })}</AlertDialogTitle><AlertDialogDescription>
             {pendingPreview?.isError ? t(($) => $.project_sharing.preview_failed) : !pendingPreview?.data ? t(($) => $.project_sharing.preview_loading) : t(($) => $.project_sharing.confirm_description, { count: pendingPreview.data.affected_count, privateCount: pendingPreview.data.previously_private_count, visibility: pending ? labels[pending.visibility] : "" })}
           </AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={mutation.isPending}>{t(($) => $.project_sharing.cancel)}</AlertDialogCancel><AlertDialogAction disabled={mutation.isPending || !pendingPreview?.data || pendingPreview.isError} onClick={() => pending && mutation.mutate({ id: pending.id, visibility: pending.visibility })}>{mutation.isPending ? t(($) => $.project_sharing.saving) : t(($) => $.project_sharing.confirm)}</AlertDialogAction></AlertDialogFooter>
+          <AlertDialogFooter><AlertDialogCancel disabled={mutation.isPending}>{t(($) => $.project_sharing.cancel)}</AlertDialogCancel><AlertDialogAction disabled={mutation.isPending || !pendingPreview?.data || pendingPreview.isError} onClick={() => pending && apply(pending.id, pending.visibility)}>{mutation.isPending ? t(($) => $.project_sharing.saving) : t(($) => $.project_sharing.confirm)}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </SettingsTab>

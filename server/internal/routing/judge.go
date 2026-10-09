@@ -104,6 +104,9 @@ type JudgeState struct {
 	// Stuck is the analysis model's summary of where a blocked ticket is
 	// stuck. Blocked row only.
 	Stuck string `json:"stuck,omitempty"`
+	// RuleTier is the tier the rule table already chose (DENE-1677). The
+	// judge may only raise it by one rung; any other answer is ignored.
+	RuleTier string `json:"rule_tier,omitempty"`
 	// EscalationReason is the executor's own account of why the work is too
 	// hard for its seat (DENE-1033). Escalation row only.
 	EscalationReason string `json:"escalation_reason,omitempty"`
@@ -206,11 +209,13 @@ Answer three things and nothing else:
 2. reviewer: whether this ticket needs a separate acceptance pass — "seat" (an agent checks it), "human" (acceptance needs a conversation with a person, e.g. product judgement, money, irreversible or outward-facing effects), or "none" (small, self-evident work).
 3. reviewer_tier: when reviewer is "seat", which tier checks it. Choose from candidate_tiers exactly.
 
+When the payload carries rule_tier, the platform's rule table has already chosen that executor tier and the choice stands: answer rule_tier to keep it, or the tier one rung above it when the ticket needs more than the rule saw, and say why in reason. A weaker tier is ignored, and so is a raise without a reason.
+
 Large or vague tickets default to needing review. When the payload carries facts, decide from them: they are a reading of the whole ticket. Report calibrated confidence in [0,1] separately for the executor choice and the reviewer choice; below-threshold answers are discarded rather than used, so do not inflate them.
 
 Respond with a JSON object with keys: executor_tier, executor_confidence, reviewer, reviewer_tier, reviewer_confidence, reason. reason is one short sentence for a human reader.
 
-Follow policy_prompt in the user payload when choosing executor_tier and reviewer_tier. That text is the preference. Checking the work is not a reason to pick a higher tier than doing it. You still only return the JSON object above: you do not change status, assignee, or any other ticket field, and you do not take an action. A fact marked unknown is missing: do not treat it as zero, available, or exhausted.`
+Follow policy_prompt in the user payload when choosing executor_tier, reviewer and reviewer_tier. That text is the preference. Checking the work is not a reason to pick a higher tier than doing it. You still only return the JSON object above: you do not change status, assignee, or any other ticket field, and you do not take an action. A fact marked unknown is missing: do not treat it as zero, available, or exhausted.`
 
 const unblockSystemPrompt = `A work ticket is blocked. Say only what is likely wrong.
 

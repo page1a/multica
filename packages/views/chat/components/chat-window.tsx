@@ -78,6 +78,7 @@ import { ChatAccessDialog } from "./chat-access-dialog";
 import { ChatVisibilityNotice } from "./chat-visibility-notice";
 import { ChatProjectNudge } from "./chat-project-nudge";
 import { ChatInput } from "./chat-input";
+import { useChatLinkedProjects } from "./use-chat-linked-projects";
 import { ChatQueue } from "./chat-queue";
 import { EmptyState } from "./chat-empty-state";
 import { SessionRenameInput } from "./session-rename-input";
@@ -233,6 +234,7 @@ export function ChatWindow() {
     ? sessions.find((s) => s.id === activeSessionId)
     : null;
   const isSessionArchived = currentSession?.status === "archived";
+  const linkedProjects = useChatLinkedProjects(currentSession);
   // Mirrors useChatController's derivation — see the notes there.
   const candidateProjectIds = useMemo(
     () => (currentSession ? chatSessionProjectIds(currentSession) : selectedProjectIds),
@@ -459,7 +461,9 @@ export function ChatWindow() {
             agent_id: activeAgent.id,
             title: titleSeed.slice(0, 50),
             project_ids: activeProjectIds,
+            linked_projects: linkedProjects.draftRefs,
           });
+          linkedProjects.clearDraft();
           return session.id;
         } finally {
           sessionPromiseRef.current = null;
@@ -472,6 +476,7 @@ export function ChatWindow() {
       activeSessionId,
       activeAgent,
       activeProjectIds,
+      linkedProjects,
       createSession,
       sessions,
       sessionsLoaded,
@@ -1023,6 +1028,7 @@ export function ChatWindow() {
         <ChatMessageList
           key={activeSessionId}
           messages={messages}
+          sessionId={activeSessionId ?? undefined}
           pendingTask={pendingTask}
           availability={availability}
           firstItemIndex={firstItemIndex}
@@ -1136,9 +1142,14 @@ export function ChatWindow() {
         projectIds={activeProjectIds}
         currentProjectId={routeProjectId}
         onProjectsChange={handleProjectsChange}
+        linkedProjects={linkedProjects.items}
+        linkedProjectOptions={linkedProjects.options}
+        onLinkedProjectsChange={linkedProjects.onChange}
         projectContextUnsupported={projectContextSupport === false}
         isProjectUpdating={
-          setSessionProjects.isPending || (!!activeSessionId && !currentSession)
+          setSessionProjects.isPending ||
+          linkedProjects.isUpdating ||
+          (!!activeSessionId && !currentSession)
         }
         leftAdornment={
           <AgentDropdown

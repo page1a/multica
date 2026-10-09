@@ -1,0 +1,37 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1681 项目记忆：沉淀与回流监控</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#222}h1{font-size:18px}h2{font-size:15px;margin-top:28px}
+.row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}figure{margin:0}img{max-width:100%;border:1px solid #ddd;border-radius:6px}
+figcaption{color:#777;font-size:12px}pre{background:#f6f6f6;padding:12px;overflow-x:auto;font-size:12px}</style>
+<h1>项目记忆卡片 · 沉淀与回流</h1>
+<p>近 14 天的沉淀（含删除行数）、收口没沉淀、沉淀轮次与空转、聊天派单回流；每行点回来源票或聊天。截图来自本地真实页面，数据为示例。</p>
+<h2>四档宽度（卡片）</h2><div class="row"><figure><img src="card-375.png" style="width:300px"><figcaption>375px</figcaption></figure><figure><img src="card-390.png" style="width:300px"><figcaption>390px</figcaption></figure><figure><img src="card-768.png" style="width:360px"><figcaption>768px</figcaption></figure><figure><img src="card-1280.png" style="width:360px"><figcaption>1280px</figcaption></figure></div>
+<h2>手机 390px</h2><div class="row"><figure><img src="page-390.png" style="width:300px"><figcaption>右侧面板打开</figcaption></figure><figure><img src="sheet-bottom-390.png" style="width:300px"><figcaption>滚到底</figcaption></figure><figure><img src="sheet-closed-390.png" style="width:300px"><figcaption>按 Esc 关闭</figcaption></figure></div>
+<h2>桌面 1280px</h2><img src="page-1280.png" style="width:100%;max-width:1280px">
+<h2>点回来源</h2><div class="row"><figure><img src="click-unsettled-1280.png" style="width:600px"><figcaption>收口没沉淀 → DENE-1703</figcaption></figure><figure><img src="click-chat-1280.png" style="width:600px"><figcaption>聊天回流 → 回执贯通方案</figcaption></figure></div>
+<h2>CLI：multica project memory monitor --output table</h2><pre>Last 14 days (since 2026-09-24T16:22:56Z)
+
+Writes (3):
+  2026-10-08T09:14:40-05:00  worker  DENE-1701  agents:supersede「旧派单规则」  superseded: 旧派单规则  deleted lines: 4
+  2026-10-07T11:14:40-05:00  boss    DENE-1702  context:update「沉淀轮次」
+  2026-10-05T11:14:40-05:00  worker  chat 路由规则整理  adr
+
+Finished without sediment (4):
+  2026-10-08T06:14:40-05:00  none       DENE-1703 修复看板拖拽偏移
+  2026-10-08T11:14:40-05:00  unaudited  DENE-1707 状态卡回执汇总
+  2026-10-07T11:14:40-05:00  unaudited  DENE-1708 来源聊天显示子任务回执
+  2026-10-06T11:14:40-05:00  unaudited  DENE-1704 CLI 输出加 --output json
+
+Sediment rounds: 2 opened, 1 open, 1 idle
+  DENE-1706  worker  in_progress  沉淀第 4 轮
+  DENE-1705  worker  done (idle)  沉淀第 3 轮
+
+Chat receipts (2 chats):
+  abbe1f99-9ec5-454c-8f14-e6fb063dfebe 回执贯通方案: 3 dispatched, 1 reported, 1 no conclusion, 1 open
+    DENE-1709  open           in_progress  回执失败重试
+    DENE-1707  reported       done         状态卡回执汇总
+    DENE-1708  no_conclusion  done         来源聊天显示子任务回执
+  7d52ba1d-5639-454b-8ab3-9ed48b579c4b 路由规则整理: 1 dispatched, 1 reported, 0 no conclusion, 0 open
+    DENE-1710  reported       in_review    路由兜底标签
+</pre>
+</html>

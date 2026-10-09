@@ -197,5 +197,26 @@
     "fallback": "排队消息",
     "action_failed_toast": "无法更新排队消息",
     "steering": "插话中"
+  },
+  "tickets": {
+    "heading_other": "开了 {{count}} 张单",
+    "to": "给 {{name}}",
+    "routing": "等路由派人",
+    "actions": "{{id}} 的操作",
+    "assign_me": "改给我",
+    "assign_agent": "改给智能体",
+    "withdraw": "撤回",
+    "failed": "{{id}} 没改成"
+  },
+  "progress": {
+    "bar_other": "本聊天 {{count}} 张单",
+    "bar_fresh_other": "本聊天 {{count}} 张单 · 刚变 {{fresh}}",
+    "waiting_you": "等你 {{count}}",
+    "in_progress": "在做 {{count}}",
+    "done": "做完 {{count}}",
+    "title": "本聊天开的单",
+    "just_changed": "刚变",
+    "opened": "新开 · {{to}}",
+    "needs_you": "要你处理"
   }
 }

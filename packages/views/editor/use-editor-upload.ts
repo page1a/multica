@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
+import { UnreadableFileError } from "@multica/core/attachments";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { useT } from "../i18n";
 
@@ -22,9 +23,9 @@ function useEditorUpload() {
   const { t } = useT("editor");
   const onError = useCallback(
     (error: Error, file: File) => {
-      toast.error(
-        t(($) => $.upload.failed, { filename: file.name, reason: error.message }),
-      );
+      const reason =
+        error instanceof UnreadableFileError ? t(($) => $.upload.unreadable) : error.message;
+      toast.error(t(($) => $.upload.failed, { filename: file.name, reason }));
     },
     [t],
   );

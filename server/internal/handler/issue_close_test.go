@@ -890,7 +890,9 @@ func TestCloseKnowledgeChangeIsStored(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	want := `{"changes":[{"location":"agents","summary":"补了开张种子"}]}`
+	// No delivered_files: a close from an older CLI or the web keeps the
+	// audit but marks it unverified (DENE-1661).
+	want := `{"changes":[{"location":"agents","summary":"补了开张种子"}],"unverified":true}`
 	if got := issueMetaString(t, issue.ID, closeprotocol.KeyKnowledgeAudit); got != want {
 		t.Fatalf("close.knowledge_audit = %q", got)
 	}
@@ -945,12 +947,25 @@ func TestCloseBacklogAndTodoReturnWithACloseRecord(t *testing.T) {
 			issue := createIssueHTTP(t, "close "+outcome, "in_progress")
 			taskID := insertIssueTaskWithStatus(t, agentID, issue.ID, "running")
 
-			w := closeIssueHTTP(t, issue.ID, agentID, taskID, map[string]any{
+			body := map[string]any{
 				"outcome":  outcome,
 				"evidence": "这轮先不动，需求还没定；等排期再拉起来。",
-			})
+			}
+			if outcome == "backlog" {
+				// DENE-1638: an agent's backlog names what it waits for.
+				if w := closeIssueHTTP(t, issue.ID, agentID, taskID, body); w.Code != http.StatusBadRequest {
+					t.Fatalf("backlog without waiting_for: status = %d, want 400: %s", w.Code, w.Body.String())
+				}
+				body["waiting_for"] = "等排期"
+			}
+			w := closeIssueHTTP(t, issue.ID, agentID, taskID, body)
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+			if outcome == "backlog" {
+				if got := issueMetaString(t, issue.ID, metaKeyBacklogWaitingFor); got != "等排期" {
+					t.Fatalf("backlog.waiting_for = %q, want 等排期", got)
+				}
 			}
 			var resp CloseIssueResponse
 			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {

@@ -18,6 +18,8 @@ import type {
   ChatMessage,
   ChatPendingTask,
   ChatSession,
+  ChatTicket,
+  ChatTicketsResponse,
   Comment,
   InboxItem,
   InboxWorkspaceUnread,
@@ -316,6 +318,36 @@ export const ChatMessageSchema: z.ZodType<ChatMessage> = z.object({
 export const ChatMessageListSchema = z.array(ChatMessageSchema).default([]);
 
 export const EMPTY_CHAT_MESSAGE_LIST: ChatMessage[] = [];
+
+// The issues a chat opened (DENE-1665). An unknown assignee_type downgrades
+// to "unassigned" instead of failing the whole card.
+export const ChatTicketSchema: z.ZodType<ChatTicket> = z.object({
+  id: z.string(),
+  identifier: z.string().default(""),
+  title: z.string().default(""),
+  status: z.string().default("todo"),
+  priority: z.string().default("none"),
+  assignee_type: z.enum(["member", "agent", "squad"]).nullable().catch(null).default(null),
+  assignee_id: z.string().nullable().default(null),
+  assignee_name: z.string().optional(),
+  goal: z.string().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  from_status: z.string().optional(),
+  changed_at: z.string().default(""),
+  phase: z.enum(["done", "in_progress", "waiting_you"]).catch("in_progress").default("in_progress"),
+  needs_you: z.boolean().default(false),
+}).loose();
+
+export const ChatTicketsResponseSchema: z.ZodType<ChatTicketsResponse> = z.object({
+  chat_session_id: z.string().default(""),
+  tickets: z.array(ChatTicketSchema).default([]),
+}).loose();
+
+export const EMPTY_CHAT_TICKETS_RESPONSE: ChatTicketsResponse = {
+  chat_session_id: "",
+  tickets: [],
+};
 
 const ChatQueuedTaskSchema = z.object({
   task_id: z.string(),

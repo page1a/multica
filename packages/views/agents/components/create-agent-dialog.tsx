@@ -216,10 +216,10 @@ export function CreateAgentDialog({
       });
       if (wsId) {
         queryClient.invalidateQueries({
-          queryKey: [...workspaceKeys.squads(wsId), squadId, "members"],
+          queryKey: workspaceKeys.squadMembers(wsId, squadId),
         });
         queryClient.invalidateQueries({
-          queryKey: [...workspaceKeys.squads(wsId), squadId],
+          queryKey: workspaceKeys.squad(wsId, squadId),
         });
       }
     } catch (err) {

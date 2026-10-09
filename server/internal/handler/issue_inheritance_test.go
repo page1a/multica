@@ -43,6 +43,10 @@ func createAgentIssueForInheritanceTest(t *testing.T, fx issueCreateInheritanceF
 		fields = map[string]any{}
 	}
 	fields["title"] = title
+	if _, ok := fields["description"]; !ok {
+		// A chat run's issue must carry 目标/验收 (DENE-1665).
+		fields["description"] = "## 目标\n" + title + "\n\n## 验收\n- created"
+	}
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, fields)
 	req.Header.Set("X-Agent-ID", fx.agentID)

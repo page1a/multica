@@ -40,6 +40,9 @@ type SeatState struct {
 	NoRuntime bool
 	// DispatchMode is the stored mode; empty reads as auto.
 	DispatchMode string
+	// Projects limits automatic dispatch to tickets in these project ids
+	// (DENE-1648). Empty serves every project.
+	Projects []string
 }
 
 // SelectContext is what the calling path knows on top of the record.
@@ -54,16 +57,24 @@ type SelectContext struct {
 	Availability string
 	// BreakerOpen is an open quota breaker on the seat.
 	BreakerOpen bool
+	// ProjectID is the ticket's project. A seat limited to projects is
+	// selectable only for a ticket in one of them, so a path that does not
+	// say which ticket it picks for never picks a limited seat.
+	ProjectID string
+	// AnyProject skips the project check, for a roster shared across
+	// tickets that applies ServesProject per ticket itself.
+	AnyProject bool
 }
 
 // Reasons SeatSelectable gives for a seat it refuses.
 const (
-	ReasonArchived    = "archived"
-	ReasonDisabled    = "disabled"
-	ReasonMentionOnly = "mention_only"
-	ReasonNoRuntime   = "no_runtime"
-	ReasonUntiered    = "untiered"
-	ReasonBreakerOpen = "breaker_open"
+	ReasonArchived     = "archived"
+	ReasonDisabled     = "disabled"
+	ReasonMentionOnly  = "mention_only"
+	ReasonNoRuntime    = "no_runtime"
+	ReasonUntiered     = "untiered"
+	ReasonBreakerOpen  = "breaker_open"
+	ReasonOutOfProject = "out_of_project"
 )
 
 // SeatSelectable is the one answer to "may automatic dispatch pick this seat
@@ -83,6 +94,8 @@ func SeatSelectable(s SeatState, c SelectContext) (bool, string) {
 		return false, ReasonMentionOnly
 	case s.NoRuntime:
 		return false, ReasonNoRuntime
+	case !c.AnyProject && !ServesProject(s.Projects, c.ProjectID):
+		return false, ReasonOutOfProject
 	case c.NeedTier && strings.TrimSpace(c.Tier) == "":
 		return false, ReasonUntiered
 	case c.BreakerOpen:
@@ -100,8 +113,40 @@ func isMentionOnly(mode string) bool {
 	return key == DispatchMentionOnly
 }
 
-// autoPickable is SeatSelectable for a roster seat on the routing paths.
+// ServesProject reports whether a seat limited to projects may be picked
+// automatically for a ticket in projectID. An unlimited seat serves every
+// project; a limited one never serves a ticket outside a project.
+func ServesProject(projects []string, projectID string) bool {
+	if len(projects) == 0 {
+		return true
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return false
+	}
+	for _, p := range projects {
+		if strings.EqualFold(strings.TrimSpace(p), projectID) {
+			return true
+		}
+	}
+	return false
+}
+
+// autoPickable is SeatSelectable for a roster seat on the routing paths. The
+// project is the one ForProject stamped on the roster.
 func (a Agent) autoPickable() bool {
-	ok, _ := SeatSelectable(a.State, SelectContext{})
+	ok, _ := SeatSelectable(a.State, SelectContext{ProjectID: a.project})
 	return ok
+}
+
+// ForProject returns the roster as seen from a ticket in projectID: a seat
+// limited to other projects stays on it, so it can still be found as a
+// holder, but the candidate builders drop it (DENE-1648).
+func ForProject(roster map[string]Agent, projectID string) map[string]Agent {
+	out := make(map[string]Agent, len(roster))
+	for name, a := range roster {
+		a.project = projectID
+		out[name] = a
+	}
+	return out
 }

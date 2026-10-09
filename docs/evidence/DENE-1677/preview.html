@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DENE-1677 定档规则 预览</title>
+<style>
+body{font:14px/1.5 -apple-system,"PingFang SC",sans-serif;background:#fafafa;color:#18181b;margin:24px}
+h2{font-size:14px;margin:28px 0 8px;color:#71717a;font-weight:500}
+.card{background:#fff;border:1px solid #e4e4e7;border-radius:10px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 16px;border-top:1px solid #e4e4e7;min-height:36px}
+.row:first-child{border-top:0}
+.l{min-width:0;flex:1}.name{font-weight:500}.hint{color:#71717a;font-size:13px}
+.v{white-space:nowrap;color:#71717a;flex:none;max-width:56%}
+.sec{margin:0 2px 8px}.t{font-weight:600}
+.cm{padding:12px 16px}.cm ul{padding-left:18px;margin:4px 0}.cm p{margin:6px 0}
+.desk{max-width:760px}.phone{width:390px;box-sizing:border-box;padding:0 16px;border:1px dashed #d4d4d8;padding-top:12px;padding-bottom:12px}
+.phone .row{gap:8px}
+@media (max-width:500px){body{margin:0 0 24px}h2{margin-left:16px}.desk,.dk{display:none}.phone{width:auto;border:0}}
+</style></head><body>
+<h2 class="dk">桌面 · 设置 → 路由</h2>
+<div class="desk"><p class="hint">两个都开：规则表定档，判断模型最多再抬一档，不能降档。</p><div class="sec"><div class="t">定档规则</div><div class="hint">分析模型答题后，从上往下第一条对上的规则定档。</div></div><div class="card"><div class="row"><div class="l"><div class="name">出错代价高</div><div class="hint">出错代价：高</div></div><div class="v">强档，要验收</div></div><div class="row"><div class="l"><div class="name">跨模块</div><div class="hint">改动范围：跨模块</div></div><div class="v">强档，要验收</div></div><div class="row"><div class="l"><div class="name">需求模糊</div><div class="hint">需求：模糊</div></div><div class="v">强档，要验收</div></div><div class="row"><div class="l"><div class="name">有一题答不出</div><div class="hint">任一题答不出</div></div><div class="v">中档，要验收</div></div><div class="row"><div class="l"><div class="name">小改动、需求清楚、代价低</div><div class="hint">改动范围：小 · 需求：清楚 · 出错代价：低</div></div><div class="v">弱档，不验收</div></div><div class="row"><div class="l"><div class="name">其余</div><div class="hint">以上都没对上</div></div><div class="v">中档，不验收</div></div></div></div>
+<h2 class="dk">桌面 · 任务上的自动选派评论</h2>
+<div class="desk"><div class="card cm"><b>自动选派</b>
+<p><b>为什么是他</b>：档位 —— 规则表定的强档</p>
+<ul><li><b>执行席</b>：孙悟空（强档，规则表第 6 行定中档，判断模型上调一档）→ 已派出</li>
+<li><b>验收席</b>：本票不需要验收（规则表第 6 行；执行人验证后自己合并关单）</li>
+<li><b>答题</b>：分析模型<ul><li>改动范围：单模块（答 2）</li><li>需求：清楚（答 1）</li><li>出错代价：中（答 2）</li><li>要人拍板：否（答 1）</li></ul></li>
+<li><b>规则</b>：第 6 行「其余」→ 中档，不需要验收</li>
+<li><b>判断模型</b>：上调一档到强档（置信度 90%）：要动服务端和前端两处</li></ul></div></div>
+<h2>手机 390px · 设置 → 路由</h2>
+<div class="phone"><p class="hint">两个都开：规则表定档，判断模型最多再抬一档，不能降档。</p><div class="sec"><div class="t">定档规则</div><div class="hint">分析模型答题后，从上往下第一条对上的规则定档。</div></div><div class="card"><div class="row"><div class="l"><div class="name">出错代价高</div><div class="hint">出错代价：高</div></div><div class="v">强档，要验收</div></div><div class="row"><div class="l"><div class="name">跨模块</div><div class="hint">改动范围：跨模块</div></div><div class="v">强档，要验收</div></div><div class="row"><div class="l"><div class="name">需求模糊</div><div class="hint">需求：模糊</div></div><div class="v">强档，要验收</div></div><div class="row"><div class="l"><div class="name">有一题答不出</div><div class="hint">任一题答不出</div></div><div class="v">中档，要验收</div></div><div class="row"><div class="l"><div class="name">小改动、需求清楚、代价低</div><div class="hint">改动范围：小 · 需求：清楚 · 出错代价：低</div></div><div class="v">弱档，不验收</div></div><div class="row"><div class="l"><div class="name">其余</div><div class="hint">以上都没对上</div></div><div class="v">中档，不验收</div></div></div></div>
+<h2>手机 390px · 自动选派评论</h2>
+<div class="phone"><div class="card cm"><b>自动选派</b>
+<p><b>为什么是他</b>：档位 —— 规则表定的强档</p>
+<ul><li><b>执行席</b>：孙悟空（强档，规则表第 6 行定中档，判断模型上调一档）→ 已派出</li>
+<li><b>验收席</b>：本票不需要验收（规则表第 6 行；执行人验证后自己合并关单）</li>
+<li><b>答题</b>：分析模型<ul><li>改动范围：单模块（答 2）</li><li>需求：清楚（答 1）</li><li>出错代价：中（答 2）</li><li>要人拍板：否（答 1）</li></ul></li>
+<li><b>规则</b>：第 6 行「其余」→ 中档，不需要验收</li>
+<li><b>判断模型</b>：上调一档到强档（置信度 90%）：要动服务端和前端两处</li></ul></div></div>
+</body></html>

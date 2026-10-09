@@ -79,11 +79,16 @@ export type CloseProtocolView = {
   knowledgeAudit: CloseKnowledgeAudit | null;
 };
 
-export type CloseKnowledgeChange = { location: string; summary: string };
+export type CloseKnowledgeChange = {
+  location: string;
+  summary: string;
+  /** Delivered files that wrote the slot; empty on older closes (DENE-1661). */
+  files: string[];
+};
 
 export type CloseKnowledgeAudit =
   | { none: true }
-  | { none: false; changes: CloseKnowledgeChange[] };
+  | { none: false; changes: CloseKnowledgeChange[]; unverified: boolean };
 
 function metaString(
   metadata: IssueMetadata | null | undefined,
@@ -101,7 +106,7 @@ function metaString(
 function readKnowledgeAudit(raw: string | null): CloseKnowledgeAudit | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { none?: unknown; changes?: unknown };
+    const parsed = JSON.parse(raw) as { none?: unknown; changes?: unknown; unverified?: unknown };
     if (parsed.none === true) return { none: true };
     if (!Array.isArray(parsed.changes)) return null;
     const changes: CloseKnowledgeChange[] = [];
@@ -111,10 +116,14 @@ function readKnowledgeAudit(raw: string | null): CloseKnowledgeAudit | null {
       const summary = (item as { summary?: unknown }).summary;
       if (typeof location !== "string" || typeof summary !== "string") continue;
       if (location.trim() === "" || summary.trim() === "") continue;
-      changes.push({ location, summary });
+      const rawFiles = (item as { files?: unknown }).files;
+      const files = Array.isArray(rawFiles)
+        ? rawFiles.filter((file): file is string => typeof file === "string" && file !== "")
+        : [];
+      changes.push({ location, summary, files });
     }
     if (changes.length === 0) return null;
-    return { none: false, changes };
+    return { none: false, changes, unverified: parsed.unverified === true };
   } catch {
     return null;
   }

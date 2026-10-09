@@ -182,7 +182,11 @@ function useUnlinkPullRequest(issueId: string, before: PRAutoComplete) {
         toast.success(t(($) => $.pr_automation.unlinked, { pr: prLabel(pr) }), {
           action: {
             label: t(($) => $.pr_automation.undo),
-            onClick: () => relink.mutate({ pull_request_id: pr.id }),
+            onClick: () =>
+              relink.mutate(
+                { pull_request_id: pr.id },
+                { onError: () => toast.error(t(($) => $.pr_automation.link_failed)) },
+              ),
           },
         });
       },

@@ -33,6 +33,9 @@ type Handoff struct {
 	// Demotion is set when this opening is the second-or-later breaker in
 	// the seat's recent window. Empty when the seat is not being demoted.
 	Demotion string
+	// Review is true when the failed run was the issue's acceptance run. The
+	// replacement takes over acceptance, not execution (DENE-1647).
+	Review bool
 }
 
 func (h Handoff) scope() string {
@@ -50,6 +53,8 @@ func (h Handoff) reasonLabel() string {
 		return "模型满载，原地重试已用尽"
 	case KindBalanceExhausted:
 		return "账号余额耗尽（402），不会自己恢复"
+	case KindAuthFailure:
+		return "模型登录被拒（401/403）"
 	default:
 		return "席位周额度失效"
 	}
@@ -59,6 +64,9 @@ func (h Handoff) reasonLabel() string {
 func (h Handoff) recovery() string {
 	if IsManualRecovery(h.Kind) {
 		return "不会自己恢复。要有人去充值或换账号，再手动重新启用这一席"
+	}
+	if h.Kind == KindAuthFailure {
+		return fmt.Sprintf("一小时后自动重试，预计 %s；修好登录后手动重新启用会立刻恢复", h.RecoverAt.UTC().Format(time.RFC3339))
 	}
 	return fmt.Sprintf("%s，预计 %s", h.Condition, h.RecoverAt.UTC().Format(time.RFC3339))
 }
@@ -96,6 +104,18 @@ func emptyAsUnset(v string) string {
 // AgentNote is the opening handoff on the replacement task.
 func AgentNote(h Handoff) string {
 	var b strings.Builder
+	if h.Review {
+		fmt.Fprintf(&b, "验收接力。上一验收席「%s」因%s没能完成验收，已暂停接活，改由你验收这张票。只做验收：读票的验收标准、评论和交付物，通过就按验收席收口，不通过就写明原因退回执行人。不要接手执行，也不要另开任务。\n", h.FailedName, h.reasonLabel())
+		fmt.Fprintf(&b, "票 #%d %s。原任务 %s。工作线程 %s。\n", h.IssueNumber, h.IssueTitle, h.TaskID, threadLabel(h.ThreadCommentID))
+		if strings.TrimSpace(h.Acceptance) != "" {
+			fmt.Fprintf(&b, "验收标准：%s\n", strings.TrimSpace(h.Acceptance))
+		}
+		if h.Branch != "" {
+			fmt.Fprintf(&b, "交付分支：%s。\n", h.Branch)
+		}
+		b.WriteString(h.tokens())
+		return b.String()
+	}
 	switch h.Kind {
 	case KindBalanceExhausted:
 		fmt.Fprintf(&b, "余额耗尽接力。上一席位「%s」的账号余额用完了（402），已停用且不会自己恢复。请先读这张票的评论和原分支上的提交，从当前进度接着做，不要另开任务，也不要重做已经做完的部分。\n", h.FailedName)
@@ -120,6 +140,15 @@ func AgentNote(h Handoff) string {
 // AuditRelay is the issue comment that records a successful handoff.
 func AuditRelay(h Handoff) string {
 	var b strings.Builder
+	if h.Review {
+		fmt.Fprintf(&b, "## 验收席失败，已转给 %s\n\n", h.ReplacementName)
+		fmt.Fprintf(&b, "- 原因：%s\n", h.reasonLabel())
+		fmt.Fprintf(&b, "- 暂停席位：%s（%s）。只停这一席，其他席位未改。\n", h.FailedName, h.FailedID)
+		fmt.Fprintf(&b, "- 新验收席：%s（%s，%s）。只验收，不接手执行。\n", h.ReplacementName, h.ReplacementTier, stepLabel(h.SteppedDown))
+		fmt.Fprintf(&b, "- 恢复：%s\n", h.recovery())
+		fmt.Fprintf(&b, "- %s\n", h.tokens())
+		return b.String()
+	}
 	b.WriteString("## 额度熔断接力\n\n")
 	fmt.Fprintf(&b, "- 原因：%s\n", h.reasonLabel())
 	fmt.Fprintf(&b, "- 停用席位：%s（%s）。只停这一席，共享模型配置和其他席位未改。\n", h.FailedName, h.FailedID)
@@ -138,6 +167,15 @@ func AuditRelay(h Handoff) string {
 // AuditWait is the issue comment when no replacement seat exists.
 func AuditWait(h Handoff) string {
 	var b strings.Builder
+	if h.Review {
+		b.WriteString("## 验收席失败，没有可接的验收席\n\n")
+		fmt.Fprintf(&b, "- 原因：%s\n", h.reasonLabel())
+		fmt.Fprintf(&b, "- 暂停席位：%s（%s）。只停这一席，其他席位未改。\n", h.FailedName, h.FailedID)
+		fmt.Fprintf(&b, "- 等待：%s\n", h.WaitReason)
+		fmt.Fprintf(&b, "- 恢复：%s。票留在待验收，已发选项提问：换席位 / 我来验 / 直接关票。\n", h.recovery())
+		fmt.Fprintf(&b, "- %s\n", h.tokens())
+		return b.String()
+	}
 	b.WriteString("## 额度熔断后无人可接力\n\n")
 	fmt.Fprintf(&b, "- 原因：%s\n", h.reasonLabel())
 	fmt.Fprintf(&b, "- 停用席位：%s（%s）。只停这一席，共享模型配置和其他席位未改。\n", h.FailedName, h.FailedID)

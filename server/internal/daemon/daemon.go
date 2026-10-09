@@ -8751,6 +8751,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ProjectDescription:               task.ProjectDescription,
 		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),
 		Projects:                         convertProjectsForEnv(task.projectContexts()),
+		ReferenceProjects:                convertReferenceProjectsForEnv(task.LinkedProjects),
 		ChatSessionID:                    task.ChatSessionID,
 		ChatChannelType:                  task.ChatChannelType,
 		ChatChannelDeliversFiles:         task.ChatChannelDeliversFiles,
@@ -9237,6 +9238,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				ResumeWorkDir:    resumeWorkDir,
 				ReclaimPriorCopy: reclaimPriorCopy,
 				CanonicalBranch:  strings.TrimSpace(task.CanonicalBranch),
+			}
+			if trunk := strings.TrimSpace(d.worktreeCleanup.Settings().TrunkBranch); trunk != "" {
+				prepParams.LocalWorktree.SweepTrunks = []string{trunk}
 			}
 			if task.DeliveryLine != nil {
 				prepParams.LocalWorktree.DeliveryBranch = strings.TrimSpace(task.DeliveryLine.Branch)
@@ -11425,6 +11429,39 @@ func convertProjectsForEnv(projects []ProjectContextData) []execenv.ProjectConte
 			Resources:   convertProjectResourcesForEnv(p.Resources),
 			MemoryLine:  p.MemoryLine,
 			ChatCount:   p.ChatCount,
+		}
+	}
+	return result
+}
+
+// convertReferenceProjectsForEnv maps the claim's read-only linked projects
+// into the execenv shape, noting which shared directories this machine lacks:
+// the path is the source side's, and the brief says so instead of failing.
+func convertReferenceProjectsForEnv(projects []LinkedProjectData) []execenv.ReferenceProjectForEnv {
+	if len(projects) == 0 {
+		return nil
+	}
+	result := make([]execenv.ReferenceProjectForEnv, len(projects))
+	for i, p := range projects {
+		resources := make([]execenv.ReferenceResourceForEnv, 0, len(p.Resources))
+		for _, r := range p.Resources {
+			res := execenv.ReferenceResourceForEnv{Type: r.Type, URL: r.URL, Path: r.Path}
+			if r.Label != nil {
+				res.Label = *r.Label
+			}
+			if r.Path != "" {
+				if _, err := os.Stat(r.Path); err != nil {
+					res.Missing = true
+				}
+			}
+			resources = append(resources, res)
+		}
+		result[i] = execenv.ReferenceProjectForEnv{
+			Title:       p.Title,
+			SourceName:  p.SourceName,
+			Description: p.Description,
+			Resources:   resources,
+			MemoryLine:  p.MemoryLine,
 		}
 	}
 	return result

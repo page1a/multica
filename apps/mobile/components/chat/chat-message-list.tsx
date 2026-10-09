@@ -50,6 +50,7 @@ import type {
   ChatMessage,
   ChatPendingTask,
   ChatQuickAction,
+  ChatTicket,
   TaskMessagePayload,
 } from "@multica/core/types";
 import type { AgentAvailability } from "@multica/core/agents";
@@ -70,6 +71,8 @@ import { ChatTimeline } from "./chat-timeline";
 // referenced inline in the message content, with same-file dedup.
 import { CommentAttachmentList } from "@/components/issue/comment-attachment-list";
 import { StatusPill } from "./status-pill";
+import { ChatTicketCard } from "./chat-ticket-card";
+import { groupChatTickets } from "@/lib/chat-tickets";
 import {
   Collapsible,
   CollapsibleContent,
@@ -102,7 +105,12 @@ interface Props {
   /** Resolved availability — drives the StatusPill's "Offline" /
    *  "Reconnecting" stages. Pass `undefined` while loading. */
   availability?: AgentAvailability;
+  /** The issues this chat opened (DENE-1665). Each renders under the reply
+   *  of the turn that opened it; a still-running turn's go in the footer. */
+  tickets?: ChatTicket[];
 }
+
+const NO_TICKETS: ChatTicket[] = [];
 
 export function ChatMessageList({
   messages,
@@ -115,6 +123,7 @@ export function ChatMessageList({
   pendingTask,
   liveTaskMessages,
   availability,
+  tickets = NO_TICKETS,
 }: Props) {
   // Top-level selection subscription gates the outer "tap-outside-to-dismiss"
   // Pressable below. When null, the Pressable stays disabled and every tap
@@ -138,6 +147,10 @@ export function ChatMessageList({
         attachments: message.attachments,
       })),
     [messages],
+  );
+  const ticketGroups = useMemo(
+    () => groupChatTickets(messages, tickets),
+    [messages, tickets],
   );
 
   if (loading && messages.length === 0) {
@@ -211,20 +224,28 @@ export function ChatMessageList({
             onQuickAction={onQuickAction}
             quickActionsDisabled={quickActionsDisabled}
           />
+          {ticketGroups.byMessage.has(item.id) ? (
+            <ChatTicketCard tickets={ticketGroups.byMessage.get(item.id)!} />
+          ) : null}
         </>
       )}
+      // Ticket groups live outside `data`; re-render cells when they change.
+      extraData={ticketGroups}
       ItemSeparatorComponent={MessageSeparator}
       ListFooterComponent={
-        showLiveSection ? (
-          <View style={{ paddingTop: 12 }} className="gap-2">
+        showLiveSection || ticketGroups.tail.length > 0 ? (
+          <View style={{ paddingTop: showLiveSection ? 12 : 0 }} className="gap-2">
             {showLiveTimeline ? (
               <ChatTimeline items={liveTaskMessages ?? []} isStreaming />
             ) : null}
-            <StatusPill
-              pendingTask={pendingTask}
-              taskMessages={liveTaskMessages}
-              availability={availability}
-            />
+            {showLiveSection ? (
+              <StatusPill
+                pendingTask={pendingTask}
+                taskMessages={liveTaskMessages}
+                availability={availability}
+              />
+            ) : null}
+            <ChatTicketCard tickets={ticketGroups.tail} />
           </View>
         ) : null
       }

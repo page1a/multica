@@ -14,6 +14,8 @@ export const workspaceKeys = {
   agent: (wsId: string, agentId: string) =>
     ["workspaces", wsId, "agents", "detail", agentId] as const,
   squads: (wsId: string) => ["workspaces", wsId, "squads"] as const,
+  // One squad's own record; its roster and status keys nest under it.
+  squad: (wsId: string, squadId: string) => ["workspaces", wsId, "squads", squadId] as const,
   // Full roster for one squad. Same key the squad detail page already
   // uses, so list-filter fetches and the Members tab share a cache.
   // Lives under the workspace key tree so a broad

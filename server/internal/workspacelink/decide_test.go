@@ -66,6 +66,24 @@ func TestDecideMatrix(t *testing.T) {
 			SideViewer: "Y......",
 			SideNone:   ".......",
 		},
+		OpSeePending: {
+			SideSource: ".......",
+			SideViewer: "YY..Y..",
+			SideNone:   ".......",
+		},
+		OpSetManaged: {
+			SideSource: "Y......",
+			SideViewer: ".......",
+			SideNone:   ".......",
+		},
+		// The agent columns here carry the originator's tier in the SOURCE
+		// (DENE-1663). People never take this path: they act in the source
+		// through their own membership.
+		OpManageRemote: {
+			SideSource: ".......",
+			SideViewer: "....YY.",
+			SideNone:   ".......",
+		},
 	}
 	if len(want) != len(Ops) {
 		t.Fatalf("matrix covers %d ops, package defines %d: add the new op's row", len(want), len(Ops))

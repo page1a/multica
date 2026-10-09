@@ -35,9 +35,16 @@ export const chatKeys = {
   /** Full sessions list (active + archived); the dropdown splits locally. */
   sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
   directory: (wsId: string, projectId?: string) => [...chatKeys.all(wsId), "directory", projectId ?? "all"] as const,
+  /** The once-per-person "your chats are now visible" notice. */
+  visibilityNotice: (wsId: string) => [...chatKeys.all(wsId), "visibility-notice"] as const,
   messageSearch: (wsId: string, q: string) =>
     [...chatKeys.all(wsId), "message-search", q] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
+  /** Who can see this chat. Nested under the session so every invalidation of it reaches here. */
+  access: (wsId: string, id: string) => [...chatKeys.session(wsId, id), "access"] as const,
+  /** Issues a chat opened (DENE-1665). Any issue event refetches the open ones. */
+  ticketsAll: (wsId: string) => [...chatKeys.all(wsId), "tickets"] as const,
+  tickets: (wsId: string, id: string) => [...chatKeys.ticketsAll(wsId), id] as const,
   messagesAll: () => ["chat", "messages"] as const,
   messages: (sessionId: string) => [...chatKeys.messagesAll(), sessionId] as const,
   messagesPageAll: () => ["chat", "messages-page"] as const,
@@ -176,6 +183,16 @@ export function chatMessagesPageOptions(sessionId: string, limit = 50) {
     initialPageParam: null as { created_at: string; id: string } | null,
     getNextPageParam: (lastPage) =>
       lastPage.has_more ? lastPage.next_cursor ?? undefined : undefined,
+    enabled: !!sessionId,
+    staleTime: Infinity,
+  });
+}
+
+/** Issues this chat opened. Refetched by useRealtimeSync on any issue event. */
+export function chatTicketsOptions(wsId: string, sessionId: string) {
+  return queryOptions({
+    queryKey: chatKeys.tickets(wsId, sessionId),
+    queryFn: () => api.listChatTickets(sessionId),
     enabled: !!sessionId,
     staleTime: Infinity,
   });

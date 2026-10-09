@@ -47,6 +47,7 @@ describe("parseRoutingHealth", () => {
       // A backend that predates the role split only had the judge.
       mode: "judge",
       roles: [],
+      rules: { questions: [], rules: [] },
     });
   });
 
@@ -179,5 +180,31 @@ describe("normalizeRoutingState", () => {
     for (const s of ["off", "incomplete", "enabled", "ineffective"] as const) {
       expect(normalizeRoutingState(s)).toBe(s);
     }
+  });
+});
+
+// DENE-1677: the rule table, read leniently.
+describe("parseRoutingHealth rules", () => {
+  it("is empty from a backend that predates the table", () => {
+    expect(parseRoutingHealth({ state: "enabled" }).rules).toEqual({ questions: [], rules: [] });
+  });
+
+  it("reads rows and treats an unknown reviewer as a check", () => {
+    const { rules } = parseRoutingHealth({
+      state: "enabled",
+      rules: {
+        questions: [{ key: "scope", label: "改动范围", options: [{ value: "small", label: "小" }, 7] }],
+        rules: [
+          { id: "unknown", label: "有一题答不出", any_unknown: true, tier: "medium", tier_label: "中档", reviewer: "person" },
+          { id: "broken" },
+          { id: "default", label: "其余", tier: "medium", reviewer: "none" },
+        ],
+      },
+    });
+    expect(rules.questions[0]?.options).toEqual([{ value: "small", label: "小" }]);
+    expect(rules.rules.map((r) => [r.id, r.any_unknown, r.reviewer, r.tier_label])).toEqual([
+      ["unknown", true, "seat", "中档"],
+      ["default", false, "none", "medium"],
+    ]);
   });
 });

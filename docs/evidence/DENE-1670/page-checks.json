@@ -1,0 +1,357 @@
+{
+ "375": {
+  "innerWidth": 375,
+  "cardVisibleWithoutOpening": false,
+  "openedSheet": true,
+  "card": [
+   {
+    "source": "SED-4",
+    "href": "/dev/issues/01a11bb8-7666-73d0-9bf5-0f801fc5d36f",
+    "files": "agents",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": true,
+    "right": 342
+   },
+   {
+    "source": "SED-3",
+    "href": "/dev/issues/01a11bb8-7625-7c48-8caf-4808cafe9920",
+    "files": "CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 342
+   },
+   {
+    "source": "聊天 沉淀：超长文件名与来源跳转演示",
+    "href": "/dev/chat/2fe1c21b-9efb-4355-83d0-10767dcca69b",
+    "files": "docs/adr/0042-chat-sediment-must-land-on-the-project-mainline-before-it-is-recorded-even-for-shared-directories.md, docs/evidence/INDEX.md",
+    "filesTruncated": false,
+    "filesLines": 5,
+    "rowFits": true,
+    "unverified": false,
+    "right": 342
+   },
+   {
+    "source": "聊天 沉淀：远端仓库推送",
+    "href": "/dev/chat/9c430eb4-8918-48c6-a619-16850de8e424",
+    "files": "AGENTS.md, docs/README.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 342
+   },
+   {
+    "source": "聊天 沉淀：本地仓库主线",
+    "href": "/dev/chat/80f77278-d1d7-4c85-927d-374f61c0cf29",
+    "files": "AGENTS.md, CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 342
+   }
+  ],
+  "overflowOpen": {
+   "sw": 375,
+   "iw": 375,
+   "bodySW": 375
+  },
+  "closedByEscape": true,
+  "closedByBackdrop": true,
+  "overflowClosed": {
+   "sw": 375,
+   "iw": 375,
+   "bodySW": 375
+  },
+  "strips": [
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：CONTEXT.md | 11 分钟前",
+    "knowledge": "知识：CONTEXT.md",
+    "fits": true
+   },
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：agents（未核对交付） | 11 分钟前",
+    "knowledge": "知识：agents（未核对交付）",
+    "fits": true
+   }
+  ],
+  "overflowIssue": {
+   "sw": 375,
+   "iw": 375,
+   "bodySW": 375
+  }
+ },
+ "390": {
+  "innerWidth": 390,
+  "cardVisibleWithoutOpening": false,
+  "openedSheet": true,
+  "card": [
+   {
+    "source": "SED-4",
+    "href": "/dev/issues/01a11bb8-7666-73d0-9bf5-0f801fc5d36f",
+    "files": "agents",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": true,
+    "right": 357
+   },
+   {
+    "source": "SED-3",
+    "href": "/dev/issues/01a11bb8-7625-7c48-8caf-4808cafe9920",
+    "files": "CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 357
+   },
+   {
+    "source": "聊天 沉淀：超长文件名与来源跳转演示",
+    "href": "/dev/chat/2fe1c21b-9efb-4355-83d0-10767dcca69b",
+    "files": "docs/adr/0042-chat-sediment-must-land-on-the-project-mainline-before-it-is-recorded-even-for-shared-directories.md, docs/evidence/INDEX.md",
+    "filesTruncated": false,
+    "filesLines": 5,
+    "rowFits": true,
+    "unverified": false,
+    "right": 357
+   },
+   {
+    "source": "聊天 沉淀：远端仓库推送",
+    "href": "/dev/chat/9c430eb4-8918-48c6-a619-16850de8e424",
+    "files": "AGENTS.md, docs/README.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 357
+   },
+   {
+    "source": "聊天 沉淀：本地仓库主线",
+    "href": "/dev/chat/80f77278-d1d7-4c85-927d-374f61c0cf29",
+    "files": "AGENTS.md, CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 357
+   }
+  ],
+  "overflowOpen": {
+   "sw": 390,
+   "iw": 390,
+   "bodySW": 390
+  },
+  "closedByEscape": true,
+  "closedByBackdrop": true,
+  "overflowClosed": {
+   "sw": 390,
+   "iw": 390,
+   "bodySW": 390
+  },
+  "strips": [
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：CONTEXT.md | 11 分钟前",
+    "knowledge": "知识：CONTEXT.md",
+    "fits": true
+   },
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：agents（未核对交付） | 11 分钟前",
+    "knowledge": "知识：agents（未核对交付）",
+    "fits": true
+   }
+  ],
+  "overflowIssue": {
+   "sw": 390,
+   "iw": 390,
+   "bodySW": 390
+  }
+ },
+ "768": {
+  "innerWidth": 768,
+  "cardVisibleWithoutOpening": false,
+  "openedSheet": true,
+  "card": [
+   {
+    "source": "SED-4",
+    "href": "/dev/issues/01a11bb8-7666-73d0-9bf5-0f801fc5d36f",
+    "files": "agents",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": true,
+    "right": 725
+   },
+   {
+    "source": "SED-3",
+    "href": "/dev/issues/01a11bb8-7625-7c48-8caf-4808cafe9920",
+    "files": "CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 725
+   },
+   {
+    "source": "聊天 沉淀：超长文件名与来源跳转演示",
+    "href": "/dev/chat/2fe1c21b-9efb-4355-83d0-10767dcca69b",
+    "files": "docs/adr/0042-chat-sediment-must-land-on-the-project-mainline-before-it-is-recorded-even-for-shared-directories.md, docs/evidence/INDEX.md",
+    "filesTruncated": false,
+    "filesLines": 3,
+    "rowFits": true,
+    "unverified": false,
+    "right": 725
+   },
+   {
+    "source": "聊天 沉淀：远端仓库推送",
+    "href": "/dev/chat/9c430eb4-8918-48c6-a619-16850de8e424",
+    "files": "AGENTS.md, docs/README.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 725
+   },
+   {
+    "source": "聊天 沉淀：本地仓库主线",
+    "href": "/dev/chat/80f77278-d1d7-4c85-927d-374f61c0cf29",
+    "files": "AGENTS.md, CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 725
+   }
+  ],
+  "overflowOpen": {
+   "sw": 768,
+   "iw": 768,
+   "bodySW": 768
+  },
+  "closedByEscape": true,
+  "closedByBackdrop": true,
+  "overflowClosed": {
+   "sw": 768,
+   "iw": 768,
+   "bodySW": 768
+  },
+  "strips": [
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：CONTEXT.md | 10 分钟前",
+    "knowledge": "知识：CONTEXT.md",
+    "fits": true
+   },
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：agents（未核对交付） | 10 分钟前",
+    "knowledge": "知识：agents（未核对交付）",
+    "fits": true
+   }
+  ],
+  "overflowIssue": {
+   "sw": 768,
+   "iw": 768,
+   "bodySW": 768
+  }
+ },
+ "1280": {
+  "innerWidth": 1281,
+  "cardVisibleWithoutOpening": true,
+  "card": [
+   {
+    "source": "SED-4",
+    "href": "/dev/issues/01a11bb8-7666-73d0-9bf5-0f801fc5d36f",
+    "files": "agents",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": true,
+    "right": 1230
+   },
+   {
+    "source": "SED-3",
+    "href": "/dev/issues/01a11bb8-7625-7c48-8caf-4808cafe9920",
+    "files": "CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 1230
+   },
+   {
+    "source": "聊天 沉淀：超长文件名与来源跳转演示",
+    "href": "/dev/chat/2fe1c21b-9efb-4355-83d0-10767dcca69b",
+    "files": "docs/adr/0042-chat-sediment-must-land-on-the-project-mainline-before-it-is-recorded-even-for-shared-directories.md, docs/evidence/INDEX.md",
+    "filesTruncated": false,
+    "filesLines": 4,
+    "rowFits": true,
+    "unverified": false,
+    "right": 1230
+   },
+   {
+    "source": "聊天 沉淀：远端仓库推送",
+    "href": "/dev/chat/9c430eb4-8918-48c6-a619-16850de8e424",
+    "files": "AGENTS.md, docs/README.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 1230
+   },
+   {
+    "source": "聊天 沉淀：本地仓库主线",
+    "href": "/dev/chat/80f77278-d1d7-4c85-927d-374f61c0cf29",
+    "files": "AGENTS.md, CONTEXT.md",
+    "filesTruncated": false,
+    "filesLines": 1,
+    "rowFits": true,
+    "unverified": false,
+    "right": 1230
+   }
+  ],
+  "overflowOpen": {
+   "sw": 1281,
+   "iw": 1281,
+   "bodySW": 1281
+  },
+  "overflowClosed": {
+   "sw": 1281,
+   "iw": 1281,
+   "bodySW": 1281
+  },
+  "strips": [
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：CONTEXT.md | 10 分钟前",
+    "knowledge": "知识：CONTEXT.md",
+    "fits": true
+   },
+   {
+    "text": "阶段 1 | 已交付 | 下一责任人：无 | 知识：agents（未核对交付） | 10 分钟前",
+    "knowledge": "知识：agents（未核对交付）",
+    "fits": true
+   }
+  ],
+  "overflowIssue": {
+   "sw": 1281,
+   "iw": 1281,
+   "bodySW": 1281
+  }
+ },
+ "jumps": {
+  "chat": {
+   "clicked": "聊天 沉淀：超长文件名与来源跳转演示",
+   "url": "/dev/chat/2fe1c21b-9efb-4355-83d0-10767dcca69b",
+   "title": "Multica — Project Management for Human + Agent Teams",
+   "sheetGone": true
+  },
+  "issue": {
+   "clicked": "SED-3",
+   "url": "/dev/issues/SED-3",
+   "title": "Multica — Project Management for Human + Agent Teams",
+   "sheetGone": true
+  }
+ }
+}

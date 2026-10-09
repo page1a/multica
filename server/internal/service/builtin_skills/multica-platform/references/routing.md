@@ -17,7 +17,8 @@ What it may do, and only when the slot is still **empty**:
   stage/barrier; the parent is the single issue that later enters `in_review`
   for a unified review of the full child tree.
 - **`todo`** — fill the assignee with a seat from the tier ladder (seats with
-  `dispatch_mode: mention_only` are never on it, whatever their tier). For a
+  `dispatch_mode: mention_only` are never on it, whatever their tier, and a
+  seat with `dispatch_projects` set is on it only for those projects' issues). For a
   top-level issue, also fill the issue's 验收席 with a seat or 「不需要验收」.
   **Routing never writes a person
   into 验收席**: an issue a person holds is one routing never touches again, so
@@ -32,7 +33,9 @@ What it may do, and only when the slot is still **empty**:
   whoever is holding it keeps it, so its status can still be moved.
 - **`blocked`** — post one advice comment and @ somebody. **No value is
   changed.**
-- **`in_progress` / `done` / `cancelled` / `backlog`** — nothing at all.
+- **`in_progress` / `done` / `cancelled` / `backlog`** — nothing at all. A
+  ticket meant to start now must be `todo`; an agent putting one in `backlog`
+  has to name what it waits for (`--waiting-for`), or the server refuses.
 
 There is a fourth trigger that is not a status change. A top-level ticket sitting
 in `in_review` with nothing happening on it and no run working on it is **stalled**,
@@ -219,6 +222,10 @@ multica workspace routing set --load on      # or off to go back to shadow
 So create independent tickets in one batch and leave them to routing; do not
 hand-assign them to different seats to spread the load.
 
+**按判断配验收 (DENE-1252)** has no effect since DENE-1677: the rule table
+below decides whether a ticket gets a 验收席. `--judged-review` is still
+accepted so old configs read, and changes nothing.
+
 If a ticket turned out too hard for its seat, do not pick a stronger one.
 Ask routing to re-judge:
 
@@ -249,11 +256,14 @@ Consequences for how you work:
 - Read `action` in `--output json` as what was WRITTEN. `assigned`: a slot was
   filled. `declined`: nothing was written, which now means somebody else won
   the write. `noop`: nothing to decide. Only `assigned` is a dispatch.
-- **Low confidence dispatches anyway**, to the ladder's fallback rung (the
-  generic strong seat) — `reason` reads `executor fell back to 孙悟空:
-  confidence 47% < threshold 60%`. The reviewer slot falls back to one rung
-  above the executor, one rung below when the executor is already the top
-  rung, and 「不需要验收」 when the workspace has only one seat.
+- **The tier comes from the rule table, not a model (DENE-1677).** The
+  analysis model answers four numbered questions (改动范围, 需求, 出错代价,
+  要人拍板); only the option number is read. The first matching row of the
+  table names the tier and whether a 验收席 is needed. An answer that is not a
+  number in range, a timeout or a garbled reply counts as 答不出, and 答不出 or
+  cross-module never lands on the weakest rung. The reviewer seat follows the
+  executor: same rung from another model family, else one rung down. A judge
+  answer below confidence threshold is ignored and the table stands.
 - The issue's **scene** decides which specialisation on a rung gets the
   work; it never changes the rung or the confidence. The scene is the issue's
   own domain; else all of its project's domains; else generic. Every
@@ -280,6 +290,22 @@ alone, exactly as if routing were off. Nothing is posted on a ticket about it.
 The reason is shown in one place only: Settings → Routing, which reports the
 state, the reason, when the model last answered, and offers a re-check. If
 automatic dispatch seems to have stopped, that section is where to look.
+
+Read the table without the browser (`--output json` for the same shape the
+settings page reads):
+
+```bash
+multica workspace routing rules
+```
+
+With the judge on (mode `judge` or `both`) it may only **raise** the table's
+tier by one rung, with a reason; a lower or two-rung answer is not used, and
+the decision comment says so. `multica issue route <id> --output json`
+reports `tier` (used), `judged_tier` (set only when the judge's answer was
+held to the table), and `trace`: the questions with the raw reply and the
+number read, the rule row, the judge's effect (`raised` / `agreed` /
+`ignored` / `failed`) and the tier. The decision comment carries the same
+trace in prose.
 
 Agent-created tickets should pass `--routing-facts` with scope, clarity, risk,
 and needs_human (plus an optional summary). The creator facts are accepted

@@ -173,3 +173,79 @@ describe("ChatAddMenu project context", () => {
     expect(onProjectsChange).toHaveBeenCalled();
   });
 });
+
+describe("ChatAddMenu linked projects (DENE-1643)", () => {
+  const OPTION = {
+    link_id: "link-1",
+    id: "shared-1",
+    title: "Shared Docs",
+    icon: null,
+    source: { name: "Acme", avatar_url: null },
+  };
+
+  it("lists shared projects under their own group and adds one to the set", async () => {
+    const onLinkedProjectsChange = vi.fn();
+    await openProjectSubmenu({
+      projects: [],
+      linkedProjectOptions: [OPTION],
+      linkedProjects: [],
+      onLinkedProjectsChange,
+    });
+
+    expect(await screen.findByText("Linked projects (read-only)")).toBeInTheDocument();
+    expect(screen.queryByText("No projects yet")).toBeNull();
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Shared Docs/ }));
+    expect(onLinkedProjectsChange).toHaveBeenCalledWith([
+      { link_id: "link-1", project_id: "shared-1" },
+    ]);
+  });
+
+  it("keeps a stale attachment ticked and marked so it can be removed", async () => {
+    const onLinkedProjectsChange = vi.fn();
+    await openProjectSubmenu({
+      linkedProjectOptions: [],
+      linkedProjects: [{
+        link_id: "link-gone",
+        project_id: "shared-gone",
+        title: "Old Docs",
+        icon: null,
+        source_name: "Acme",
+        available: false,
+      }],
+      onLinkedProjectsChange,
+    });
+
+    const item = await screen.findByRole("menuitemcheckbox", { name: /Old Docs/ });
+    expect(item).toBeChecked();
+    expect(item).toHaveTextContent("Stale");
+    fireEvent.click(item);
+    expect(onLinkedProjectsChange).toHaveBeenCalledWith([]);
+  });
+
+  it("drops one stale entry at a time and keeps the rest of the set", async () => {
+    const onLinkedProjectsChange = vi.fn();
+    const stale = (id: string, title: string) => ({
+      link_id: "link-gone",
+      project_id: id,
+      title,
+      icon: null,
+      source_name: "Acme",
+      available: false,
+    });
+    await openProjectSubmenu({
+      linkedProjectOptions: [OPTION],
+      linkedProjects: [
+        stale("gone-a", "Old A"),
+        stale("gone-b", "Old B"),
+        { ...stale("shared-1", "Shared Docs"), link_id: "link-1", available: true },
+      ],
+      onLinkedProjectsChange,
+    });
+
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /Old A/ }));
+    expect(onLinkedProjectsChange).toHaveBeenCalledWith([
+      { link_id: "link-gone", project_id: "gone-b" },
+      { link_id: "link-1", project_id: "shared-1" },
+    ]);
+  });
+});

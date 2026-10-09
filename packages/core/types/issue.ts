@@ -191,6 +191,12 @@ export interface SourceContextChangeDetails {
   description_attachment_changes: SourceContextDescriptionAttachmentChange[];
 }
 
+export interface IssueSourceChat {
+  id: string;
+  title?: string;
+  accessible: boolean;
+}
+
 export interface IssueSourceContext {
   id: string;
   version: number;
@@ -305,6 +311,11 @@ export interface Issue {
   last_activity_at?: string | null;
   /** Present only on issue detail responses for issues created from a comment. */
   source_context?: IssueSourceContext;
+  /**
+   * Detail only: the chat this issue was opened from (DENE-1665). `title` is
+   * absent and `accessible` false when the viewer cannot see that chat.
+   */
+  source_chat?: IssueSourceChat | null;
   /** Detail only: the in-place retry waiting out a full model (DENE-1093). */
   capacity_retry?: CapacityRetry;
   /** Detail and children responses only; absent on closed or backlog issues. */

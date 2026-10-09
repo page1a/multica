@@ -53,6 +53,7 @@ import { useBackOrReplace, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { ChatMessageList, ChatMessageSkeleton } from "./components/chat-message-list";
 import { ChatInput } from "./components/chat-input";
+import { ChatReportBar } from "./components/chat-report-bar";
 import { ChatQueue } from "./components/chat-queue";
 import { ChatThreadList } from "./components/chat-thread-list";
 import { ChatProjectBar } from "./components/chat-project-bar";
@@ -134,6 +135,7 @@ function chatTitleMatches(session: ChatSession, words: string[], query: string) 
  */
 export function ChatPage() {
   const { t } = useT("chat");
+  const { t: tProjects } = useT("projects");
   const { pathname, searchParams, replace, push, back } = useNavigation();
   const backOrReplace = useBackOrReplace();
   const queryClient = useQueryClient();
@@ -202,10 +204,11 @@ export function ChatPage() {
     [pinnedItems],
   );
   const toggleProjectPin = (projectId: string) => {
+    const onError = () => toast.error(tProjects(($) => $.page.pin_failed));
     if (projectPinnedItems.some((pin) => pin.item_id === projectId)) {
-      deletePin.mutate({ itemType: "project", itemId: projectId });
+      deletePin.mutate({ itemType: "project", itemId: projectId }, { onError });
     } else {
-      createPin.mutate({ item_type: "project", item_id: projectId });
+      createPin.mutate({ item_type: "project", item_id: projectId }, { onError });
     }
   };
   const moveProjectPin = (fromProjectId: string, toProjectId: string) => {
@@ -773,7 +776,7 @@ export function ChatPage() {
           dismissing={dismissProjectNudge.isPending}
         />
       )}
-      {c.currentSession && <div className="flex shrink-0 px-3 py-1"><WorkThreadPanel kind="chat" id={c.currentSession.id} /></div>}
+      {c.currentSession && <WorkThreadPanel kind="chat" id={c.currentSession.id} className="mx-3 my-1 self-start" />}
       {c.showSkeleton ? (
         <ChatMessageSkeleton />
       ) : c.hasMessages ? (
@@ -788,6 +791,7 @@ export function ChatPage() {
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
           onQuickAction={(action) => c.handleSend(action.prompt)}
           creatorId={c.currentSession?.creator_id}
+          sessionId={c.activeSessionId ?? undefined}
           quickActionsDisabled={
             !!c.pendingTaskId ||
             c.isSessionArchived ||
@@ -850,6 +854,27 @@ export function ChatPage() {
         onClear={c.handleClearQueuedTasks}
       />
 
+      {c.user?.id && c.activeSessionId && !c.isChatViewOnly && (
+        <ChatReportBar
+          key={`report:${c.activeSessionId}`}
+          wsId={c.wsId}
+          userId={c.user.id}
+          sessionId={c.activeSessionId}
+          projectTitle={(c.projects ?? [])
+            .filter((p) => c.activeProjectIds.includes(p.id))
+            .map((p) => p.title)
+            .join("、")}
+          disabled={
+            c.isSessionArchived ||
+            c.isAgentArchived ||
+            c.isAgentAccessRevoked ||
+            !c.isAgentRuntimeBound ||
+            c.noAgent
+          }
+          onHear={(prompt) => void c.handleSend(prompt)}
+        />
+      )}
+
       {projectCaption && (
         <div className={cn(CHAT_GUTTER, "pb-1")} data-slot="chat-new-chat-project">
           <p className={cn(CHAT_COLUMN, "text-caption text-muted-foreground")}>{projectCaption}</p>
@@ -885,6 +910,9 @@ export function ChatPage() {
         projectIds={c.activeProjectIds}
         projectContextUnsupported={c.projectContextUnsupported}
         onProjectsChange={changeProjectContext}
+        linkedProjects={c.linkedProjects.items}
+        linkedProjectOptions={c.linkedProjects.options}
+        onLinkedProjectsChange={c.linkedProjects.onChange}
         isProjectUpdating={c.isProjectUpdating}
         focusRequest={c.focusInputRequest}
         onConvertToGoal={c.activeSessionId ? async () => {

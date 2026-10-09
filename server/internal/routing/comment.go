@@ -31,6 +31,17 @@ func directionLine(issue Issue, scene Scene) string {
 	return "- **方向**：" + GenericDirection
 }
 
+// ruleTierWhy is the executor line's account of a rule-table tier.
+func ruleTierWhy(dec decision) string {
+	if dec.Trace == nil {
+		return "规则表定档"
+	}
+	if j := dec.Trace.Judge; j != nil && j.Effect == JudgeRaised {
+		return fmt.Sprintf("规则表第 %d 行定%s档，判断模型上调一档", dec.Trace.Rule.Index, tierLabel(DefaultLadder, dec.Trace.Rule.Tier))
+	}
+	return fmt.Sprintf("规则表第 %d 行「%s」", dec.Trace.Rule.Index, dec.Trace.Rule.Label)
+}
+
 // heldExecutorLine says whose decision an executor already in the slot is.
 func heldExecutorLine(issue Issue) string {
 	switch issue.AssigneeSource {
@@ -74,7 +85,7 @@ func (r *Router) assignmentComment(
 ) string {
 	var b strings.Builder
 	b.WriteString("## 自动选派\n\n")
-	b.WriteString(PickReasonLine(executorPickReason(issue, needExecutor, executor, executorSource)))
+	b.WriteString(PickReasonLine(executorPickReason(issue, needExecutor, executor, executorSource, dec.RaisedFrom != "")))
 	if continuationNote != "" {
 		b.WriteString(continuationNote + "\n\n")
 	}
@@ -118,6 +129,9 @@ func (r *Router) assignmentComment(
 	case executor != nil && executorSource == pickFallback:
 		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，**兜底档**——裁决置信度 %s 低于阈值 %s，或它点的档位这里没有席位）→ 仍然%s。觉得档位不对直接改，改了路由不会再碰\n",
 			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold), next))
+	case executor != nil && dec.Decider == DeciderRule:
+		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，%s）→ %s\n",
+			executor.Name, executor.TierLabel, ruleTierWhy(dec), next))
 	case executor != nil:
 		b.WriteString(fmt.Sprintf("- **执行席**：%s（%s档，置信度 %s ≥ 阈值 %s）→ %s\n",
 			executor.Name, executor.TierLabel, pct(v.ExecutorConfidence), pct(threshold), next))
@@ -129,6 +143,9 @@ func (r *Router) assignmentComment(
 	switch {
 	case !needReviewer:
 		b.WriteString(fmt.Sprintf("- **验收席**：已有值「%s」，未改动\n", issue.Reviewer.Label()))
+	case reviewerFallback && humanSignoff && !reviewer.Empty() && dec.Decider == DeciderRule:
+		b.WriteString(fmt.Sprintf("- **验收席**：%s（「要人拍板」答的是。验收席不填人——填了人这张票后面就没人能推动了；%s）\n",
+			reviewer.Label(), fallbackWhy))
 	case reviewerFallback && humanSignoff && !reviewer.Empty():
 		b.WriteString(fmt.Sprintf("- **验收席**：%s（模型判为这次验收需要人拍板，置信度 %s。验收席不填人——填了人这张票后面就没人能推动了；%s）\n",
 			reviewer.Label(), pct(v.ReviewerConfidence), fallbackWhy))
@@ -137,8 +154,15 @@ func (r *Router) assignmentComment(
 	case reviewerFallback && !reviewer.Empty():
 		b.WriteString(fmt.Sprintf("- **验收席**：%s（**兜底**——裁决置信度 %s 低于阈值 %s，%s）\n",
 			reviewer.Label(), pct(v.ReviewerConfidence), pct(threshold), fallbackWhy))
+	case reviewer.Kind == ReviewerNoReview && dec.Decider == DeciderRule && v.Reviewer == ReviewerNone:
+		b.WriteString(fmt.Sprintf("- **验收席**：本票不需要验收（规则表第 %d 行；执行人验证后自己合并关单）。要人复核就自己填一个\n", dec.Trace.Rule.Index))
+	case reviewer.Kind == ReviewerNoReview && settings.JudgedReview && !(v.Reviewer == ReviewerNone && v.ReviewerConfidence >= threshold):
+		b.WriteString(fmt.Sprintf("- **验收席**：本票不需要验收（按判断配验收：模型没有把握要验收，置信度 %s 低于阈值 %s；执行人验证后自己合并关单）。要人复核就自己填一个\n",
+			pct(v.ReviewerConfidence), pct(threshold)))
 	case reviewer.Kind == ReviewerNoReview:
 		b.WriteString(fmt.Sprintf("- **验收席**：本票不需要验收（置信度 %s）。要人复核就自己填一个\n", pct(v.ReviewerConfidence)))
+	case !reviewer.Empty() && dec.Decider == DeciderRule && dec.Trace != nil:
+		b.WriteString(fmt.Sprintf("- **验收席**：%s（规则表第 %d 行要验收，%s）\n", reviewer.Label(), dec.Trace.Rule.Index, fallbackWhy))
 	case !reviewer.Empty():
 		b.WriteString(fmt.Sprintf("- **验收席**：%s（置信度 %s ≥ 阈值 %s）\n",
 			reviewer.Label(), pct(v.ReviewerConfidence), pct(threshold)))
@@ -152,9 +176,12 @@ func (r *Router) assignmentComment(
 	// A label that answered the only open slot means no model took part and
 	// there is nothing to say about who decided.
 	if executorSource != pickLabel || needReviewer {
-		b.WriteString(decisionSourceLine(dec, settings))
+		b.WriteString(decisionSourceLine(dec, settings, DefaultLadder))
 	}
-	if strings.TrimSpace(v.Reason) != "" {
+	if executorSource != pickLabel && executorSource != pickFallback {
+		b.WriteString(floorLine(dec, DefaultLadder))
+	}
+	if dec.Decider != DeciderRule && strings.TrimSpace(v.Reason) != "" {
 		b.WriteString("- **判断**：" + strings.TrimSpace(v.Reason) + "\n")
 	}
 	b.WriteString("\n")
@@ -243,6 +270,24 @@ func disabledReviewerStuck(from string) string {
 		from = "原验收席"
 	}
 	return fmt.Sprintf("验收席 %s 已停用，不接新活。同档没有另一家供应商，降一档也没有能接的席位。这张票停在待验收，需要人指定验收席。", from)
+}
+
+func failedReviewerNote(from, to string, steppedDown bool) string {
+	if from == "" {
+		from = "原验收席"
+	}
+	step := "同档另一家模型"
+	if steppedDown {
+		step = "下一档"
+	}
+	return fmt.Sprintf("验收席失败，已转给 %s。%s 这一轮的验收 run 失败后没有再跑起来，复审改由%s的 %s 接手，避开了做过这张票的席位。", to, from, step, to)
+}
+
+func failedReviewerStuck(from string) string {
+	if from == "" {
+		from = "原验收席"
+	}
+	return fmt.Sprintf("验收席 %s 的验收 run 失败了，找不到另一个没做过这张票的验收席。这张票停在待验收，已发选项提问：换席位 / 我来验 / 直接关票。", from)
 }
 
 // handoffComment is the in-review-row comment. Every handoff it describes is

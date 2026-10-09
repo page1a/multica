@@ -122,9 +122,13 @@ export function SubIssueCloseStrip({
       )}
       {knowledge && knowledge.none === false && (
         <Chip kind="close.knowledge_audit" tone="muted">
-          {t(($) => $.close_protocol.knowledge_change, {
-            locations: knowledge.changes.map((change) => change.location).join(", "),
-          })}
+          {knowledge.unverified
+            ? t(($) => $.close_protocol.knowledge_change_unverified, {
+                locations: knowledgeTargets(knowledge.changes),
+              })
+            : t(($) => $.close_protocol.knowledge_change, {
+                locations: knowledgeTargets(knowledge.changes),
+              })}
         </Chip>
       )}
       <Chip kind="last_activity_at" tone="muted">
@@ -132,6 +136,14 @@ export function SubIssueCloseStrip({
       </Chip>
     </div>
   );
+}
+
+// knowledgeTargets names what a close wrote: the delivered files when the
+// close bound them (DENE-1661), the slot names on older closes.
+function knowledgeTargets(changes: { location: string; files: string[] }[]): string {
+  return changes
+    .flatMap((change) => (change.files.length > 0 ? change.files : [change.location]))
+    .join(", ");
 }
 
 function Chip({

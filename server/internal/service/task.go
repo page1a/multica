@@ -5041,8 +5041,16 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 		// pending flag and the pass that resolves it can never disagree: a
 		// client only shows the skeleton placeholder when generation is
 		// actually about to run.
-		suggest := s.chatQuickActionsEligible(ctx, task, chatAssistantMsg)
+		// A turn that delivered project reports (DENE-1667) carries the
+		// server's own buttons and skips the suggestion pass.
+		reportActions := s.chatReportQuickActions(ctx, task)
+		suggest := len(reportActions) == 0 && s.chatQuickActionsEligible(ctx, task, chatAssistantMsg)
 		s.broadcastChatDone(ctx, task, chatAssistantMsg, suggest)
+		if len(reportActions) > 0 && chatAssistantMsg != nil {
+			if err := s.attachChatQuickActions(ctx, task, reportActions, false); err != nil {
+				slog.Warn("chat report quick actions failed", "task_id", util.UUIDToString(task.ID), "error", err)
+			}
+		}
 		if suggest {
 			// Detached: the reply is already delivered and the user's next turn
 			// must never wait on suggestions.

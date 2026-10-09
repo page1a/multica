@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -72,25 +73,56 @@ func TestUnverifiedQuoteOnCreateIsHandedToRouting(t *testing.T) {
 	assertRoutedPastUnverifiedQuote(t, id)
 }
 
+// The assign request itself starts routing: nothing here calls Route, and the
+// request does not touch status, title or description, the writes that
+// routed a ticket before (DENE-1613 review F1).
 func TestUnverifiedQuoteOnAssignIsHandedToRouting(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	routableSeat(t, "Quote Route Seat assign")
 	f := originRun(t, "quote-route-assign", "这张票先放着", "member", testUserID, testUserID)
-	id := originIssue(t, "empty todo")
 
-	req := newRequest(http.MethodPut, "/api/issues/"+id, map[string]any{
-		"assignee_type": "agent", "assignee_id": f.target, "assignee_quote": "交给 " + f.name,
-	})
-	req.Header.Set("X-Agent-ID", f.caller)
-	req.Header.Set("X-Task-ID", f.task)
-	req = req.WithContext(withSkipIssueRouting(req.Context()))
-	resp := testutil.Call(t, testHandler.UpdateIssue, testutil.WithURLParams(req, "id", id)).Want(http.StatusOK).Map()
-	if resp["assignee_ignored"] != true || resp["assignee_ignored_reason"] != routing.ReasonQuoteNotVerified {
-		t.Fatalf("ignored = %v reason = %v", resp["assignee_ignored"], resp["assignee_ignored_reason"])
+	for _, tc := range []struct {
+		name  string
+		batch bool
+	}{{"single update", false}, {"batch update", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := originIssue(t, "empty todo "+tc.name)
+			assign := map[string]any{"assignee_type": "agent", "assignee_id": f.target, "assignee_quote": "交给 " + f.name}
+			var req *http.Request
+			if tc.batch {
+				req = newRequest(http.MethodPatch, "/api/issues/batch?workspace_id="+testWorkspaceID, map[string]any{
+					"issue_ids": []string{id}, "updates": assign,
+				})
+			} else {
+				req = newRequest(http.MethodPut, "/api/issues/"+id, assign)
+			}
+			req.Header.Set("X-Agent-ID", f.caller)
+			req.Header.Set("X-Task-ID", f.task)
+			if tc.batch {
+				testutil.Call(t, testHandler.BatchUpdateIssues, req).Want(http.StatusOK)
+			} else {
+				resp := testutil.Call(t, testHandler.UpdateIssue, testutil.WithURLParams(req, "id", id)).Want(http.StatusOK).Map()
+				if resp["assignee_ignored"] != true || resp["assignee_ignored_reason"] != routing.ReasonQuoteNotVerified {
+					t.Fatalf("ignored = %v reason = %v", resp["assignee_ignored"], resp["assignee_ignored_reason"])
+				}
+			}
+			waitRouterFill(t, id)
+		})
 	}
-	assertRoutedPastUnverifiedQuote(t, id)
+}
+
+// waitRouterFill waits for the detached routing pass a write started.
+func waitRouterFill(t *testing.T, issueID string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if _, source, _, _ := originOf(t, issueID); source != nil && *source == routing.SourceRouter {
+			return
+		}
+	}
+	assignee, source, _, _ := originOf(t, issueID)
+	t.Fatalf("no routing pass filled the slot after the write: assignee = %v source = %v", assignee, source)
 }
 
 // routerSeatedWithRuns is a ticket routing put on seat, with the run that

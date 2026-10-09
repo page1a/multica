@@ -167,6 +167,9 @@ func continuationBlocker(seat ContinuationSeat, known bool, rank map[string]int,
 	if seat.Unpickable == ReasonMentionOnly {
 		return "仅点名，不自动派单"
 	}
+	if seat.Unpickable == ReasonOutOfProject {
+		return "限定了别的项目"
+	}
 	if seat.Unpickable != "" {
 		return "不能自动派单"
 	}

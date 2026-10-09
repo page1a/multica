@@ -37,7 +37,9 @@
     "steer_step_read": "Read",
     "retrying": "Waiting to retry.",
     "skills_used": "Skills used: {{names}}",
-    "skill_step": "Used skill {{name}}"
+    "skill_step": "Used skill {{name}}",
+    "relayed_to": "Handed to {{name}} after the failure",
+    "relay_waiting": "No seat could take over; waiting for a person"
   },
   "working_filter_error": {
     "title": "Couldn't load issues with working agents"
@@ -172,6 +174,7 @@
     "last_activity_missing": "No activity time",
     "knowledge_none": "No qualified knowledge",
     "knowledge_change": "Knowledge: {{locations}}",
+    "knowledge_change_unverified": "Knowledge: {{locations}} (delivery not checked)",
     "section_title": "Close record",
     "conclusion": "Conclusion",
     "status": "Status",
@@ -508,6 +511,7 @@
     "prop_status": "Status",
     "prop_priority": "Priority",
     "prop_stage": "Stage",
+    "prop_waiting_for": "Waiting for",
     "prop_assignee": "Assignee",
     "prop_reviewer": "Reviewer",
     "prop_start_date": "Start date",
@@ -622,7 +626,9 @@
       "status_conflict": "Conflict, executor resolves",
       "show_all_one": "Show all {{count}}",
       "show_all_other": "Show all {{count}}"
-    }
+    },
+    "from_chat": "From chat",
+    "from_chat_hidden": "From a chat you can't see"
   },
   "timeline": {
     "loading": "Loading..."
@@ -666,6 +672,7 @@
     "status_changed_pr": "changed status from {{from}} to {{to}} after every linked PR merged ({{prs}})",
     "pr_auto_complete_disabled": "set this issue to keep its status when PRs merge",
     "pr_auto_complete_enabled": "set this issue to change status when PRs merge again",
+    "linked_write": "acted on this issue via {{workspace}} · {{agent}}",
     "wakeup_created": "added a wakeup: {{condition}} · wake {{agent}}",
     "wakeup_triggered": "{{condition}} · woke {{agent}}",
     "wakeup_triggered_merged": "{{condition}} · joined {{agent}}'s waiting run",
@@ -690,6 +697,7 @@
   },
   "comment": {
     "add_reaction": "Add reaction",
+    "reaction_failed": "Couldn't update the reaction",
     "collapse_thread": "Collapse thread",
     "expand_thread": "Expand thread",
     "delete_title": "Delete comment",
@@ -1901,6 +1909,9 @@
     "reason_fresh_requested": "fresh session requested"
   },
   "state_card": {
+    "source_quote": "Original request",
+    "children": "Sub-task results",
+    "children_pr_merged": "merged",
     "section_title": "State card",
     "decisions": "Settled",
     "decisions_empty": "Nothing settled yet",

@@ -332,3 +332,16 @@ FROM (
       AND completed_at >= started_at
 ) spans
 WHERE n <= 40;
+
+-- name: SetIssueReviewerToMember :one
+-- DENE-1647: a person answered "我来验" on a failed acceptance. The slot
+-- names them; the patrol then only reminds and never starts a seat.
+UPDATE issue
+SET reviewer_type = 'member',
+    reviewer_id = sqlc.arg('reviewer_id')::uuid,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')::uuid
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+RETURNING *;

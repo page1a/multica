@@ -593,6 +593,20 @@ export interface AgentTask {
    * messages instead.
    */
   skills_used?: string[];
+  /**
+   * What the platform did after this run failed on a broken seat (DENE-1647).
+   * Only the issue execution log carries it.
+   */
+  relay?: TaskRelay;
+}
+
+/** One failed run's relay record: handed to another seat, waiting, or skipped. */
+export interface TaskRelay {
+  outcome: string;
+  reason?: string;
+  to_agent_id?: string;
+  to_agent_name?: string;
+  wait_reason?: string;
 }
 
 /**
@@ -851,6 +865,11 @@ export interface Agent {
    * reads as `auto`.
    */
   dispatch_mode?: string;
+  /**
+   * Project ids automatic dispatch is limited to (DENE-1648). Empty serves
+   * every project; older backends omit it.
+   */
+  dispatch_projects?: string[];
   /**
    * Platform auto-retry switch (DENE-217). When `false`, FailTask /
    * MaybeRetryFailedTask never spawn a retry child. Older backends omit
@@ -1141,6 +1160,8 @@ export interface UpdateAgentRequest {
   routing_usage?: string;
   /** `auto` or `mention_only`. Omitted preserves the saved value. */
   dispatch_mode?: string;
+  /** Project limit for automatic dispatch; `[]` lifts it. Omitted preserves. */
+  dispatch_projects?: string[];
   /**
    * Platform auto-retry switch. Omitted preserves the saved value; `false`
    * turns platform auto-retry off without affecting manual rerun.

@@ -90,6 +90,10 @@
     "no_projects": "还没有项目",
     "switch_project": "切换到其他项目…",
     "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级",
+    "linked_projects": "连通的项目（只读）",
+    "linked_project_chip": "来自 {{source}} 的只读项目",
+    "linked_project_stale": "失效",
+    "linked_project_stale_hint": "已不再共享，智能体不再收到它",
     "to_goal": "转成目标任务",
     "mode_menu": "发送方式",
     "mode_steer": "插话",
@@ -166,7 +170,8 @@
     "quick_actions_regenerate": "重新生成建议",
     "quick_actions_regenerate_failed": "无法重新生成建议，请重试。",
     "spawned": "已派生会话",
-    "spawn_untitled": "新聊天"
+    "spawn_untitled": "新聊天",
+    "issue_receipt": "任务回执"
   },
   "session_history": {
     "untitled": "无标题",
@@ -372,6 +377,7 @@
     "remove": "移除",
     "save": "保存",
     "cancel": "取消",
+    "save_failed": "保存失败",
     "note_bound": "改成私密后，其他人将看不到这个聊天。",
     "note_unbound": "没绑项目的聊天默认就是私密。",
     "view_only": "你可以看这个聊天，但不能发言。",
@@ -391,7 +397,8 @@
     "title": "有些聊天现在项目成员能看到",
     "body": "你有 {{count}} 个聊天现在项目成员能看到。",
     "make_private": "把勾选的设为私密",
-    "dismiss": "知道了"
+    "dismiss": "知道了",
+    "failed": "保存失败，请重试"
   },
   "title_locked": "标题已锁定，智能体不会再改名",
   "origin": {
@@ -405,5 +412,31 @@
     "reason_runtime_changed": "上次的会话在另一台机器上",
     "reason_session_lost": "会话没能恢复",
     "reason_fresh_requested": "按要求新开"
+  },
+  "report": {
+    "bar_other": "本聊天 {{count}} 张单",
+    "bar_fresh_other": "本聊天 {{count}} 张单 · 刚变 {{fresh}}",
+    "waiting_you": "等你 {{count}}",
+    "in_progress": "在做 {{count}}",
+    "done": "做完 {{count}}",
+    "hear": "听汇报",
+    "hear_prompt": "听汇报：讲讲「{{project}}」上次以来的新进展",
+    "title": "本聊天开的单",
+    "just_changed": "刚变",
+    "opened": "新开 · {{to}}",
+    "needs_you": "要你处理"
+  },
+  "tickets": {
+    "heading_other": "开了 {{count}} 张单",
+    "to": "给 {{name}}",
+    "routing": "等路由派人",
+    "actions": "{{id}} 的操作",
+    "assign_me": "改给我",
+    "assign_agent": "改给智能体",
+    "withdraw": "撤回",
+    "assigned_me": "{{id}} 已改给你",
+    "assigned_agent": "{{id}} 已交回路由派人",
+    "withdrawn": "已撤回 {{id}}",
+    "failed": "{{id}} 没改成"
   }
 }

@@ -23,7 +23,7 @@ import {
 // switches at their defaults.
 const JUDGE_ONLY: Pick<
   RoutingSettings,
-  "judge_enabled" | "analysis" | "usage_priority" | "allow_upshift" | "prefer_continuation" | "prefer_idle"
+  "judge_enabled" | "analysis" | "usage_priority" | "allow_upshift" | "prefer_continuation" | "prefer_idle" | "judged_review"
 > = {
   judge_enabled: true,
   analysis: { enabled: false, model: "", base_url: "" },
@@ -31,6 +31,7 @@ const JUDGE_ONLY: Pick<
   allow_upshift: false,
   prefer_continuation: false,
   prefer_idle: false,
+  judged_review: false,
 };
 
 const BASE: RoutingSettings = {
@@ -68,6 +69,7 @@ describe("parseRoutingSettings", () => {
       allow_upshift: false,
       prefer_continuation: false,
       prefer_idle: false,
+      judged_review: false,
     });
   });
 
@@ -79,6 +81,7 @@ describe("parseRoutingSettings", () => {
       allow_upshift: false,
       prefer_continuation: false,
       prefer_idle: false,
+      judged_review: false,
     });
     expect(
       parseRoutingSettings({
@@ -93,6 +96,9 @@ describe("parseRoutingSettings", () => {
     // DENE-1203: 负载分流 is off (shadow) unless explicitly true.
     expect(parseRoutingSettings({ routing: {} }).prefer_idle).toBe(false);
     expect(parseRoutingSettings({ routing: { prefer_idle: true } }).prefer_idle).toBe(true);
+    // DENE-1252: 按判断配验收 is off unless explicitly true.
+    expect(parseRoutingSettings({ routing: {} }).judged_review).toBe(false);
+    expect(parseRoutingSettings({ routing: { judged_review: true } }).judged_review).toBe(true);
     // Only an explicit false turns usage priority off.
     expect(
       parseRoutingSettings({ routing: { usage_priority: "no" } }).usage_priority,
@@ -254,6 +260,7 @@ describe("withRoutingSettings", () => {
         allow_upshift: false,
         prefer_continuation: false,
         prefer_idle: false,
+        judged_review: false,
       },
     });
   });
@@ -278,6 +285,7 @@ describe("withRoutingSettings", () => {
       allow_upshift: false,
       prefer_continuation: false,
       prefer_idle: false,
+      judged_review: false,
       projects: { tarot: "出海" },
       future: 1,
     });
@@ -305,6 +313,7 @@ describe("withRoutingSettings", () => {
         allow_upshift: false,
         prefer_continuation: false,
         prefer_idle: false,
+        judged_review: false,
       },
     );
     const gateway = withRoutingSettings(
@@ -321,6 +330,7 @@ describe("withRoutingSettings", () => {
         allow_upshift: false,
         prefer_continuation: false,
         prefer_idle: false,
+        judged_review: false,
       },
     );
     expect((gateway.routing as { analysis: { source: string } }).analysis.source).toBe("api_gateway");

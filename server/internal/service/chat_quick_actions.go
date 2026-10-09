@@ -242,7 +242,55 @@ func (s *TaskService) SupplementChatQuickActions(ctx context.Context, task db.Ag
 	if !task.ChatSessionID.Valid {
 		return nil
 	}
-	actions := parseChatQuickActionsOutput(raw)
+	return s.attachChatQuickActions(ctx, task, parseChatQuickActionsOutput(raw), failed)
+}
+
+// chatReportQuickActions are the buttons of a turn that delivered project
+// reports (DENE-1667, `multica project report --mark-heard`): the server built
+// them from the issues waiting on the person when it recorded the report, so
+// the turn takes them instead of the model suggestion pass.
+func (s *TaskService) chatReportQuickActions(ctx context.Context, task db.AgentTaskQueue) []protocol.ChatQuickAction {
+	if !task.ChatSessionID.Valid {
+		return nil
+	}
+	rows, err := s.Queries.ListProjectReportHeardByTask(ctx, task.ID)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	var settle, ack []protocol.ChatQuickAction
+	for _, row := range rows {
+		var actions []protocol.ChatQuickAction
+		if json.Unmarshal(row.Actions, &actions) != nil {
+			continue
+		}
+		for _, action := range actions {
+			action.Primary = false
+			if action.Label == ChatReportAckLabel {
+				ack = append(ack, action)
+			} else {
+				settle = append(settle, action)
+			}
+		}
+	}
+	// "都知道了" closes the row whatever number of reports the turn carried.
+	if len(ack) > 0 {
+		if len(settle) > chatQuickActionMaxCount-1 {
+			settle = settle[:chatQuickActionMaxCount-1]
+		}
+		settle = append(settle, ack[0])
+	}
+	return sanitizeChatQuickActions(settle)
+}
+
+// ChatReportAckLabel is the "heard it all" button every report ends with.
+const ChatReportAckLabel = "都知道了"
+
+// attachChatQuickActions writes sanitized actions onto the turn's assistant
+// message and broadcasts chat:quick_actions (see SupplementChatQuickActions).
+func (s *TaskService) attachChatQuickActions(ctx context.Context, task db.AgentTaskQueue, actions []protocol.ChatQuickAction, failed bool) error {
+	if !task.ChatSessionID.Valid {
+		return nil
+	}
 	for i := range actions {
 		actions[i].Label = redact.Text(actions[i].Label)
 		actions[i].Prompt = redact.Text(actions[i].Prompt)

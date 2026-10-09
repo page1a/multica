@@ -637,6 +637,13 @@ WITH
 deleted_chat_session_projects AS (
     DELETE FROM chat_session_project WHERE workspace_id = $1
 ),
+deleted_chat_session_linked_projects AS (
+    DELETE FROM chat_session_linked_project WHERE workspace_id = $1
+),
+-- project_report_heard keeps soft references too (DENE-1667).
+deleted_project_report_heard AS (
+    DELETE FROM project_report_heard WHERE workspace_id = $1
+),
 deleted_sessions AS (
     DELETE FROM chat_session WHERE chat_session.workspace_id = $1
 ),

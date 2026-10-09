@@ -33,6 +33,7 @@ import {
   PanelRight,
   Pin,
   PinOff,
+  MessagesSquare,
   Plus,
   SlidersHorizontal,
   Tag,
@@ -82,6 +83,7 @@ import { PropertyIcon } from "../../common/property-icon";
 import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { isBuiltInIssueStatus } from "@multica/core/issue-statuses";
+import { backlogWaitingFor } from "@multica/core/issues/backlog-waiting-for";
 import { commentLandingTarget, isDeletedComment } from "@multica/core/issues/comment-deletion";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
@@ -376,6 +378,13 @@ function formatActivity(
       return t(($) => $.activity.status_changed, {
         from: statusLabel(details.from ?? "?", t, resolveStatusLabel),
         to: statusLabel(details.to ?? "?", t, resolveStatusLabel),
+      });
+    case "linked_write":
+      // A managed workspace link (DENE-1663): the actor is the person whose
+      // run did it; the line names the workspace and agent it came through.
+      return t(($) => $.activity.linked_write, {
+        workspace: details.via_workspace ?? "?",
+        agent: details.agent_name ?? "?",
       });
     case "pr_auto_complete_changed":
       return (entry.details as { disabled?: unknown } | undefined)?.disabled === true
@@ -2799,6 +2808,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return <IssueNotFound showBackLink={!onDelete} leading={leadingAction} trailing={trailingActions} />;
   }
 
+  // What a parked ticket waits for (DENE-1638); shown only while it is in backlog.
+  const backlogWaitingForLine = backlogWaitingFor(issue);
+
   const persistDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
   ) => {
@@ -2869,6 +2881,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               isDuplicate={isDuplicateIssue(issue)}
             />
           </PropRow>
+          {backlogWaitingForLine && (
+            <PropRow label={t(($) => $.detail.prop_waiting_for)} interactive={false}>
+              <span className="min-w-0 whitespace-normal break-words py-1.5" title={backlogWaitingForLine}>{backlogWaitingForLine}</span>
+            </PropRow>
+          )}
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" sceneProjectIds={[issue.project_id]} sceneDomainId={issue.domain_id} />
           </PropRow>
@@ -3858,6 +3875,24 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               })()}
             </AppLink>
           )}
+
+          {issue.source_chat && (issue.source_chat.accessible ? (
+            <AppLink
+              href={paths.chatSession(issue.source_chat.id)}
+              className="mt-2 flex max-w-full items-center gap-1.5 text-caption text-muted-foreground hover:text-foreground transition-colors group/chat"
+            >
+              <MessagesSquare className="h-3.5 w-3.5 shrink-0" />
+              <span className="font-medium shrink-0">{t(($) => $.detail.from_chat)}</span>
+              {issue.source_chat.title && (
+                <span className="truncate group-hover/chat:text-foreground">{issue.source_chat.title}</span>
+              )}
+            </AppLink>
+          ) : (
+            <div className="mt-2 flex items-center gap-1.5 text-caption text-muted-foreground">
+              <MessagesSquare className="h-3.5 w-3.5 shrink-0" />
+              <span>{t(($) => $.detail.from_chat_hidden)}</span>
+            </div>
+          ))}
 
           {isPeek && (
             <div className="mt-3">

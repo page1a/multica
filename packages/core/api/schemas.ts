@@ -946,7 +946,7 @@ export const ChatMessageSchema = z.object({
   failure_reason: z.string().nullable().optional(),
   elapsed_ms: z.number().nullable().optional(),
   message_kind: z
-    .enum(["message", "no_response", "onboarding_kickoff", "onboarding_opening", "chat_spawn", "chat_spawn_refused"])
+    .enum(["message", "no_response", "onboarding_kickoff", "onboarding_opening", "chat_spawn", "chat_spawn_refused", "issue_receipt"])
     .catch("message")
     .optional(),
   // Optional additive data degrades independently: a malformed suggestion
@@ -1531,6 +1531,35 @@ export const IssueStateCardSchema = z.object({
       more: z.number().optional(),
     })
     .default({ anchor: "none", threads: [] }),
+  source: z
+    .object({
+      chat_session_id: z.string(),
+      chat_title: z.string().default(""),
+      message_id: z.string().optional(),
+      excerpt: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+  children: z
+    .array(
+      z.object({
+        issue_id: z.string(),
+        identifier: z.string().default(""),
+        title: z.string().default(""),
+        status: z.string().default(""),
+        conclusion: z.string().optional(),
+        summary: z.string().optional(),
+        knowledge: z.string().optional(),
+        pull_requests: z
+          .array(z.object({ number: z.number().default(0), url: z.string(), state: z.string().default("") }))
+          .nullable()
+          .default([])
+          .transform((v) => v ?? []),
+      }),
+    )
+    .nullable()
+    .optional()
+    .transform((v) => v ?? []),
   text: z.string().default(""),
 });
 
@@ -2134,6 +2163,7 @@ export const AgentSchema: z.ZodType<Agent> = z.object({
   routing_tier: z.string().optional().catch(undefined),
   routing_usage: z.string().optional().catch(undefined),
   dispatch_mode: z.string().optional().catch(undefined),
+  dispatch_projects: z.array(z.string()).optional().catch(undefined),
   owner_id: z.string().nullable().default(null),
   skills: z.array(z.unknown()).default([]),
   disabled_runtime_skills: z.array(z.unknown()).optional(),
@@ -2520,6 +2550,13 @@ export const AgentTaskSchema = z.object({
   // the UI already renders as an em dash.
   usage: z.array(TaskUsageSchema).optional().catch(undefined),
   skills_used: z.array(z.string()).optional().catch(undefined),
+  relay: z.object({
+    outcome: z.string(),
+    reason: z.string().optional(),
+    to_agent_id: z.string().optional(),
+    to_agent_name: z.string().optional(),
+    wait_reason: z.string().optional(),
+  }).optional().catch(undefined),
 }).loose();
 
 // Outcome counts are required: every backend that serves this endpoint
@@ -2642,6 +2679,15 @@ const ChatLastMessageSchema = z.object({
   sender_user_id: z.string().nullable().optional(),
 }).loose();
 
+const ChatLinkedProjectSchema = z.object({
+  link_id: z.string(),
+  project_id: z.string(),
+  title: z.string().default(""),
+  icon: z.string().nullable().default(null),
+  source_name: z.string().default(""),
+  available: z.boolean().default(false),
+}).loose();
+
 const ChatChannelSourceSchema = z.object({
   channel_type: z.string().default(""),
   installation_id: z.string().default(""),
@@ -2655,6 +2701,7 @@ export const ChatSessionSchema: z.ZodType<ChatSession> = z.object({
   creator_id: z.string().default(""),
   project_id: z.string().nullable().optional(),
   project_ids: z.array(z.string()).optional().catch(undefined),
+  linked_projects: z.array(ChatLinkedProjectSchema).optional().catch(undefined),
   title: z.string().default(""),
   title_locked: z.boolean().optional().catch(undefined),
   progress: ProgressSchema.nullable().optional().catch(undefined),

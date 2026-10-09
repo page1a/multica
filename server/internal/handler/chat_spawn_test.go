@@ -281,7 +281,7 @@ func TestAgentSpawn_IssueFromIssueDisabled(t *testing.T) {
 	// budget counts them.
 	setAgentSpawn(t, `{"issue_issue":{"enabled":false},"chat_issue":{"enabled":true,"per_run":1}}`)
 	create := func() *httptest.ResponseRecorder {
-		r := newRequest(http.MethodPost, "/api/issues", map[string]any{"title": "issue from chat", "allow_duplicate": true})
+		r := newRequest(http.MethodPost, "/api/issues", map[string]any{"title": "issue from chat", "description": "## 目标\nx\n\n## 验收\n- y", "allow_duplicate": true})
 		r.Header.Set("X-Actor-Source", "task_token")
 		r.Header.Set("X-Agent-ID", f.carrier)
 		r.Header.Set("X-Task-ID", f.task)
@@ -316,7 +316,7 @@ func TestAgentSpawn_ConcurrentIssueCreatesRespectPerRun(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			r := newRequest(http.MethodPost, "/api/issues", map[string]any{"title": "concurrent issue from chat", "allow_duplicate": true})
+			r := newRequest(http.MethodPost, "/api/issues", map[string]any{"title": "concurrent issue from chat", "description": "## 目标\nx\n\n## 验收\n- y", "allow_duplicate": true})
 			r.Header.Set("X-Actor-Source", "task_token")
 			r.Header.Set("X-Agent-ID", f.carrier)
 			r.Header.Set("X-Task-ID", f.task)

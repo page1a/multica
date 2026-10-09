@@ -76,6 +76,6 @@ func relaySeat(l Ladder, agent Agent) quotarelay.Seat {
 }
 
 func relayPickable(agent Agent, tier string) bool {
-	ok, _ := SeatSelectable(agent.State, SelectContext{NeedTier: true, Tier: tier})
+	ok, _ := SeatSelectable(agent.State, SelectContext{NeedTier: true, Tier: tier, ProjectID: agent.project})
 	return ok
 }

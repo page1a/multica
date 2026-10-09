@@ -344,7 +344,8 @@ func TestViewDTOFieldSet(t *testing.T) {
 	want := map[string][]string{
 		"":         {"issues", "link_id", "next_cursor", "projects", "source", "statuses"},
 		"source":   {"avatar_url", "name"},
-		"projects": {"done", "icon", "id", "status", "title", "total"},
+		// DENE-1643: sharing a project shares its project context.
+		"projects": {"description", "done", "icon", "id", "memory_line", "resources", "status", "title", "total"},
 		"issues": {"assignee_avatar_url", "assignee_name", "due_date", "identifier", "priority",
 			"project_id", "status", "title", "updated_at"},
 		"statuses": {"category", "key", "name"},
