@@ -43,3 +43,23 @@ func TestDecidePatrolCoversFailedReview(t *testing.T) {
 		t.Fatal("cover_review must stamp the patrol clock")
 	}
 }
+
+// DENE-1678: a failed acceptance run on work already merged and reviewed is
+// closed as passed instead of looking for another seat.
+func TestDecidePatrolReleasesSkippableFailedReview(t *testing.T) {
+	now := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	base := PatrolInput{Status: "in_review", Quiet: QuietAfter, Now: now, ReviewRunFailed: true, ReviewFailures: 1, ReviewSkip: "PR x 已合入"}
+	if d := DecidePatrol(base); d.Action != ActionRelease {
+		t.Fatalf("skippable failed review = %+v, want release", d)
+	}
+	human := base
+	human.ReviewerHuman = true
+	if d := DecidePatrol(human); d.Action == ActionRelease {
+		t.Fatalf("human reviewer = %+v, a person still decides", d)
+	}
+	running := base
+	running.ReviewRunFailed = false
+	if d := DecidePatrol(running); d.Action == ActionRelease {
+		t.Fatalf("no failed run = %+v, the patrol leaves the seat alone", d)
+	}
+}

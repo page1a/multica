@@ -25,6 +25,12 @@ export function useUpdateWorkspaceLinkProjects(wsId: string) {
   );
 }
 
+export function useSetWorkspaceLinkManaged(wsId: string) {
+  return useLinkMutation(wsId, ({ linkId, managed }: { linkId: string; managed: boolean }) =>
+    api.updateWorkspaceLink(linkId, { managed }),
+  );
+}
+
 export function useAcceptWorkspaceLink(wsId: string) {
   return useLinkMutation(wsId, (linkId: string) => api.updateWorkspaceLink(linkId, { accept: true }));
 }

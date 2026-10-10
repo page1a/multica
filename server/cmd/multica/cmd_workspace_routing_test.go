@@ -7,7 +7,7 @@ import (
 
 func newWorkspaceRoutingSetTestCmd() *cobra.Command {
 	cmd := newRoutingProjectsTestCmd()
-	for _, f := range []string{"source", "runtime", "model", "thinking", "continuation", "load", "usage-priority", "allow-upshift", "judged-review", "confidence-threshold", "stale-review-hours"} {
+	for _, f := range []string{"source", "runtime", "model", "thinking", "continuation", "load", "usage-priority", "allow-upshift", "judged-review", "confidence-threshold", "stale-review-hours", "learn", "learn-low-rate", "learn-window-days"} {
 		cmd.Flags().String(f, "", "")
 	}
 	return cmd
@@ -194,5 +194,41 @@ func TestWorkspaceRoutingSetLoadKeepsContinuation(t *testing.T) {
 	_ = bad.Flags().Set("load", "yes")
 	if err := runWorkspaceRoutingSet(bad, nil); err == nil {
 		t.Fatal("want an error for --load yes")
+	}
+}
+
+// DENE-1722: --learn flips 从结果里学 with its thresholds, leaves the other
+// switches alone, and reads as shadow by default.
+func TestWorkspaceRoutingSetLearn(t *testing.T) {
+	var patched map[string]any
+	routingProjectsServer(t, map[string]any{
+		"routing": map[string]any{"enabled": true, "prefer_idle": true},
+	}, &patched)
+
+	cmd := newWorkspaceRoutingSetTestCmd()
+	_ = cmd.Flags().Set("learn", "on")
+	_ = cmd.Flags().Set("learn-low-rate", "0.4")
+	_ = cmd.Flags().Set("learn-window-days", "14")
+	if err := runWorkspaceRoutingSet(cmd, nil); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	settings, _ := patched["settings"].(map[string]any)
+	block, _ := settings["routing"].(map[string]any)
+	if block["learn_from_outcomes"] != true || block["learn_low_rate"] != 0.4 || block["learn_window_days"] != 14.0 || block["prefer_idle"] != true {
+		t.Fatalf("learn not written or load lost: %v", block)
+	}
+	if got := routingView(block); got["learn_mode"] != "on" || got["learn_low_rate"] != 0.4 || got["learn_window_days"] != 14.0 {
+		t.Fatalf("view = %v", got)
+	}
+	if got := routingView(nil); got["learn_mode"] != "shadow" || got["learn_low_rate"] != 0.3 || got["learn_window_days"] != 30.0 {
+		t.Fatalf("default view = %v, want shadow with defaults", got)
+	}
+
+	for flag, value := range map[string]string{"learn": "yes", "learn-low-rate": "0", "learn-window-days": "400"} {
+		bad := newWorkspaceRoutingSetTestCmd()
+		_ = bad.Flags().Set(flag, value)
+		if err := runWorkspaceRoutingSet(bad, nil); err == nil {
+			t.Fatalf("want an error for --%s %s", flag, value)
+		}
 	}
 }

@@ -411,6 +411,29 @@ export function ChatPage() {
     backOrReplace(wsPaths.chat());
   };
 
+  // Narrowing a wide window folds to the list first, like a fresh compact
+  // visit: whatever the right pane held is one tap away instead of taking over
+  // the whole width. Only a real resize counts — the width hook reports wide on
+  // its first render, and a phone mount must keep its deep-linked chat.
+  const resizedSinceMount = useRef(false);
+  useEffect(() => {
+    const onResize = () => {
+      resizedSinceMount.current = true;
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const wasCompact = useRef(isCompact);
+  useEffect(() => {
+    const folded = isCompact && !wasCompact.current;
+    wasCompact.current = isCompact;
+    if (!folded || !resizedSinceMount.current) return;
+    conversationEntry.current = null;
+    setComposingNew(false);
+    if (c.activeSessionId) c.setActiveSession(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to the fold only
+  }, [isCompact]);
+
   // Single archive path for both entry points (thread-list row + conversation
   // header). When the archived chat is the one in view, move the pane off it:
   // on desktop advance to the next chat (Inbox-style); when compact drop back to

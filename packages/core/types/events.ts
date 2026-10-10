@@ -67,6 +67,7 @@ export type WSEventType =
   | "chat:session_deleted"
   | "chat:session_updated"
   | "chat:session_invalidated"
+  | "chat:tickets_changed"
   | "project:created"
   | "project:updated"
   | "project:deleted"
@@ -663,6 +664,7 @@ export interface WSEventPayloadMap {
   "chat:session_deleted": ChatSessionDeletedPayload;
   "chat:session_updated": unknown;
   "chat:session_invalidated": { chat_session_id: string };
+  "chat:tickets_changed": { chat_session_id: string };
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;

@@ -1722,7 +1722,11 @@
       "manage_members": "inviter des membres et changer les rôles",
       "workspace_settings": "paramètres de l'espace de travail, intégrations et clés",
       "billing_and_transfer": "facturation, transfert et suppression"
-    }
+    },
+    "projects_count_one": "{{count}} projet",
+    "projects_count_other": "{{count}} projets",
+    "no_projects": "Aucun projet",
+    "projects_aria": "Projets rejoints par {{name}}"
   },
   "integrations": {
     "status_connected": "Connecté",
@@ -1955,6 +1959,13 @@
     "load_label": "Répartir sur les sièges libres",
     "load_description_on": "Actif : dans le palier et la direction choisis, le siège qui a le moins de tâches en cours prend le ticket, sans passer outre l'étiquette d'usage : un siège « tendu » inoccupé ne prend pas le travail d'un siège normal ou large plus chargé ; à charge égale, l'ordre habituel s'applique. Si « Préférer l'exécutant précédent » est aussi actif, il l'emporte.",
     "load_description_shadow": "Mode fantôme : le routage garde son choix et indique seulement dans le commentaire quel siège moins chargé cette règle choisirait. Activez pour l'appliquer.",
+    "learn_label": "Apprendre des résultats",
+    "learn_description_on": "Actif : quand des tickets du même type ont récemment été escaladés ou refusés, les nouveaux montent d'un palier.",
+    "learn_description_shadow": "Mode fantôme : le routage garde son choix et indique seulement dans le commentaire que cette règle monterait d'un palier, et pourquoi. Activez pour l'appliquer.",
+    "learn_rate_label": "Part jugée trop basse (%)",
+    "learn_rate_description": "Monter un type dès que cette part de ses tickets a été escaladée ou refusée ; il en faut au moins 5.",
+    "learn_window_label": "Fenêtre (jours)",
+    "learn_window_description": "Seuls les tickets routés dans ce nombre de jours comptent.",
     "gateway_endpoint_workspace": "L'identifiant du modèle est envoyé au point d'accès propre à cet espace de travail : {{host}}.",
     "gateway_endpoint_deployment": "L'identifiant du modèle est envoyé au point d'accès LLM partagé du déploiement : {{host}}.",
     "gateway_unset": "Aucun point de terminaison disponible. Renseignez un point de terminaison et une clé ci-dessous.",
@@ -2117,6 +2128,10 @@
     "issue_chat_description": "Indisponible : discutez en commentaires, découpez l'exploration en sous-tâches.",
     "per_run": "Par exécution",
     "per_chat": "Par chat",
+    "per_issue": "Par tâche",
+    "consult_title": "Consultation",
+    "consult_label": "Consulter un siège fort",
+    "consult_description": "Une exécution sur une tâche peut poser une question à un siège du niveau le plus fort ; ce siège ne fait que lire.",
     "unlimited": "Illimité",
     "enabled": "Autoriser",
     "limits_title": "Limites d'exécution",

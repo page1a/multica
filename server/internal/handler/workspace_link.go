@@ -73,11 +73,14 @@ func parseProjectUUIDs(w http.ResponseWriter, ids []string) ([]pgtype.UUID, bool
 
 // ListWorkspaceLinks — GET /api/workspace-links
 func (h *Handler) ListWorkspaceLinks(w http.ResponseWriter, r *http.Request) {
-	ws, _, actor, ok := h.workspaceLinkCaller(w, r)
+	ws, user, actor, ok := h.workspaceLinkCaller(w, r)
 	if !ok {
 		return
 	}
 	links, err := h.workspaceLinks().List(r.Context(), ws, actor)
+	if err == nil {
+		err = h.workspaceLinks().FillCanSetManaged(r.Context(), links, user, actor)
+	}
 	if err != nil {
 		writeWorkspaceLinkError(w, err)
 		return

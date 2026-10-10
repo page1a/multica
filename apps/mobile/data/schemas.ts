@@ -323,6 +323,10 @@ export const EMPTY_CHAT_MESSAGE_LIST: ChatMessage[] = [];
 // to "unassigned" instead of failing the whole card.
 export const ChatTicketSchema: z.ZodType<ChatTicket> = z.object({
   id: z.string(),
+  // DENE-1719: a server predating followed tickets only returned issues the
+  // chat opened, so a missing/unknown source reads as "created".
+  source: z.enum(["created", "auto", "manual"]).catch("created").default("created"),
+  linked_at: z.string().default(""),
   identifier: z.string().default(""),
   title: z.string().default(""),
   status: z.string().default("todo"),
@@ -337,7 +341,7 @@ export const ChatTicketSchema: z.ZodType<ChatTicket> = z.object({
   changed_at: z.string().default(""),
   phase: z.enum(["done", "in_progress", "waiting_you"]).catch("in_progress").default("in_progress"),
   needs_you: z.boolean().default(false),
-}).loose();
+}).loose().transform((t) => ({ ...t, linked_at: t.linked_at || t.created_at }));
 
 export const ChatTicketsResponseSchema: z.ZodType<ChatTicketsResponse> = z.object({
   chat_session_id: z.string().default(""),

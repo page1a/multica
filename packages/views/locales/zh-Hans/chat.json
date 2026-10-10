@@ -421,13 +421,13 @@
     "done": "做完 {{count}}",
     "hear": "听汇报",
     "hear_prompt": "听汇报：讲讲「{{project}}」上次以来的新进展",
-    "title": "本聊天开的单",
+    "title": "本聊天的单",
     "just_changed": "刚变",
-    "opened": "新开 · {{to}}",
     "needs_you": "要你处理"
   },
   "tickets": {
     "heading_other": "开了 {{count}} 张单",
+    "heading_mixed_other": "{{count}} 张单",
     "to": "给 {{name}}",
     "routing": "等路由派人",
     "actions": "{{id}} 的操作",
@@ -437,6 +437,19 @@
     "assigned_me": "{{id}} 已改给你",
     "assigned_agent": "{{id}} 已交回路由派人",
     "withdrawn": "已撤回 {{id}}",
-    "failed": "{{id}} 没改成"
+    "failed": "{{id}} 没改成",
+    "source_created": "本聊天新建",
+    "source_auto": "跟进",
+    "source_manual": "手动挂上",
+    "remove": "从聊天取下",
+    "removed": "已从本聊天取下 {{id}}",
+    "remove_failed": "{{id}} 没取下来",
+    "pin": "挂上票",
+    "pin_title": "把票挂到本聊天",
+    "pin_hint": "挂上后在卡片和进度条里跟进，票本身不变。",
+    "pin_placeholder": "票号，如 DENE-12",
+    "pin_submit": "挂上",
+    "pinned": "已挂上 {{id}}",
+    "pin_failed": "{{id}} 没挂上"
   }
 }

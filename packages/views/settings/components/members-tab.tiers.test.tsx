@@ -291,3 +291,42 @@ describe("MembersTab tier changes", () => {
     );
   });
 });
+
+// DENE-1706: each row says which projects the person has joined.
+describe("MembersTab project memberships", () => {
+  it("links up to two projects inline and folds more into a count", async () => {
+    const user = userEvent.setup();
+    renderTab([
+      OWNER,
+      member({
+        ...TEAMMATE,
+        projects: [
+          { id: "p-a", title: "Alpha", icon: null },
+          { id: "p-b", title: "Beta", icon: null },
+        ],
+      }),
+      member({
+        id: "m-busy",
+        name: "Cy Busy",
+        projects: [
+          { id: "p-a", title: "Alpha", icon: null },
+          { id: "p-b", title: "Beta", icon: null },
+          { id: "p-c", title: "Gamma", icon: null },
+        ],
+      }),
+      member({ id: "m-idle", name: "Di Idle", projects: [] }),
+    ]);
+
+    const inline = await screen.findByLabelText("Projects Bo Member has joined");
+    expect(inline).toHaveTextContent("Alpha");
+    expect(screen.getAllByRole("link", { name: "Beta" })[0]).toHaveAttribute(
+      "href",
+      "/acme/projects/p-b",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Projects Cy Busy has joined" }));
+    expect(await screen.findByRole("link", { name: "Gamma" })).toBeInTheDocument();
+
+    expect(screen.getByText("No projects")).toBeInTheDocument();
+  });
+});

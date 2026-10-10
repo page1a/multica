@@ -195,7 +195,16 @@
     "assign_me": "Give to me",
     "assign_agent": "Give to an agent",
     "withdraw": "Withdraw",
-    "failed": "Couldn't update {{id}}"
+    "failed": "Couldn't update {{id}}",
+    "heading_linked_one": "{{count}} issue",
+    "heading_linked_other": "{{count}} issues",
+    "source": {
+      "created": "Opened here",
+      "auto": "Followed",
+      "manual": "Pinned"
+    },
+    "remove": "Remove from chat",
+    "remove_failed": "Couldn't remove {{id}} from this chat"
   },
   "progress": {
     "bar_one": "{{count}} issue from this chat",
@@ -207,7 +216,8 @@
     "done": "{{count}} done",
     "title": "Issues from this chat",
     "just_changed": "Just changed",
-    "opened": "Opened · {{to}}",
-    "needs_you": "needs you"
+    "needs_you": "needs you",
+    "hear": "Hear report",
+    "hear_prompt": "Report: tell me what's new in \"{{project}}\" since I last heard"
   }
 }

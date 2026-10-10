@@ -1,5 +1,6 @@
 import type { ChatQuickAction } from "./chat";
 import type { KnowledgeAuditChange } from "./close";
+import type { MemberRole } from "./workspace";
 
 export type ProjectStatus = "planned" | "in_progress" | "paused" | "completed" | "cancelled";
 
@@ -224,6 +225,11 @@ export interface ProjectMember {
   name: string;
   email: string;
   avatar_url: string | null;
+  /** Workspace role. Owner-only like the roster (DENE-1022): "" for anyone
+   *  but the viewer unless the viewer is the workspace owner. */
+  role: MemberRole | "";
+  /** This person is the project's member lead. */
+  is_lead: boolean;
 }
 
 /** A person granted direct access to one issue or repository ("specific people" scope). */

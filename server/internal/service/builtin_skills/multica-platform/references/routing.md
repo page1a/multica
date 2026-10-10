@@ -140,6 +140,7 @@ naming the way out, and the CLI prints it on stderr. The ways out:
 | You want | Run |
 |---|---|
 | a stronger seat | `multica issue escalate <id> --reason "..."` |
+| advice from a stronger seat, keeping the ticket | `multica issue consult <id> --question-file <path>` (`references/consult.md`) |
 | someone else to take it | `multica issue close <id> --outcome blocked --evidence-file <path> ...` — routing advises |
 | a person to decide | `multica issue summon <id> --to <member> --reason "..."` |
 | the person already named the new owner | `--per-quote "<原话>"`, checked as above |
@@ -221,6 +222,23 @@ multica workspace routing set --load on      # or off to go back to shadow
 
 So create independent tickets in one batch and leave them to routing; do not
 hand-assign them to different seats to spread the load.
+
+**从结果里学 (DENE-1722).** A ticket the rule table tiered is remembered by
+class: direction × tier × scope / clarity / risk. `issue escalate` and an
+acceptance `verdict: hold` mark it judged low. Once a class has at least 5
+tickets in the window and the judged-low share reaches the threshold
+(defaults 30% over 30 days), its next ticket goes one rung higher. Also **off
+by default = shadow mode**: the comment only says 「按新规则会上调一档——同类票近
+30 天 4/10 张判低…」.
+
+```bash
+multica workspace routing learning --output json   # classes, counts, would-raise
+multica workspace routing set --learn on           # or off to go back to shadow
+multica workspace routing set --learn-low-rate 0.4 --learn-window-days 14
+```
+
+So when a ticket is beyond your seat, say so with `issue escalate`; that call
+is what teaches routing, a comment saying "too hard" is not.
 
 **按判断配验收 (DENE-1252)** has no effect since DENE-1677: the rule table
 below decides whether a ticket gets a 验收席. `--judged-review` is still

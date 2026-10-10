@@ -592,6 +592,34 @@ describe("ChatPage responsive layout", () => {
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
   });
 
+  it("folds to the list when a wide window is narrowed", () => {
+    layout.width = DESKTOP;
+    storeRef.current = { activeSessionId: "session-1" };
+    const { rerender } = renderPage("session=session-1");
+
+    layout.width = FOLD_INNER;
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    rerender();
+
+    expect(mockSetActiveSession).toHaveBeenCalledWith(null);
+  });
+
+  it("keeps a deep-linked chat when the page mounts narrow", () => {
+    layout.width = DESKTOP;
+    storeRef.current = { activeSessionId: "session-1" };
+    const { rerender } = renderPage("session=session-1");
+
+    // The width hook's first render reports wide; settling without a resize
+    // is a phone mount, not a fold.
+    layout.width = FOLD_INNER;
+    rerender();
+
+    expect(mockSetActiveSession).not.toHaveBeenCalledWith(null);
+    expect(screen.getByText("chat-input")).toBeInTheDocument();
+  });
+
   it("keeps both panes at the compact breakpoint", () => {
     // 1024px is the first width that keeps two panes. The nav auto-collapses
     // there instead (see the sidebar), so the thread list stays on screen next

@@ -112,6 +112,18 @@
       "cancel": "취소",
       "confirm": "삭제",
       "deleting": "삭제하는 중..."
+    },
+    "section_linked_changes": "연결된 워크스페이스를 통한 변경",
+    "linked_change_by": "{{actor}} · {{via}} · {{agent}} 경유",
+    "linked_change_route": {
+      "create": "생성",
+      "update": "설정 변경",
+      "delete": "삭제",
+      "run": "수동 실행",
+      "trigger_add": "트리거 추가",
+      "trigger_update": "트리거 변경",
+      "trigger_delete": "트리거 삭제",
+      "other": "변경"
     }
   },
   "access": {

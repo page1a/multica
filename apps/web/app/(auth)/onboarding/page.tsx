@@ -7,6 +7,7 @@ import {
   paths,
   resolvePostAuthDestination,
   useHasOnboarded,
+  workspaceLandingPath,
 } from "@multica/core/paths";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { CliInstallInstructions, OnboardingFlow } from "@multica/views/onboarding";
@@ -80,7 +81,7 @@ export default function OnboardingPage() {
               paths.workspace(ws.slug).issueDetail(destination.issueId),
             );
           } else if (ws) {
-            router.push(paths.workspace(ws.slug).issues());
+            router.push(workspaceLandingPath(ws.slug));
           } else {
             router.push(paths.root());
           }

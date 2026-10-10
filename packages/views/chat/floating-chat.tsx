@@ -8,6 +8,7 @@ import { useBackToDismiss, useNavigation } from "../navigation";
 import { ChatFab } from "./components/chat-fab";
 import { ChatWindow } from "./components/chat-window";
 import { isFloatingChatRouteSuppressed } from "./floating-chat-visibility";
+import { useIsPhone } from "../layout/use-is-phone";
 
 /**
  * Mount point for the floating chat overlay (FAB + window). Rendered once in
@@ -32,7 +33,10 @@ export function FloatingChat() {
   const { pathname } = useNavigation();
   const wsPaths = useWorkspacePaths();
   const isMobile = useIsMobile();
-  const suppressed = isFloatingChatRouteSuppressed(pathname, wsPaths.chat());
+  // A phone has Chat in its tab bar, which the launcher would sit on top of.
+  const isPhone = useIsPhone();
+  const suppressed =
+    isPhone || isFloatingChatRouteSuppressed(pathname, wsPaths.chat());
 
   // The open flag is a desktop habit ("keep my chat panel open"). On a phone a
   // restored flag means a full-screen sheet covering the page just opened, so
@@ -58,7 +62,8 @@ export function FloatingChat() {
   );
 
   if (!enabled) return null;
-  // Suppress on the Chat tab — it renders the same conversation full-page.
+  // Suppress on the Chat tab — it renders the same conversation full-page —
+  // and on a phone (see above).
   if (suppressed) return null;
 
   return (

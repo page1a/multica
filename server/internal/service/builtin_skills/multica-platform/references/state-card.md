@@ -10,7 +10,7 @@ does not replace the scan.
 | 目标 | the title, plus the goal's finish line when the issue has a goal |
 | 来源 | the chat the issue was opened from and the user message it answered; absent when no chat opened it |
 | 已拍板 | `--decision` on `issue close` / `issue handoff`, and what people add on the issue page |
-| 现在在哪 | the status and the latest `close.*` record; a record the status has since moved past is marked stale and its wait dropped |
+| 现在在哪 | the status and the latest `close.*` record; a record the status has since moved past is marked stale and its wait dropped; a `done` issue that skipped acceptance adds 跳过验收 and why (`now.review_skip`) |
 | 上一棒交代 | whichever is newer: the latest close's summary, or the latest handoff's `--summary` |
 | 子任务回执 | each sub-issue you can see: status, its close's summary, PRs, knowledge; absent without sub-issues |
 | 你上次之后的变化 | threads with comments new since your previous run on this issue (a person: since their last comment), your own comments excluded; titles and thread ids only |

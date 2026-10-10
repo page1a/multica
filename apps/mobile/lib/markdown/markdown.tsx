@@ -48,6 +48,8 @@ import { useMarkdownStyle } from "./markdown-style";
 import { splitMarkdown } from "./split-markdown";
 import { CodeBlock } from "./code-block";
 import { MarkdownImage } from "./markdown-image";
+import { parseMermaidGroups } from "./mermaid-groups";
+import { MermaidSummary } from "./mermaid-summary";
 
 interface Props {
   content: string;
@@ -196,7 +198,12 @@ export function Markdown({
                 selectable={selectable}
               />
             );
-          case "code":
+          case "code": {
+            // No WebView for a real diagram (ADR); the 听汇报 shape shows as
+            // grouped counts, everything else stays code.
+            const groups =
+              seg.lang === "mermaid" ? parseMermaidGroups(seg.code) : null;
+            if (groups) return <MermaidSummary key={i} groups={groups} />;
             return (
               <CodeBlock
                 key={i}
@@ -205,6 +212,7 @@ export function Markdown({
                 selectable={selectable}
               />
             );
+          }
           case "image":
             return (
               <MarkdownImage

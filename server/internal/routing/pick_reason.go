@@ -68,6 +68,8 @@ func executorPickReason(issue Issue, needExecutor bool, executor *Seat, executor
 		return PickReasonContinuation, executor.Continues
 	case pickLoad:
 		return PickReasonLoad, executor.Balanced
+	case pickLearned:
+		return PickReasonTier, executor.Learned
 	case pickFallback:
 		return PickReasonFallback, "判断不够确定或没有判断，落到兜底档"
 	}

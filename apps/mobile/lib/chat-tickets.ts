@@ -1,10 +1,12 @@
 /**
- * Where a chat's tickets render (DENE-1665).
+ * Where a chat's tickets render (DENE-1665, DENE-1719).
  *
  * Mirrors `groupChatTickets` in packages/views/chat/components/chat-ticket-card.tsx:
- * each ticket hangs under the reply of the turn that opened it — the first
- * assistant message created at or after the ticket. A ticket opened by a turn
- * still running has no such reply yet and goes to `tail`, the list's last row.
+ * each ticket hangs under the reply of the turn that linked it — the first
+ * assistant message created at or after its `linked_at` (an old issue the chat
+ * follows joins when a turn touched it, not when it was created). A ticket
+ * linked by a turn still running has no such reply yet and goes to `tail`,
+ * the list's last row.
  */
 import type { ChatTicket } from "@multica/core/types";
 
@@ -19,7 +21,7 @@ export function groupChatTickets(
   const byMessage = new Map<string, ChatTicket[]>();
   const tail: ChatTicket[] = [];
   for (const ticket of tickets) {
-    const at = Date.parse(ticket.created_at);
+    const at = Date.parse(ticket.linked_at || ticket.created_at);
     const reply = replies.find((r) => r.at >= at);
     if (!reply) {
       tail.push(ticket);

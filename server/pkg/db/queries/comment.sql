@@ -890,3 +890,39 @@ FROM comment c
 JOIN ancestor_ids path ON path.id = c.id
 ORDER BY c.id
 FOR UPDATE OF c;
+
+-- name: ListIssueVerdictComments :many
+-- DENE-1678: the newest comments on an issue that may carry an acceptance
+-- verdict line (`verdict: pass` / `verdict: hold`). The caller parses the
+-- line; the LIKE only narrows the scan.
+SELECT id, author_type, author_id, content, created_at
+FROM comment
+WHERE issue_id = $1
+  AND deleted_at IS NULL
+  AND author_type IN ('agent', 'member')
+  AND content ILIKE '%verdict:%'
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+
+-- name: RecordReviewPassHeads :exec
+-- DENE-1678: when a `verdict: pass` comment lands, keep the head of every PR
+-- linked to its issue, GitHub and self-hosted alike: the version the pass
+-- reviewed. A PR with no known head is left out, so a pass never vouches for
+-- it.
+INSERT INTO review_pass_head (comment_id, pr_url, head_sha)
+SELECT sqlc.arg('comment_id')::uuid, pr.html_url, pr.head_sha
+FROM github_pull_request pr
+JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
+WHERE ipr.issue_id = sqlc.arg('issue_id') AND pr.head_sha <> ''
+UNION
+SELECT sqlc.arg('comment_id')::uuid, pr.html_url, pr.head_sha
+FROM vcs_pull_request pr
+JOIN issue_vcs_pull_request ipr ON ipr.pull_request_id = pr.id
+WHERE ipr.issue_id = sqlc.arg('issue_id') AND pr.head_sha <> ''
+ON CONFLICT (comment_id, pr_url) DO NOTHING;
+
+-- name: ListReviewPassHeads :many
+-- DENE-1678: the PR heads recorded for the given pass comments.
+SELECT comment_id, pr_url, head_sha
+FROM review_pass_head
+WHERE comment_id = ANY(sqlc.arg('comment_ids')::uuid[]);

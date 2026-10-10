@@ -20,6 +20,7 @@ import {
 import { ActorAvatar } from "../../common/actor-avatar";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
+import type { ProjectMember } from "@multica/core/types";
 
 export function ProjectMembersSection({
   projectId,
@@ -40,6 +41,21 @@ export function ProjectMembersSection({
   const { data: workspaceMembers = [] } = useQuery(memberListOptions(wsId));
   const addMember = useAddProjectMember(wsId, projectId);
   const removeMember = useRemoveProjectMember(wsId, projectId);
+
+  // The server orders the column (owner, lead, admins, rest) and blanks roles
+  // the viewer may not see, so this only labels what came back.
+  const roleLabels: Record<string, string> = {
+    owner: t(($) => $.members.roles.owner),
+    admin: t(($) => $.members.roles.admin),
+    member: t(($) => $.members.roles.member),
+    guest: t(($) => $.members.roles.guest),
+  };
+  const roleText = (member: ProjectMember) => {
+    const parts: string[] = [];
+    if (member.is_lead) parts.push(t(($) => $.members.lead));
+    if (member.role) parts.push(roleLabels[member.role] ?? member.role);
+    return parts.join(" · ");
+  };
 
   const addedIds = new Set(projectMembers.map((m) => m.member_id));
   const query = filter.toLowerCase();
@@ -95,6 +111,9 @@ export function ProjectMembersSection({
       </button>
       {open && (
         <div className="pl-2 space-y-1.5">
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.members.hint)}
+          </p>
           {projectMembers.length === 0 && (
             <p className="text-caption text-muted-foreground">
               {t(($) => $.members.empty)}
@@ -109,6 +128,11 @@ export function ProjectMembersSection({
                 >
                   <ActorAvatar actorType="member" actorId={member.member_id} size="sm" />
                   <span className="truncate flex-1">{member.name || member.email}</span>
+                  {roleText(member) && (
+                    <span className="shrink-0 text-muted-foreground">
+                      {roleText(member)}
+                    </span>
+                  )}
                   {canManage && (
                     <button
                       type="button"

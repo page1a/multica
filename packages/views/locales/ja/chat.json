@@ -421,13 +421,13 @@
     "done": "完了 {{count}}",
     "hear": "報告を聞く",
     "hear_prompt": "報告：「{{project}}」の前回以降の進捗を教えて",
-    "title": "このチャットで作ったチケット",
+    "title": "このチャットのチケット",
     "just_changed": "今変わった",
-    "opened": "新規 · {{to}}",
     "needs_you": "要対応"
   },
   "tickets": {
     "heading_other": "{{count}} 件の課題を作成",
+    "heading_mixed_other": "課題 {{count}} 件",
     "to": "担当 {{name}}",
     "routing": "ルーティングが担当を選びます",
     "actions": "{{id}} の操作",
@@ -437,6 +437,19 @@
     "assigned_me": "{{id}} を自分に割り当てました",
     "assigned_agent": "{{id}} をルーティングに戻しました",
     "withdrawn": "{{id}} を取り下げました",
-    "failed": "{{id}} を更新できませんでした"
+    "failed": "{{id}} を更新できませんでした",
+    "source_created": "このチャットで作成",
+    "source_auto": "フォロー",
+    "source_manual": "手動で追加",
+    "remove": "チャットから外す",
+    "removed": "{{id}} をこのチャットから外しました",
+    "remove_failed": "{{id}} を外せませんでした",
+    "pin": "課題を追加",
+    "pin_title": "このチャットに課題を追加",
+    "pin_hint": "カードと進捗バーに表示されます。課題自体は変わりません。",
+    "pin_placeholder": "課題番号（例: DENE-12）",
+    "pin_submit": "追加",
+    "pinned": "{{id}} を追加しました",
+    "pin_failed": "{{id}} を追加できませんでした"
   }
 }

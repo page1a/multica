@@ -41,6 +41,7 @@ vi.mock("@multica/core/chat/mutations", () => ({
   useDeleteChatSession: () => ({ mutate: vi.fn() }),
   useSetChatSessionArchived: () => ({ mutate: vi.fn() }),
   useHandoffChatSession: () => ({ mutate: handoffMutate, isPending: false }),
+  useSetChatTicket: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@multica/core/chat", () => ({
@@ -300,12 +301,13 @@ describe("ChatSessionHeader handoff (DENE-1350)", () => {
 
   beforeEach(() => handoffMutate.mockReset());
 
-  it("hands the chat to another agent, never the current one", () => {
+  it("lists the chat's own agent first, then the others", () => {
     renderHeader();
     fireEvent.click(screen.getByTestId("chat-handoff-trigger"));
-    expect(screen.queryByRole("menuitem", { name: "Current" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Gohan" }));
-    expect(handoffMutate).toHaveBeenCalledWith({ sessionId: "session-1", to: "agent-2" }, expect.anything());
+    const items = screen.getAllByRole("menuitem").map((el) => el.textContent);
+    expect(items.slice(0, 2)).toEqual(["Current", "Gohan"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Current" }));
+    expect(handoffMutate).toHaveBeenCalledWith({ sessionId: "session-1", to: "agent-1" }, expect.anything());
   });
 
   it("offers no handoff to someone who does not own the chat", () => {

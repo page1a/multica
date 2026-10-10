@@ -6,6 +6,7 @@ import { renderWithI18n } from "../../test/i18n";
 import { ChatReportBar } from "./chat-report-bar";
 
 const tickets = vi.hoisted(() => ({ current: [] as ChatTicket[] }));
+const setTicket = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/chat/queries", () => ({
   chatTicketsOptions: (wsId: string, id: string) => ({
@@ -13,8 +14,11 @@ vi.mock("@multica/core/chat/queries", () => ({
     queryFn: async () => ({ chat_session_id: id, tickets: tickets.current }),
   }),
 }));
-vi.mock("@multica/core/issue-statuses", () => ({
-  useIssueStatuses: () => ({ labelOf: (key: string) => key }),
+vi.mock("@multica/core/chat/mutations", () => ({
+  useSetChatTicket: () => ({ mutate: setTicket, isPending: false }),
+}));
+vi.mock("../../issues/utils/status-label", () => ({
+  useStatusLabel: () => (key: string) => key,
 }));
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/ws/issues/${id}` }),
@@ -35,6 +39,7 @@ function ticket(id: string, title: string, rest: Partial<ChatTicket>): ChatTicke
     assignee_type: null, assignee_id: null,
     created_at: iso(3 * 3_600_000), updated_at: iso(0),
     changed_at: iso(3 * 3_600_000), phase: "in_progress", needs_you: false,
+    source: "created", linked_at: iso(3 * 3_600_000),
     ...rest,
   };
 }
@@ -52,6 +57,7 @@ function renderBar(projectTitle = "Alpha", onHear = vi.fn()) {
 describe("ChatReportBar", () => {
   beforeEach(() => {
     localStorage.clear();
+    setTicket.mockClear();
   });
 
   it("stays hidden while the chat has opened no tickets", async () => {
@@ -90,5 +96,27 @@ describe("ChatReportBar", () => {
     renderBar("");
     await screen.findByText(/1 issue from this chat/);
     expect(screen.queryByRole("button", { name: "Hear report" })).toBeNull();
+  });
+
+  it("says where each ticket came from and takes one off the chat", async () => {
+    tickets.current = [
+      ticket("DENE-1", "Opened", {}),
+      ticket("DENE-2", "Followed", { source: "auto" }),
+      ticket("DENE-3", "Pinned", { source: "manual" }),
+    ];
+    renderBar();
+    fireEvent.click(await screen.findByText(/3 issues from this chat/));
+
+    const rows = await screen.findAllByRole("link");
+    expect(rows.find((r) => r.textContent?.includes("DENE-1"))?.textContent).toContain("Opened here");
+    expect(rows.find((r) => r.textContent?.includes("DENE-2"))?.textContent).toContain("Followed");
+    expect(rows.find((r) => r.textContent?.includes("DENE-3"))?.textContent).toContain("Pinned");
+    expect(screen.getByRole("button", { name: "Pin an issue" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove from chat DENE-2" }));
+    expect(setTicket).toHaveBeenCalledWith(
+      { sessionId: "chat-a", issue: "DENE-2", remove: true },
+      expect.anything(),
+    );
   });
 });

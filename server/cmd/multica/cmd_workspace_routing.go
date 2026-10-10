@@ -36,6 +36,14 @@ seat with fewer unfinished runs (queued or running) takes the ticket; when all
 are equally busy the usual order stands. Off (the default) is shadow mode, as
 above. With both switches on, --continuation wins.
 
+--learn on|off is 从结果里学: a class of tickets (direction × tier × scope,
+clarity, risk) whose recent tickets were escalated by their executor or held
+at acceptance often enough gets its next ticket one tier higher. Off (the
+default) is shadow mode, as above. --learn-low-rate (0, 1] is the share that
+triggers it (default 0.3), --learn-window-days [1, 365] how far back it looks
+(default 30); a class needs at least 5 tickets. See the numbers with:
+multica workspace routing learning --output json
+
 --judged-review on|off is 按判断配验收. It is kept so old configs still read:
 since DENE-1677 the rule table (multica workspace routing rules) decides
 whether a ticket needs a check, so the switch has no effect.`,
@@ -51,6 +59,9 @@ func init() {
 	workspaceRoutingSetCmd.Flags().String("thinking", "", "Thinking level: low, medium, high")
 	workspaceRoutingSetCmd.Flags().String("continuation", "", "接着做 switch: on (prefer the previous executor) or off (shadow mode)")
 	workspaceRoutingSetCmd.Flags().String("load", "", "负载分流 switch: on (prefer a less busy seat of the same tier) or off (shadow mode)")
+	workspaceRoutingSetCmd.Flags().String("learn", "", "从结果里学 switch: on (raise a class judged low too often one tier) or off (shadow mode)")
+	workspaceRoutingSetCmd.Flags().String("learn-low-rate", "", "从结果里学: share of a class judged low that raises it, (0, 1]")
+	workspaceRoutingSetCmd.Flags().String("learn-window-days", "", "从结果里学: days of history the rate is taken over, [1, 365]")
 	workspaceRoutingSetCmd.Flags().String("usage-priority", "", "用量优先 switch: on (ample seats first) or off (stable name order)")
 	workspaceRoutingSetCmd.Flags().String("allow-upshift", "", "允许上调一档 switch: on (borrow an ample seat from the tier above) or off")
 	workspaceRoutingSetCmd.Flags().String("judged-review", "", "按判断配验收 switch (no effect since the rule table decides the check; kept for old configs)")
@@ -87,6 +98,15 @@ func routingView(block map[string]any) map[string]any {
 		usagePriority = true
 	}
 	allowUpshift, _ := block["allow_upshift"].(bool)
+	learn, _ := block["learn_from_outcomes"].(bool)
+	lowRate := routing.DefaultLearnLowRate
+	if value, ok := numberFromRoutingBlock(block, "learn_low_rate"); ok && value > 0 && value <= 1 {
+		lowRate = value
+	}
+	windowDays := float64(routing.DefaultLearnWindowDays)
+	if value, ok := numberFromRoutingBlock(block, "learn_window_days"); ok && value >= 1 && value <= 365 {
+		windowDays = float64(int(value))
+	}
 	judgedReview, _ := block["judged_review"].(bool)
 	confidenceThreshold := routing.DefaultConfidenceThreshold
 	if value, ok := numberFromRoutingBlock(block, "confidence_threshold"); ok && value > 0 && value <= 1 {
@@ -100,6 +120,7 @@ func routingView(block map[string]any) map[string]any {
 		"source": analysis["source"], "runtime_id": analysis["runtime_id"], "model": analysis["model"], "thinking_level": analysis["thinking_level"],
 		"prefer_continuation": continuation, "continuation_mode": switchMode(continuation),
 		"prefer_idle": idle, "load_mode": switchMode(idle),
+		"learn_from_outcomes": learn, "learn_mode": switchMode(learn), "learn_low_rate": lowRate, "learn_window_days": windowDays,
 		"usage_priority": usagePriority, "allow_upshift": allowUpshift, "judged_review": judgedReview,
 		"confidence_threshold": confidenceThreshold, "stale_review_hours": staleReviewHours,
 	}
@@ -148,6 +169,20 @@ func runWorkspaceRoutingSet(cmd *cobra.Command, _ []string) error {
 	if load != "" && load != "on" && load != "off" {
 		return fmt.Errorf("--load must be on or off")
 	}
+	learn, _ := cmd.Flags().GetString("learn")
+	if learn != "" && learn != "on" && learn != "off" {
+		return fmt.Errorf("--learn must be on or off")
+	}
+	learnLowRate, _ := cmd.Flags().GetString("learn-low-rate")
+	lowRateValue, err := parseRoutingRange(learnLowRate, "--learn-low-rate", 0, 1, false)
+	if err != nil {
+		return err
+	}
+	learnWindowDays, _ := cmd.Flags().GetString("learn-window-days")
+	windowValue, err := parseRoutingRange(learnWindowDays, "--learn-window-days", 1, 365, true)
+	if err != nil {
+		return err
+	}
 	usagePriority, _ := cmd.Flags().GetString("usage-priority")
 	if usagePriority != "" && usagePriority != "on" && usagePriority != "off" {
 		return fmt.Errorf("--usage-priority must be on or off")
@@ -195,6 +230,15 @@ func runWorkspaceRoutingSet(cmd *cobra.Command, _ []string) error {
 	}
 	if load != "" {
 		block["prefer_idle"] = load == "on"
+	}
+	if learn != "" {
+		block["learn_from_outcomes"] = learn == "on"
+	}
+	if learnLowRate != "" {
+		block["learn_low_rate"] = lowRateValue
+	}
+	if learnWindowDays != "" {
+		block["learn_window_days"] = windowValue
 	}
 	if usagePriority != "" {
 		block["usage_priority"] = usagePriority == "on"
@@ -256,6 +300,24 @@ func parseRoutingStaleReviewHours(value string) (float64, error) {
 	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil || !(parsed > 0 && parsed <= 24*365) {
 		return 0, fmt.Errorf("--stale-review-hours must be a number in (0, 8760]")
+	}
+	return parsed, nil
+}
+
+// parseRoutingRange reads an optional number flag. The lower bound is
+// inclusive only when lowInclusive is set; the upper bound always is.
+func parseRoutingRange(value, flag string, low, high float64, lowInclusive bool) (float64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	inRange := parsed <= high && (parsed > low || (lowInclusive && parsed == low))
+	if err != nil || !inRange {
+		open := "("
+		if lowInclusive {
+			open = "["
+		}
+		return 0, fmt.Errorf("%s must be a number in %s%v, %v]", flag, open, low, high)
 	}
 	return parsed, nil
 }

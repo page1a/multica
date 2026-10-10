@@ -1,6 +1,7 @@
 /**
  * The chat's progress sheet (DENE-1667) — presented as a formSheet by the
- * parent Stack from `ChatProgressBar`. Lists the issues this chat opened,
+ * parent Stack from `ChatProgressBar`. Lists the issues this chat opened or
+ * follows (each row leads with where it came from),
  * fresh moves first (「刚变：A → B · 多久前」); a row opens the issue.
  * Closing the sheet is the "look": the next opening marks only later moves.
  */
@@ -48,8 +49,9 @@ export default function ChatProgressRoute() {
         {rows.map((row) => {
           const where = row.from_status
             ? `${catalog.labelOf(row.from_status)} → ${catalog.labelOf(row.status)}`
-            : t("progress.opened", { to: catalog.labelOf(row.status) });
+            : catalog.labelOf(row.status);
           const meta = [
+            t(`tickets.source.${row.source}`),
             row.fresh ? `${t("progress.just_changed")}：${where}` : where,
             row.changed_at ? timeAgo(row.changed_at) : "",
             row.needs_you ? t("progress.needs_you") : "",

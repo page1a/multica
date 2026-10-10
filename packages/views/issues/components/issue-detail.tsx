@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { BreadcrumbBackButton, BreadcrumbHeader, type BreadcrumbSegment } from "../../layout/breadcrumb-header";
 import { OverflowActions, type OverflowItem } from "../../layout/overflow-actions";
+import { useIsPhone } from "../../layout/use-is-phone";
 import { ResourceNotFound, WriteAction, useGuestReadOnly } from "../../layout/guest-readonly";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -84,6 +85,7 @@ import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory
 import { contentReferencesAttachment } from "@multica/core/types";
 import { isBuiltInIssueStatus } from "@multica/core/issue-statuses";
 import { backlogWaitingFor } from "@multica/core/issues/backlog-waiting-for";
+import { reviewSkipReason } from "@multica/core/issues/review-skip";
 import { commentLandingTarget, isDeletedComment } from "@multica/core/issues/comment-deletion";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
@@ -353,6 +355,94 @@ function statusLabel(
     return t(($) => $.status[status]);
   }
   return status;
+}
+
+const CONSULT_ACTIVITY_ACTIONS = new Set(["consult_answered", "consult_failed"]);
+
+/**
+ * A run asked a strong seat for advice (DENE-1721). One line names the
+ * advisor and the cost; the chevron opens the question and the answer.
+ */
+function ConsultActivityRow({
+  entry,
+  getActorName,
+}: {
+  entry: TimelineEntry;
+  getActorName: (type: string, id: string) => string;
+}) {
+  const { t } = useT("issues");
+  const locale = useLocale();
+  const timeAgo = useTimeAgo();
+  const [open, setOpen] = useState(false);
+  const details = (entry.details ?? {}) as Record<string, unknown>;
+  const text = (key: string) => (typeof details[key] === "string" ? (details[key] as string) : "");
+  const num = (key: string) => (typeof details[key] === "number" ? (details[key] as number) : 0);
+  const failed = entry.action === "consult_failed";
+  const advisor = text("advisor_name") || "?";
+  const tokens = num("tokens_used");
+  const cost = t(($) => $.activity.consult_cost, {
+    tokens: tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens),
+    seconds: num("duration_seconds"),
+  });
+  return (
+    <div className="flex flex-col gap-1.5 text-caption text-muted-foreground">
+      <div className="flex items-center">
+        <div className="mr-2 flex w-4 shrink-0 justify-center">
+          <ActorAvatar
+            actorType={entry.actor_type}
+            actorId={entry.actor_id}
+            name={entry.actor_name}
+            avatarUrl={entry.actor_avatar_url}
+            profileRequiresDirectoryEntry
+            size="sm"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-1 text-left transition-colors hover:text-foreground"
+        >
+          <span className="shrink-0 font-medium">
+            {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
+          </span>
+          <span className="truncate">
+            {failed
+              ? t(($) => $.activity.consult_failed, { name: advisor })
+              : t(($) => $.activity.consult_answered, { name: advisor })}
+          </span>
+          {!failed && <span className="shrink-0 tabular-nums">· {cost}</span>}
+          {open ? (
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          )}
+        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className="ml-2 shrink-0 cursor-default">{timeAgo(entry.created_at)}</span>}
+          />
+          <TooltipContent side="top">{new Date(entry.created_at).toLocaleString(locale)}</TooltipContent>
+        </Tooltip>
+      </div>
+      {open && (
+        <div className="ml-6 flex flex-col gap-2 border-l pl-3">
+          <div>
+            <div className="font-medium">{t(($) => $.activity.consult_question)}</div>
+            <p className="whitespace-pre-wrap break-words text-foreground">{text("question")}</p>
+          </div>
+          <div>
+            <div className="font-medium">
+              {failed ? t(($) => $.activity.consult_reason) : t(($) => $.activity.consult_answer)}
+            </div>
+            <p className="whitespace-pre-wrap break-words text-foreground">
+              {failed ? text("reason") : text("answer")}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatActivity(
@@ -746,6 +836,9 @@ function ActivityBlock({
         </button>
       )}
       {visibleEntries.map((entry) => {
+        if (CONSULT_ACTIVITY_ACTIONS.has(entry.action ?? "")) {
+          return <ConsultActivityRow key={entry.id} entry={entry} getActorName={getActorName} />;
+        }
         const details = (entry.details ?? {}) as Record<string, string>;
         // Duplicate rows replace the status rows of the same write, so they
         // carry the status glyph those rows would have had.
@@ -1387,6 +1480,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   });
   const sidebarRef = usePanelRef();
   const isMobile = useIsMobile();
+  const isPhone = useIsPhone();
   // The properties panel folds into a drawer below the same breakpoint the
   // app nav does: on a portrait tablet a 320px panel beside the content
   // leaves the description under 500px of reading width.
@@ -1787,6 +1881,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     // Duplicate marks name a different issue on every row.
     const NEVER_COALESCE_ACTIONS = new Set([
       "squad_leader_evaluated",
+      "consult_answered",
+      "consult_failed",
       "wakeup_created",
       "wakeup_triggered",
       "wakeup_timed_out",
@@ -2810,6 +2906,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // What a parked ticket waits for (DENE-1638); shown only while it is in backlog.
   const backlogWaitingForLine = backlogWaitingFor(issue);
+  const reviewSkip = reviewSkipReason(issue);
 
   const persistDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
@@ -2903,6 +3000,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           {(issue.parent_issue_id == null || issue.reviewer_type != null) && (
             <PropRow label={t(($) => $.detail.prop_reviewer)}>
               <ReviewerPicker reviewerType={issue.reviewer_type} reviewerId={issue.reviewer_id} onUpdate={handleUpdateField} align="start" sceneProjectIds={[issue.project_id]} sceneDomainId={issue.domain_id} />
+            </PropRow>
+          )}
+          {/* DENE-1678: merged and already reviewed, so no acceptance seat ran.
+              The server writes the reason; it says which fact counted. */}
+          {reviewSkip && (
+            <PropRow label={t(($) => $.detail.prop_review_skip)} interactive={false}>
+              <span className="min-w-0 whitespace-normal break-words py-1.5" title={reviewSkip}>{reviewSkip}</span>
             </PropRow>
           )}
           <PropRow label={t(($) => $.detail.prop_project)}>
@@ -3546,7 +3650,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
     </Tooltip>
   );
-  const backFallback = breadcrumbSegments.at(-1)?.href;
+  // On a phone the header always offers a way back. It steps back through
+  // history (Chat → issue → Chat), and only a cold open falls back — to the
+  // issue list, the phone's home for issues, not the issue's container.
+  const backFallback = isPhone ? paths.issues() : breadcrumbSegments.at(-1)?.href;
 
   const breadcrumbLeaf = (
     <AppLink

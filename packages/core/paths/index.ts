@@ -35,6 +35,7 @@ export type {
   TabLabelKey,
 } from "./tab-presentation";
 export { resolvePostAuthDestination, useHasOnboarded } from "./resolve";
+export { PHONE_MEDIA_QUERY, isPhoneViewport, workspaceLandingPath } from "./landing";
 export {
   WorkspaceSlugProvider,
   useWorkspaceSlug,

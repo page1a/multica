@@ -833,6 +833,15 @@ type MemberWithUserResponse struct {
 	Name        string  `json:"name"`
 	Email       string  `json:"email"`
 	AvatarURL   *string `json:"avatar_url"`
+	// Projects this person has joined (DENE-1706). Management data like role:
+	// an owner gets everyone's, anyone else only their own.
+	Projects []MemberProjectRef `json:"projects"`
+}
+
+type MemberProjectRef struct {
+	ID    string  `json:"id"`
+	Title string  `json:"title"`
+	Icon  *string `json:"icon"`
 }
 
 // redactedForRoster drops the management fields, keeping name-and-avatar.
@@ -840,6 +849,7 @@ func (m MemberWithUserResponse) redactedForRoster() MemberWithUserResponse {
 	m.Role = ""
 	m.Email = ""
 	m.CreatedAt = ""
+	m.Projects = []MemberProjectRef{}
 	return m
 }
 
@@ -865,6 +875,21 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	memberships, err := h.Queries.ListWorkspaceProjectMemberships(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list members")
+		return
+	}
+	projectsByUser := make(map[string][]MemberProjectRef)
+	for _, pm := range memberships {
+		uid := uuidToString(pm.MemberID)
+		projectsByUser[uid] = append(projectsByUser[uid], MemberProjectRef{
+			ID:    uuidToString(pm.ProjectID),
+			Title: pm.Title,
+			Icon:  textToPtr(pm.Icon),
+		})
+	}
+
 	isOwner := requester.Role == "owner"
 	resp := make([]MemberWithUserResponse, len(members))
 	for i, m := range members {
@@ -877,6 +902,10 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 			Name:        m.UserName,
 			Email:       m.UserEmail,
 			AvatarURL:   h.resolveAvatarURLPtr(textToPtr(m.UserAvatarUrl)),
+			Projects:    projectsByUser[uuidToString(m.UserID)],
+		}
+		if row.Projects == nil {
+			row.Projects = []MemberProjectRef{}
 		}
 		if !isOwner && m.UserID != requester.UserID {
 			row = row.redactedForRoster()
@@ -902,6 +931,7 @@ func (h *Handler) memberWithUserResponse(member db.Member, user db.User) MemberW
 		Name:        user.Name,
 		Email:       user.Email,
 		AvatarURL:   h.resolveAvatarURLPtr(textToPtr(user.AvatarUrl)),
+		Projects:    []MemberProjectRef{},
 	}
 }
 

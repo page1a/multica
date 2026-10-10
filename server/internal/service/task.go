@@ -1109,6 +1109,8 @@ func (s *TaskService) taskMetricsContext(ctx context.Context, task db.AgentTaskQ
 	default:
 		if _, ok := s.parseQuickCreateContext(task); ok {
 			source = "quick_create"
+		} else if _, ok := ParseConsultContext(task); ok {
+			source = "consult"
 		} else if tc.Source != "" {
 			source = tc.Source
 		}
@@ -1196,6 +1198,10 @@ func (s *TaskService) taskAnalyticsContext(ctx context.Context, task db.AgentTas
 		tc.WorkspaceID = qc.WorkspaceID
 		tc.UserID = qc.RequesterID
 		tc.Source = analytics.SourceManual
+	}
+	if cc, ok := ParseConsultContext(task); ok {
+		tc.WorkspaceID = cc.WorkspaceID
+		tc.UserID = util.UUIDToString(task.OriginatorUserID)
 	}
 	s.storeTaskAnalyticsContext(task, tc)
 	return tc
@@ -5025,6 +5031,12 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		s.notifyQuickCreateCompleted(ctx, task, qc, result)
 	}
+	// Consult runs (DENE-1721): the final output is the advice.
+	if cc, ok := ParseConsultContext(task); ok {
+		var payload protocol.TaskCompletedPayload
+		_ = json.Unmarshal(result, &payload)
+		s.finishConsult(ctx, task, cc, util.UnescapeBackslashEscapes(payload.Output), "")
+	}
 
 	// For chat tasks, broadcast chat:done AFTER commit. The single assistant
 	// outcome row (message or no_response) and the resume pointer were already
@@ -5732,6 +5744,13 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 	// without losing their original prompt. Skipped when an auto-retry is
 	// pending — the new attempt will write its own outcome.
 	if retried == nil {
+		if cc, ok := ParseConsultContext(task); ok {
+			reason := strings.TrimSpace(errMsg)
+			if reason == "" {
+				reason = failureReason
+			}
+			s.finishConsult(ctx, task, cc, "", reason)
+		}
 		if qc, ok := s.parseQuickCreateContext(task); ok {
 			attached, attachedErr := s.sourceContextAttachedByTask(ctx, task, qc)
 			switch {
@@ -8906,6 +8925,9 @@ func (s *TaskService) ResolveTaskWorkspaceIDChecked(ctx context.Context, task db
 	// broadcasts, which is why quick-create tasks appeared stuck queued.
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		return qc.WorkspaceID, nil
+	}
+	if cc, ok := ParseConsultContext(task); ok {
+		return cc.WorkspaceID, nil
 	}
 	if lookupErr != nil {
 		return "", fmt.Errorf("resolve task workspace: %w", lookupErr)

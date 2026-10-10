@@ -11,5 +11,6 @@ export {
   useAcceptWorkspaceLink,
   useCreateWorkspaceLink,
   useRevokeWorkspaceLink,
+  useSetWorkspaceLinkManaged,
   useUpdateWorkspaceLinkProjects,
 } from "./mutations";

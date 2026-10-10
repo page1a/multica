@@ -63,7 +63,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useAuthStore } from "@multica/core/auth";
-import { useCurrentWorkspace, useWorkspacePaths, paths } from "@multica/core/paths";
+import { useCurrentWorkspace, useWorkspacePaths, paths, workspaceLandingPath } from "@multica/core/paths";
 import { workspaceListOptions, myInvitationListOptions, workspaceKeys, moduleVisibilityOptions } from "@multica/core/workspace/queries";
 import { canAccessModule, navItemModule } from "@multica/core/workspace";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
@@ -77,9 +77,6 @@ import type { Workspace } from "@multica/core/types";
 import { WorkspaceOrganizeDialog } from "./workspace-organize-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { inboxUnreadSummaryOptions, useInboxUnreadCount, hasOtherWorkspaceUnread, unreadWorkspaceIds } from "@multica/core/inbox/queries";
-import { chatSessionsOptions } from "@multica/core/chat/queries";
-import { countUnreadChatMessages } from "@multica/core/chat/unread";
-import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
@@ -90,20 +87,13 @@ import type { PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { routeIconForPath } from "./route-icon-components";
+import { isNavActive, useChatNavUnreadCount } from "./nav-unread";
 import { useT } from "../i18n";
 import {
   useShortcut,
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
-import { useAppForeground } from "../common/use-app-foreground";
 
-// Top-level nav items stay active when the user is on a child route
-// (e.g. "Projects" stays lit on /:slug/projects/:id). Pinned items keep
-// strict equality elsewhere — a pinned project shouldn't highlight on
-// sub-pages of itself.
-function isNavActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(href + "/");
-}
 
 // Stable empty arrays for query defaults. Using an inline `= []` default on
 // `useQuery` creates a new array reference on every render when `data` is
@@ -364,35 +354,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   // for the switcher dot, so the count costs no request of its own — it used
   // to download the whole inbox list here just to count it (MUL-6967).
   const unreadCount = useInboxUnreadCount(wsId);
-  // Chat tab unread badge: IM-style total of unread *messages* across chat
-  // threads (countUnreadChatMessages is the shared definition — mobile's tab
-  // badge derives from the same function, keeping the platforms in agreement).
-  const { data: chatSessions = [] } = useQuery({
-    ...chatSessionsOptions(wsId ?? ""),
-    enabled: !!wsId,
-  });
-  // The session the user is reading right now must not count: the thread list
-  // renders its row badge as 0 (auto mark-read is about to clear it), and a
-  // reply landing in the open conversation would otherwise flash a sidebar
-  // count with no matching row. "Reading right now" = a session is active, a
-  // chat surface is actually showing it (chat page route or the floating
-  // window), AND the app is in the foreground. When the app is backgrounded,
-  // auto mark-read is suppressed (MUL-4485) so the reply stays unread — the
-  // badge must count it, or the notification is silently eaten while the user
-  // is away. A remembered selection while both surfaces are closed also still
-  // counts, for the same reason.
-  const activeChatSessionId = useChatStore((s) => s.activeSessionId);
-  const floatingChatOpen = useChatStore((s) => s.isOpen);
-  const appForeground = useAppForeground();
-  const chatHref = p.chat();
-  const viewedChatSessionId =
-    appForeground && (floatingChatOpen || isNavActive(pathname, chatHref))
-      ? activeChatSessionId
-      : null;
-  const chatUnreadCount = React.useMemo(
-    () => countUnreadChatMessages(chatSessions, viewedChatSessionId),
-    [chatSessions, viewedChatSessionId],
-  );
+  const chatUnreadCount = useChatNavUnreadCount(wsId, pathname, p.chat());
   // Cross-workspace unread summary backs the workspace-switcher dot. One
   // shared cache entry across workspaces; gated on an active workspace since
   // the endpoint resolves through the workspace-member middleware.
@@ -504,7 +466,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         ? list.find((w) => w.id === invitation.workspace_id)
         : null;
       if (joined) {
-        push(paths.workspace(joined.slug).issues());
+        push(workspaceLandingPath(joined.slug));
       }
     },
     onError: () => {
@@ -557,7 +519,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         key={ws.id}
         className="group/ws"
         render={
-          <AppLink href={paths.workspace(ws.slug).issues()} />
+          <AppLink href={workspaceLandingPath(ws.slug)} />
         }
       >
         <WorkspaceAvatar name={ws.name} avatarUrl={ws.avatar_url} size="sm" />
@@ -670,7 +632,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                               if (firstWorkspaceMatch) {
                                 setSwitcherOpen(false);
                                 setWorkspaceQuery("");
-                                push(paths.workspace(firstWorkspaceMatch.slug).issues());
+                                push(workspaceLandingPath(firstWorkspaceMatch.slug));
                               }
                               return;
                             }

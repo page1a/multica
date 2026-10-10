@@ -3,6 +3,7 @@ import { api } from "../api";
 import { projectKeys } from "./queries";
 import { issueKeys } from "../issues/queries";
 import { domainKeys } from "../domains/queries";
+import { workspaceKeys } from "../workspace/queries";
 import { useWorkspaceId } from "../hooks";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { clearIssueSurfaceViewState } from "../issues/stores/surface-view-store";
@@ -63,6 +64,10 @@ export function useUpdateProject() {
       if ("domain_ids" in vars) {
         qc.invalidateQueries({ queryKey: domainKeys.all(wsId) });
       }
+      // Roster rows show project titles and icons.
+      if ("title" in vars || "icon" in vars) {
+        qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+      }
     },
   });
 }
@@ -95,6 +100,8 @@ export function useDeleteProject() {
       // event invalidates too, but a delivery gap must not leave the window
       // wrong forever — the global staleTime is Infinity.
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+      // Roster rows link to the member's projects.
+      qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     },
   });
 }

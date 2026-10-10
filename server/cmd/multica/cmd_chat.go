@@ -106,22 +106,58 @@ var chatToGoalCmd = &cobra.Command{
 
 var chatTicketsCmd = &cobra.Command{
 	Use:   "tickets",
-	Short: "List the issues a chat opened",
-	Long: `List the issues opened from a chat — by its agent's "issue create" or
-"plan apply", or by turning the chat into a goal — oldest first, with status,
-assignee and the first line of each issue's 目标 section, plus its latest
-status move (from_status, changed_at) and phase — waiting_you, in_progress or
-done, bucketed as "multica project report" does. A ticket that is done,
-blocked, cancelled or in review also carries its result: the close's summary,
-PRs and knowledge (summary, pull_requests, knowledge). The chat shows the same
-list as its ticket cards and progress bar; each issue names the chat back as
-source_chat in "multica issue get".
+	Short: "List the issues a chat opened or follows",
+	Long: `List a chat's tickets, in the order they joined it, each with its source:
+
+  created  opened from this chat — by its agent's "issue create" or
+           "plan apply", or by turning the chat into a goal
+  auto     followed: this chat's run changed its status or assignee,
+           commented on it, handed it off or closed it (naming an issue in a
+           reply does not count)
+  manual   pinned by hand ("multica chat tickets add" or the chat bar)
+
+Each ticket carries status, assignee and the first line of its 目标 section,
+plus its latest status move (from_status, changed_at) and phase — waiting_you,
+in_progress or done, bucketed as "multica project report" does. A ticket that
+is done, blocked, cancelled or in review also carries its result: the close's
+summary, PRs and knowledge (summary, pull_requests, knowledge). The chat shows
+the same list as its ticket cards and progress bar. An issue names the chat it
+was opened from as source_chat in "multica issue get"; following never moves
+that.
 
   multica chat tickets
   multica chat tickets --session <id|url> --output json
+  multica chat tickets add DENE-12
+  multica chat tickets remove DENE-12
 `,
 	Args: cobra.NoArgs,
 	RunE: runChatTickets,
+}
+
+var chatTicketsAddCmd = &cobra.Command{
+	Use:   "add <issue>",
+	Short: "Pin an issue to a chat's tickets",
+	Long: `Pin an issue to a chat's ticket list by hand (source manual). Also undoes
+an earlier "remove". The chat bar's 挂上 does the same.
+
+  multica chat tickets add DENE-12
+  multica chat tickets add DENE-12 --session <id|url>
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error { return runChatTicketsPin(cmd, args[0], false) },
+}
+
+var chatTicketsRemoveCmd = &cobra.Command{
+	Use:   "remove <issue>",
+	Short: "Take an issue off a chat's tickets",
+	Long: `Take an issue off a chat's ticket list, whatever its source. The issue is
+untouched, and the chat's run acting on it again does not bring it back; only
+"add" does. The ticket card's 取下 does the same.
+
+  multica chat tickets remove DENE-12
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error { return runChatTicketsPin(cmd, args[0], true) },
 }
 
 var chatTitleCmd = &cobra.Command{
@@ -188,8 +224,9 @@ the modes that work; nothing is sent.
 
 var chatHandoffCmd = &cobra.Command{
 	Use:   "handoff",
-	Short: "Hand a chat to another agent: a new chat that opens with this one's summary",
-	Long: `Hand a chat to another agent. The server opens a new chat with --to whose
+	Short: "Hand a chat to an agent: a new chat that opens with this one's summary",
+	Long: `Hand a chat to an agent (the chat's own agent too, for a fresh start). The
+server opens a new chat with --to whose
 first message summarises this one (title, opening line, latest messages, and
 how to read the full history), and starts that agent's reply. The old chat is
 left as it is. Only the chat's owner can hand it over.
@@ -226,6 +263,11 @@ func init() {
 	chatCmd.AddCommand(chatTicketsCmd)
 	chatTicketsCmd.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
 	chatTicketsCmd.Flags().String("output", "table", "Output format: table or json")
+	chatTicketsCmd.AddCommand(chatTicketsAddCmd, chatTicketsRemoveCmd)
+	for _, c := range []*cobra.Command{chatTicketsAddCmd, chatTicketsRemoveCmd} {
+		c.Flags().String("session", "", "Chat session id or URL (defaults to MULTICA_CHAT_SESSION_ID)")
+		c.Flags().String("output", "table", "Output format: table or json")
+	}
 	chatCmd.AddCommand(chatOpenCmd)
 	chatCmd.AddCommand(chatSendCmd)
 	chatCmd.AddCommand(chatHandoffCmd)
@@ -306,10 +348,10 @@ func runChatTickets(cmd *cobra.Command, _ []string) error {
 		return cli.PrintJSON(os.Stdout, out)
 	}
 	if len(out.Tickets) == 0 {
-		fmt.Println("This chat has not opened any issues.")
+		fmt.Println("This chat has no tickets: it has not opened or followed any issue.")
 		return nil
 	}
-	headers := []string{"IDENTIFIER", "STATUS", "PHASE", "ASSIGNEE", "TITLE", "RESULT"}
+	headers := []string{"IDENTIFIER", "SOURCE", "STATUS", "PHASE", "ASSIGNEE", "TITLE", "RESULT"}
 	rows := make([][]string, 0, len(out.Tickets))
 	for _, t := range out.Tickets {
 		assignee, _ := t["assignee_name"].(string)
@@ -320,9 +362,59 @@ func runChatTickets(cmd *cobra.Command, _ []string) error {
 		if phase == "" {
 			phase = "-"
 		}
-		rows = append(rows, []string{fmt.Sprint(t["identifier"]), fmt.Sprint(t["status"]), phase, assignee, fmt.Sprint(t["title"]), chatTicketResult(t)})
+		source, _ := t["source"].(string)
+		if source == "" {
+			source = "-"
+		}
+		rows = append(rows, []string{fmt.Sprint(t["identifier"]), source, fmt.Sprint(t["status"]), phase, assignee, fmt.Sprint(t["title"]), chatTicketResult(t)})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+// runChatTicketsPin is "chat tickets add|remove": the same server write the
+// chat bar's 挂上 / 取下 uses.
+func runChatTicketsPin(cmd *cobra.Command, issueArg string, remove bool) error {
+	verb := "add"
+	if remove {
+		verb = "remove"
+	}
+	session, _ := cmd.Flags().GetString("session")
+	if strings.TrimSpace(session) == "" {
+		session = os.Getenv("MULTICA_CHAT_SESSION_ID")
+	}
+	ref, err := parseChatSessionLinkRef(session)
+	if err != nil {
+		return fmt.Errorf("chat tickets %s: --session is required (or set MULTICA_CHAT_SESSION_ID): %w", verb, err)
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	issueRef, err := resolveIssueRef(ctx, client, issueArg)
+	if err != nil {
+		return fmt.Errorf("resolve issue %s: %w", issueArg, err)
+	}
+	path := "/api/chat/sessions/" + url.PathEscape(ref.ID) + "/tickets"
+	if remove {
+		err = client.DeleteJSON(ctx, path+"/"+url.PathEscape(issueRef.ID))
+	} else {
+		err = client.PostJSON(ctx, path, map[string]any{"issue": issueRef.ID}, nil)
+	}
+	if err != nil {
+		return fmt.Errorf("chat tickets %s: %w", verb, err)
+	}
+	result := map[string]any{"chat_session_id": ref.ID, "issue_id": issueRef.ID, "identifier": issueRef.Display, "removed": remove}
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	if remove {
+		fmt.Printf("Took %s off this chat's tickets.\n", issueRef.Display)
+	} else {
+		fmt.Printf("Pinned %s to this chat's tickets.\n", issueRef.Display)
+	}
 	return nil
 }
 

@@ -9,7 +9,7 @@ import {
   workspaceKeys,
   workspaceListOptions,
 } from "@multica/core/workspace/queries";
-import { paths } from "@multica/core/paths";
+import { paths, workspaceLandingPath } from "@multica/core/paths";
 import type { Invitation } from "@multica/core/types";
 import { AppLink, useNavigation } from "../navigation";
 import { useLogout } from "../auth";
@@ -112,7 +112,7 @@ export function InvitationsPage() {
       // wsList[0]: that could teleport the user into an unrelated old
       // workspace they happen to also belong to.
       push(
-        targetWs ? paths.workspace(targetWs.slug).issues() : paths.newWorkspace(),
+        targetWs ? workspaceLandingPath(targetWs.slug) : paths.newWorkspace(),
       );
     } catch (e) {
       setError(

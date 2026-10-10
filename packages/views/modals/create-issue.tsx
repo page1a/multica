@@ -1579,12 +1579,14 @@ export function manualDialogContentClass(isExpanded: boolean) {
     // Phone gutter — see the matching note in create-issue-dialog.tsx: the
     // `!important` widths below also override DialogContent's
     // `max-w-[calc(100%-2rem)]`, leaving the card edge to edge on a phone
-    // (MUL-6236). `!h-96` stays a hard height; it already fits the shortest
-    // phone we support.
+    // (MUL-6236). `!h-96` is a hard height only from `sm`: on a phone the
+    // property chips and footer wrap into extra rows that no longer fit 384px
+    // and pushed Create out of the card, so there it follows its content up
+    // to the browser chrome (DENE-1709).
     "!w-full !max-w-[calc(100vw-1.5rem)]",
     isExpanded
       ? "!h-5/6 !-translate-y-1/2 sm:!max-w-4xl"
-      : "!h-96 !-translate-y-1/2 sm:!max-w-2xl",
+      : "max-sm:!h-auto max-sm:!max-h-[85dvh] sm:!h-96 !-translate-y-1/2 sm:!max-w-2xl",
   );
 }
 

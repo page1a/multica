@@ -199,6 +199,7 @@ import type {
   GetAutopilotResponse,
   AutopilotCollaboratorsResponse,
   ListAutopilotRunsResponse,
+  AutopilotLinkedChange,
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
   NotificationPreferenceResponse,
@@ -5340,9 +5341,24 @@ export class ApiClient {
     });
   }
 
-  /** Issues this chat opened, oldest first (DENE-1665). */
+  /** Issues this chat opened or follows, in the order they joined it (DENE-1665, DENE-1719). */
   async listChatTickets(sessionId: string): Promise<ChatTicketsResponse> {
     return this.fetch(`/api/chat/sessions/${sessionId}/tickets`);
+  }
+
+  /** Pin an issue (id or identifier) to a chat by hand — `multica chat tickets add` (DENE-1719). */
+  async addChatTicket(sessionId: string, issue: string): Promise<void> {
+    await this.fetch(`/api/chat/sessions/${sessionId}/tickets`, {
+      method: "POST",
+      body: JSON.stringify({ issue }),
+    });
+  }
+
+  /** Take an issue off a chat — `multica chat tickets remove` (DENE-1719). */
+  async removeChatTicket(sessionId: string, issueId: string): Promise<void> {
+    await this.fetch(`/api/chat/sessions/${sessionId}/tickets/${encodeURIComponent(issueId)}`, {
+      method: "DELETE",
+    });
   }
 
   async getChatWorkThread(sessionId: string): Promise<WorkThreadSnapshot | null> {
@@ -6297,6 +6313,11 @@ export class ApiClient {
   // Returns a single run including its full trigger_payload. List responses
   // omit trigger_payload to keep them small (a webhook envelope can be
   // up to 256 KiB × limit rows), so the detail view fetches via this route.
+  async listAutopilotLinkedChanges(id: string): Promise<AutopilotLinkedChange[]> {
+    const raw = await this.fetch<{ changes?: AutopilotLinkedChange[] }>(`/api/autopilots/${id}/linked-changes`);
+    return raw.changes ?? [];
+  }
+
   async getAutopilotRun(autopilotId: string, runId: string): Promise<AutopilotRun> {
     return this.fetch(`/api/autopilots/${autopilotId}/runs/${runId}`);
   }
@@ -6637,7 +6658,7 @@ export class ApiClient {
 
   async updateWorkspaceLink(
     linkId: string,
-    body: { project_ids: string[] } | { accept: true },
+    body: { project_ids: string[] } | { accept: true } | { managed: boolean },
   ): Promise<WorkspaceLink> {
     return this.fetch(`/api/workspace-links/${encodeURIComponent(linkId)}`, {
       method: "PATCH",

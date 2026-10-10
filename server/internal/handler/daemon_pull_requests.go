@@ -41,6 +41,12 @@ type DaemonPullRequest struct {
 	ChecksRollup     *string  `json:"checks_rollup,omitempty"`
 	FailedCheckNames []string `json:"failed_check_names,omitempty"`
 	ChecksRunning    int      `json:"checks_running,omitempty"`
+	// Approval from the caller's gh (DENE-1678). Nil means not read.
+	ApprovedBy *string    `json:"approved_by,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	// ApprovedHead is the commit the approval was given on; an approval of
+	// another commit never counts toward a review skip.
+	ApprovedHead string `json:"approved_head_sha,omitempty"`
 }
 
 func (h *Handler) ReportDaemonPullRequests(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +131,22 @@ func (h *Handler) persistReportedPullRequests(ctx context.Context, ws pgtype.UUI
 		if err := writeReportedCheckSnapshot(ctx, qtx, row.ID, p); err != nil {
 			_ = tx.Rollback(ctx)
 			return err
+		}
+		if p.ApprovedBy != nil {
+			approval := db.SetGitHubPullRequestApprovalParams{ID: row.ID}
+			if *p.ApprovedBy != "" {
+				approval.ApprovedBy = pgtype.Text{String: *p.ApprovedBy, Valid: true}
+				at := time.Now()
+				if p.ApprovedAt != nil {
+					at = *p.ApprovedAt
+				}
+				approval.ApprovedAt = pgtype.Timestamptz{Time: at, Valid: true}
+				approval.ApprovedHeadSha = pgtype.Text{String: p.ApprovedHead, Valid: p.ApprovedHead != ""}
+			}
+			if err := qtx.SetGitHubPullRequestApproval(ctx, approval); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
 		}
 		for _, ident := range idents {
 			pfx, num, ok := strings.Cut(ident, "-")

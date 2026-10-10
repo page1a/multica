@@ -1280,6 +1280,54 @@ func (q *Queries) ListCommentsSinceForIssue(ctx context.Context, arg ListComment
 	return items, nil
 }
 
+const listIssueVerdictComments = `-- name: ListIssueVerdictComments :many
+SELECT id, author_type, author_id, content, created_at
+FROM comment
+WHERE issue_id = $1
+  AND deleted_at IS NULL
+  AND author_type IN ('agent', 'member')
+  AND content ILIKE '%verdict:%'
+ORDER BY created_at DESC, id DESC
+LIMIT 20
+`
+
+type ListIssueVerdictCommentsRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	AuthorType string             `json:"author_type"`
+	AuthorID   pgtype.UUID        `json:"author_id"`
+	Content    string             `json:"content"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+// DENE-1678: the newest comments on an issue that may carry an acceptance
+// verdict line (`verdict: pass` / `verdict: hold`). The caller parses the
+// line; the LIKE only narrows the scan.
+func (q *Queries) ListIssueVerdictComments(ctx context.Context, issueID pgtype.UUID) ([]ListIssueVerdictCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listIssueVerdictComments, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueVerdictCommentsRow{}
+	for rows.Next() {
+		var i ListIssueVerdictCommentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AuthorType,
+			&i.AuthorID,
+			&i.Content,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentThreadCommentsForIssue = `-- name: ListRecentThreadCommentsForIssue :many
 WITH RECURSIVE membership(id, root_id, comment_created_at) AS (
     -- Each root maps to itself.
@@ -1535,6 +1583,39 @@ func (q *Queries) ListReconcilableCommentsForIssueSince(ctx context.Context, arg
 			&i.RoutingKind,
 			&i.SuppressedAgentIds,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewPassHeads = `-- name: ListReviewPassHeads :many
+SELECT comment_id, pr_url, head_sha
+FROM review_pass_head
+WHERE comment_id = ANY($1::uuid[])
+`
+
+type ListReviewPassHeadsRow struct {
+	CommentID pgtype.UUID `json:"comment_id"`
+	PrUrl     string      `json:"pr_url"`
+	HeadSha   string      `json:"head_sha"`
+}
+
+// DENE-1678: the PR heads recorded for the given pass comments.
+func (q *Queries) ListReviewPassHeads(ctx context.Context, commentIds []pgtype.UUID) ([]ListReviewPassHeadsRow, error) {
+	rows, err := q.db.Query(ctx, listReviewPassHeads, commentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReviewPassHeadsRow{}
+	for rows.Next() {
+		var i ListReviewPassHeadsRow
+		if err := rows.Scan(&i.CommentID, &i.PrUrl, &i.HeadSha); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2119,6 +2200,34 @@ func (q *Queries) LockLiveComment(ctx context.Context, arg LockLiveCommentParams
 		&i.SuppressedAgentIds,
 	)
 	return i, err
+}
+
+const recordReviewPassHeads = `-- name: RecordReviewPassHeads :exec
+INSERT INTO review_pass_head (comment_id, pr_url, head_sha)
+SELECT $1::uuid, pr.html_url, pr.head_sha
+FROM github_pull_request pr
+JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
+WHERE ipr.issue_id = $2 AND pr.head_sha <> ''
+UNION
+SELECT $1::uuid, pr.html_url, pr.head_sha
+FROM vcs_pull_request pr
+JOIN issue_vcs_pull_request ipr ON ipr.pull_request_id = pr.id
+WHERE ipr.issue_id = $2 AND pr.head_sha <> ''
+ON CONFLICT (comment_id, pr_url) DO NOTHING
+`
+
+type RecordReviewPassHeadsParams struct {
+	CommentID pgtype.UUID `json:"comment_id"`
+	IssueID   pgtype.UUID `json:"issue_id"`
+}
+
+// DENE-1678: when a `verdict: pass` comment lands, keep the head of every PR
+// linked to its issue, GitHub and self-hosted alike: the version the pass
+// reviewed. A PR with no known head is left out, so a pass never vouches for
+// it.
+func (q *Queries) RecordReviewPassHeads(ctx context.Context, arg RecordReviewPassHeadsParams) error {
+	_, err := q.db.Exec(ctx, recordReviewPassHeads, arg.CommentID, arg.IssueID)
+	return err
 }
 
 const resolveComment = `-- name: ResolveComment :one

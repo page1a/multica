@@ -430,12 +430,13 @@
     "hear_prompt": "Point : raconte-moi les nouveautés de « {{project}} » depuis la dernière fois",
     "title": "Tickets de cette discussion",
     "just_changed": "Vient de changer",
-    "opened": "Ouvert · {{to}}",
     "needs_you": "vous attend"
   },
   "tickets": {
     "heading_one": "{{count}} ticket ouvert",
     "heading_other": "{{count}} tickets ouverts",
+    "heading_mixed_one": "{{count}} ticket",
+    "heading_mixed_other": "{{count}} tickets",
     "to": "pour {{name}}",
     "routing": "le routage choisit l'exécutant",
     "actions": "Actions pour {{id}}",
@@ -445,6 +446,19 @@
     "assigned_me": "{{id}} vous est attribué",
     "assigned_agent": "{{id}} est rendu au routage",
     "withdrawn": "{{id}} retiré",
-    "failed": "Impossible de modifier {{id}}"
+    "failed": "Impossible de modifier {{id}}",
+    "source_created": "Ouvert ici",
+    "source_auto": "Suivi",
+    "source_manual": "Épinglé",
+    "remove": "Retirer de la discussion",
+    "removed": "{{id}} retiré de cette discussion",
+    "remove_failed": "Impossible de retirer {{id}}",
+    "pin": "Épingler un ticket",
+    "pin_title": "Épingler un ticket à cette discussion",
+    "pin_hint": "Il apparaît dans les cartes et la barre de suivi ; le ticket ne change pas.",
+    "pin_placeholder": "Numéro, ex. DENE-12",
+    "pin_submit": "Épingler",
+    "pinned": "{{id}} épinglé",
+    "pin_failed": "Impossible d'épingler {{id}}"
   }
 }

@@ -142,6 +142,10 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					http.Error(w, `{"error":"issue draft sessions are read-only"}`, http.StatusForbidden)
 					return
 				}
+				if isConsultReadOnlyScope(tt.TaskKind) && !isReadOnlyMethod(r.Method) {
+					http.Error(w, `{"error":"a consult run only reads: reply with your advice as your final output"}`, http.StatusForbidden)
+					return
+				}
 				userID := uuidToString(tt.UserID)
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
 					return

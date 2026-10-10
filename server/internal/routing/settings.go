@@ -140,6 +140,14 @@ type Settings struct {
 	// Off by default, which is shadow mode, like PreferContinuation. With
 	// both on, 接着做 wins.
 	PreferIdle bool `json:"prefer_idle,omitempty"`
+	// LearnFromOutcomes is 「从结果里学」 (DENE-1722): a class of tickets
+	// whose recent members were judged too low gets its next ticket one rung
+	// higher. Off by default, which is shadow mode, like PreferContinuation.
+	// LearnLowRate and LearnWindowDays tune it; zero or out of range means
+	// the defaults in learn.go.
+	LearnFromOutcomes bool    `json:"learn_from_outcomes,omitempty"`
+	LearnLowRate      float64 `json:"learn_low_rate,omitempty"`
+	LearnWindowDays   float64 `json:"learn_window_days,omitempty"`
 	// JudgedReview is 「按判断配验收」 (DENE-1252): the reviewer slot gets a
 	// seat only when the judge asks for a check with confidence (or asks for
 	// a person). An unsure or "none" answer writes 不需要验收 instead of the

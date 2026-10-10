@@ -104,6 +104,11 @@
     "duplicate_removed": "取消了 {{identifier}} 对这个任务的重复标记",
     "tasks_completed_other": "完成了 {{count}} 次运行",
     "tasks_failed_other": "有 {{count}} 次运行失败",
+    "consult_answered": "咨询了 {{name}}",
+    "consult_failed": "咨询了 {{name}}，没有得到回答",
+    "consult_question": "问题",
+    "consult_answer": "回答",
+    "consult_reason": "没有回答的原因",
     "squad_action_with_reason": "评估后执行操作：{{reason}}",
     "squad_action": "评估后执行操作",
     "squad_no_action_with_reason": "评估结果：无需操作（{{reason}}）",
@@ -126,6 +131,7 @@
     "members": "没有分配给成员的任务。"
   },
   "waiting_for": "在等：{{reason}}",
+  "review_skip": "跳过验收：{{reason}}",
   "driver": {
     "none": "没人在推进",
     "revived": "已重跑 {{count}} 次",

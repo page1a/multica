@@ -24,7 +24,8 @@ need its answer.
 | A conversation with another agent: ask, explore, compare options | `multica chat open` |
 | Discussion inside a task | an issue comment; split parallel exploration into sub-issues |
 | Turn the current chat into tracked work | `multica chat to-goal` |
-| See the issues this chat opened, their status, latest move and phase (waiting_you / in_progress / done) | `multica chat tickets [--session <id>] --output json` |
+| See the issues this chat opened or follows, their source, status, latest move and phase (waiting_you / in_progress / done) | `multica chat tickets [--session <id>] --output json` |
+| Pin an existing issue to this chat's tickets, or take one off | `multica chat tickets add <DENE-N>` / `multica chat tickets remove <DENE-N>` |
 
 **Chat aligns, a ticket executes.** In chat, only make an aligned small fix: at
 most 3 files and 150 lines, no migration, not a server + UI + CLI change.
@@ -85,3 +86,10 @@ the parent's card lists each sub-issue's conclusion, PRs and knowledge
 chat run opens with the newest ten tickets and where each stands; answer "how
 is it going" from that list, not from memory. `multica chat tickets` shows the
 same result (`summary`, `pull_requests`, `knowledge`) for every ticket.
+
+The list also holds existing issues the chat follows, each with a `source`:
+`created` (opened here), `auto` (this chat's run changed its status or
+assignee, commented, handed off or closed it — the server adds it, nothing to
+do; only naming it in a reply does not count) or `manual` (pinned with `chat
+tickets add`). `chat tickets remove` takes any of them off and keeps auto-follow
+from bringing it back. Receipt cards still go only to the chat that opened it.

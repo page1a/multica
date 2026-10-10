@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DENE-1682 手机 App：听汇报 Mermaid 替代显示与入口</title>
+<style>
+:root{--bg:#fff;--fg:#0a0a0a;--card:#fff;--mut:#737373;--border:#d6d6d6;--brand:hsl(225 71% 58%);--ok:hsl(142 71% 45%)}
+.dark{--bg:#0a0a0a;--fg:#fafafa;--card:#0a0a0a;--mut:#a3a3a3;--border:#404040}
+body{margin:0;font:15px -apple-system,system-ui,"PingFang SC",sans-serif;background:#888;display:flex;gap:16px;padding:16px;flex-wrap:wrap}
+.phone{width:390px;background:var(--bg);color:var(--fg);padding:12px 0;border-radius:12px}
+.msg{margin:0 16px 12px;line-height:1.6}
+.card{margin:0 16px 12px;border:1px solid var(--border);background:var(--card);border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:8px;font-size:12px}
+.g{display:flex;align-items:center;gap:6px;font-weight:500}.d{width:6px;height:6px;border-radius:50%;background:color-mix(in srgb,var(--mut) 40%,transparent)}
+.i{padding-left:12px;color:var(--mut)}
+.bar{display:flex;align-items:center;padding-right:8px;min-height:44px;font-size:12px}
+.bar .t{flex:1;padding:0 16px;display:flex;align-items:center;gap:6px}.bar .m{color:var(--mut)}
+.hear{color:var(--brand);font-weight:500;padding:0 12px}
+.cap{margin:8px 16px 0;color:var(--mut);font-size:12px}
+</style>
+<div class="phone" id="light">
+<p class="msg">上次之后有 3 张单有动静：</p>
+<div class="card"><div><div class="g"><span class="d" style="background:var(--ok)"></span>做完 1</div><div class="i">DENE-1643 参考项目</div></div>
+<div><div class="g"><span class="d"></span>在做 1</div><div class="i">DENE-1665 聊天开单卡</div></div>
+<div><div class="g"><span class="d" style="background:var(--brand)"></span>等你 1</div><div class="i">DENE-1667 听汇报</div></div></div>
+<div class="bar"><div class="t"><span class="d" style="background:var(--brand)"></span><span>本聊天 3 张单 · 刚变 1<span class="m"> · 等你 1 · 在做 1 · 做完 1</span></span><span class="m">⌃</span></div><span class="hear">听汇报</span></div>
+<p class="cap">浅色 · 390px · 带项目</p></div>
+<div class="phone dark" id="dark">
+<p class="msg">上次之后有 3 张单有动静：</p>
+<div class="card"><div><div class="g"><span class="d" style="background:var(--ok)"></span>做完 1</div><div class="i">DENE-1643 参考项目</div></div>
+<div><div class="g"><span class="d"></span>在做 1</div><div class="i">DENE-1665 聊天开单卡</div></div>
+<div><div class="g"><span class="d" style="background:var(--brand)"></span>等你 1</div><div class="i">DENE-1667 听汇报</div></div></div>
+<div class="bar"><div class="t"><span class="d" style="background:var(--brand)"></span><span>本聊天 3 张单 · 刚变 1<span class="m"> · 等你 1 · 在做 1 · 做完 1</span></span><span class="m">⌃</span></div><span class="hear">听汇报</span></div>
+<p class="cap">深色 · 390px · 带项目</p></div>

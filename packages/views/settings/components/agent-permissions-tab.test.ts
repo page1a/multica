@@ -17,3 +17,11 @@ describe("parseSpawnCount", () => {
     expect(parseSpawnCount("5000", 3)).toBe(1000);
   });
 });
+
+describe("parseSpawnCount (required)", () => {
+  it("has no unlimited: blank or below 1 keeps the previous count", () => {
+    expect(parseSpawnCount("", 3, true)).toBe(3);
+    expect(parseSpawnCount("0", 3, true)).toBe(3);
+    expect(parseSpawnCount("5", 3, true)).toBe(5);
+  });
+});

@@ -247,7 +247,15 @@
     "toast_added": "Member added",
     "toast_add_failed": "Failed to add member",
     "toast_removed": "Member removed",
-    "toast_remove_failed": "Failed to remove member"
+    "toast_remove_failed": "Failed to remove member",
+    "hint": "Project members can see this project's issues.",
+    "lead": "Lead",
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member",
+      "guest": "Guest"
+    }
   },
   "delete_dialog": {
     "title": "Delete project",

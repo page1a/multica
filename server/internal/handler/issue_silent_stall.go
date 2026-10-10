@@ -41,6 +41,9 @@ type statusTransition struct {
 	// answered with a PR hold (DENE-1219): close_checks_pending,
 	// close_checks_red, ... The CLI waits out close_checks_pending in place.
 	refuseCode string
+	// reviewSkip is set when an agent's in_review was written as done
+	// because the PR is already merged and reviewed (DENE-1678).
+	reviewSkip *service.ReviewSkip
 }
 
 // holdRefusal answers a close the done gate cannot finish yet (DENE-1219):
@@ -162,6 +165,13 @@ func (h *Handler) decideSilentStall(ctx context.Context, issue db.Issue, nextSta
 			if reason := strings.TrimSpace(noCodeReason); reason != "" {
 				tr.noCode = reason
 				tr.note = "执行人声明这张票没有代码交付：" + reason + "。"
+			} else if skip, ok := h.findReviewSkip(ctx, issue, actorID); ok {
+				// Already reviewed and merged: the acceptance seat would only
+				// re-read a verdict that exists (DENE-1678).
+				tr.status = issuestatus.Done
+				tr.reviewSkip = &skip
+				tr.note = "已审已合，跳过验收席：" + skip.Reason() + "。票直接完成。"
+				return tr
 			}
 		}
 		// `none` is a routing verdict meaning that this ticket does not need
@@ -580,6 +590,21 @@ func mergeFailureCondition(err error, prs []db.ListPullRequestsByIssueRow) strin
 	}
 }
 
+// findReviewSkip is service.FindReviewSkip for a gate that must not fail the
+// write: a read error means "no skip", and the ticket goes to review.
+func (h *Handler) findReviewSkip(ctx context.Context, issue db.Issue, executorID string) (service.ReviewSkip, bool) {
+	var executors []pgtype.UUID
+	if id, err := util.ParseUUID(executorID); err == nil {
+		executors = append(executors, id)
+	}
+	skip, ok, err := service.FindReviewSkip(ctx, h.Queries, issue, executors...)
+	if err != nil {
+		slog.Warn("review skip: read failed", "issue_id", uuidToString(issue.ID), "error", err)
+		return service.ReviewSkip{}, false
+	}
+	return skip, ok
+}
+
 // finishStatusTransition applies a handoff and posts the human note after the
 // status row is committed. It returns the issue to publish, which may be the
 // reloaded row when the acceptance seat just took the ticket.
@@ -596,6 +621,15 @@ func (h *Handler) finishStatusTransition(ctx context.Context, issue db.Issue, tr
 				issue = fresh
 			}
 		}
+	}
+	if tr.reviewSkip != nil && issue.Status == issuestatus.Done {
+		if err := service.RecordReviewSkip(ctx, h.Queries, issue, *tr.reviewSkip); err != nil {
+			slog.Warn("review skip: record failed", "issue_id", uuidToString(issue.ID), "error", err)
+		}
+	} else if issue.Status == issuestatus.InReview {
+		// A reopened ticket goes through acceptance this time; an earlier
+		// skip must not be read as this round's reason.
+		service.ClearReviewSkip(ctx, h.Queries, issue)
 	}
 	if tr.note != "" {
 		h.postBlockComment(ctx, issue, tr.note)

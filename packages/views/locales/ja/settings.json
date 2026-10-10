@@ -1708,7 +1708,10 @@
       "manage_members": "メンバー招待と権限変更",
       "workspace_settings": "ワークスペース設定・連携・キー",
       "billing_and_transfer": "請求・譲渡・削除"
-    }
+    },
+    "projects_count_other": "{{count}} 件のプロジェクト",
+    "no_projects": "プロジェクトなし",
+    "projects_aria": "{{name}} が参加しているプロジェクト"
   },
   "integrations": {
     "status_connected": "接続済み",
@@ -1940,6 +1943,13 @@
     "load_label": "空いている席に振り分ける",
     "load_description_on": "有効：判定したティアと方向の席のうち、実行中の作業が少ない席に割り当てます。ただし使用量タグは越えません（「逼迫」の席が空いていても「通常」「余裕」の席の作業は取りません）。同じ忙しさなら従来の順番です。「前の担当者に続けて任せる」も有効なときはそちらが優先です。",
     "load_description_shadow": "シャドーモード：実際の選択は変えず、このルールならどの空いている席を選ぶかを割り当てコメントに書くだけです。有効にすると適用されます。",
+    "learn_label": "結果から学ぶ",
+    "learn_description_on": "有効：同じ種類のチケットが最近よく昇格・差し戻しされていると、新しいチケットを一段上のティアに割り当てます。",
+    "learn_description_shadow": "シャドーモード：実際の選択は変えず、このルールなら一段上げることとその理由を割り当てコメントに書くだけです。有効にすると適用されます。",
+    "learn_rate_label": "低判定の割合（%）",
+    "learn_rate_description": "同じ種類のうち昇格・差し戻しがこの割合に達したら上げます。最低 5 件必要です。",
+    "learn_window_label": "集計期間（日）",
+    "learn_window_description": "この日数以内に割り当てたチケットだけを数えます。",
     "gateway_endpoint_workspace": "モデル id はこのワークスペース独自のエンドポイントに送信されます：{{host}}。",
     "gateway_endpoint_deployment": "モデル id はデプロイ共通の LLM エンドポイントに送信されます：{{host}}。",
     "gateway_unset": "利用できるエンドポイントがありません。下でエンドポイントとキーを設定してください。",
@@ -2102,6 +2112,10 @@
     "issue_chat_description": "利用不可：議論はコメントで、並行調査はサブタスクに分けてください。",
     "per_run": "実行ごと",
     "per_chat": "チャットごと",
+    "per_issue": "タスクごと",
+    "consult_title": "相談",
+    "consult_label": "強い席に相談",
+    "consult_description": "タスク作業中の実行が最上位の席に一つ質問できます。相手は読むだけです。",
     "unlimited": "無制限",
     "enabled": "許可",
     "limits_title": "実行の上限",

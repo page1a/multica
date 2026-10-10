@@ -192,6 +192,24 @@ var projectResourceRemoveCmd = &cobra.Command{
 	RunE:  runProjectResourceRemove,
 }
 
+var projectMemberCmd = &cobra.Command{
+	Use:   "member",
+	Short: "Project members: the people who can see this project's issues",
+}
+
+var projectMemberListCmd = &cobra.Command{
+	Use:   "list <project-id>",
+	Short: "List project members with their workspace role",
+	Long: "Lists the project's members, workspace owner and project lead first. " +
+		"Project members can see the project's issues; the workspace owner sees " +
+		"every project.\n\n" +
+		"ROLE is the workspace role. Like 'workspace member list' it is owner-only: " +
+		"anyone else sees their own role and '-' for the rest. LEAD marks the " +
+		"project lead.",
+	Args: exactArgs(1),
+	RunE: runProjectMemberList,
+}
+
 var validProjectStatuses = []string{
 	"planned", "in_progress", "paused", "completed", "cancelled",
 }
@@ -230,6 +248,8 @@ func init() {
 	projectCmd.AddCommand(projectResourceCmd)
 
 	projectResourceCmd.AddCommand(projectResourceListCmd)
+	projectCmd.AddCommand(projectMemberCmd)
+	projectMemberCmd.AddCommand(projectMemberListCmd)
 	projectResourceCmd.AddCommand(projectResourceAddCmd)
 	projectResourceCmd.AddCommand(projectResourceUpdateCmd)
 	projectResourceCmd.AddCommand(projectResourceRemoveCmd)
@@ -260,6 +280,7 @@ func init() {
 	// project resource list
 	projectResourceListCmd.Flags().String("output", "table", "Output format: table or json")
 	projectResourceListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
+	projectMemberListCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// project resource add — generic shape: any --type with a JSON --ref
 	// payload works without further CLI changes. github_repo is supported via
@@ -1111,6 +1132,48 @@ func runProjectResourceList(cmd *cobra.Command, args []string) error {
 			strVal(r, "resource_type"),
 			summarizeResourceRef(r["resource_ref"]),
 			strVal(r, "label"),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+func runProjectMemberList(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	projectRef, err := resolveProjectID(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve project: %w", err)
+	}
+
+	var members []map[string]any
+	if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID+"/members", &members); err != nil {
+		return fmt.Errorf("list project members: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, members)
+	}
+
+	headers := []string{"USER ID", "NAME", "ROLE", "LEAD"}
+	rows := make([][]string, 0, len(members))
+	for _, m := range members {
+		lead := ""
+		if b, _ := m["is_lead"].(bool); b {
+			lead = "lead"
+		}
+		rows = append(rows, []string{
+			strVal(m, "member_id"),
+			strVal(m, "name"),
+			dashIfEmpty(strVal(m, "role")),
+			lead,
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)

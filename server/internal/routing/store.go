@@ -356,4 +356,14 @@ type Store interface {
 	// in_review category, and reports whether THIS call wrote it. A ticket
 	// that moved between the decision and the write is left alone.
 	CompleteFromReview(ctx context.Context, workspaceID, issueID string) (written bool, err error)
+
+	// --- 从结果里学 (DENE-1722) -------------------------------------------
+
+	// RecordOutcome keeps the class a ticket was first tiered in.
+	RecordOutcome(ctx context.Context, workspaceID, issueID string, class OutcomeClass) error
+	// MarkUnderjudged records one of the Signal* events on a ticket that has
+	// a class. A ticket without one is left alone.
+	MarkUnderjudged(ctx context.Context, workspaceID, issueID, signal string) error
+	// OutcomeStats is every class tiered since the given time.
+	OutcomeStats(ctx context.Context, workspaceID string, since time.Time) ([]ClassStats, error)
 }

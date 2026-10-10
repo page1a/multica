@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/receipt"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // A chat aligns, an issue executes (DENE-1665). Every issue a chat opens
@@ -19,11 +22,25 @@ import (
 // other: the chat lists its tickets (GET /api/chat/sessions/{id}/tickets,
 // `multica chat tickets`), the issue names its source chat (source_chat on
 // GET /api/issues/{id}, `multica issue get`).
+//
+// A chat also follows issues it did not open (DENE-1719): the ones its run
+// acted on — status, assignee, a comment, a handoff — and the ones pinned by
+// hand. Those live in chat_followed_issue; the birthplace stays the one
+// origin_chat_session_id, which the project monitor's chat flow still counts.
 
-// ChatTicket is one issue a chat opened. Goal is the first line of the
-// description's 目标 section: the "why" shown on the chat's ticket card.
+// Where a ticket came from, as the chat sees it.
+const (
+	chatTicketSourceCreated = "created" // the chat opened it
+	chatTicketSourceAuto    = "auto"    // the chat's run acted on it
+	chatTicketSourceManual  = "manual"  // pinned by hand
+)
+
+// ChatTicket is one issue a chat opened or follows. Goal is the first line of
+// the description's 目标 section: the "why" shown on the chat's ticket card.
 type ChatTicket struct {
-	ID           string  `json:"id"`
+	ID string `json:"id"`
+	// Source is created, auto or manual (chatTicketSource*).
+	Source       string  `json:"source"`
 	Identifier   string  `json:"identifier"`
 	Title        string  `json:"title"`
 	Status       string  `json:"status"`
@@ -40,6 +57,9 @@ type ChatTicket struct {
 	Knowledge    string       `json:"knowledge,omitempty"`
 	CreatedAt    string       `json:"created_at"`
 	UpdatedAt    string       `json:"updated_at"`
+	// LinkedAt is when the issue joined this chat: created_at for one it
+	// opened, the follow or pin time otherwise.
+	LinkedAt string `json:"linked_at"`
 	// The chat's progress bar (DENE-1667): the latest status move (FromStatus
 	// empty and ChangedAt the creation time when it never moved) and the
 	// caller's bucket, as the project report computes it.
@@ -143,8 +163,9 @@ func (h *Handler) chatSessionForTask(ctx context.Context, r *http.Request, agent
 }
 
 // ListChatSessionTickets serves `multica chat tickets`: the issues this chat
-// opened, oldest first, filtered to what the caller may see. A chat run reads
-// its own chat; anyone else goes through the ordinary chat gate.
+// opened or follows, in the order they joined it, filtered to what the caller
+// may see. A chat run reads its own chat; anyone else goes through the
+// ordinary chat gate.
 func (h *Handler) ListChatSessionTickets(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -161,12 +182,18 @@ func (h *Handler) ListChatSessionTickets(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	issues, err := h.Queries.ListIssuesByOriginChatSession(r.Context(), db.ListIssuesByOriginChatSessionParams{
+	rows, err := h.Queries.ListChatSessionTicketIssues(r.Context(), db.ListChatSessionTicketIssuesParams{
 		WorkspaceID: session.WorkspaceID, ChatSessionID: session.ID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list chat tickets")
 		return
+	}
+	issues := make([]db.Issue, 0, len(rows))
+	links := make(map[string]db.ListChatSessionTicketIssuesRow, len(rows))
+	for _, row := range rows {
+		issues = append(issues, row.Issue)
+		links[uuidToString(row.Issue.ID)] = row
 	}
 	viewer, err := h.visibilityViewerFor(r, session.WorkspaceID)
 	if err != nil {
@@ -187,7 +214,7 @@ func (h *Handler) ListChatSessionTickets(w http.ResponseWriter, r *http.Request)
 		}
 		resp := issueToResponse(issue, prefix)
 		ticket := ChatTicket{
-			ID: resp.ID, Identifier: resp.Identifier, Title: resp.Title,
+			ID: resp.ID, Source: links[resp.ID].Source, LinkedAt: timestampToString(links[resp.ID].LinkedAt), Identifier: resp.Identifier, Title: resp.Title,
 			Status: resp.Status, Priority: resp.Priority,
 			AssigneeType: resp.AssigneeType, AssigneeID: resp.AssigneeID,
 			Goal:      chatTicketGoal(issue.Description.String),
@@ -211,6 +238,110 @@ func (h *Handler) ListChatSessionTickets(w http.ResponseWriter, r *http.Request)
 		tickets = append(tickets, ticket)
 	}
 	writeJSON(w, http.StatusOK, ChatTicketsResponse{ChatSessionID: uuidToString(session.ID), Tickets: tickets})
+}
+
+// ChatTicketPinRequest pins an issue to a chat: an id or an identifier.
+type ChatTicketPinRequest struct {
+	Issue string `json:"issue"`
+}
+
+// AddChatSessionTicket pins an issue to the chat by hand (`multica chat
+// tickets add`, the chat bar's 挂上). It also undoes a take-down.
+func (h *Handler) AddChatSessionTicket(w http.ResponseWriter, r *http.Request) {
+	var req ChatTicketPinRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Issue) == "" {
+		writeError(w, http.StatusBadRequest, "issue is required (an id or an identifier like DENE-12)")
+		return
+	}
+	h.setChatSessionTicket(w, r, strings.TrimSpace(req.Issue), false)
+}
+
+// RemoveChatSessionTicket takes an issue off the chat (`multica chat tickets
+// remove`, the ticket card's 取下). Auto-follow does not bring it back; the
+// issue itself and its birthplace are untouched.
+func (h *Handler) RemoveChatSessionTicket(w http.ResponseWriter, r *http.Request) {
+	h.setChatSessionTicket(w, r, chi.URLParam(r, "issueId"), true)
+}
+
+func (h *Handler) setChatSessionTicket(w http.ResponseWriter, r *http.Request, issueRef string, hidden bool) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionParam := chi.URLParam(r, "sessionId")
+	session, own := h.ownChatForTaskToken(r, sessionParam, workspaceID)
+	if !own {
+		session, ok = h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionParam)
+		if !ok {
+			return
+		}
+		if uuidToString(session.CreatorID) != userID {
+			access, err := h.chatAccessFor(r.Context(), session, userID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check chat access")
+				return
+			}
+			if !access.speak {
+				writeError(w, http.StatusForbidden, "you can view this chat but not change its tickets")
+				return
+			}
+		}
+	}
+	issue, ok := h.loadIssueForUser(w, r, issueRef)
+	if !ok {
+		return
+	}
+	if issue.WorkspaceID != session.WorkspaceID {
+		writeError(w, http.StatusNotFound, "issue not found")
+		return
+	}
+	if err := h.Queries.SetChatFollowedIssue(r.Context(), db.SetChatFollowedIssueParams{
+		ChatSessionID: session.ID, IssueID: issue.ID, WorkspaceID: session.WorkspaceID, Hidden: hidden,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update chat tickets")
+		return
+	}
+	h.publishChatTicketsChanged(session)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// followIssueFromChatTask is auto-follow (DENE-1719): when a chat's run acts
+// on an issue — status, assignee, a comment, a handoff — the issue joins that
+// chat's ticket list. Which chat is decided by the run's task, so the agent
+// does nothing extra; a reply that only names an issue never gets here.
+// Best-effort: the action itself already succeeded.
+func (h *Handler) followIssueFromChatTask(r *http.Request, actorType, actorID string, issue db.Issue) {
+	if actorType != "agent" {
+		return
+	}
+	ctx := r.Context()
+	sessionID := h.chatSessionForTask(ctx, r, actorID)
+	if !sessionID.Valid || issue.OriginChatSessionID == sessionID {
+		return
+	}
+	session, err := h.Queries.GetChatSession(ctx, sessionID)
+	if err != nil || session.WorkspaceID != issue.WorkspaceID {
+		return
+	}
+	added, err := h.Queries.FollowIssueFromChat(ctx, db.FollowIssueFromChatParams{
+		ChatSessionID: session.ID, IssueID: issue.ID, WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("chat tickets: auto-follow failed", "chat_session_id", uuidToString(session.ID), "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	if added > 0 {
+		h.publishChatTicketsChanged(session)
+	}
+}
+
+// publishChatTicketsChanged tells the chat's viewers to refetch its tickets.
+func (h *Handler) publishChatTicketsChanged(session db.ChatSession) {
+	sessionID := uuidToString(session.ID)
+	h.publishChat(protocol.EventChatTicketsChanged, uuidToString(session.WorkspaceID), "system", "", sessionID, protocol.ChatTicketsChangedPayload{
+		ChatSessionID: sessionID,
+	})
 }
 
 // ownChatForTaskToken admits a chat run to its own chat without the member

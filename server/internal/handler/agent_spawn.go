@@ -28,6 +28,7 @@ const (
 	agentSpawnKindIssue        = "issue"
 	defaultChatChatPerChat     = 5
 	defaultChatChatPerRun      = 3
+	defaultConsultPerIssue     = 3
 	maxAgentSpawnLimit         = 1000
 	chatSpawnClientKeyMaxBytes = 200
 )
@@ -37,6 +38,8 @@ type AgentSpawnCell struct {
 	Enabled bool `json:"enabled"`
 	PerChat int  `json:"per_chat,omitempty"`
 	PerRun  int  `json:"per_run"`
+	// PerIssue caps consults on one ticket; only the consult cell has it.
+	PerIssue int `json:"per_issue,omitempty"`
 }
 
 // AgentSpawnPolicy is workspace.settings.agent_spawn. Chat-from-issue has no
@@ -46,6 +49,9 @@ type AgentSpawnPolicy struct {
 	ChatIssue  AgentSpawnCell `json:"chat_issue"`
 	IssueIssue AgentSpawnCell `json:"issue_issue"`
 	ChatChat   AgentSpawnCell `json:"chat_chat"`
+	// Consult is an issue run asking a strong-tier seat for advice
+	// (DENE-1721); PerIssue counts consults per ticket.
+	Consult AgentSpawnCell `json:"consult"`
 }
 
 // defaultAgentSpawnPolicy keeps today's behavior: agents may create issues
@@ -55,22 +61,27 @@ func defaultAgentSpawnPolicy() AgentSpawnPolicy {
 		ChatIssue:  AgentSpawnCell{Enabled: true},
 		IssueIssue: AgentSpawnCell{Enabled: true},
 		ChatChat:   AgentSpawnCell{Enabled: true, PerChat: defaultChatChatPerChat, PerRun: defaultChatChatPerRun},
+		Consult:    AgentSpawnCell{Enabled: true, PerIssue: defaultConsultPerIssue},
 	}
 }
 
 type agentSpawnCellPatch struct {
-	Enabled *bool `json:"enabled"`
-	PerChat *int  `json:"per_chat"`
-	PerRun  *int  `json:"per_run"`
+	Enabled  *bool `json:"enabled"`
+	PerChat  *int  `json:"per_chat"`
+	PerRun   *int  `json:"per_run"`
+	PerIssue *int  `json:"per_issue"`
 }
 
 type agentSpawnPolicyPatch struct {
 	ChatIssue  *agentSpawnCellPatch `json:"chat_issue"`
 	IssueIssue *agentSpawnCellPatch `json:"issue_issue"`
 	ChatChat   *agentSpawnCellPatch `json:"chat_chat"`
+	Consult    *agentSpawnCellPatch `json:"consult"`
 }
 
-func (c *AgentSpawnCell) apply(p *agentSpawnCellPatch, perChat bool) error {
+// extra names the one cell-specific limit this cell accepts: per_chat,
+// per_issue, or none.
+func (c *AgentSpawnCell) apply(p *agentSpawnCellPatch, extra string) error {
 	if p == nil {
 		return nil
 	}
@@ -78,13 +89,16 @@ func (c *AgentSpawnCell) apply(p *agentSpawnCellPatch, perChat bool) error {
 		c.Enabled = *p.Enabled
 	}
 	if p.PerRun != nil {
+		if extra == "per_issue" {
+			return fmt.Errorf("per_run does not apply to consult; use per_issue")
+		}
 		if *p.PerRun < 0 || *p.PerRun > maxAgentSpawnLimit {
 			return fmt.Errorf("per_run must be between 0 and %d", maxAgentSpawnLimit)
 		}
 		c.PerRun = *p.PerRun
 	}
 	if p.PerChat != nil {
-		if !perChat {
+		if extra != "per_chat" {
 			return fmt.Errorf("per_chat only applies to chat_chat")
 		}
 		if *p.PerChat < 0 || *p.PerChat > maxAgentSpawnLimit {
@@ -92,18 +106,32 @@ func (c *AgentSpawnCell) apply(p *agentSpawnCellPatch, perChat bool) error {
 		}
 		c.PerChat = *p.PerChat
 	}
+	if p.PerIssue != nil {
+		if extra != "per_issue" {
+			return fmt.Errorf("per_issue only applies to consult")
+		}
+		// No "0 = unlimited" here: the field is omitempty, so a stored 0
+		// would read back as the default. Turn the cell off instead.
+		if *p.PerIssue < 1 || *p.PerIssue > maxAgentSpawnLimit {
+			return fmt.Errorf("per_issue must be between 1 and %d", maxAgentSpawnLimit)
+		}
+		c.PerIssue = *p.PerIssue
+	}
 	return nil
 }
 
 func (p *AgentSpawnPolicy) apply(patch agentSpawnPolicyPatch) error {
-	if err := p.ChatIssue.apply(patch.ChatIssue, false); err != nil {
+	if err := p.ChatIssue.apply(patch.ChatIssue, ""); err != nil {
 		return fmt.Errorf("chat_issue: %w", err)
 	}
-	if err := p.IssueIssue.apply(patch.IssueIssue, false); err != nil {
+	if err := p.IssueIssue.apply(patch.IssueIssue, ""); err != nil {
 		return fmt.Errorf("issue_issue: %w", err)
 	}
-	if err := p.ChatChat.apply(patch.ChatChat, true); err != nil {
+	if err := p.ChatChat.apply(patch.ChatChat, "per_chat"); err != nil {
 		return fmt.Errorf("chat_chat: %w", err)
+	}
+	if err := p.Consult.apply(patch.Consult, "per_issue"); err != nil {
+		return fmt.Errorf("consult: %w", err)
 	}
 	return nil
 }

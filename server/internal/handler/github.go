@@ -1117,6 +1117,8 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		h.handleInstallationEvent(ctx, body)
 	case "pull_request":
 		h.handlePullRequestEvent(ctx, body)
+	case "pull_request_review":
+		h.handlePullRequestReviewEvent(ctx, body)
 	case "check_suite", "check_run", "status":
 		// CI events are pure triggers under Plan C (MUL-5265): their payload is
 		// never read for display. Each just asks the API pipeline to re-fetch
@@ -1289,6 +1291,79 @@ type ghPullRequestPayload struct {
 	Installation struct {
 		ID int64 `json:"id"`
 	} `json:"installation"`
+}
+
+// ghPullRequestReviewPayload is the part of a pull_request_review delivery
+// the review skip reads (DENE-1678).
+type ghPullRequestReviewPayload struct {
+	Action string `json:"action"`
+	Review struct {
+		State       string `json:"state"`
+		SubmittedAt string `json:"submitted_at"`
+		CommitID    string `json:"commit_id"`
+		User        struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"review"`
+	PullRequest struct {
+		Number int32 `json:"number"`
+	} `json:"pull_request"`
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	} `json:"repository"`
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+}
+
+// handlePullRequestReviewEvent records who approved a mirrored PR, in every
+// workspace the installation is bound to. A dismissed approval clears it.
+// Other review states (commented, changes requested) change nothing.
+func (h *Handler) handlePullRequestReviewEvent(ctx context.Context, body []byte) {
+	var p ghPullRequestReviewPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		slog.Warn("github: bad pull_request_review payload", "err", err)
+		return
+	}
+	if p.Installation.ID == 0 || p.PullRequest.Number == 0 || p.Review.User.Login == "" {
+		return
+	}
+	params := db.SetGitHubPullRequestApprovalByNumberParams{
+		RepoOwner: p.Repository.Owner.Login,
+		RepoName:  p.Repository.Name,
+		PrNumber:  p.PullRequest.Number,
+	}
+	switch {
+	case p.Action == "submitted" && strings.EqualFold(p.Review.State, "approved"):
+		params.ApprovedBy = pgtype.Text{String: p.Review.User.Login, Valid: true}
+		params.ApprovedAt = parseGHTimeOrNow(p.Review.SubmittedAt)
+		params.ApprovedHeadSha = pgtype.Text{String: p.Review.CommitID, Valid: p.Review.CommitID != ""}
+	case p.Action == "dismissed":
+		params.DismissedBy = p.Review.User.Login
+	default:
+		return
+	}
+	insts, err := h.Queries.ListGitHubInstallationsByInstallationID(ctx, p.Installation.ID)
+	if err != nil {
+		slog.Warn("github: lookup installation failed", "err", err)
+		return
+	}
+	for _, inst := range insts {
+		params.WorkspaceID = inst.WorkspaceID
+		if err := h.Queries.SetGitHubPullRequestApprovalByNumber(ctx, params); err != nil {
+			slog.Warn("github: record approval failed", "err", err, "pr", p.PullRequest.Number)
+		}
+	}
+}
+
+func parseGHTimeOrNow(raw string) pgtype.Timestamptz {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return pgtype.Timestamptz{Time: t, Valid: true}
+	}
+	return pgtype.Timestamptz{Time: time.Now(), Valid: true}
 }
 
 func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {

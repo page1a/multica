@@ -34,8 +34,9 @@ type HandoffChatSessionResponse struct {
 // chatHandoffRecent is how many of the latest messages the opening repeats.
 const chatHandoffRecent = 8
 
-// HandoffChatSession opens a new chat with another agent whose first message
-// is a summary of this one. It goes through CreateChatSession and
+// HandoffChatSession opens a new chat whose first message is a summary of
+// this one. The target may be the chat's own agent: a fresh chat with the
+// same role and only the summary carried over. It goes through CreateChatSession and
 // SendChatMessage so the new chat passes the same agent access gate and
 // starts its run the ordinary way. The old chat is left as it is.
 func (h *Handler) HandoffChatSession(w http.ResponseWriter, r *http.Request) {
@@ -80,10 +81,6 @@ func (h *Handler) HandoffChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !to.ID.Valid {
 		writeError(w, http.StatusBadRequest, "--to must be an agent name or id in this workspace")
-		return
-	}
-	if to.ID == session.AgentID {
-		writeError(w, http.StatusBadRequest, "this chat is already with "+to.Name+"; pick another agent")
 		return
 	}
 

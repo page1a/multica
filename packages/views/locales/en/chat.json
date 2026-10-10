@@ -428,14 +428,15 @@
     "done": "{{count}} done",
     "hear": "Hear report",
     "hear_prompt": "Report: tell me what's new in \"{{project}}\" since I last heard",
-    "title": "Issues from this chat",
+    "title": "This chat's issues",
     "just_changed": "Just changed",
-    "opened": "Opened · {{to}}",
     "needs_you": "needs you"
   },
   "tickets": {
     "heading_one": "Opened {{count}} issue",
     "heading_other": "Opened {{count}} issues",
+    "heading_mixed_one": "{{count}} issue",
+    "heading_mixed_other": "{{count}} issues",
     "to": "to {{name}}",
     "routing": "routing picks the executor",
     "actions": "Actions for {{id}}",
@@ -445,6 +446,19 @@
     "assigned_me": "{{id}} is yours",
     "assigned_agent": "{{id}} is back with routing",
     "withdrawn": "Withdrew {{id}}",
-    "failed": "Couldn't update {{id}}"
+    "failed": "Couldn't update {{id}}",
+    "source_created": "Opened here",
+    "source_auto": "Followed",
+    "source_manual": "Pinned",
+    "remove": "Remove from chat",
+    "removed": "Removed {{id}} from this chat",
+    "remove_failed": "Couldn't remove {{id}}",
+    "pin": "Pin an issue",
+    "pin_title": "Pin an issue to this chat",
+    "pin_hint": "It shows in the cards and progress bar; the issue itself doesn't change.",
+    "pin_placeholder": "Issue number, e.g. DENE-12",
+    "pin_submit": "Pin",
+    "pinned": "Pinned {{id}}",
+    "pin_failed": "Couldn't pin {{id}}"
   }
 }

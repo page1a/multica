@@ -23,7 +23,16 @@ multica project list --output json
 multica project get <project-id> --output json
 multica project access <project-id> --output json   # who can see it, can you change the scope
 multica project resource list <project-id> --output json
+multica project member list <project-id> --output json   # who is on the project
+multica workspace member list --output json              # each member's projects[]
 ```
+
+Project members are who can see a non-public project's issues. In
+`project member list`, `is_lead` marks the project lead and `role` is the
+member's workspace role; rows come owner, lead, admins, then the rest. Both
+`role` and the roster's `projects[]` are owner-only: anyone else gets them only
+on their own row (`role: ""`, `projects: []` elsewhere), and the order then
+falls back to lead first, then join order.
 
 Project resources are mutated through project resource commands/endpoints. Issue
 comments do not create durable project resources.

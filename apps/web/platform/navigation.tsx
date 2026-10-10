@@ -6,7 +6,7 @@ import {
   NavigationProvider,
   type NavigationAdapter,
 } from "@multica/views/navigation";
-import { canGoBackInApp } from "./in-app-history";
+import { canGoBackInApp, installInAppHistoryDepth } from "./in-app-history";
 
 /**
  * Web half of the `multica:navigate` bridge — the event shared content
@@ -74,6 +74,7 @@ function NavigationProviderInner({
     () => "",
   );
   useInternalLinkHandler(router);
+  useEffect(installInAppHistoryDepth, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

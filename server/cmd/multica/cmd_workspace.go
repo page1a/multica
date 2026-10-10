@@ -63,7 +63,9 @@ var workspaceMemberListCmd = &cobra.Command{
 		"owner sees them for other people. Anyone else gets them empty (shown as " +
 		"'-' in the table) apart from their own row. Inviting, revoking invitations, " +
 		"changing a member's role and removing a member are owner-only as well. " +
-		"An agent acts with the permissions of the person who started its task.",
+		"An agent acts with the permissions of the person who started its task.\n\n" +
+		"PROJECTS lists the projects each person has joined (JSON: projects[] " +
+		"with id and title); it follows the same owner-only rule.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: runWorkspaceMembers,
 }
@@ -866,6 +868,18 @@ func printWorkspaceMcpServers(cmd *cobra.Command, servers []workspaceMcpServer) 
 	return nil
 }
 
+// memberProjectTitles joins a roster row's project titles for the table.
+func memberProjectTitles(m map[string]any) string {
+	raw, _ := m["projects"].([]any)
+	titles := make([]string, 0, len(raw))
+	for _, p := range raw {
+		if pm, ok := p.(map[string]any); ok {
+			titles = append(titles, strVal(pm, "title"))
+		}
+	}
+	return strings.Join(titles, ", ")
+}
+
 func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 	wsID, err := resolveWorkspaceArg(cmd, args)
 	if err != nil {
@@ -893,7 +907,7 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, members)
 	}
 
-	headers := []string{"USER ID", "NAME", "EMAIL", "ROLE"}
+	headers := []string{"USER ID", "NAME", "EMAIL", "ROLE", "PROJECTS"}
 	rows := make([][]string, 0, len(members))
 	hidden := false
 	for _, m := range members {
@@ -906,6 +920,7 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 			strVal(m, "name"),
 			dashIfEmpty(email),
 			dashIfEmpty(role),
+			dashIfEmpty(memberProjectTitles(m)),
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)

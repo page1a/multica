@@ -436,10 +436,10 @@ export function ChatMessageList({
               creatorId={creatorId}
             />
             {item.kind === "message" && ticketGroups.byMessage.has(item.message.id) && (
-              <ChatTicketCard wsId={ticketsWsId} tickets={ticketGroups.byMessage.get(item.message.id)!} />
+              <ChatTicketCard wsId={ticketsWsId} sessionId={sessionId ?? ""} tickets={ticketGroups.byMessage.get(item.message.id)!} />
             )}
             {item.key === liveEndKey && ticketGroups.tail.length > 0 && (
-              <ChatTicketCard wsId={ticketsWsId} tickets={ticketGroups.tail} />
+              <ChatTicketCard wsId={ticketsWsId} sessionId={sessionId ?? ""} tickets={ticketGroups.tail} />
             )}
           </div>
         )}

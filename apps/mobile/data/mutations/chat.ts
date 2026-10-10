@@ -1,5 +1,6 @@
 /**
- * Mobile chat mutations — create session, delete session, mark session read.
+ * Mobile chat mutations — create session, delete session, mark session read,
+ * take a ticket off a chat.
  *
  * Send-message is NOT a mutation: the chat screen runs a hand-written
  * optimistic burst (seed messages cache → seed pendingTask cache → flip
@@ -88,6 +89,22 @@ export function useMarkChatSessionRead() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+    },
+  });
+}
+
+/** Take an issue off a chat's ticket list (DENE-1719). Not optimistic: the
+ *  row leaves when the server confirms and the list refetches. */
+export function useUnpinChatTicket(sessionId: string | null) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
+
+  return useMutation({
+    mutationFn: (issueId: string) => api.unpinChatTicket(sessionId!, issueId),
+    onSettled: () => {
+      if (sessionId) {
+        qc.invalidateQueries({ queryKey: chatKeys.tickets(wsId, sessionId) });
+      }
     },
   });
 }

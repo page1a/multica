@@ -246,7 +246,15 @@
     "toast_added": "已添加成员",
     "toast_add_failed": "添加成员失败",
     "toast_removed": "已移除成员",
-    "toast_remove_failed": "移除成员失败"
+    "toast_remove_failed": "移除成员失败",
+    "hint": "项目成员能看到这个项目的任务",
+    "lead": "负责人",
+    "roles": {
+      "owner": "所有者",
+      "admin": "管理员",
+      "member": "成员",
+      "guest": "访客"
+    }
   },
   "delete_dialog": {
     "title": "删除项目",

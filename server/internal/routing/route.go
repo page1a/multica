@@ -370,6 +370,9 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	executorSource := ""
 	var cont ContinuationPick
 	var load LoadPick
+	var learn LearnPick
+	var class *OutcomeClass
+	learnApplied := false
 	if labelled && !labelSeatOK {
 		notes = append(notes, "labelled tier "+requestedTier+" was not eligible")
 	}
@@ -382,6 +385,19 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		} else {
 			labelStill := labelSeatOK && seatIn(fresh, labelSeat)
 			seat, source, why := r.pickExecutor(fresh, labelSeat, labelStill, verdict, threshold)
+			// 从结果里学 only revisits the table's own tier: a label is a
+			// person's call and a fallback is no judgement to learn from.
+			if source == pickJudge && dec.Decider == DeciderRule && dec.Facts != nil {
+				c := ClassOf(scene, verdict.ExecutorTier, *dec.Facts)
+				class = &c
+				learn = r.learned(ctx, workspaceID, settings, ladder, c)
+				if learn.Raise && settings.LearnFromOutcomes {
+					if up, ok := SeatByTier(fresh, learn.To); ok {
+						seat, source, learnApplied = up, pickLearned, true
+						seat.Learned = learn.Detail()
+					}
+				}
+			}
 			// 接着做 ranks above the ladder's pick but not above a person's
 			// tier label: the label is a person's instruction about strength.
 			if !labelStill {
@@ -412,6 +428,9 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 			if written {
 				executor, executorSource = &seat, source
 				out.ExecutorWritten = &seat
+				if class != nil {
+					r.recordOutcome(ctx, workspaceID, issue.ID, *class)
+				}
 				if why != "" {
 					notes = append(notes, "executor fell back to "+seat.Name+": "+why)
 				}
@@ -520,7 +539,8 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 		executor, executorSource, reviewer, reviewerFallback, fallbackWhy, humanSignoff,
 		needExecutor, needReviewer, notify, mode, dec, settings, ignored,
 		ContinuationLine(cont, settings.PreferContinuation, executor),
-		LoadLine(load, settings.PreferIdle, executor))
+		LoadLine(load, settings.PreferIdle, executor),
+		learnLine(learn, settings.LearnFromOutcomes, learnApplied, executor, executorSource))
 	if note := DemotionFootnote(ladder, roster, executor); note != "" {
 		body += "\n\n" + note
 	}
@@ -529,6 +549,15 @@ func (r *Router) routeTodo(ctx context.Context, workspaceID string, settings Set
 	}
 
 	return r.deliver(ctx, workspaceID, issue, KindAssignment, body, notify, out)
+}
+
+// learnLine is LearnLine for the seat this call wrote; with nothing written
+// there is no pick to talk about.
+func learnLine(p LearnPick, enabled, applied bool, written *Seat, source string) string {
+	if written == nil {
+		return ""
+	}
+	return LearnLine(p, enabled, applied, source == pickLearned)
 }
 
 // judgeNote names a judge answer the rule table did not take, so a hook or
@@ -549,6 +578,8 @@ const (
 	pickContinuation = "continuation"
 	// pickLoad — the 负载 rule placed the seat (DENE-1203).
 	pickLoad = "load"
+	// pickLearned — 从结果里学 raised the table's tier one rung (DENE-1722).
+	pickLearned = "learned"
 )
 
 // pickExecutor resolves the executor seat, and always resolves one: candidates

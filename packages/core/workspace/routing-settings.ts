@@ -23,6 +23,10 @@ export const DEFAULT_CONFIDENCE_THRESHOLD = 0.6;
  * DefaultStaleReviewHours on the server (DENE-712).
  */
 export const DEFAULT_STALE_REVIEW_HOURS = 24;
+/** Server defaults for 「从结果里学」; out-of-range values fall back to them. */
+export const DEFAULT_LEARN_LOW_RATE = 0.3;
+export const DEFAULT_LEARN_WINDOW_DAYS = 30;
+export const MAX_LEARN_WINDOW_DAYS = 365;
 
 /**
  * The largest threshold worth storing. A year of silence is already far past
@@ -116,6 +120,16 @@ export interface RoutingSettings {
    */
   prefer_idle: boolean;
   /**
+   * 「从结果里学」(DENE-1722): when enough recent tickets of the same class
+   * (direction × tier × facts) were escalated or held, the next one goes one
+   * rung higher. Default off, which is shadow mode.
+   */
+  learn_from_outcomes: boolean;
+  /** Share of a class judged low before it is raised, in (0, 1]. */
+  learn_low_rate: number;
+  /** How far back the rate looks, in days. */
+  learn_window_days: number;
+  /**
    * 「按判断配验收」(DENE-1252): the reviewer slot gets a seat only when the
    * routing model asks for a check with confidence; otherwise it reads
    * 不需要验收. Default off, which keeps the fallback reviewer seat.
@@ -177,6 +191,9 @@ export const DEFAULT_ROUTING_SETTINGS: RoutingSettings = {
   allow_upshift: false,
   prefer_continuation: false,
   prefer_idle: false,
+  learn_from_outcomes: false,
+  learn_low_rate: DEFAULT_LEARN_LOW_RATE,
+  learn_window_days: DEFAULT_LEARN_WINDOW_DAYS,
   judged_review: false,
 };
 
@@ -228,6 +245,9 @@ export function parseRoutingSettings(
     allow_upshift: block.allow_upshift === true,
     prefer_continuation: block.prefer_continuation === true,
     prefer_idle: block.prefer_idle === true,
+    learn_from_outcomes: block.learn_from_outcomes === true,
+    learn_low_rate: normalizeLearnLowRate(block.learn_low_rate),
+    learn_window_days: normalizeLearnWindowDays(block.learn_window_days),
     judged_review: block.judged_review === true,
   };
 }
@@ -243,6 +263,20 @@ export function normalizeThreshold(value: unknown): number {
   }
   if (value <= 0 || value > 1) return DEFAULT_CONFIDENCE_THRESHOLD;
   return value;
+}
+
+export function normalizeLearnLowRate(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1) {
+    return DEFAULT_LEARN_LOW_RATE;
+  }
+  return value;
+}
+
+export function normalizeLearnWindowDays(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || value > MAX_LEARN_WINDOW_DAYS) {
+    return DEFAULT_LEARN_WINDOW_DAYS;
+  }
+  return Math.floor(value);
 }
 
 /**
@@ -358,6 +392,9 @@ export function withRoutingSettings(
     allow_upshift: next.allow_upshift,
     prefer_continuation: next.prefer_continuation,
     prefer_idle: next.prefer_idle,
+    learn_from_outcomes: next.learn_from_outcomes,
+    learn_low_rate: normalizeLearnLowRate(next.learn_low_rate),
+    learn_window_days: normalizeLearnWindowDays(next.learn_window_days),
     judged_review: next.judged_review,
     judge_enabled: next.judge_enabled,
     [ROUTING_ANALYSIS_KEY]: analysis,

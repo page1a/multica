@@ -4020,10 +4020,30 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		projectCtx.applyTo(&resp)
 	}
 
+	hasQuickCreate := false
+	// Consult run (DENE-1721): an issue-less advisor run. The server renders
+	// the whole prompt — ticket background plus the question — so the daemon
+	// only runs it.
+	if cc, ok := service.ParseConsultContext(*task); ok {
+		hasQuickCreate = true
+		resp.WorkspaceID = cc.WorkspaceID
+		if failure := h.rejectClaimOnWorkspaceMismatch(r.Context(), task, resp.WorkspaceID, runtimeID, runtimeWorkspaceID, true); failure != nil {
+			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, failure
+		}
+		prompt, thread, err := h.renderConsultPrompt(r.Context(), cc)
+		if err != nil {
+			return resp, nil, nil, 0, 0, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "The ticket this consult was about is no longer available.",
+				taskfailure.ReasonAgentUnknown, "error_consult_unavailable", http.StatusConflict, "consult is unavailable",
+			)
+		}
+		resp.ConsultPrompt = prompt
+		resp.ThreadName = thread
+	}
+
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.
-	hasQuickCreate := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {

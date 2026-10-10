@@ -9,6 +9,8 @@ export const autopilotKeys = {
     [...autopilotKeys.all(wsId), "detail", id] as const,
   runs: (wsId: string, id: string) =>
     [...autopilotKeys.all(wsId), "runs", id] as const,
+  linkedChanges: (wsId: string, id: string) =>
+    [...autopilotKeys.all(wsId), "linked-changes", id] as const,
   run: (wsId: string, autopilotId: string, runId: string) =>
     [...autopilotKeys.all(wsId), "runs", autopilotId, runId] as const,
   deliveries: (wsId: string, id: string) =>
@@ -49,6 +51,14 @@ export function autopilotRunsOptions(wsId: string, id: string) {
     queryKey: autopilotKeys.runs(wsId, id),
     queryFn: () => api.listAutopilotRuns(id),
     select: (data) => data.runs,
+  });
+}
+
+// Writes made through a managed workspace link (DENE-1663), newest first.
+export function autopilotLinkedChangesOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: autopilotKeys.linkedChanges(wsId, id),
+    queryFn: () => api.listAutopilotLinkedChanges(id),
   });
 }
 

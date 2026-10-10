@@ -1708,7 +1708,10 @@
       "manage_members": "邀请成员与修改档位",
       "workspace_settings": "工作区设置、集成与密钥",
       "billing_and_transfer": "计费、转让与删除工作区"
-    }
+    },
+    "projects_count_other": "{{count}} 个项目",
+    "no_projects": "未加入项目",
+    "projects_aria": "{{name}} 加入的项目"
   },
   "integrations": {
     "status_connected": "已连接",
@@ -1940,6 +1943,13 @@
     "load_label": "负载分流",
     "load_description_on": "已生效：在判出的同档、同方向席位里，派给手上活更少的那个，但不会越过用量标签：标「紧张」的席位不会因为空闲就抢走「常规」「充足」席位的活；大家一样忙就按原来的顺序。和「接着做」都开时，「接着做」优先。",
     "load_description_shadow": "影子运行：不改实际选择，只在路由评论里写「按新规则会选谁、谁正在跑几个活」。打开后才真的生效。",
+    "learn_label": "从结果里学",
+    "learn_description_on": "已生效：同类票近期常被升档或打回时，新票自动上调一档。",
+    "learn_description_shadow": "影子运行：不改实际选择，只在路由评论里写「按新规则会上调一档」及原因。打开后才真的生效。",
+    "learn_rate_label": "判低比例（%）",
+    "learn_rate_description": "同类票里升档或打回占到这个比例就上调；至少 5 张才算。",
+    "learn_window_label": "统计窗口（天）",
+    "learn_window_description": "只看最近这么多天派出的票。",
     "gateway_endpoint_workspace": "模型 id 发往本工作区自己的端点：{{host}}。",
     "gateway_endpoint_deployment": "模型 id 发往部署共用的 LLM 端点：{{host}}。",
     "gateway_unset": "还没有可用的端点，请在下面填写端点和 Key。",
@@ -2102,6 +2112,10 @@
     "issue_chat_description": "不可用：任务内讨论请用评论，并行探索请拆子任务。",
     "per_run": "每次运行",
     "per_chat": "每个聊天",
+    "per_issue": "每张任务",
+    "consult_title": "咨询",
+    "consult_label": "向强档席位咨询",
+    "consult_description": "正在干活的智能体运行可以向最强档席位问一句，对方只读不改。",
     "unlimited": "不限",
     "enabled": "允许",
     "limits_title": "运行上限",

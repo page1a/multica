@@ -112,6 +112,18 @@
       "cancel": "取消",
       "confirm": "删除",
       "deleting": "删除中..."
+    },
+    "section_linked_changes": "经连通的代办",
+    "linked_change_by": "{{actor}} 经 {{via}}·{{agent}}",
+    "linked_change_route": {
+      "create": "创建了它",
+      "update": "改了设置",
+      "delete": "删除了它",
+      "run": "手动运行",
+      "trigger_add": "加了触发器",
+      "trigger_update": "改了触发器",
+      "trigger_delete": "删了触发器",
+      "other": "改了它"
     }
   },
   "access": {

@@ -150,6 +150,14 @@ export function formatActivity(
       const n = entry.coalesced_count ?? 1;
       return t("issues:activity.tasks_failed", { count: n });
     }
+    case "consult_answered":
+      return t("issues:activity.consult_answered", {
+        name: details.advisor_name || "?",
+      });
+    case "consult_failed":
+      return t("issues:activity.consult_failed", {
+        name: details.advisor_name || "?",
+      });
     case "squad_leader_evaluated": {
       // Copy mirrors packages/views/locales/en/issues.json
       // (squad_leader_action / squad_leader_no_action / squad_leader_failed,

@@ -1015,6 +1015,7 @@ type AgentTaskResponse struct {
 	AutopilotSource          string               `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
 	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
 	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
+	ConsultPrompt            string               `json:"consult_prompt,omitempty"`              // DENE-1721: the advisor's whole prompt for a consult run
 	QuickCreatePriority      string               `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
 	QuickCreateDueDate       string               `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateGoalMode      bool                 `json:"quick_create_goal_mode,omitempty"`
@@ -1708,6 +1709,9 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 	}
 	if json.Unmarshal(t.Context, &contextKind) == nil && contextKind.Type == service.QuickCreateContextType {
 		return "quick_create"
+	}
+	if contextKind.Type == service.ConsultContextType && uuidToString(t.IssueID) == "" {
+		return "consult"
 	}
 	// Preserve the historical classification for issue-less rows from before
 	// quick-create stored a typed context.

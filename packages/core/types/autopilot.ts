@@ -226,6 +226,23 @@ export interface ListAutopilotRunsResponse {
   total: number;
 }
 
+/** One write to an autopilot made by an agent of a linked workspace on a
+ *  managed link (DENE-1663). `route` is the server's route name, e.g.
+ *  "autopilot.update"; switch on it with a default. */
+export interface AutopilotLinkedChange {
+  id: string;
+  route: string;
+  actor_id: string;
+  actor_name: string;
+  via_workspace_id: string;
+  via_workspace_name: string;
+  via_slug: string;
+  agent_id: string;
+  agent_name: string;
+  task_id: string;
+  created_at: string;
+}
+
 // Webhook delivery enum is server-canonical. The frontend MUST `default`
 // any switch on it to a generic fallback — see API Response Compatibility
 // rules in CLAUDE.md. PR1 collapsed `skipped` into `dispatched` (the run

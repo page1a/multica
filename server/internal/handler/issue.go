@@ -4863,6 +4863,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if statusChanged || prevIssue.ParentIssueID != issue.ParentIssueID || prevIssue.Stage != issue.Stage {
 		h.processChildEvents(r.Context(), issue.ParentIssueID, prevIssue.ParentIssueID)
 	}
+	// A chat's run moving the issue or its executor follows it from that
+	// chat (DENE-1719).
+	if statusChanged || assigneeChanged || executorCleared {
+		h.followIssueFromChatTask(r, actorType, actorID, issue)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -5844,6 +5849,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		if statusChanged || prevIssue.ParentIssueID != issue.ParentIssueID || prevIssue.Stage != issue.Stage {
 			changedParents = append(changedParents, issue.ParentIssueID, prevIssue.ParentIssueID)
+		}
+		if statusChanged || assigneeChanged || (prevIssue.AssigneeID.Valid && !issue.AssigneeID.Valid) {
+			h.followIssueFromChatTask(r, actorType, actorID, issue)
 		}
 
 		updated++

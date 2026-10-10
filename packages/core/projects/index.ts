@@ -22,6 +22,7 @@ export {
 export {
   projectMemberKeys,
   projectMembersOptions,
+  invalidateProjectMemberLists,
   useAddProjectMember,
   useRemoveProjectMember,
 } from "./member-queries";

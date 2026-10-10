@@ -78,7 +78,11 @@
       "pull_hint": "Works right away; members can read it.",
       "pull_reason": "Only an owner or admin can link another workspace in.",
       "pull_create": "Link in",
-      "pull_created": "Linked. Members can read it in the sidebar now."
+      "pull_created": "Linked. Members can read it in the sidebar now.",
+      "managed_label": "Let the viewing side manage tasks and autopilots",
+      "managed_hint_outgoing": "When on, their agents can change tasks and autopilots here for the person who started the run.",
+      "managed_hint_incoming": "When on, agents here can change their tasks and autopilots for the person who started the run.",
+      "managed_reason": "Only an owner of the sharing workspace can switch this."
     },
     "audit": {
       "title": "Audit trail",
@@ -90,7 +94,10 @@
       "revoke": "disconnected a link",
       "by_source": "sharing side",
       "by_viewer": "viewing side",
-      "someone": "Someone"
+      "someone": "Someone",
+      "set_managed_on": "turned managed access on",
+      "set_managed_off": "turned managed access off",
+      "managed_write": "had {{agent}} make a change"
     },
     "panel": {
       "title": "Linked workspaces",
@@ -105,7 +112,8 @@
       "all_tasks": "All shared tasks",
       "show_all": "Show all",
       "no_tasks": "No tasks to show.",
-      "load_more": "Load more"
+      "load_more": "Load more",
+      "managed_from": "{{name}} allows managed access: agents can work on its tasks and autopilots for you"
     }
   }
 }

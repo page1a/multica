@@ -112,6 +112,18 @@
       "cancel": "Cancel",
       "confirm": "Delete",
       "deleting": "Deleting..."
+    },
+    "section_linked_changes": "Changes through linked workspaces",
+    "linked_change_by": "{{actor}} via {{via}} · {{agent}}",
+    "linked_change_route": {
+      "create": "created it",
+      "update": "changed settings",
+      "delete": "deleted it",
+      "run": "ran it",
+      "trigger_add": "added a trigger",
+      "trigger_update": "changed a trigger",
+      "trigger_delete": "removed a trigger",
+      "other": "changed it"
     }
   },
   "access": {

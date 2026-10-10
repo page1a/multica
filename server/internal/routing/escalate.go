@@ -74,6 +74,11 @@ func (r *Router) Escalate(ctx context.Context, workspaceID, issueID, reason stri
 	if holderRank < 0 {
 		return esc, ErrNotEscalatable
 	}
+	// The request itself is the signal for 从结果里学 (DENE-1722), whether or
+	// not a stronger seat exists to take it.
+	if err := r.Store.MarkUnderjudged(ctx, workspaceID, issue.ID, SignalEscalated); err != nil {
+		r.log().Warn("routing: escalation not recorded as underjudged", "workspace_id", workspaceID, "issue_id", issue.ID, "error", err)
+	}
 
 	candidates := ladder.SceneCandidates(scene, roster)
 	eligible, state, err := r.decisionContext(ctx, workspaceID, settings, issue, scene, candidates)

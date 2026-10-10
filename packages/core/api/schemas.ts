@@ -1731,6 +1731,8 @@ export const ProjectMemberSchema = z.object({
   name: z.string().optional().default(""),
   email: z.string().optional().default(""),
   avatar_url: z.string().nullable().optional().default(null),
+  role: z.string().optional().default(""),
+  is_lead: z.boolean().optional().default(false),
 }).loose();
 
 export const ProjectMemberListSchema = z.array(ProjectMemberSchema);
@@ -1756,6 +1758,8 @@ export const EMPTY_PROJECT_MEMBER: ProjectMember = {
   name: "",
   email: "",
   avatar_url: null,
+  role: "",
+  is_lead: false,
 };
 // Local search index sync (MUL-7754). Callers reject a response that fails
 // these schemas instead of degrading to an empty value: an empty snapshot page
@@ -4709,6 +4713,17 @@ export const MemberWithUserSchema = z.object({
   name: z.string().optional().default(""),
   email: z.string().optional().default(""),
   avatar_url: z.string().nullable().optional().default(null),
+  projects: z
+    .array(
+      z.object({
+        id: z.string(),
+        title: z.string().optional().default(""),
+        icon: z.string().nullable().optional().default(null),
+      }).loose(),
+    )
+    .nullable()
+    .optional()
+    .transform((v) => v ?? []),
 }).loose();
 
 export const MemberWithUserListSchema = z.array(MemberWithUserSchema);

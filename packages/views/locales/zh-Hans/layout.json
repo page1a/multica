@@ -15,6 +15,11 @@
     "settings": "设置",
     "permissions": "权限"
   },
+  "tab_bar": {
+    "label": "主导航",
+    "new_issue": "新建",
+    "more": "更多"
+  },
   "tab": {
     "issue": "任务",
     "project": "项目",

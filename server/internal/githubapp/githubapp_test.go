@@ -44,7 +44,7 @@ func TestBuildManifestMatchesOnboarding(t *testing.T) {
 		}
 	}
 	events, _ := got.Fields["default_events"].([]string)
-	if strings.Join(events, ",") != "pull_request,check_suite,check_run,status" {
+	if strings.Join(events, ",") != "pull_request,pull_request_review,check_suite,check_run,status" {
 		t.Fatalf("events = %#v", events)
 	}
 }

@@ -131,7 +131,7 @@ upgrade because newly-added color fields may ship light-mode defaults.
   hidden-default trap re-emerges on every enriched upgrade
 - Code blocks nested in a list item stay with the enriched prose stream
   (don't get Shiki) — top-level code is the >95% case, acceptable
-- LaTeX / Mermaid not currently supported
+- LaTeX not supported. Mermaid is not drawn; a `mermaid` fence in the 听汇报 shape (flowchart of `subgraph` groups with labelled nodes, no edges) renders as grouped lists with counts (`lib/markdown/mermaid-summary.tsx`, DENE-1682); any other mermaid stays a code block
 
 ### Known limitations and mitigations
 

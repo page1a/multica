@@ -15,6 +15,11 @@
     "settings": "Settings",
     "permissions": "Permissions"
   },
+  "tab_bar": {
+    "label": "Main",
+    "new_issue": "New",
+    "more": "More"
+  },
   "tab": {
     "issue": "Issue",
     "project": "Project",

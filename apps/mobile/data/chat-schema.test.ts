@@ -68,4 +68,32 @@ describe("ChatTicketsResponseSchema", () => {
     expect(parsed.tickets[0].assignee_type).toBeNull();
     expect(parsed.tickets[0].goal).toBeUndefined();
   });
+
+  it("reads a ticket from an older server as opened here, linked when created", () => {
+    const parsed = ChatTicketsResponseSchema.parse({
+      tickets: [{ id: "i1", created_at: "2026-10-01T00:00:00Z" }],
+    });
+    expect(parsed.tickets[0].source).toBe("created");
+    expect(parsed.tickets[0].linked_at).toBe("2026-10-01T00:00:00Z");
+  });
+
+  it("keeps a followed ticket's source and linked_at, downgrading unknown sources", () => {
+    const parsed = ChatTicketsResponseSchema.parse({
+      tickets: [
+        {
+          id: "i1",
+          source: "auto",
+          linked_at: "2026-10-05T00:00:00Z",
+          created_at: "2026-09-01T00:00:00Z",
+        },
+        { id: "i2", source: "magic", created_at: "2026-09-02T00:00:00Z" },
+        { id: "i3", source: "manual", linked_at: "2026-10-06T00:00:00Z" },
+      ],
+    });
+    expect(parsed.tickets.map((t) => [t.source, t.linked_at])).toEqual([
+      ["auto", "2026-10-05T00:00:00Z"],
+      ["created", "2026-09-02T00:00:00Z"],
+      ["manual", "2026-10-06T00:00:00Z"],
+    ]);
+  });
 });

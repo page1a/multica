@@ -7,6 +7,8 @@ export interface AgentSpawnCell {
   enabled: boolean;
   per_chat?: number;
   per_run: number;
+  /** Consult only: asks per ticket, at least 1. */
+  per_issue?: number;
 }
 
 /** What an agent run may create, keyed by where it runs → what it creates. */
@@ -14,6 +16,8 @@ export interface AgentSpawnPolicy {
   chat_issue: AgentSpawnCell;
   issue_issue: AgentSpawnCell;
   chat_chat: AgentSpawnCell;
+  /** A run asking a strong-tier seat for advice (DENE-1721). */
+  consult: AgentSpawnCell;
 }
 
 export type AgentSpawnPolicyPatch = {

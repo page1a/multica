@@ -67,7 +67,7 @@ func Build(publicAPI, appURL, state, org string) (Manifest, error) {
 			"checks":        "read",
 			"statuses":      "read",
 		},
-		"default_events": []string{"pull_request", "check_suite", "check_run", "status"},
+		"default_events": []string{"pull_request", "pull_request_review", "check_suite", "check_run", "status"},
 	}
 	action := "https://github.com/settings/apps/new"
 	if org != "" {

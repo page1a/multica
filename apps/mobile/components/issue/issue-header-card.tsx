@@ -18,6 +18,7 @@ import { AttributeRow } from "./attribute-row";
 import { AgentActivityRow } from "./agent-activity-row";
 import { UndrivenRow } from "./undriven-row";
 import { BacklogWaitingRow } from "./backlog-waiting-row";
+import { ReviewSkipRow } from "./review-skip-row";
 import { SourceChatRow } from "./source-chat-row";
 
 export function IssueHeaderCard({ issue }: { issue: Issue }) {
@@ -35,6 +36,7 @@ export function IssueHeaderCard({ issue }: { issue: Issue }) {
       <AgentActivityRow issueId={issue.id} />
       <UndrivenRow issue={issue} />
       <BacklogWaitingRow issue={issue} />
+      <ReviewSkipRow issue={issue} />
       <AttributeRow issue={issue} />
     </View>
   );

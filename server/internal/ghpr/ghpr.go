@@ -37,6 +37,12 @@ type PR struct {
 	ChecksRollup     *string    `json:"checks_rollup,omitempty"`
 	FailedCheckNames []string   `json:"failed_check_names,omitempty"`
 	ChecksRunning    int        `json:"checks_running,omitempty"`
+	// ApprovedBy is the login of a current approving review (DENE-1678). Nil
+	// means the report did not read reviews; "" means it did and found none.
+	ApprovedBy *string    `json:"approved_by,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	// ApprovedHead is the commit that approval was given on.
+	ApprovedHead string `json:"approved_head_sha,omitempty"`
 }
 
 // ReadyToMerge reports whether the gh snapshot is one the close gate would
@@ -70,13 +76,25 @@ type ghRow struct {
 	Mergeable         string          `json:"mergeable"`
 	MergeStateStatus  string          `json:"mergeStateStatus"`
 	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
+	LatestReviews     json.RawMessage `json:"latestReviews"`
+}
+
+type ghReview struct {
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	State       string     `json:"state"`
+	SubmittedAt *time.Time `json:"submittedAt"`
+	Commit      struct {
+		Oid string `json:"oid"`
+	} `json:"commit"`
 }
 
 // ghJSONFields is what `gh pr list --json` returns for the close gate.
 // statusCheckRollup is gh's flattened export: a JSON array of CheckRun /
 // StatusContext objects, or null when the commit has no checks. The first
 // 100 contexts are all gh itself asks for.
-const ghJSONFields = "number,title,state,url,headRefName,headRefOid,isDraft,mergedAt,mergeable,mergeStateStatus,statusCheckRollup"
+const ghJSONFields = "number,title,state,url,headRefName,headRefOid,isDraft,mergedAt,mergeable,mergeStateStatus,statusCheckRollup,latestReviews"
 
 // List runs `gh pr list --state all` in dir with the extra filter args
 // (e.g. "--head", branch or "--search", "DENE-1").
@@ -101,6 +119,7 @@ func List(ctx context.Context, dir string, filter ...string) ([]PR, error) {
 		pr := PR{Owner: owner, Repo: repo, Number: r.Number, Title: r.Title, State: strings.ToLower(r.State),
 			URL: r.URL, Branch: r.HeadRefName, SHA: r.HeadRefOid, IsDraft: r.IsDraft, MergedAt: r.MergedAt}
 		applySnapshot(&pr, r)
+		applyApproval(&pr, r.LatestReviews)
 		prs = append(prs, pr)
 	}
 	return prs, nil
@@ -118,6 +137,29 @@ func applySnapshot(pr *PR, row ghRow) {
 	pr.ChecksRollup = &rollup
 	pr.FailedCheckNames = failed
 	pr.ChecksRunning = running
+}
+
+// applyApproval reads gh's latestReviews (each reviewer's newest review) and
+// keeps the first APPROVED one. A dismissed approval is no longer APPROVED.
+func applyApproval(pr *PR, raw json.RawMessage) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return
+	}
+	var reviews []ghReview
+	if trimmed != "null" && json.Unmarshal(raw, &reviews) != nil {
+		return
+	}
+	by := ""
+	for _, r := range reviews {
+		if strings.EqualFold(r.State, "approved") && r.Author.Login != "" {
+			by = r.Author.Login
+			pr.ApprovedAt = r.SubmittedAt
+			pr.ApprovedHead = r.Commit.Oid
+			break
+		}
+	}
+	pr.ApprovedBy = &by
 }
 
 type ghCheckNode struct {

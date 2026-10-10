@@ -421,13 +421,13 @@
     "done": "완료 {{count}}",
     "hear": "보고 듣기",
     "hear_prompt": "보고: 「{{project}}」의 지난번 이후 새 진행을 알려줘",
-    "title": "이 채팅에서 만든 티켓",
+    "title": "이 채팅의 티켓",
     "just_changed": "방금 바뀜",
-    "opened": "새로 열림 · {{to}}",
     "needs_you": "내 처리 필요"
   },
   "tickets": {
     "heading_other": "이슈 {{count}}개 생성",
+    "heading_mixed_other": "이슈 {{count}}개",
     "to": "담당 {{name}}",
     "routing": "라우팅이 담당자를 고릅니다",
     "actions": "{{id}} 작업",
@@ -437,6 +437,19 @@
     "assigned_me": "{{id}}을(를) 나에게 배정했습니다",
     "assigned_agent": "{{id}}을(를) 라우팅에 돌려보냈습니다",
     "withdrawn": "{{id}}을(를) 철회했습니다",
-    "failed": "{{id}}을(를) 업데이트하지 못했습니다"
+    "failed": "{{id}}을(를) 업데이트하지 못했습니다",
+    "source_created": "이 채팅에서 생성",
+    "source_auto": "팔로우",
+    "source_manual": "직접 추가",
+    "remove": "채팅에서 빼기",
+    "removed": "{{id}}을(를) 이 채팅에서 뺐습니다",
+    "remove_failed": "{{id}}을(를) 빼지 못했습니다",
+    "pin": "이슈 추가",
+    "pin_title": "이 채팅에 이슈 추가",
+    "pin_hint": "카드와 진행 바에 표시되며 이슈 자체는 바뀌지 않습니다.",
+    "pin_placeholder": "이슈 번호, 예: DENE-12",
+    "pin_submit": "추가",
+    "pinned": "{{id}}을(를) 추가했습니다",
+    "pin_failed": "{{id}}을(를) 추가하지 못했습니다"
   }
 }

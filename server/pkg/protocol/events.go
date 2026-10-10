@@ -107,6 +107,9 @@ const (
 	// to the whole workspace so someone who just lost the chat drops it,
 	// while content frames stay filtered to people who can still see it.
 	EventChatSessionInvalidated = "chat:session_invalidated"
+	// EventChatTicketsChanged is id-only: an issue joined or left the chat's
+	// ticket list (DENE-1719); clients refetch GET /tickets.
+	EventChatTicketsChanged = "chat:tickets_changed"
 
 	// Project events
 	EventProjectCreated         = "project:created"

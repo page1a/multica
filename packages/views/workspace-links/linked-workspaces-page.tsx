@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Eye, Link2 } from "lucide-react";
+import { Bot, Eye, Link2 } from "lucide-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { linkedViewOptions, workspaceLinksOptions } from "@multica/core/workspace-links";
@@ -16,7 +16,8 @@ import { useT, useTimeAgo } from "../i18n";
 /**
  * Read-only panel over the workspaces linked to this one (DENE-1225). It
  * renders exactly the server's whitelisted view: no edit controls, and
- * nothing links into the source workspace.
+ * nothing links into the source workspace. A managed link only changes the
+ * access line: its tasks are changed by agents, not from this page.
  */
 export function LinkedWorkspacesPage() {
   const { t } = useT("workspace");
@@ -99,9 +100,13 @@ function LinkedView({ wsId, link }: { wsId: string; link: WorkspaceLink }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2 text-caption text-muted-foreground">
-        <Eye className="size-3.5" />
-        {t(($) => $.links.panel.read_only_from, { name: first.source.name })}
+      {/* On a managed link the page itself stays read-only; agents do the
+          work through `--linked` (DENE-1663), so say that they can. */}
+      <div className="flex items-center gap-2 text-caption text-muted-foreground" data-testid="linked-view-access">
+        {link.managed ? <Bot className="size-3.5 shrink-0" /> : <Eye className="size-3.5 shrink-0" />}
+        {link.managed
+          ? t(($) => $.links.panel.managed_from, { name: first.source.name })
+          : t(($) => $.links.panel.read_only_from, { name: first.source.name })}
       </div>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label={t(($) => $.links.panel.projects)}>

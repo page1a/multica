@@ -26,6 +26,9 @@
  *     deleted / invalidated     → invalidate this session's ticket card
  *                                  (DENE-1665; the payload cannot say which
  *                                  chat opened the issue, so refetch)
+ *   - chat:tickets_changed      → invalidate this session's ticket card
+ *                                  (DENE-1719: an issue was linked, pinned
+ *                                  or taken off this chat)
  *   - reconnect                 → invalidate this session's messages +
  *                                  pendingTask + tickets
  */
@@ -132,6 +135,10 @@ export function useChatSessionRealtime(
         ws.on("issue:updated", invalidateTickets),
         ws.on("issue:deleted", invalidateTickets),
         ws.on("issue:invalidated", invalidateTickets),
+        ws.on("chat:tickets_changed", (payload) => {
+          if (!isMine(payload)) return;
+          invalidateTickets();
+        }),
         ws.onReconnect(() => {
           invalidateMine();
           invalidateTickets();

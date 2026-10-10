@@ -1,11 +1,12 @@
 import type { Workspace } from "../types";
 import { useAuthStore } from "../auth";
 import { paths } from "./paths";
+import { workspaceLandingPath } from "./landing";
 
 /**
  * Priority (onboarded-first):
  *   !hasOnboarded               → /onboarding
- *   hasOnboarded + workspace[0] → /<first.slug>/issues
+ *   hasOnboarded + workspace[0] → /<first.slug>/issues (/chat on a phone)
  *   hasOnboarded + no workspace → /workspaces/new
  *
  * V3 invariant: `onboarded_at != null` is the single source of truth for
@@ -36,7 +37,7 @@ export function resolvePostAuthDestination(
   }
   const first = workspaces[0];
   if (first) {
-    return paths.workspace(first.slug).issues();
+    return workspaceLandingPath(first.slug);
   }
   return paths.newWorkspace();
 }

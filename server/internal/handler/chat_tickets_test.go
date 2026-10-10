@@ -3,11 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 func TestChatTicketDescriptionProblem(t *testing.T) {
@@ -258,5 +261,168 @@ func TestChatTickets_PlanApplyFromChat(t *testing.T) {
 	var n int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE origin_chat_session_id = $1`, sessionID).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("plan issues stamped with chat = %d (%v), want 2", n, err)
+	}
+}
+
+// TestChatTickets_FollowAndPin (DENE-1719): a chat lists the issues its run
+// acted on and the ones pinned by hand, each with its source; reading an issue
+// does not follow it, and a take-down sticks against later auto-follow.
+func TestChatTickets_FollowAndPin(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND name = $2`,
+		testWorkspaceID, "Handler Test Agent",
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("find test agent: %v", err)
+	}
+	var sessionID string
+	if err := testPool.QueryRow(ctx,
+		`INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id, explicitly_created_at)
+		 VALUES ($1, $2, $3, 'Multica · 聊天跟进', $4, now()) RETURNING id`,
+		testWorkspaceID, agentID, testUserID, runtimeID,
+	).Scan(&sessionID); err != nil {
+		t.Fatalf("seed chat session: %v", err)
+	}
+	var taskID string
+	if err := testPool.QueryRow(ctx,
+		`INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, originator_user_id, accountable_user_id, chat_session_id)
+		 VALUES ($1, $2, 'running', 0, $3, $3, $4) RETURNING id`,
+		agentID, runtimeID, testUserID, sessionID,
+	).Scan(&taskID); err != nil {
+		t.Fatalf("seed chat task: %v", err)
+	}
+	var issueIDs []string
+	t.Cleanup(func() {
+		bg := context.Background()
+		testPool.Exec(bg, `DELETE FROM chat_followed_issue WHERE chat_session_id = $1`, sessionID)
+		for _, id := range issueIDs {
+			testPool.Exec(bg, `DELETE FROM issue WHERE id = $1`, id)
+		}
+		testPool.Exec(bg, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		testPool.Exec(bg, `DELETE FROM chat_session WHERE id = $1`, sessionID)
+	})
+
+	asChatRun := func(req *http.Request) *http.Request {
+		req.Header.Set("X-Actor-Source", "task_token")
+		req.Header.Set("X-Agent-ID", agentID)
+		req.Header.Set("X-Task-ID", taskID)
+		return req
+	}
+	memberIssue := func(title string) string {
+		w := httptest.NewRecorder()
+		testHandler.CreateIssue(w, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{"title": title, "status": "backlog"}))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("member create: want 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var issue IssueResponse
+		_ = json.NewDecoder(w.Body).Decode(&issue)
+		issueIDs = append(issueIDs, issue.ID)
+		return issue.ID
+	}
+	list := func() map[string]string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.ListChatSessionTickets(w, withChatTestWorkspaceCtx(t, withURLParam(newRequest("GET", "/api/chat/sessions/"+sessionID+"/tickets", nil), "sessionId", sessionID)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ListChatSessionTickets: want 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp ChatTicketsResponse
+		_ = json.NewDecoder(w.Body).Decode(&resp)
+		out := map[string]string{}
+		for _, tk := range resp.Tickets {
+			if tk.LinkedAt == "" {
+				t.Fatalf("ticket %s has no linked_at", tk.Identifier)
+			}
+			out[tk.ID] = tk.Source
+		}
+		return out
+	}
+	pin := func(issueRef string, remove bool) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		if remove {
+			req := withURLParams(newRequest("DELETE", "/api/chat/sessions/"+sessionID+"/tickets/"+issueRef, nil), "sessionId", sessionID, "issueId", issueRef)
+			testHandler.RemoveChatSessionTicket(w, withChatTestWorkspaceCtx(t, req))
+		} else {
+			req := withURLParam(newRequest("POST", "/api/chat/sessions/"+sessionID+"/tickets", map[string]any{"issue": issueRef}), "sessionId", sessionID)
+			testHandler.AddChatSessionTicket(w, withChatTestWorkspaceCtx(t, req))
+		}
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("pin %s (remove=%v): want 204, got %d: %s", issueRef, remove, w.Code, w.Body.String())
+		}
+	}
+
+	moved := memberIssue("Moved from chat (DENE-1719)")
+	commented := memberIssue("Commented from chat (DENE-1719)")
+	pinned := memberIssue("Pinned by hand (DENE-1719)")
+
+	// Reading an issue is not acting on it.
+	w := httptest.NewRecorder()
+	testHandler.GetIssue(w, asChatRun(withURLParam(newRequest("GET", "/api/issues/"+moved, nil), "id", moved)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssue as chat run: got %d: %s", w.Code, w.Body.String())
+	}
+	if got := list(); len(got) != 0 {
+		t.Fatalf("after a read, tickets = %v, want none", got)
+	}
+
+	// A status change from the chat's run follows the issue.
+	w = httptest.NewRecorder()
+	testHandler.UpdateIssue(w, asChatRun(withURLParam(newRequest(http.MethodPut, "/api/issues/"+moved, map[string]any{"status": "todo", "suppress_run": true}), "id", moved)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue as chat run: got %d: %s", w.Code, w.Body.String())
+	}
+	// So does a comment.
+	w = httptest.NewRecorder()
+	testHandler.CreateComment(w, asChatRun(withURLParam(newRequest("POST", "/api/issues/"+commented+"/comments", map[string]any{"content": "聊天里跟进一下"}), "id", commented)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment as chat run: got %d: %s", w.Code, w.Body.String())
+	}
+	// A member's own comment follows nothing.
+	w = httptest.NewRecorder()
+	testHandler.CreateComment(w, withURLParam(newRequest("POST", "/api/issues/"+pinned+"/comments", map[string]any{"content": "人自己评论"}), "id", pinned))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("member comment: got %d: %s", w.Code, w.Body.String())
+	}
+	if got := list(); len(got) != 2 || got[moved] != chatTicketSourceAuto || got[commented] != chatTicketSourceAuto {
+		t.Fatalf("after acting, tickets = %v, want moved and commented as auto", got)
+	}
+
+	// Pin by hand, by identifier.
+	var number int
+	if err := testPool.QueryRow(ctx, `SELECT number FROM issue WHERE id = $1`, pinned).Scan(&number); err != nil {
+		t.Fatalf("load number: %v", err)
+	}
+	prefix := testHandler.getIssuePrefix(ctx, util.MustParseUUID(testWorkspaceID))
+	pin(fmt.Sprintf("%s-%d", prefix, number), false)
+	if got := list(); got[pinned] != chatTicketSourceManual {
+		t.Fatalf("after pin, tickets = %v, want pinned as manual", got)
+	}
+
+	// A take-down sticks: acting on the issue again does not bring it back.
+	pin(moved, true)
+	w = httptest.NewRecorder()
+	testHandler.UpdateIssue(w, asChatRun(withURLParam(newRequest(http.MethodPut, "/api/issues/"+moved, map[string]any{"status": "in_progress", "suppress_run": true}), "id", moved)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue after take-down: got %d: %s", w.Code, w.Body.String())
+	}
+	if got := list(); len(got) != 2 || got[moved] != "" {
+		t.Fatalf("after take-down, tickets = %v, want moved gone", got)
+	}
+	// Pinning it again brings it back.
+	pin(moved, false)
+	if got := list(); got[moved] != chatTicketSourceManual {
+		t.Fatalf("after re-pin, tickets = %v, want moved as manual", got)
+	}
+
+	// The birthplace is untouched by following.
+	var origin string
+	if err := testPool.QueryRow(ctx, `SELECT COALESCE(origin_chat_session_id::text, '') FROM issue WHERE id = $1`, moved).Scan(&origin); err != nil || origin != "" {
+		t.Fatalf("followed issue origin = %q (%v), want empty", origin, err)
 	}
 }

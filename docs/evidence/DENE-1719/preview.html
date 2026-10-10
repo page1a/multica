@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1719 聊天跟进的票</title>
+<style>
+  :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: #18181b; background: #fafafa; }
+  body { margin: 0; padding: 24px 16px 48px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 32px 0 12px; color: #52525b; font-weight: 500; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; }
+  figure { margin: 0; width: 195px; }
+  figure.mid { width: 384px; }
+  figure.wide { width: min(640px, 100%); }
+  img { display: block; width: 100%; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; }
+  figcaption { font-size: 12px; color: #71717a; margin-top: 6px; }
+  @media (max-width: 480px) {
+    figure { width: calc(50% - 8px); }
+    figure.mid, figure.wide { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<h1>聊天底栏显示跟进的票</h1>
+<h2>手机 390px</h2>
+<div class="row">
+  <figure><img src="mobile-cards.png" alt=""><figcaption>卡片注明来源</figcaption></figure>
+  <figure><img src="mobile-panel.png" alt=""><figcaption>进度条展开</figcaption></figure>
+  <figure><img src="mobile-panel-after-remove.png" alt=""><figcaption>取下一张后</figcaption></figure>
+  <figure><img src="mobile-pin-dialog.png" alt=""><figcaption>挂上票</figcaption></figure>
+</div>
+<h2>平板 768px</h2>
+<div class="row">
+  <figure class="mid"><img src="tablet-panel.png" alt=""><figcaption>进度条展开，触屏常显取下</figcaption></figure>
+</div>
+<h2>桌面 1280px</h2>
+<div class="row">
+  <figure class="wide"><img src="desktop-cards.png" alt=""><figcaption>新建、跟进、手动挂上</figcaption></figure>
+  <figure class="wide"><img src="desktop-panel.png" alt=""><figcaption>进度条展开</figcaption></figure>
+  <figure class="wide"><img src="desktop-settled-menu.png" alt=""><figcaption>做完的票只剩取下</figcaption></figure>
+  <figure class="wide"><img src="desktop-open-menu.png" alt=""><figcaption>没做完的票</figcaption></figure>
+  <figure class="wide"><img src="desktop-pin-dialog.png" alt=""><figcaption>标题栏 ⋯ 里挂上票</figcaption></figure>
+</div>
+</body>
+</html>

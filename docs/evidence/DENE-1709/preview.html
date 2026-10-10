@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1709 手机网页底部导航</title>
+<style>
+  :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: #18181b; background: #fafafa; }
+  body { margin: 0; padding: 24px 16px 48px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 32px 0 12px; color: #52525b; font-weight: 500; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; }
+  figure { margin: 0; width: 195px; }
+  figure.wide { width: min(640px, 100%); }
+  img { display: block; width: 100%; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; }
+  figcaption { font-size: 12px; color: #71717a; margin-top: 6px; }
+  @media (max-width: 480px) {
+    figure { width: calc(50% - 8px); }
+    figure.wide { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<h1>手机网页底部导航</h1>
+<h2>手机 390px</h2>
+<div class="row">
+  <figure><img src="390-landing-chat.png" alt=""><figcaption>打开即进聊天</figcaption></figure>
+  <figure><img src="390-chat-session.png" alt=""><figcaption>聊天里点任务卡</figcaption></figure>
+  <figure><img src="390-issue-detail.png" alt=""><figcaption>任务页左上角返回</figcaption></figure>
+  <figure><img src="390-issues.png" alt=""><figcaption>任务</figcaption></figure>
+  <figure><img src="390-inbox.png" alt=""><figcaption>收件箱</figcaption></figure>
+  <figure><img src="390-new-issue-assigned.png" alt=""><figcaption>新建，派给智能体</figcaption></figure>
+  <figure><img src="390-composer-focused.png" alt=""><figcaption>打字时让出位置</figcaption></figure>
+  <figure><img src="390-more-sheet.png" alt=""><figcaption>更多</figcaption></figure>
+</div>
+<h2>手机 390px，浏览器没有 Navigation API（旧版 Safari）</h2>
+<div class="row">
+  <figure><img src="390-nonav-back-in-chat.png" alt=""><figcaption>从聊天进任务，返回回到聊天</figcaption></figure>
+  <figure><img src="390-nonav-cold-back-list.png" alt=""><figcaption>直接打开任务，返回到任务列表</figcaption></figure>
+</div>
+<h2>平板 768px / 桌面 1280px（不变）</h2>
+<div class="row">
+  <figure class="wide"><img src="768-issues.png" alt=""><figcaption>768px</figcaption></figure>
+  <figure class="wide"><img src="1280-issues.png" alt=""><figcaption>1280px</figcaption></figure>
+</div>
+</body>
+</html>

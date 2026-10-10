@@ -152,6 +152,16 @@ export interface MemberWithUser {
   name: string;
   email: string;
   avatar_url: string | null;
+  /** Projects this person has joined (DENE-1706). Owner-only like role: a
+   *  non-owner gets their own and [] for everyone else. Optional so rows
+   *  built locally (invite responses, fixtures) need not carry it. */
+  projects?: MemberProjectRef[];
+}
+
+export interface MemberProjectRef {
+  id: string;
+  title: string;
+  icon: string | null;
 }
 
 export interface Invitation {

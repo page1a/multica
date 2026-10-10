@@ -656,6 +656,69 @@ func (q *Queries) ListRoutingEnabledWorkspaces(ctx context.Context) ([]pgtype.UU
 	return items, nil
 }
 
+const listRoutingOutcomeStats = `-- name: ListRoutingOutcomeStats :many
+SELECT o.direction, o.tier, o.scope, o.clarity, o.risk,
+       COUNT(*)::int AS total,
+       COUNT(o.escalated_at)::int AS escalated,
+       COUNT(o.held_at)::int AS held,
+       COUNT(*) FILTER (WHERE o.escalated_at IS NOT NULL OR o.held_at IS NOT NULL)::int AS low
+FROM issue_routing_outcome o
+JOIN issue i ON i.id = o.issue_id
+WHERE o.workspace_id = $1::uuid
+  AND o.routed_at >= $2::timestamptz
+GROUP BY o.direction, o.tier, o.scope, o.clarity, o.risk
+ORDER BY low DESC, total DESC, o.direction, o.tier, o.scope, o.clarity, o.risk
+`
+
+type ListRoutingOutcomeStatsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+type ListRoutingOutcomeStatsRow struct {
+	Direction string `json:"direction"`
+	Tier      string `json:"tier"`
+	Scope     string `json:"scope"`
+	Clarity   string `json:"clarity"`
+	Risk      string `json:"risk"`
+	Total     int32  `json:"total"`
+	Escalated int32  `json:"escalated"`
+	Held      int32  `json:"held"`
+	Low       int32  `json:"low"`
+}
+
+// Per class, over the tickets tiered since the window start: how many there
+// were, how many escalated, how many were held, and how many either.
+func (q *Queries) ListRoutingOutcomeStats(ctx context.Context, arg ListRoutingOutcomeStatsParams) ([]ListRoutingOutcomeStatsRow, error) {
+	rows, err := q.db.Query(ctx, listRoutingOutcomeStats, arg.WorkspaceID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRoutingOutcomeStatsRow{}
+	for rows.Next() {
+		var i ListRoutingOutcomeStatsRow
+		if err := rows.Scan(
+			&i.Direction,
+			&i.Tier,
+			&i.Scope,
+			&i.Clarity,
+			&i.Risk,
+			&i.Total,
+			&i.Escalated,
+			&i.Held,
+			&i.Low,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStaleReviewIssues = `-- name: ListStaleReviewIssues :many
 SELECT i.id FROM issue i
 WHERE i.workspace_id = $1::uuid
@@ -764,6 +827,44 @@ func (q *Queries) ListUnseatedIssues(ctx context.Context, arg ListUnseatedIssues
 	return items, nil
 }
 
+const markIssueRoutingEscalated = `-- name: MarkIssueRoutingEscalated :exec
+UPDATE issue_routing_outcome
+SET escalated_at = now()
+WHERE issue_id = $1::uuid
+  AND workspace_id = $2::uuid
+  AND escalated_at IS NULL
+`
+
+type MarkIssueRoutingEscalatedParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// The executor said the ticket was too hard. Only the first escalation is kept.
+func (q *Queries) MarkIssueRoutingEscalated(ctx context.Context, arg MarkIssueRoutingEscalatedParams) error {
+	_, err := q.db.Exec(ctx, markIssueRoutingEscalated, arg.IssueID, arg.WorkspaceID)
+	return err
+}
+
+const markIssueRoutingHeld = `-- name: MarkIssueRoutingHeld :exec
+UPDATE issue_routing_outcome
+SET held_at = now()
+WHERE issue_id = $1::uuid
+  AND workspace_id = $2::uuid
+  AND held_at IS NULL
+`
+
+type MarkIssueRoutingHeldParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Acceptance sent the ticket back (verdict: hold). Only the first is kept.
+func (q *Queries) MarkIssueRoutingHeld(ctx context.Context, arg MarkIssueRoutingHeldParams) error {
+	_, err := q.db.Exec(ctx, markIssueRoutingHeld, arg.IssueID, arg.WorkspaceID)
+	return err
+}
+
 const reassignIssue = `-- name: ReassignIssue :one
 UPDATE issue
 SET assignee_type = $1::text,
@@ -849,6 +950,41 @@ func (q *Queries) ReassignIssue(ctx context.Context, arg ReassignIssueParams) (I
 		&i.OriginChatSessionID,
 	)
 	return i, err
+}
+
+const recordIssueRoutingOutcome = `-- name: RecordIssueRoutingOutcome :exec
+INSERT INTO issue_routing_outcome (issue_id, workspace_id, direction, tier, scope, clarity, risk)
+VALUES (
+    $1::uuid, $2::uuid,
+    $3::text, $4::text,
+    $5::text, $6::text, $7::text
+)
+ON CONFLICT (issue_id) DO NOTHING
+`
+
+type RecordIssueRoutingOutcomeParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Direction   string      `json:"direction"`
+	Tier        string      `json:"tier"`
+	Scope       string      `json:"scope"`
+	Clarity     string      `json:"clarity"`
+	Risk        string      `json:"risk"`
+}
+
+// Records the class a ticket was first tiered in (DENE-1722). A ticket routed
+// again keeps its first class: the signals that follow are about that call.
+func (q *Queries) RecordIssueRoutingOutcome(ctx context.Context, arg RecordIssueRoutingOutcomeParams) error {
+	_, err := q.db.Exec(ctx, recordIssueRoutingOutcome,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.Direction,
+		arg.Tier,
+		arg.Scope,
+		arg.Clarity,
+		arg.Risk,
+	)
+	return err
 }
 
 const replaceIssueReviewerIfCurrent = `-- name: ReplaceIssueReviewerIfCurrent :one

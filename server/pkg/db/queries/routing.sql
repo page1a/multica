@@ -345,3 +345,45 @@ SET reviewer_type = 'member',
 WHERE id = sqlc.arg('id')::uuid
   AND workspace_id = sqlc.arg('workspace_id')::uuid
 RETURNING *;
+
+-- name: RecordIssueRoutingOutcome :exec
+-- Records the class a ticket was first tiered in (DENE-1722). A ticket routed
+-- again keeps its first class: the signals that follow are about that call.
+INSERT INTO issue_routing_outcome (issue_id, workspace_id, direction, tier, scope, clarity, risk)
+VALUES (
+    sqlc.arg('issue_id')::uuid, sqlc.arg('workspace_id')::uuid,
+    sqlc.arg('direction')::text, sqlc.arg('tier')::text,
+    sqlc.arg('scope')::text, sqlc.arg('clarity')::text, sqlc.arg('risk')::text
+)
+ON CONFLICT (issue_id) DO NOTHING;
+
+-- name: MarkIssueRoutingEscalated :exec
+-- The executor said the ticket was too hard. Only the first escalation is kept.
+UPDATE issue_routing_outcome
+SET escalated_at = now()
+WHERE issue_id = sqlc.arg('issue_id')::uuid
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND escalated_at IS NULL;
+
+-- name: MarkIssueRoutingHeld :exec
+-- Acceptance sent the ticket back (verdict: hold). Only the first is kept.
+UPDATE issue_routing_outcome
+SET held_at = now()
+WHERE issue_id = sqlc.arg('issue_id')::uuid
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND held_at IS NULL;
+
+-- name: ListRoutingOutcomeStats :many
+-- Per class, over the tickets tiered since the window start: how many there
+-- were, how many escalated, how many were held, and how many either.
+SELECT o.direction, o.tier, o.scope, o.clarity, o.risk,
+       COUNT(*)::int AS total,
+       COUNT(o.escalated_at)::int AS escalated,
+       COUNT(o.held_at)::int AS held,
+       COUNT(*) FILTER (WHERE o.escalated_at IS NOT NULL OR o.held_at IS NOT NULL)::int AS low
+FROM issue_routing_outcome o
+JOIN issue i ON i.id = o.issue_id
+WHERE o.workspace_id = sqlc.arg('workspace_id')::uuid
+  AND o.routed_at >= sqlc.arg('since')::timestamptz
+GROUP BY o.direction, o.tier, o.scope, o.clarity, o.risk
+ORDER BY low DESC, total DESC, o.direction, o.tier, o.scope, o.clarity, o.risk;

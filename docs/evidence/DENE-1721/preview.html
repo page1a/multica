@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DENE-1721 咨询强档席位 · 预览</title>
+<style>
+  :root { --fg:#0a0a0a; --muted:#71717a; --border:#e4e4e7; --card:#fff; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; color:var(--fg); background:var(--bg); }
+  .page { max-width:760px; margin:0 auto; padding:24px 16px; display:flex; flex-direction:column; gap:28px; }
+  h2 { font-size:13px; font-weight:600; color:var(--muted); margin:0 0 8px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; }
+  .row { display:flex; gap:16px; align-items:center; justify-content:space-between; padding:14px 16px; flex-wrap:wrap; }
+  .row + .row { border-top:1px solid var(--border); }
+  .label { font-weight:500; }
+  .desc { color:var(--muted); font-size:13px; }
+  .ctl { display:flex; align-items:center; gap:16px; }
+  .count { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+  .count input { width:80px; height:32px; border:1px solid var(--border); border-radius:6px; padding:0 8px; font:inherit; color:var(--fg); }
+  .switch { width:36px; height:20px; border-radius:999px; background:#18181b; position:relative; }
+  .switch::after { content:""; position:absolute; top:2px; left:18px; width:16px; height:16px; border-radius:50%; background:#fff; }
+  .timeline { padding:12px 16px; display:flex; flex-direction:column; gap:12px; font-size:12px; color:var(--muted); }
+  .act { display:flex; align-items:center; gap:4px; min-width:0; }
+  .av { width:16px; height:16px; border-radius:50%; background:#d4d4d8; flex:none; margin-right:4px; }
+  .name { font-weight:500; flex:none; }
+  .trunc { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .time { margin-left:auto; flex:none; padding-left:8px; }
+  .chev { flex:none; }
+  .detail { margin-left:24px; border-left:1px solid var(--border); padding-left:12px; display:flex; flex-direction:column; gap:8px; }
+  .detail b { font-weight:500; display:block; }
+  .detail p { margin:0; color:var(--fg); white-space:pre-wrap; word-break:break-word; }
+</style>
+</head>
+<body>
+<div class="page">
+  <section>
+    <h2>设置 → 智能体权限 → 咨询</h2>
+    <div class="card">
+      <div class="row">
+        <div><div class="label">向强档席位咨询</div><div class="desc">正在干活的智能体运行可以向最强档席位问一句，对方只读不改。</div></div>
+        <div class="ctl"><label class="count">每张任务 <input value="3"></label><span class="switch"></span></div>
+      </div>
+    </div>
+  </section>
+  <section>
+    <h2>任务时间线（收起）</h2>
+    <div class="card timeline">
+      <div class="act"><span class="av"></span><span class="name">孙悟空</span><span class="trunc">将状态从 待办 改为 进行中</span><span class="time">12 分钟前</span></div>
+      <div class="act"><span class="av"></span><span class="name">孙悟空</span><span class="trunc">咨询了 孙悟饭</span><span class="chev">· 1.2k token · 40 秒 ›</span><span class="time">3 分钟前</span></div>
+      <div class="act"><span class="av"></span><span class="name">孙悟空</span><span class="trunc">咨询了 布尔玛，没有得到回答</span><span class="chev">›</span><span class="time">1 分钟前</span></div>
+    </div>
+  </section>
+  <section>
+    <h2>任务时间线（展开一条）</h2>
+    <div class="card timeline">
+      <div class="act"><span class="av"></span><span class="name">孙悟空</span><span class="trunc">咨询了 孙悟饭</span><span class="chev">· 1.2k token · 40 秒 ⌄</span><span class="time">3 分钟前</span></div>
+      <div class="detail">
+        <div><b>问题</b><p>我打算在 issue_consult 上建 (issue_id, created_at) 复合索引，计数时只看 pending/answered。漏了什么吗？</p></div>
+        <div><b>回答</b><p>思路可以。两点：1) 计数要放在同一事务里加锁，否则并发两次都会通过；2) failed 的不计数要在文档里说清楚，执行人才知道失败不扣次数。</p></div>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

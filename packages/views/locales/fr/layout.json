@@ -15,6 +15,11 @@
     "settings": "Paramètres",
     "permissions": "Autorisations"
   },
+  "tab_bar": {
+    "label": "Principal",
+    "new_issue": "Créer",
+    "more": "Plus"
+  },
   "tab": {
     "issue": "Tâche",
     "project": "Projet",

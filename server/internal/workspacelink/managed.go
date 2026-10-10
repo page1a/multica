@@ -478,6 +478,28 @@ func (s *Service) managedIssueID(ctx context.Context, source db.Workspace, ref s
 // setManaged switches managed access. The source owner decides; someone who
 // owns the source and manages the viewer may switch it from the viewer side
 // too (the pull rule, DENE-1582), and then each side gets its audit row.
+// FillCanSetManaged answers, per link, what setManaged would: the source
+// owner, or from the viewer side an owner of the source too.
+func (s *Service) FillCanSetManaged(ctx context.Context, links []Link, actorUser pgtype.UUID, actor Actor) error {
+	for i := range links {
+		switch links[i].Side {
+		case SideSource:
+			links[i].CanSetManaged = Decide(OpSetManaged, SideSource, actor)
+		case SideViewer:
+			sourceID, err := util.ParseUUID(links[i].Source.ID)
+			if err != nil {
+				return err
+			}
+			ok, err := s.canPull(ctx, s.q, actorUser, sourceID, actor)
+			if err != nil {
+				return err
+			}
+			links[i].CanSetManaged = ok
+		}
+	}
+	return nil
+}
+
 func (s *Service) setManaged(ctx context.Context, q *db.Queries, link db.WorkspaceLink, side Side, actorWS, actorUser pgtype.UUID, actor Actor, on bool) error {
 	fromViewer := false
 	switch side {

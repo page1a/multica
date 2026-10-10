@@ -1220,8 +1220,8 @@ class ApiClient {
     );
   }
 
-  /** The issues this chat opened, oldest first, already filtered to what the
-   *  viewer may see (DENE-1665). */
+  /** The issues this chat opened or follows (DENE-1665, DENE-1719), oldest
+   *  first, already filtered to what the viewer may see. */
   async listChatTickets(
     sessionId: string,
     opts?: { signal?: AbortSignal },
@@ -1231,6 +1231,25 @@ class ApiClient {
       ChatTicketsResponseSchema,
       EMPTY_CHAT_TICKETS_RESPONSE,
       { ...opts, endpoint: "GET /api/chat/sessions/:id/tickets" },
+    );
+  }
+
+  /** Pin an issue to this chat by hand (DENE-1719); `issue` is an id or an
+   *  identifier like DENE-12. Also undoes a take-down. Same endpoint as web
+   *  and `multica chat tickets`. */
+  async pinChatTicket(sessionId: string, issue: string): Promise<void> {
+    await this.fetch<void>(`/api/chat/sessions/${sessionId}/tickets`, {
+      method: "POST",
+      body: JSON.stringify({ issue }),
+    });
+  }
+
+  /** Take an issue off this chat (DENE-1719). The issue itself is untouched,
+   *  and auto-follow will not bring it back. */
+  async unpinChatTicket(sessionId: string, issueId: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/chat/sessions/${sessionId}/tickets/${issueId}`,
+      { method: "DELETE" },
     );
   }
 

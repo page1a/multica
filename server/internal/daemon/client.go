@@ -219,6 +219,7 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 		protocol.DaemonCapabilityJoinedWakeupsV1,
 		protocol.DaemonCapabilityDeliveryLineV1,
+		protocol.DaemonCapabilityConsultV1,
 	}
 }
 

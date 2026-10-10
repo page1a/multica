@@ -293,6 +293,9 @@ describe("RoutingTab", () => {
       allow_upshift: false,
       prefer_continuation: false,
       prefer_idle: false,
+      learn_from_outcomes: false,
+      learn_low_rate: 0.3,
+      learn_window_days: 30,
       judged_review: false,
       judge_enabled: false,
       analysis: {
@@ -698,6 +701,38 @@ describe("RoutingTab seat order switches", () => {
     ];
     expect(body.settings.routing.prefer_idle).toBe(true);
     expect(body.settings.routing.prefer_continuation).toBe(false);
+  });
+
+  // DENE-1722: 从结果里学 is its own switch, shadow by default; the rate is
+  // typed as a percentage and stored as a share.
+  it("switches 从结果里学 from shadow to live and saves its thresholds", async () => {
+    workspace.current.settings = {
+      routing: { enabled: true, model: "gpt-5.6-luna" },
+    };
+    render();
+    const learn = screen.getByRole("switch", { name: "Learn from outcomes" });
+    expect(learn).not.toHaveAttribute("data-checked");
+    expect(screen.getByText(/^Shadow mode:.*raise the tier/)).toBeInTheDocument();
+
+    await userEvent.click(learn);
+    expect(screen.getByText(/^Live: when tickets of the same kind/)).toBeInTheDocument();
+    const rate = screen.getByRole("spinbutton", { name: "Judged-low share (%)" });
+    await userEvent.clear(rate);
+    await userEvent.type(rate, "50");
+    const days = screen.getByRole("spinbutton", { name: "Window (days)" });
+    await userEvent.clear(days);
+    await userEvent.type(days, "14");
+    await waitFor(() => {
+      const [, body] = updateWorkspace.mock.calls.at(-1) as [
+        string,
+        { settings: { routing: Record<string, unknown> } },
+      ];
+      expect(body.settings.routing).toMatchObject({
+        learn_from_outcomes: true,
+        learn_low_rate: 0.5,
+        learn_window_days: 14,
+      });
+    });
   });
 
   // DENE-1677: the rule table decides the tier and the 验收席, so the

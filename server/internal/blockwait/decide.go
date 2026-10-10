@@ -74,6 +74,9 @@ type PatrolInput struct {
 	ReviewRunFailed bool
 	ReviewFailures  int
 	ReviewAsked     bool
+	// ReviewSkip is the reason the failed round needs no acceptance at all:
+	// the PR is already merged and reviewed (DENE-1678). Empty otherwise.
+	ReviewSkip string
 	// Watched is `block.watched=1`. DENE-1002 only lets an in_progress row act
 	// on a clock when this ticket was deliberately parked there by
 	// `issue close --outcome in_progress`; a leftover failure wake on an
@@ -188,6 +191,9 @@ func DecidePatrol(in PatrolInput) Decision {
 	if in.Status == "in_review" {
 		if in.HasPassComment || in.ReleasedPass {
 			return Decision{Action: ActionRelease, Reason: "验收已经通过，但票还停在待验收。平台按通过收口。"}
+		}
+		if in.ReviewRunFailed && in.ReviewSkip != "" && !in.ReviewerHuman {
+			return Decision{Action: ActionRelease, Reason: "验收 run 失败了，但" + in.ReviewSkip + "。平台按通过收口，不再找验收席。"}
 		}
 		if in.Quiet >= QuietAfter && in.ReviewerEmpty {
 			return Decision{

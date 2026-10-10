@@ -24,9 +24,11 @@ SELECT
     pm.created_at,
     u.name AS user_name,
     u.email AS user_email,
-    u.avatar_url AS user_avatar_url
+    u.avatar_url AS user_avatar_url,
+    COALESCE(wm.role, '')::text AS workspace_role
 FROM project_member pm
 JOIN "user" u ON u.id = pm.member_id
+LEFT JOIN member wm ON wm.workspace_id = pm.workspace_id AND wm.user_id = pm.member_id
 WHERE pm.project_id = $1
 ORDER BY pm.created_at ASC;
 
@@ -40,6 +42,14 @@ SELECT EXISTS(
 SELECT project_id FROM project_member
 WHERE workspace_id = $1 AND member_id = $2
 ORDER BY created_at ASC;
+
+-- name: ListWorkspaceProjectMemberships :many
+-- Every person's projects in one workspace, for the roster's "projects" column.
+SELECT pm.member_id, p.id AS project_id, p.title, p.icon
+FROM project_member pm
+JOIN project p ON p.id = pm.project_id
+WHERE pm.workspace_id = $1
+ORDER BY p.title ASC, p.id ASC;
 
 -- name: DeleteProjectMembersByProject :exec
 DELETE FROM project_member

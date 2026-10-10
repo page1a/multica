@@ -31,6 +31,7 @@ var briefSizeBudgets = []struct {
 	{"chat", TaskContextForEnv{ChatSessionID: "c-1", AgentID: "a-1", AgentName: "Agent"}, 4000, 6 << 10},
 	{"quick-create", TaskContextForEnv{QuickCreatePrompt: "create an issue", AgentID: "a-1", AgentName: "Agent"}, 5200, 0},
 	{"autopilot", TaskContextForEnv{AutopilotRunID: "r-1", AgentID: "a-1", AgentName: "Agent"}, 3700, 0},
+	{"consult", TaskContextForEnv{IsConsult: true, AgentID: "a-1", AgentName: "Agent"}, 3600, 0},
 }
 
 // TestBriefSizeBudget renders each task kind's brief from a minimal context —

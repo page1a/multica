@@ -1722,7 +1722,11 @@
       "manage_members": "invite members and change tiers",
       "workspace_settings": "workspace settings, integrations and keys",
       "billing_and_transfer": "billing, transfer and deletion"
-    }
+    },
+    "projects_count_one": "{{count}} project",
+    "projects_count_other": "{{count}} projects",
+    "no_projects": "No projects",
+    "projects_aria": "Projects {{name}} has joined"
   },
   "integrations": {
     "status_connected": "Connected",
@@ -1955,6 +1959,13 @@
     "load_label": "Spread across idle seats",
     "load_description_on": "Live: within the picked tier and direction, a seat with fewer runs in progress takes the ticket, but never past the usage tag: an idle Tight seat does not take work from a busier Normal or Ample one; when all are equally busy the usual order stands. If “Prefer the previous executor” is also on, it wins.",
     "load_description_shadow": "Shadow mode: routing keeps its own pick and only notes in the assignment comment which less busy seat this rule would pick. Turn on to apply it.",
+    "learn_label": "Learn from outcomes",
+    "learn_description_on": "Live: when tickets of the same kind were recently escalated or held, new ones go one tier higher.",
+    "learn_description_shadow": "Shadow mode: routing keeps its own pick and only notes in the assignment comment that this rule would raise the tier, and why. Turn on to apply it.",
+    "learn_rate_label": "Judged-low share (%)",
+    "learn_rate_description": "Raise a kind once this share of its tickets was escalated or held; needs at least 5.",
+    "learn_window_label": "Window (days)",
+    "learn_window_description": "Only tickets routed within this many days count.",
     "gateway_endpoint_workspace": "The model id is sent to this workspace's own endpoint: {{host}}.",
     "gateway_endpoint_deployment": "The model id is sent to the deployment's shared LLM endpoint: {{host}}.",
     "gateway_unset": "No endpoint is available. Set an endpoint and key below.",
@@ -2117,6 +2128,10 @@
     "issue_chat_description": "Unavailable: discuss in comments, and split parallel exploration into sub-issues.",
     "per_run": "Per run",
     "per_chat": "Per chat",
+    "per_issue": "Per issue",
+    "consult_title": "Consult",
+    "consult_label": "Ask a strong seat",
+    "consult_description": "A run working an issue can ask a strongest-tier seat one question; the seat only reads.",
     "unlimited": "Unlimited",
     "enabled": "Allow",
     "limits_title": "Run limits",

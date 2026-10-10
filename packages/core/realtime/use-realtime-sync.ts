@@ -15,6 +15,7 @@ import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { homeKeys } from "../home/queries";
 import { projectKeys } from "../projects/queries";
+import { invalidateProjectMemberLists } from "../projects/member-queries";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
 import { runtimeKeys } from "../runtimes/queries";
@@ -1031,7 +1032,11 @@ export function useRealtimeSync(
       },
       member: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+          // Project member rows show the workspace role and sort by it.
+          void invalidateProjectMemberLists(qc, wsId);
+        }
       },
       // workspace:updated is handled by the specific handler below
       // (compares prefixes to decide whether to also invalidate issues).
@@ -1055,6 +1060,9 @@ export function useRealtimeSync(
           // against, and project writes are rare, so refresh the table
           // queries unconditionally rather than guess.
           qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+          // Roster rows list each member's projects by title, and project
+          // membership changes arrive as project:updated.
+          qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
         }
       },
       squad: () => {
@@ -1292,6 +1300,7 @@ export function useRealtimeSync(
       // Chat events are handled explicitly below; do not double-invalidate.
       "chat:message", "chat:done", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
       "chat:session_created", "chat:session_deleted", "chat:session_updated", "chat:session_invalidated",
+      "chat:tickets_changed",
       // task:message stays out of the prefix path because it fires per
       // streamed message during a long run — invalidating the snapshot on
       // every message would flood the network. Specific chat handlers below
@@ -2128,6 +2137,13 @@ export function useRealtimeSync(
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
     });
 
+    // An issue joined or left a chat's tickets (DENE-1719).
+    const unsubChatTicketsChanged = ws.on("chat:tickets_changed", (p) => {
+      const payload = p as { chat_session_id: string };
+      const id = getCurrentWsId();
+      if (id) qc.invalidateQueries({ queryKey: chatKeys.tickets(id, payload.chat_session_id) });
+    });
+
     const unsubChatSessionDeleted = ws.on("chat:session_deleted", (p) => {
       const payload = p as { chat_session_id: string };
       chatWsLogger.info("chat:session_deleted (global)", payload);
@@ -2196,6 +2212,7 @@ export function useRealtimeSync(
       unsubChatSessionRead();
       unsubChatSessionCreated();
       unsubChatSessionInvalidated();
+      unsubChatTicketsChanged();
       unsubChatSessionDeleted();
       unsubChatSessionUpdated();
       if (taskMessageFlushTimer) clearTimeout(taskMessageFlushTimer);

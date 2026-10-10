@@ -206,7 +206,15 @@
     "assign_me": "改给我",
     "assign_agent": "改给智能体",
     "withdraw": "撤回",
-    "failed": "{{id}} 没改成"
+    "failed": "{{id}} 没改成",
+    "heading_linked_other": "{{count}} 张单",
+    "source": {
+      "created": "本聊天新建",
+      "auto": "跟进",
+      "manual": "手动挂上"
+    },
+    "remove": "取下",
+    "remove_failed": "{{id}} 没取下"
   },
   "progress": {
     "bar_other": "本聊天 {{count}} 张单",
@@ -214,9 +222,10 @@
     "waiting_you": "等你 {{count}}",
     "in_progress": "在做 {{count}}",
     "done": "做完 {{count}}",
-    "title": "本聊天开的单",
+    "title": "本聊天的单",
     "just_changed": "刚变",
-    "opened": "新开 · {{to}}",
-    "needs_you": "要你处理"
+    "needs_you": "要你处理",
+    "hear": "听汇报",
+    "hear_prompt": "听汇报：讲讲「{{project}}」上次以来的新进展"
   }
 }

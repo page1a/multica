@@ -211,3 +211,19 @@ func TestLatestSummary(t *testing.T) {
 		}
 	}
 }
+
+// DENE-1678: a done issue that skipped acceptance says why on the card.
+func TestDeriveNowCarriesReviewSkip(t *testing.T) {
+	meta := closeMeta("delivered", "done", "2026-10-09T10:00:00Z")
+	meta["review_skip"] = "PR u 已合入，octo 在 GitHub 上批准过"
+	now := DeriveNow(meta, "done")
+	if now.ReviewSkip != meta["review_skip"] {
+		t.Fatalf("review skip = %q", now.ReviewSkip)
+	}
+	if text := Render(Card{Now: now}); !strings.Contains(text, "跳过验收：PR u 已合入") {
+		t.Fatalf("render missing review skip:\n%s", text)
+	}
+	if DeriveNow(meta, "in_progress").ReviewSkip != "" {
+		t.Fatal("a reopened issue must not keep claiming acceptance was skipped")
+	}
+}

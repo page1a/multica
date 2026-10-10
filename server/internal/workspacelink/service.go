@@ -64,9 +64,13 @@ type Link struct {
 	Projects []ProjectRef `json:"projects"`
 	// Managed: the source lets the viewer's agents manage its issues and
 	// autopilots for their run's originator (DENE-1663).
-	Managed    bool    `json:"managed"`
-	CreatedAt  string  `json:"created_at"`
-	AcceptedAt *string `json:"accepted_at"`
+	Managed bool `json:"managed"`
+	// CanSetManaged answers whether the caller may switch Managed; only the
+	// list fills it (FillCanSetManaged), so the UI disables the switch and
+	// says why instead of re-deriving the rule.
+	CanSetManaged bool    `json:"can_set_managed"`
+	CreatedAt     string  `json:"created_at"`
+	AcceptedAt    *string `json:"accepted_at"`
 }
 
 // WorkspaceRef names a workspace without exposing anything inside it.

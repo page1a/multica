@@ -79,6 +79,8 @@ func (h *Handler) HandoffIssue(w http.ResponseWriter, r *http.Request) {
 	// the target: the next owner reads it from the state card.
 	finish := func(resp HandoffIssueResponse) {
 		h.recordHandoff(r, issue, resp, summary, decisions)
+		actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(issue.WorkspaceID))
+		h.followIssueFromChatTask(r, actorType, actorID, issue)
 		writeJSON(w, http.StatusOK, resp)
 	}
 	if target == "reviewer" || target == "dispatcher" {

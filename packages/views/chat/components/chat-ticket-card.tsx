@@ -6,6 +6,7 @@ import type { ChatTicket } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { statusCategoryOfKey } from "@multica/core/issues";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
+import { useSetChatTicket } from "@multica/core/chat/mutations";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -19,35 +20,61 @@ import { StatusIcon } from "../../issues/components/status-icon";
 import { useStatusLabel } from "../../issues/utils/status-label";
 import { useT } from "../../i18n";
 
+/** The one-line caption saying how a ticket came to be in this chat. */
+export function useChatTicketSourceLabel() {
+  const { t } = useT("chat");
+  return (source: ChatTicket["source"]) =>
+    source === "auto"
+      ? t(($) => $.tickets.source_auto)
+      : source === "manual"
+        ? t(($) => $.tickets.source_manual)
+        : t(($) => $.tickets.source_created);
+}
+
 /**
- * The issues a chat turn opened (DENE-1665): who has each one, why, and its
- * live status, with the three corrections a reader makes without leaving the
- * chat. Issues are dispatched as they are opened; this card is where a wrong
- * dispatch gets undone, not a confirmation step.
+ * The issues a chat turn opened or followed (DENE-1665, DENE-1719): where each
+ * came from, who has it, why, and its live status, with the corrections a
+ * reader makes without leaving the chat. Issues are dispatched as they are
+ * opened; this card is where a wrong dispatch gets undone, not a confirmation
+ * step.
  */
-export function ChatTicketCard({ wsId, tickets }: { wsId: string; tickets: ChatTicket[] }) {
+export function ChatTicketCard({
+  wsId,
+  sessionId,
+  tickets,
+}: {
+  wsId: string;
+  sessionId: string;
+  tickets: ChatTicket[];
+}) {
   const { t } = useT("chat");
   if (tickets.length === 0) return null;
+  // "Opened N" is only true when this chat opened every one of them.
+  const allCreated = tickets.every((ticket) => ticket.source === "created");
   return (
     <div className="mt-2 rounded-md border text-body" data-testid="chat-ticket-card">
       <div className="px-3 pt-2 pb-1 text-caption text-muted-foreground">
-        {t(($) => $.tickets.heading, { count: tickets.length })}
+        {allCreated
+          ? t(($) => $.tickets.heading, { count: tickets.length })
+          : t(($) => $.tickets.heading_mixed, { count: tickets.length })}
       </div>
       <ul className="pb-1">
         {tickets.map((ticket) => (
-          <ChatTicketRow key={ticket.id} wsId={wsId} ticket={ticket} />
+          <ChatTicketRow key={ticket.id} wsId={wsId} sessionId={sessionId} ticket={ticket} />
         ))}
       </ul>
     </div>
   );
 }
 
-function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
+function ChatTicketRow({ wsId, sessionId, ticket }: { wsId: string; sessionId: string; ticket: ChatTicket }) {
   const { t } = useT("chat");
   const paths = useWorkspacePaths();
   const statusLabel = useStatusLabel(wsId);
   const userId = useAuthStore((s) => s.user?.id ?? null);
   const update = useUpdateIssue();
+  const unpin = useSetChatTicket();
+  const sourceLabel = useChatTicketSourceLabel();
 
   const category = statusCategoryOfKey(ticket.status);
   const settled = category === "done" || category === "closed";
@@ -57,13 +84,23 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
   const owner = unassigned
     ? settled ? "" : t(($) => $.tickets.routing)
     : t(($) => $.tickets.to, { name: ticket.assignee_name || ticket.identifier });
-  const detail = [statusLabel(ticket.status), owner, ticket.goal].filter(Boolean).join(" · ");
+  const detail = [sourceLabel(ticket.source), statusLabel(ticket.status), owner, ticket.goal].filter(Boolean).join(" · ");
 
   const run = (data: Parameters<typeof update.mutate>[0], done: string) =>
     update.mutate(data, {
       onSuccess: () => toast.success(done),
       onError: () => toast.error(t(($) => $.tickets.failed, { id: ticket.identifier })),
     });
+
+  // Taking a ticket off the chat leaves the issue as it is.
+  const remove = () =>
+    unpin.mutate(
+      { sessionId, issue: ticket.id, remove: true },
+      {
+        onSuccess: () => toast.success(t(($) => $.tickets.removed, { id: ticket.identifier })),
+        onError: () => toast.error(t(($) => $.tickets.remove_failed, { id: ticket.identifier })),
+      },
+    );
 
   return (
     <li className="flex items-center gap-2 px-3 py-1.5 max-sm:min-h-11">
@@ -75,7 +112,7 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
         </div>
         <div className="truncate text-caption text-muted-foreground">{detail}</div>
       </AppLink>
-      {!settled && (
+      {sessionId && (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -84,7 +121,7 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
                 variant="ghost"
                 size="icon-xs"
                 className="shrink-0 text-muted-foreground max-sm:size-11"
-                disabled={update.isPending}
+                disabled={update.isPending || unpin.isPending}
                 aria-label={t(($) => $.tickets.actions, { id: ticket.identifier })}
               >
                 <MoreHorizontal className="size-4" />
@@ -92,7 +129,7 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
-            {!mine && userId && (
+            {!settled && !mine && userId && (
               <DropdownMenuItem
                 onClick={() =>
                   run(
@@ -104,7 +141,7 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
                 {t(($) => $.tickets.assign_me)}
               </DropdownMenuItem>
             )}
-            {!(unassigned && ticket.status === "todo") && (
+            {!settled && !(unassigned && ticket.status === "todo") && (
               <DropdownMenuItem
                 onClick={() =>
                   run(
@@ -116,17 +153,20 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
                 {t(($) => $.tickets.assign_agent)}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() =>
-                run(
-                  { id: ticket.id, status: "cancelled" },
-                  t(($) => $.tickets.withdrawn, { id: ticket.identifier }),
-                )
-              }
-            >
-              {t(($) => $.tickets.withdraw)}
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={remove}>{t(($) => $.tickets.remove)}</DropdownMenuItem>
+            {!settled && (
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() =>
+                  run(
+                    { id: ticket.id, status: "cancelled" },
+                    t(($) => $.tickets.withdrawn, { id: ticket.identifier }),
+                  )
+                }
+              >
+                {t(($) => $.tickets.withdraw)}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -135,9 +175,10 @@ function ChatTicketRow({ wsId, ticket }: { wsId: string; ticket: ChatTicket }) {
 }
 
 /**
- * Hangs each ticket under the reply of the turn that opened it: the first
- * assistant message created at or after the ticket. A ticket opened by a turn
- * still running has no such reply yet and goes to `tail`, the list's last row.
+ * Hangs each ticket under the reply of the turn that brought it in: the first
+ * assistant message created at or after the ticket joined the chat (opened,
+ * followed or pinned). A ticket brought in by a turn still running has no such
+ * reply yet and goes to `tail`, the list's last row.
  */
 export function groupChatTickets(
   messages: { id: string; role: string; created_at: string }[],
@@ -150,7 +191,7 @@ export function groupChatTickets(
   const byMessage = new Map<string, ChatTicket[]>();
   const tail: ChatTicket[] = [];
   for (const ticket of tickets) {
-    const at = Date.parse(ticket.created_at);
+    const at = Date.parse(ticket.linked_at || ticket.created_at);
     const reply = replies.find((r) => r.at >= at);
     if (!reply) {
       tail.push(ticket);

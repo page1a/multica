@@ -243,6 +243,9 @@ type Seat struct {
 	// Balanced is set when the 负载 rule placed this seat, and says why the
 	// ladder's own pick was passed over, e.g. "孙悟空 正在跑 2 个活，克林 空着".
 	Balanced string
+	// Learned is set when 从结果里学 raised this seat one rung, and says why,
+	// e.g. "同类票近 30 天 4/10 张判低（升档 3、打回 1），上调一档到强档".
+	Learned string
 }
 
 // SeatName is the naming convention that links a tier to its

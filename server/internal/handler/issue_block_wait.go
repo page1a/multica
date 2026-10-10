@@ -619,6 +619,12 @@ func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 	}
 	round, hasRound := parseMetaTime(blockwait.MetaString(meta, blockwait.KeyReviewRound))
 	reviewFailed, reviewFailures, reviewAsked := h.reviewRoundFailure(ctx, issue, round, hasRound)
+	var reviewSkip *service.ReviewSkip
+	if reviewFailed {
+		if skip, ok := h.findReviewSkip(ctx, issue, ""); ok {
+			reviewSkip = &skip
+		}
+	}
 	decision := blockwait.DecidePatrol(blockwait.PatrolInput{
 		Status:          issue.Status,
 		Quiet:           quiet,
@@ -636,6 +642,7 @@ func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 		ReviewRunFailed: reviewFailed,
 		ReviewFailures:  reviewFailures,
 		ReviewAsked:     reviewAsked,
+		ReviewSkip:      reviewSkipReason(reviewSkip),
 		Watched:         watched,
 		Undriven:        self.Kind == blockwait.DriverNone,
 		UndrivenWhy:     self.Reason,
@@ -651,7 +658,12 @@ func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 	case blockwait.ActionRevive, blockwait.ActionEscalate:
 		h.reviveOrEscalate(ctx, issue, decision)
 	case blockwait.ActionRelease:
-		h.releaseAcceptedIssue(ctx, issue, decision)
+		out := h.releaseAcceptedIssue(ctx, issue, decision)
+		if reviewSkip != nil && out.Status == issuestatus.Done {
+			if err := service.RecordReviewSkip(ctx, h.Queries, issue, *reviewSkip); err != nil {
+				slog.Warn("review skip: record failed", "issue_id", uuidToString(issue.ID), "error", err)
+			}
+		}
 	case blockwait.ActionWake:
 		h.wakeIssueOwner(ctx, issue, decision.Reason, decision.CommentOnly)
 	case blockwait.ActionSeat:
@@ -660,6 +672,13 @@ func (h *Handler) patrolOne(ctx context.Context, issue db.Issue) bool {
 		h.coverFailedReview(ctx, issue, decision.Force)
 	}
 	return true
+}
+
+func reviewSkipReason(skip *service.ReviewSkip) string {
+	if skip == nil {
+		return ""
+	}
+	return skip.Reason()
 }
 
 // reviewerSlotEmpty reports an acceptance slot nobody has answered. "none" is

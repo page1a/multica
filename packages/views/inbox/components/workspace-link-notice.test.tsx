@@ -2,16 +2,33 @@ import { render, renderHook, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { InboxItem } from "@multica/core/types";
 import en from "../../locales/en/inbox.json";
+import enWorkspace from "../../locales/en/workspace.json";
 import {
   WorkspaceLinkNotice,
   useWorkspaceLinkNoticeTitle,
   workspaceLinkNoticeHref,
 } from "./workspace-link-notice";
 
+const links = vi.hoisted(() => ({
+  data: undefined as unknown,
+  accept: vi.fn(),
+  decline: vi.fn(),
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({ data: links.data }),
+}));
+
+vi.mock("@multica/core/workspace-links", () => ({
+  workspaceLinksOptions: (wsId: string) => ({ queryKey: ["links", wsId] }),
+  useAcceptWorkspaceLink: () => ({ mutate: links.accept, isPending: false }),
+  useRevokeWorkspaceLink: () => ({ mutate: links.decline, isPending: false }),
+}));
+
 vi.mock("../../i18n", () => ({
-  useT: () => ({
+  useT: (ns: string) => ({
     t: (accessor: (dict: unknown) => string, params?: Record<string, string>) =>
-      accessor(en).replace(/\{\{(\w+)\}\}/g, (_, key: string) => params?.[key] ?? ""),
+      accessor(ns === "workspace" ? enWorkspace : en).replace(/\{\{(\w+)\}\}/g, (_, key: string) => params?.[key] ?? ""),
   }),
 }));
 
@@ -74,5 +91,22 @@ describe("workspace link notices", () => {
     );
     rerender(<WorkspaceLinkNotice item={item({ archived: true })} />);
     expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("answers a still-pending offer in place when the reader may accept", () => {
+    links.data = {
+      can: { accept: true },
+      links: [{ id: "link-1", status: "pending" }],
+    };
+    render(<WorkspaceLinkNotice item={item()} />);
+    screen.getByRole("button", { name: "Accept" }).click();
+    expect(links.accept).toHaveBeenCalledWith("link-1", expect.anything());
+    screen.getByRole("button", { name: "Decline" }).click();
+    expect(links.decline).toHaveBeenCalledWith("link-1", expect.anything());
+
+    links.data = { can: { accept: false }, links: [{ id: "link-1", status: "pending" }] };
+    render(<WorkspaceLinkNotice item={item({ id: "inbox-2" })} />);
+    expect(screen.getAllByRole("button", { name: "Accept" })).toHaveLength(1);
+    links.data = undefined;
   });
 });

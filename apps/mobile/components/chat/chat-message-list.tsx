@@ -105,9 +105,12 @@ interface Props {
   /** Resolved availability — drives the StatusPill's "Offline" /
    *  "Reconnecting" stages. Pass `undefined` while loading. */
   availability?: AgentAvailability;
-  /** The issues this chat opened (DENE-1665). Each renders under the reply
-   *  of the turn that opened it; a still-running turn's go in the footer. */
+  /** The issues this chat opened or follows (DENE-1665, DENE-1719). Each
+   *  renders under the reply of the turn that linked it; a still-running
+   *  turn's go in the footer. */
   tickets?: ChatTicket[];
+  /** The session the tickets belong to — the row's 取下 action needs it. */
+  ticketsSessionId?: string | null;
 }
 
 const NO_TICKETS: ChatTicket[] = [];
@@ -124,6 +127,7 @@ export function ChatMessageList({
   liveTaskMessages,
   availability,
   tickets = NO_TICKETS,
+  ticketsSessionId = null,
 }: Props) {
   // Top-level selection subscription gates the outer "tap-outside-to-dismiss"
   // Pressable below. When null, the Pressable stays disabled and every tap
@@ -225,7 +229,10 @@ export function ChatMessageList({
             quickActionsDisabled={quickActionsDisabled}
           />
           {ticketGroups.byMessage.has(item.id) ? (
-            <ChatTicketCard tickets={ticketGroups.byMessage.get(item.id)!} />
+            <ChatTicketCard
+              sessionId={ticketsSessionId}
+              tickets={ticketGroups.byMessage.get(item.id)!}
+            />
           ) : null}
         </>
       )}
@@ -245,7 +252,7 @@ export function ChatMessageList({
                 availability={availability}
               />
             ) : null}
-            <ChatTicketCard tickets={ticketGroups.tail} />
+            <ChatTicketCard sessionId={ticketsSessionId} tickets={ticketGroups.tail} />
           </View>
         ) : null
       }

@@ -69,7 +69,11 @@ const apiLogger = createLogger("chat.api");
 // default until a runtime-generated title is wired up.
 const CHAT_TITLE_MAX = 30;
 export function deriveChatTitle(content: string): string {
-  const firstLine = (content.split("\n").find((l) => l.trim()) ?? content).trim();
+  // Skip lines that are only a pasted image so a screenshot ahead of the
+  // question does not name the chat "image.png" (server: chattitle.Derive).
+  const lines = content.split("\n").filter((l) => l.trim());
+  const isEmbed = (l: string) => !l.replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim();
+  const firstLine = (lines.find((l) => !isEmbed(l)) ?? lines[0] ?? content).trim();
   const cleaned = firstLine
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/[#*`>~_]/g, "")

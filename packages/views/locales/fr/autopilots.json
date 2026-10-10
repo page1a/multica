@@ -112,6 +112,18 @@
       "cancel": "Annuler",
       "confirm": "Supprimer",
       "deleting": "Suppression..."
+    },
+    "section_linked_changes": "Modifications via un espace lié",
+    "linked_change_by": "{{actor}} via {{via}} · {{agent}}",
+    "linked_change_route": {
+      "create": "l’a créé",
+      "update": "a modifié les réglages",
+      "delete": "l’a supprimé",
+      "run": "l’a lancé",
+      "trigger_add": "a ajouté un déclencheur",
+      "trigger_update": "a modifié un déclencheur",
+      "trigger_delete": "a supprimé un déclencheur",
+      "other": "l’a modifié"
     }
   },
   "access": {

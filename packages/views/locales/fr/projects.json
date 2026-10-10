@@ -279,7 +279,15 @@
     "toast_added": "Membre ajouté",
     "toast_add_failed": "Échec de l'ajout du membre",
     "toast_removed": "Membre retiré",
-    "toast_remove_failed": "Échec du retrait du membre"
+    "toast_remove_failed": "Échec du retrait du membre",
+    "hint": "Les membres du projet voient ses tâches.",
+    "lead": "Responsable",
+    "roles": {
+      "owner": "Propriétaire",
+      "admin": "Administrateur",
+      "member": "Membre",
+      "guest": "Invité"
+    }
   },
   "new_project": {
     "name": "Nom",

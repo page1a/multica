@@ -82,4 +82,21 @@ describe("LinkedWorkspacesPage", () => {
     expect(await screen.findByText("Nothing linked yet")).toBeInTheDocument();
     expect(api.getLinkedView).not.toHaveBeenCalled();
   });
+
+  it("says agents can work on a managed source", async () => {
+    api.listWorkspaceLinks.mockResolvedValue({ links: [{ ...activeLink, managed: true }], can: {} });
+    api.getLinkedView.mockResolvedValue({
+      link_id: "l-1",
+      source: { name: "Partner", avatar_url: null },
+      projects: [],
+      issues: [],
+      next_cursor: null,
+      statuses: [],
+    });
+    renderPage();
+    expect(
+      await screen.findByText("Partner allows managed access: agents can work on its tasks and autopilots for you"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Read-only view of Partner")).not.toBeInTheDocument();
+  });
 });

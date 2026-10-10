@@ -11,6 +11,7 @@ import {
   useAcceptWorkspaceLink,
   useCreateWorkspaceLink,
   useRevokeWorkspaceLink,
+  useSetWorkspaceLinkManaged,
   useUpdateWorkspaceLinkProjects,
   workspaceLinkAuditOptions,
   workspaceLinkKeys,
@@ -29,6 +30,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
 import { Popover, PopoverContent } from "@multica/ui/components/ui/popover";
+import { Switch } from "@multica/ui/components/ui/switch";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -60,46 +62,55 @@ export function WorkspaceLinksTab() {
   const [revoking, setRevoking] = useState<WorkspaceLink | null>(null);
   const revoke = useRevokeWorkspaceLink(wsId);
 
+  // An offer waiting for this workspace's answer goes first: it is the one
+  // thing on this page that needs someone to act.
+  const awaitingAnswer = incoming.some((link) => link.status === "pending");
+  const outgoingSection = (
+    <SettingsSection anchor="outgoing" title={t(($) => $.links.tab.outgoing_title)} description={t(($) => $.links.tab.outgoing_description)}>
+      <CreateLinkForm
+        wsId={wsId}
+        direction="offer"
+        enabled={!!can?.create}
+        loaded={!!can}
+        linkedSlugs={outgoing.map((link) => link.target.slug)}
+      />
+      {!isLoading && outgoing.length === 0 ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.outgoing_empty)}</p>
+      ) : null}
+      <div className="space-y-3">
+        {outgoing.map((link) => (
+          <OutgoingLinkRow key={link.id} wsId={wsId} link={link} canChange={!!can?.create} onRevoke={() => setRevoking(link)} />
+        ))}
+      </div>
+    </SettingsSection>
+  );
+  const incomingSection = (
+    <SettingsSection anchor="incoming" title={t(($) => $.links.tab.incoming_title)} description={t(($) => $.links.tab.incoming_description)}>
+      {!isLoading && incoming.length === 0 ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.incoming_empty)}</p>
+      ) : null}
+      <div className="space-y-3">
+        {incoming.map((link) => (
+          <IncomingLinkRow key={link.id} wsId={wsId} link={link} canAccept={!!can?.accept} onRevoke={() => setRevoking(link)} />
+        ))}
+      </div>
+      <CreateLinkForm
+        wsId={wsId}
+        direction="pull"
+        enabled={!!can?.pull}
+        loaded={!!can}
+        linkedSlugs={incoming.map((link) => link.source.slug)}
+      />
+      {can && !can.accept ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.accept_reason)}</p>
+      ) : null}
+    </SettingsSection>
+  );
+
   return (
     <SettingsTab title={t(($) => $.links.tab.title)} description={t(($) => $.links.tab.description)}>
-      <SettingsSection anchor="outgoing" title={t(($) => $.links.tab.outgoing_title)} description={t(($) => $.links.tab.outgoing_description)}>
-        <CreateLinkForm
-          wsId={wsId}
-          direction="offer"
-          enabled={!!can?.create}
-          loaded={!!can}
-          linkedSlugs={outgoing.map((link) => link.target.slug)}
-        />
-        {!isLoading && outgoing.length === 0 ? (
-          <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.outgoing_empty)}</p>
-        ) : null}
-        <div className="space-y-3">
-          {outgoing.map((link) => (
-            <OutgoingLinkRow key={link.id} wsId={wsId} link={link} canChange={!!can?.create} onRevoke={() => setRevoking(link)} />
-          ))}
-        </div>
-      </SettingsSection>
-
-      <SettingsSection anchor="incoming" title={t(($) => $.links.tab.incoming_title)} description={t(($) => $.links.tab.incoming_description)}>
-        <CreateLinkForm
-          wsId={wsId}
-          direction="pull"
-          enabled={!!can?.pull}
-          loaded={!!can}
-          linkedSlugs={incoming.map((link) => link.source.slug)}
-        />
-        {!isLoading && incoming.length === 0 ? (
-          <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.incoming_empty)}</p>
-        ) : null}
-        <div className="space-y-3">
-          {incoming.map((link) => (
-            <IncomingLinkRow key={link.id} wsId={wsId} link={link} canAccept={!!can?.accept} onRevoke={() => setRevoking(link)} />
-          ))}
-        </div>
-        {can && !can.accept ? (
-          <p className="text-caption text-muted-foreground">{t(($) => $.links.tab.accept_reason)}</p>
-        ) : null}
-      </SettingsSection>
+      {awaitingAnswer ? incomingSection : outgoingSection}
+      {awaitingAnswer ? outgoingSection : incomingSection}
 
       {can?.audit ? <AuditSection wsId={wsId} /> : null}
 
@@ -565,6 +576,7 @@ function OutgoingLinkRow({
             {t(($) => $.links.tab.sharing, { projects: link.projects.map((p) => p.title).join("、") || "—" })}
           </p>
         )}
+        <ManagedSwitch wsId={wsId} link={link} />
       </CardContent>
     </Card>
   );
@@ -586,34 +598,75 @@ function IncomingLinkRow({
   const reason = canAccept ? undefined : t(($) => $.links.tab.accept_reason);
   return (
     <Card data-testid="workspace-link-incoming">
-      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-        <div className="min-w-0 space-y-1">
-          <LinkHeading name={link.source.name} avatarUrl={link.source.avatar_url} slug={link.source.slug} link={link} />
-          <p className="text-caption text-muted-foreground">
-            {link.status === "pending" ? t(($) => $.links.tab.pending_hint) : t(($) => $.links.tab.active_hint)}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {link.status === "pending" ? (
-            <Button
-              size="sm"
-              disabled={!canAccept || accept.isPending}
-              title={reason}
-              onClick={() =>
-                accept.mutate(link.id, {
-                  onError: (error) => toast.error(errorMessage(error, t(($) => $.links.tab.failed))),
-                })
-              }
-            >
-              {t(($) => $.links.tab.accept)}
+      <CardContent className="space-y-3 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <LinkHeading name={link.source.name} avatarUrl={link.source.avatar_url} slug={link.source.slug} link={link} />
+            <p className="text-caption text-muted-foreground">
+              {link.status === "pending" ? t(($) => $.links.tab.pending_hint) : t(($) => $.links.tab.active_hint)}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {link.status === "pending" ? (
+              <Button
+                size="sm"
+                disabled={!canAccept || accept.isPending}
+                title={reason}
+                onClick={() =>
+                  accept.mutate(link.id, {
+                    onError: (error) => toast.error(errorMessage(error, t(($) => $.links.tab.failed))),
+                  })
+                }
+              >
+                {t(($) => $.links.tab.accept)}
+              </Button>
+            ) : null}
+            <Button size="sm" variant="outline" disabled={!canAccept} title={reason} onClick={onRevoke}>
+              {link.status === "pending" ? t(($) => $.links.tab.decline) : t(($) => $.links.tab.revoke)}
             </Button>
-          ) : null}
-          <Button size="sm" variant="outline" disabled={!canAccept} title={reason} onClick={onRevoke}>
-            {link.status === "pending" ? t(($) => $.links.tab.decline) : t(($) => $.links.tab.revoke)}
-          </Button>
+          </div>
         </div>
+        <ManagedSwitch wsId={wsId} link={link} />
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Managed access (DENE-1663): the viewer's agents may change the source's
+ * tasks and autopilots for the person who started their run. The list says
+ * who may switch it (`can_set_managed`); everyone else sees why not.
+ */
+function ManagedSwitch({ wsId, link }: { wsId: string; link: WorkspaceLink }) {
+  const { t } = useT("workspace");
+  const setManaged = useSetWorkspaceLinkManaged(wsId);
+  const allowed = !!link.can_set_managed;
+  const label = t(($) => $.links.tab.managed_label);
+  return (
+    <div className="flex items-center justify-between gap-3 border-t pt-3" data-testid="workspace-link-managed">
+      <div className="min-w-0 space-y-0.5">
+        <p className="text-body">{label}</p>
+        <p className="text-caption text-muted-foreground">
+          {!allowed
+            ? t(($) => $.links.tab.managed_reason)
+            : link.side === "source"
+              ? t(($) => $.links.tab.managed_hint_outgoing)
+              : t(($) => $.links.tab.managed_hint_incoming)}
+        </p>
+      </div>
+      <Switch
+        className="shrink-0"
+        checked={!!link.managed}
+        disabled={!allowed || setManaged.isPending}
+        aria-label={label}
+        onCheckedChange={(managed) =>
+          setManaged.mutate(
+            { linkId: link.id, managed },
+            { onError: (error) => toast.error(errorMessage(error, t(($) => $.links.tab.failed))) },
+          )
+        }
+      />
+    </div>
   );
 }
 
@@ -629,6 +682,12 @@ function AuditSection({ wsId }: { wsId: string }) {
         return t(($) => $.links.audit.update_projects);
       case "accept":
         return t(($) => $.links.audit.accept);
+      case "set_managed":
+        return entry.detail?.managed ? t(($) => $.links.audit.set_managed_on) : t(($) => $.links.audit.set_managed_off);
+      case "managed_write":
+        return t(($) => $.links.audit.managed_write, {
+          agent: typeof entry.detail?.agent_name === "string" ? entry.detail.agent_name : t(($) => $.links.audit.someone),
+        });
       default:
         return t(($) => $.links.audit.revoke);
     }

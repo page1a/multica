@@ -198,4 +198,34 @@ describe("WorkspaceLinksTab", () => {
     await user.click(await screen.findByRole("button", { name: "Accept" }));
     await waitFor(() => expect(api.updateWorkspaceLink).toHaveBeenCalledWith("l-in", { accept: true }));
   });
+
+  it("lets the source owner switch managed access and tells everyone else why not", async () => {
+    const outgoing = {
+      ...pendingIncoming,
+      id: "l-out",
+      side: "source",
+      status: "active",
+      source: ws("Acme", "acme"),
+      target: ws("Partner", "partner"),
+      projects: [{ id: "p1", title: "Roadmap", icon: null }],
+      managed: false,
+      can_set_managed: true,
+    };
+    const incoming = { ...pendingIncoming, status: "active", managed: true, can_set_managed: false };
+    api.listWorkspaceLinks.mockResolvedValue({
+      links: [outgoing, incoming],
+      can: { create: true, accept: true, pull: true, manage: true, audit: false },
+    });
+    const user = userEvent.setup();
+    renderTab();
+    const switches = await screen.findAllByRole("switch", { name: "Let the viewing side manage tasks and autopilots" });
+    expect(switches).toHaveLength(2);
+    const [mine, theirs] = switches as [HTMLElement, HTMLElement];
+    expect(theirs).toHaveAttribute("aria-disabled", "true");
+    expect(theirs).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Only an owner of the sharing workspace can switch this.")).toBeInTheDocument();
+    expect(mine).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(mine);
+    await waitFor(() => expect(api.updateWorkspaceLink).toHaveBeenCalledWith("l-out", { managed: true }));
+  });
 });

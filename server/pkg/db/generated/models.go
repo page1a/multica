@@ -626,6 +626,16 @@ type ChatDraftRestore struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type ChatFollowedIssue struct {
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	Source        string             `json:"source"`
+	Hidden        bool               `json:"hidden"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ChatMessage struct {
 	ID                            pgtype.UUID        `json:"id"`
 	ChatSessionID                 pgtype.UUID        `json:"chat_session_id"`
@@ -1004,6 +1014,9 @@ type GithubPullRequest struct {
 	SnapshotHeadSha     string             `json:"snapshot_head_sha"`
 	SnapshotFetchedAt   pgtype.Timestamptz `json:"snapshot_fetched_at"`
 	Source              string             `json:"source"`
+	ApprovedBy          pgtype.Text        `json:"approved_by"`
+	ApprovedAt          pgtype.Timestamptz `json:"approved_at"`
+	ApprovedHeadSha     pgtype.Text        `json:"approved_head_sha"`
 }
 
 type GithubPullRequestCheckRun struct {
@@ -1122,6 +1135,24 @@ type IssueChildEvent struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
 	ProcessedAt  pgtype.Timestamptz `json:"processed_at"`
+}
+
+type IssueConsult struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	AskerAgentID    pgtype.UUID        `json:"asker_agent_id"`
+	AskerTaskID     pgtype.UUID        `json:"asker_task_id"`
+	AdvisorAgentID  pgtype.UUID        `json:"advisor_agent_id"`
+	AdvisorTaskID   pgtype.UUID        `json:"advisor_task_id"`
+	Question        string             `json:"question"`
+	Status          string             `json:"status"`
+	Answer          pgtype.Text        `json:"answer"`
+	FailureReason   pgtype.Text        `json:"failure_reason"`
+	TokensUsed      int64              `json:"tokens_used"`
+	DurationSeconds int64              `json:"duration_seconds"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
 }
 
 type IssueDecision struct {
@@ -1334,6 +1365,19 @@ type IssueRejection struct {
 	Kind        string             `json:"kind"`
 	Reason      string             `json:"reason"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type IssueRoutingOutcome struct {
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Direction   string             `json:"direction"`
+	Tier        string             `json:"tier"`
+	Scope       string             `json:"scope"`
+	Clarity     string             `json:"clarity"`
+	Risk        string             `json:"risk"`
+	RoutedAt    pgtype.Timestamptz `json:"routed_at"`
+	EscalatedAt pgtype.Timestamptz `json:"escalated_at"`
+	HeldAt      pgtype.Timestamptz `json:"held_at"`
 }
 
 type IssueSourceContext struct {
@@ -1867,6 +1911,13 @@ type ResourceShare struct {
 	AddedBy      pgtype.UUID        `json:"added_by"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	Access       string             `json:"access"`
+}
+
+type ReviewPassHead struct {
+	CommentID pgtype.UUID        `json:"comment_id"`
+	PrUrl     string             `json:"pr_url"`
+	HeadSha   string             `json:"head_sha"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type RuntimeProfile struct {

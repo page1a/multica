@@ -60,6 +60,11 @@ type fakeStore struct {
 	memberNotified map[string]bool
 
 	errOn map[string]error
+
+	// 从结果里学
+	outcomes     map[string]OutcomeClass
+	underjudged  []string
+	outcomeStats []ClassStats
 }
 
 func newFakeStore() *fakeStore {
@@ -404,4 +409,35 @@ var (
 func newRouter(store Store, judge Judge) *Router {
 	r := New(store, judge)
 	return r
+}
+
+func (f *fakeStore) RecordOutcome(_ context.Context, _, issueID string, c OutcomeClass) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail("outcome"); err != nil {
+		return err
+	}
+	if f.outcomes == nil {
+		f.outcomes = map[string]OutcomeClass{}
+	}
+	if _, ok := f.outcomes[issueID]; !ok {
+		f.outcomes[issueID] = c
+	}
+	return nil
+}
+
+func (f *fakeStore) MarkUnderjudged(_ context.Context, _, issueID, signal string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.underjudged = append(f.underjudged, issueID+":"+signal)
+	return nil
+}
+
+func (f *fakeStore) OutcomeStats(_ context.Context, _ string, _ time.Time) ([]ClassStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail("stats"); err != nil {
+		return nil, err
+	}
+	return f.outcomeStats, nil
 }

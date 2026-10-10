@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/blockwait"
+	"github.com/multica-ai/multica/server/internal/routing"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -2032,6 +2033,18 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	comment := created.Comment()
+	// A pass keeps the PR heads it reviewed (DENE-1678). Without them the
+	// pass only stops counting toward a review skip, so a failure is logged.
+	if err := service.RecordReviewPass(r.Context(), h.Queries, comment); err != nil {
+		slog.Warn("record review pass heads failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+	}
+	// A hold is routing's other "tiered too low" signal (DENE-1722). A ticket
+	// routing never tiered has no class and is left alone.
+	if comment.IssueID.Valid && blockwait.Verdict(comment.Content) == "hold" {
+		if err := markUnderjudged(r.Context(), h.Queries, comment.WorkspaceID, comment.IssueID, routing.SignalHeld); err != nil {
+			slog.Warn("record review hold for routing failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		}
+	}
 
 	// Fetch linked attachments so the response includes them.
 	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
@@ -2083,6 +2096,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		applyCommentSupplements(&resp, h.listCommentSupplements(r.Context(), issue.WorkspaceID, []pgtype.UUID{comment.ID})[uuidToString(comment.ID)])
 	}
 	h.maybeReleaseOnAcceptance(r.Context(), issue, comment)
+	h.followIssueFromChatTask(r, authorType, authorID, issue)
 
 	writeJSON(w, http.StatusCreated, resp)
 }

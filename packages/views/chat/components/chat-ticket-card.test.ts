@@ -15,6 +15,8 @@ const ticket = (id: string, created_at: string): ChatTicket => ({
   changed_at: created_at,
   phase: "in_progress",
   needs_you: false,
+  source: "created",
+  linked_at: created_at,
 });
 
 describe("groupChatTickets", () => {
@@ -41,5 +43,11 @@ describe("groupChatTickets", () => {
     const { byMessage, tail } = groupChatTickets(messages, [ticket("T4", "2026-10-08T10:06:00Z")]);
     expect(byMessage.size).toBe(0);
     expect(tail.map((t) => t.id)).toEqual(["T4"]);
+  });
+
+  it("hangs a followed old issue under the turn that touched it, not its birth", () => {
+    const old: ChatTicket = { ...ticket("T5", "2026-09-01T00:00:00Z"), source: "auto", linked_at: "2026-10-08T10:03:00Z" };
+    const { byMessage } = groupChatTickets(messages, [old]);
+    expect(byMessage.get("a2")?.map((t) => t.id)).toEqual(["T5"]);
   });
 });

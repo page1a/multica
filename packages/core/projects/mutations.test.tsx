@@ -13,6 +13,7 @@ import {
   pruneIssueSurfaceViewStates,
 } from "../issues/stores/surface-view-store";
 import { issueKeys } from "../issues/queries";
+import { workspaceKeys } from "../workspace/queries";
 import { useDeleteProject, useUpdateProject } from "./mutations";
 
 vi.mock("../hooks", () => ({
@@ -77,6 +78,21 @@ describe("useDeleteProject", () => {
 
     expect(qc.getQueryState(tableKey)?.isInvalidated).toBe(true);
   });
+
+  // The roster lists each member's projects and links to them.
+  it("invalidates the workspace roster", async () => {
+    qc.setQueryData(workspaceKeys.members("ws-1"), []);
+
+    const { result } = renderHook(() => useDeleteProject(), {
+      wrapper: createWrapper(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync("p1");
+    });
+
+    expect(qc.getQueryState(workspaceKeys.members("ws-1"))?.isInvalidated).toBe(true);
+  });
 });
 
 describe("useUpdateProject", () => {
@@ -118,5 +134,18 @@ describe("useUpdateProject", () => {
     });
 
     expect(qc.getQueryState(tableKey)?.isInvalidated).toBe(false);
+  });
+
+  it("invalidates the workspace roster when the title changes", async () => {
+    qc.setQueryData(workspaceKeys.members("ws-1"), []);
+    const { result } = renderHook(() => useUpdateProject(), {
+      wrapper: createWrapper(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: "p1", title: "Renamed" });
+    });
+
+    expect(qc.getQueryState(workspaceKeys.members("ws-1"))?.isInvalidated).toBe(true);
   });
 });

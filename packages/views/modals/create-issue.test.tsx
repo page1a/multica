@@ -622,6 +622,7 @@ vi.mock("sonner", () => ({
 import {
   CreateIssueModal,
   ManualCreatePanel,
+  manualDialogContentClass,
 } from "./create-issue";
 
 function renderModal(element: React.ReactElement) {
@@ -634,6 +635,16 @@ function renderModal(element: React.ReactElement) {
     </I18nWrapper>,
   );
 }
+
+describe("manualDialogContentClass", () => {
+  it("keeps the fixed height from sm but lets a phone card fit its footer", () => {
+    const cls = manualDialogContentClass(false);
+    expect(cls).toContain("sm:!h-96");
+    expect(cls).toContain("max-sm:!h-auto");
+    expect(cls).toContain("max-sm:!max-h-[85dvh]");
+    expect(cls).not.toMatch(/(^| )!h-96( |$)/);
+  });
+});
 
 describe("CreateIssueModal", () => {
   beforeEach(() => {

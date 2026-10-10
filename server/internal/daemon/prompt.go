@@ -544,6 +544,10 @@ func buildPromptBody(task Task, provider string) string {
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}
+	// A consult run's prompt is rendered by the server (DENE-1721).
+	if task.ConsultPrompt != "" {
+		return task.ConsultPrompt
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)

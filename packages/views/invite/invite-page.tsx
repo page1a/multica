@@ -9,9 +9,9 @@ import {
   workspaceListOptions,
 } from "@multica/core/workspace/queries";
 import {
-  paths,
   resolvePostAuthDestination,
   useHasOnboarded,
+  workspaceLandingPath,
 } from "@multica/core/paths";
 import { AppLink, useNavigation } from "../navigation";
 import { useLogout } from "../auth";
@@ -85,7 +85,7 @@ export function InvitePage({ invitationId, onBack }: InvitePageProps) {
       // Navigate into the joined workspace. The [workspaceSlug]/layout will
       // sync api client, stores, and the last_workspace_slug cookie from the URL.
       const dest = joined
-        ? paths.workspace(joined.slug).issues()
+        ? workspaceLandingPath(joined.slug)
         : fallbackDest;
       setTimeout(() => push(dest), 1000);
     } catch (e) {

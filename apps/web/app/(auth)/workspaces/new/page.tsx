@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { paths } from "@multica/core/paths";
+import { paths, workspaceLandingPath } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace/queries";
 import { CliInstallInstructions, OnboardingFlow } from "@multica/views/onboarding";
 
@@ -55,7 +55,7 @@ export default function Page() {
               paths.workspace(ws.slug).issueDetail(destination.issueId),
             );
           } else if (ws) {
-            router.push(paths.workspace(ws.slug).issues());
+            router.push(workspaceLandingPath(ws.slug));
           } else {
             router.push(paths.root());
           }

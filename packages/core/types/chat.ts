@@ -434,12 +434,23 @@ export interface ChatPendingTask {
 }
 
 /**
- * One issue a chat opened (DENE-1665): `GET /api/chat/sessions/:id/tickets`,
- * also `multica chat tickets`. `goal` is the first line of the description's
- * 目标 section — the "why" shown on the chat's ticket card.
+ * Where a chat ticket came from (DENE-1719): `created` — opened from this
+ * chat; `auto` — this chat's run changed its status or assignee, commented,
+ * handed off or closed it; `manual` — pinned by hand.
+ */
+export type ChatTicketSource = "created" | "auto" | "manual";
+
+/**
+ * One issue a chat opened or follows (DENE-1665, DENE-1719):
+ * `GET /api/chat/sessions/:id/tickets`, also `multica chat tickets`. `goal` is
+ * the first line of the description's 目标 section — the "why" shown on the
+ * chat's ticket card.
  */
 export interface ChatTicket {
   id: string;
+  source: ChatTicketSource;
+  /** When the issue joined this chat: `created_at` for one it opened. */
+  linked_at: string;
   identifier: string;
   title: string;
   status: string;

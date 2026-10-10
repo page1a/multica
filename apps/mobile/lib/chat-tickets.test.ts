@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { ChatTicket } from "@multica/core/types";
 import { chatProgress, groupChatTickets } from "./chat-tickets";
 
-const ticket = (id: string, created_at: string): ChatTicket => ({
+const ticket = (
+  id: string,
+  created_at: string,
+  rest: Partial<ChatTicket> = {},
+): ChatTicket => ({
   id,
+  source: "created",
+  linked_at: created_at,
   identifier: id.toUpperCase(),
   title: id,
   status: "todo",
@@ -15,6 +21,7 @@ const ticket = (id: string, created_at: string): ChatTicket => ({
   changed_at: created_at,
   phase: "in_progress",
   needs_you: false,
+  ...rest,
 });
 
 describe("groupChatTickets", () => {
@@ -44,12 +51,30 @@ describe("groupChatTickets", () => {
     expect(byMessage.size).toBe(0);
     expect(tail.map((t) => t.id)).toEqual(["t4"]);
   });
+
+  it("hangs a followed old issue under the reply of the turn that touched it", () => {
+    const { byMessage } = groupChatTickets(messages, [
+      ticket("old", "2026-09-01T00:00:00Z", {
+        source: "auto",
+        linked_at: "2026-10-01T10:02:30Z",
+      }),
+    ]);
+    expect(byMessage.has("a1")).toBe(false);
+    expect(byMessage.get("a2")?.map((t) => t.id)).toEqual(["old"]);
+  });
+
+  it("falls back to created_at when linked_at is empty", () => {
+    const { byMessage } = groupChatTickets(messages, [
+      ticket("t5", "2026-10-01T10:00:30Z", { linked_at: "" }),
+    ]);
+    expect(byMessage.get("a1")?.map((t) => t.id)).toEqual(["t5"]);
+  });
 });
 
 describe("chatProgress", () => {
   const at = (min: number) => new Date(Date.UTC(2026, 0, 1, 12, min)).toISOString();
   const tk = (id: string, rest: Partial<ChatTicket>): ChatTicket => ({
-    id, identifier: id, title: id, status: "todo", priority: "none",
+    id, source: "created", linked_at: at(0), identifier: id, title: id, status: "todo", priority: "none",
     assignee_type: null, assignee_id: null, created_at: at(0), updated_at: at(0),
     changed_at: at(0), phase: "in_progress", needs_you: false, ...rest,
   });

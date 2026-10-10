@@ -40,6 +40,19 @@ func (w *world) setManaged(t *testing.T, link pgtype.UUID, on bool) {
 	}
 }
 
+// canSet is what the management list says the caller may switch.
+func (w *world) canSet(t *testing.T, ws, user pgtype.UUID, actor Actor) bool {
+	t.Helper()
+	links, err := w.svc.List(context.Background(), ws, actor)
+	if err == nil {
+		err = w.svc.FillCanSetManaged(context.Background(), links, user, actor)
+	}
+	if err != nil || len(links) != 1 {
+		t.Fatalf("list = %+v, %v", links, err)
+	}
+	return links[0].CanSetManaged
+}
+
 func (w *world) call(r managedRun, source string) ManagedCall {
 	return ManagedCall{ViewerWS: w.viewer, AgentID: r.agent, TaskID: r.task, Source: source}
 }
@@ -72,8 +85,16 @@ func TestSetManagedRules(t *testing.T) {
 		t.Fatalf("viewer list = %+v, want managed with the source id", links)
 	}
 
+	// The list answers the same as Update for each caller.
+	if !w.canSet(t, w.source, w.srcOwner, owner()) || w.canSet(t, w.source, w.srcAdmin, admin()) || w.canSet(t, w.viewer, w.vAdmin, admin()) {
+		t.Fatal("can_set_managed: want only the source owner before the viewer admin owns the source")
+	}
+
 	// Owner of the source who is admin here switches it off from the viewer.
 	w.fx.Member(t, util.UUIDToString(w.source), util.UUIDToString(w.vAdmin), "owner")
+	if !w.canSet(t, w.viewer, w.vAdmin, admin()) {
+		t.Fatal("can_set_managed: an owner of the source may switch it from the viewer side")
+	}
 	off := false
 	if l, err := w.svc.Update(ctx, w.viewer, w.vAdmin, admin(), link, Patch{Managed: &off}); err != nil || l.Managed {
 		t.Fatalf("viewer-side switch = %+v, %v", l, err)

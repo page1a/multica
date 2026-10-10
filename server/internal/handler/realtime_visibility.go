@@ -89,7 +89,8 @@ func realtimeChatEvent(eventType string) bool {
 		protocol.EventChatCancelFinalized,
 		protocol.EventChatSessionCreated,
 		protocol.EventChatSessionUpdated,
-		protocol.EventChatSessionRead:
+		protocol.EventChatSessionRead,
+		protocol.EventChatTicketsChanged:
 		return true
 	default:
 		return false

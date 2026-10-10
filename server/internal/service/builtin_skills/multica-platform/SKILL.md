@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "asks, open a chat, goals, inbox, project board/report, sub-issues, wakeups, charts, routing, close protocol, stalls, driver, halt, mentions, agents, specialisation, squads, autopilot, projects, runtimes, progress, state card, skill import, transfer, linked workspace, GitHub App. Not product code."
+description: "asks, open a chat, consult, goals, inbox, project board/report, sub-issues, wakeups, charts, routing, close protocol, stall, driver, halt, mention, agents, specialisation, squads, autopilot, projects, runtimes, progress, state card, skill import, transfer, linked workspace, GitHub App. Not app code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -35,11 +35,12 @@ Read the invariants below, then open the reference(s) your task actually needs �
 | `references/specialisations.md` | Base roles and specialisations: create by base role + domain, what a child inherits, the two-level cap, runtime following, solidify, the archive guard |
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
 | `references/autopilots.md` | Autopilots: schedule / webhook / manual triggers, `create_issue` vs `run_only`, why one did not fire |
-| `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode), and project memory (`check`, `status`, `monitor`, `seat`, `chat sediment`) |
+| `references/projects.md` | Projects, their members (`project member list`), and their durable resources (`github_repo`, `local_directory`, worktree mode), and project memory (`check`, `status`, `monitor`, `seat`, `chat sediment`) |
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/inbox.md` | The user asks about their inbox or what is stuck: `multica inbox board` (optionally `--project`) and the fixed five-part answer |
 | `references/project-report.md` | The user asks to hear a project's report (听汇报, 有什么新进展, 上次以来): `multica project report --mark-heard`, the fixed spoken shape with a Mermaid chart, and acting on its buttons |
 | `references/project-board.md` | The user asks for the full open-ticket panorama by project: `multica project board` (one or more projects, or the whole workspace) |
+| `references/consult.md` | Asking a strong-tier seat one question while you keep the ticket (`multica issue consult`): when to ask, the per-issue limit, cost, refusal codes |
 | `references/chat-spawn.md` | Opening a chat with another agent from a chat (`multica chat open`): task-or-chat table, limits, refusal codes |
 | `references/workspace-links.md` | Reading another workspace's shared projects through a link: `multica workspace link list` / `view`, pending link requests (`list --pending`), what the view contains, why it says link not found; on a managed link, working on the source's issues and autopilots with `--linked <source-slug>` |
 | `references/transfer.md` | `multica transfer export` / `import` / `bind-runtimes`, and the kun `/transfer/*` endpoints |
@@ -119,9 +120,8 @@ and what happens when the running CLI cannot steer, is in
 
 To promote the current conversation into a goal task, use
 `multica chat to-goal --session <id-or-url>`. The server creates the issue with
-the chat's agent as executor; confirm the completion line through the shared
-`multica goal` commands. Add `--output json` when another tool needs the new
-issue id.
+the chat's agent as executor; confirm the completion line with `multica goal`.
+Add `--output json` when another tool needs the new issue id.
 
 To talk to another agent without creating work, open a chat from your chat:
 `multica chat open --agent <name> --brief-file ./brief.md`. Work with an owner

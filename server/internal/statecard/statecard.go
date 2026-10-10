@@ -200,6 +200,9 @@ type Now struct {
 	Superseded bool `json:"superseded,omitempty"`
 	// Stale: the issue moved to another status after the close.
 	Stale bool `json:"stale,omitempty"`
+	// ReviewSkip is why a done issue had no acceptance seat: its PR was
+	// merged and already reviewed (DENE-1678, metadata review_skip).
+	ReviewSkip string `json:"review_skip,omitempty"`
 }
 
 // Baton is "上一棒交代": what the last owner said when they let go.
@@ -262,6 +265,9 @@ type Source struct {
 // metadata flattened to strings.
 func DeriveNow(meta map[string]string, status string) Now {
 	now := Now{Status: status}
+	if status == "done" {
+		now.ReviewSkip = strings.TrimSpace(meta["review_skip"])
+	}
 	if !closeprotocol.Complete(meta) {
 		return now
 	}
@@ -457,6 +463,9 @@ func Render(c Card) string {
 		}
 	} else {
 		b.WriteString("；还没收尾过")
+	}
+	if c.Now.ReviewSkip != "" {
+		fmt.Fprintf(&b, "；跳过验收：%s", c.Now.ReviewSkip)
 	}
 	b.WriteString("\n")
 

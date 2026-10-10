@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -21,6 +23,43 @@ type ProjectMemberResponse struct {
 	Name        string  `json:"name"`
 	Email       string  `json:"email"`
 	AvatarURL   *string `json:"avatar_url"`
+	// Role is the person's workspace role. Like the roster it is owner-only
+	// (DENE-1022): anyone else gets it for themselves and "" for the rest.
+	Role string `json:"role"`
+	// IsLead marks the project's member lead, which the project page already
+	// shows to everyone.
+	IsLead bool `json:"is_lead"`
+}
+
+// projectMemberRank orders the member column: workspace owner, project lead,
+// admins, then everyone else (DENE-1706). Role is only used once the viewer
+// may see it, so a non-owner's order reveals no more than the lead.
+func projectMemberRank(m ProjectMemberResponse) int {
+	switch {
+	case m.Role == "owner":
+		return 0
+	case m.IsLead:
+		return 1
+	case m.Role == "admin":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func projectLeadUserID(project db.Project) string {
+	if project.LeadType.Valid && project.LeadType.String == "member" && project.LeadID.Valid {
+		return uuidToString(project.LeadID)
+	}
+	return ""
+}
+
+// roleVisibleTo applies the roster rule to one row's role.
+func roleVisibleTo(viewer db.Member, memberID pgtype.UUID, role string) string {
+	if viewer.Role == "owner" || viewer.UserID == memberID {
+		return role
+	}
+	return ""
 }
 
 func canManageProjectMembers(member db.Member, project db.Project) bool {
@@ -47,7 +86,7 @@ func (h *Handler) loadProjectMemberContext(w http.ResponseWriter, r *http.Reques
 	return project, member, true
 }
 
-func (h *Handler) projectMemberRowToResponse(row db.ListProjectMembersRow) ProjectMemberResponse {
+func (h *Handler) projectMemberRowToResponse(row db.ListProjectMembersRow, viewer db.Member, leadID string) ProjectMemberResponse {
 	return ProjectMemberResponse{
 		ID:          uuidToString(row.ID),
 		WorkspaceID: uuidToString(row.WorkspaceID),
@@ -58,10 +97,12 @@ func (h *Handler) projectMemberRowToResponse(row db.ListProjectMembersRow) Proje
 		Name:        row.UserName,
 		Email:       row.UserEmail,
 		AvatarURL:   h.resolveAvatarURLPtr(textToPtr(row.UserAvatarUrl)),
+		Role:        roleVisibleTo(viewer, row.MemberID, row.WorkspaceRole),
+		IsLead:      leadID != "" && uuidToString(row.MemberID) == leadID,
 	}
 }
 
-func (h *Handler) projectMemberToResponse(m db.ProjectMember, user db.User) ProjectMemberResponse {
+func (h *Handler) projectMemberToResponse(m db.ProjectMember, user db.User, role string, leadID string) ProjectMemberResponse {
 	return ProjectMemberResponse{
 		ID:          uuidToString(m.ID),
 		WorkspaceID: uuidToString(m.WorkspaceID),
@@ -72,11 +113,13 @@ func (h *Handler) projectMemberToResponse(m db.ProjectMember, user db.User) Proj
 		Name:        user.Name,
 		Email:       user.Email,
 		AvatarURL:   h.resolveAvatarURLPtr(textToPtr(user.AvatarUrl)),
+		Role:        role,
+		IsLead:      leadID != "" && uuidToString(m.MemberID) == leadID,
 	}
 }
 
 func (h *Handler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
-	project, _, ok := h.loadProjectMemberContext(w, r, false)
+	project, viewer, ok := h.loadProjectMemberContext(w, r, false)
 	if !ok {
 		return
 	}
@@ -85,10 +128,15 @@ func (h *Handler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list project members")
 		return
 	}
+	leadID := projectLeadUserID(project)
 	resp := make([]ProjectMemberResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = h.projectMemberRowToResponse(row)
+		resp[i] = h.projectMemberRowToResponse(row, viewer, leadID)
 	}
+	// Rows arrive in join order; the stable sort keeps it within each rank.
+	sort.SliceStable(resp, func(i, j int) bool {
+		return projectMemberRank(resp[i]) < projectMemberRank(resp[j])
+	})
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -113,10 +161,11 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+	target, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
 		UserID:      memberUUID,
 		WorkspaceID: project.WorkspaceID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "member not found in this workspace")
 		return
 	}
@@ -160,7 +209,7 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 	h.publish(protocol.EventProjectUpdated, wsID, "member", actorID, map[string]any{
 		"project_id": uuidToString(project.ID),
 	})
-	writeJSON(w, http.StatusCreated, h.projectMemberToResponse(sm, user))
+	writeJSON(w, http.StatusCreated, h.projectMemberToResponse(sm, user, roleVisibleTo(actor, memberUUID, target.Role), projectLeadUserID(project)))
 }
 
 func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {

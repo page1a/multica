@@ -78,7 +78,11 @@
       "pull_hint": "바로 적용되며 멤버가 읽을 수 있습니다.",
       "pull_reason": "소유자나 관리자만 다른 워크스페이스를 연결할 수 있습니다.",
       "pull_create": "연결하기",
-      "pull_created": "연결했습니다. 멤버가 사이드바에서 볼 수 있습니다."
+      "pull_created": "연결했습니다. 멤버가 사이드바에서 볼 수 있습니다.",
+      "managed_label": "보는 쪽에 작업과 오토파일럿 대행 허용",
+      "managed_hint_outgoing": "켜면 상대 에이전트가 실행한 사람을 대신해 이곳의 작업과 오토파일럿을 바꿀 수 있습니다.",
+      "managed_hint_incoming": "켜면 이곳 에이전트가 실행한 사람을 대신해 상대의 작업과 오토파일럿을 바꿀 수 있습니다.",
+      "managed_reason": "공유하는 워크스페이스의 소유자만 바꿀 수 있습니다."
     },
     "audit": {
       "title": "감사 기록",
@@ -90,7 +94,10 @@
       "revoke": "연결을 끊음",
       "by_source": "공유 측",
       "by_viewer": "조회 측",
-      "someone": "누군가"
+      "someone": "누군가",
+      "set_managed_on": "대행을 켰습니다",
+      "set_managed_off": "대행을 껐습니다",
+      "managed_write": "{{agent}}에게 변경을 대행시켰습니다"
     },
     "panel": {
       "title": "연결된 워크스페이스",
@@ -105,7 +112,8 @@
       "all_tasks": "공유된 모든 작업",
       "show_all": "모두 보기",
       "no_tasks": "표시할 작업이 없습니다.",
-      "load_more": "더 보기"
+      "load_more": "더 보기",
+      "managed_from": "{{name}}에서 대행을 허용했습니다: 에이전트가 작업과 오토파일럿을 대신 처리할 수 있습니다"
     }
   }
 }

@@ -112,6 +112,18 @@
       "cancel": "キャンセル",
       "confirm": "削除",
       "deleting": "削除中..."
+    },
+    "section_linked_changes": "連携ワークスペース経由の変更",
+    "linked_change_by": "{{actor}}（{{via}}・{{agent}} 経由）",
+    "linked_change_route": {
+      "create": "作成",
+      "update": "設定を変更",
+      "delete": "削除",
+      "run": "手動実行",
+      "trigger_add": "トリガーを追加",
+      "trigger_update": "トリガーを変更",
+      "trigger_delete": "トリガーを削除",
+      "other": "変更"
     }
   },
   "access": {

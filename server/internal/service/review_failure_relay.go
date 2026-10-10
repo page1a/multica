@@ -57,6 +57,13 @@ func (s *TaskService) stageReviewRelay(ctx context.Context, qtx *db.Queries, tas
 	}
 
 	handoff.Review = true
+	// Reviewed and merged already: another seat would only re-read the same
+	// verdict. The patrol closes it as passed (DENE-1678).
+	if skip, ok, err := FindReviewSkip(ctx, qtx, issue); err != nil {
+		return err
+	} else if ok {
+		return s.skipQuotaRelay(ctx, qtx, task, agent, issue, plan, handoff, "skipped_review", "已审已合（"+skip.Reason()+"），不再换验收席，巡检会按通过收口")
+	}
 	workers, err := issueWorkerIDs(ctx, qtx, issue.ID, failedID)
 	if err != nil {
 		return err

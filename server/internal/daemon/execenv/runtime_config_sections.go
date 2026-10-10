@@ -727,6 +727,12 @@ func writeWorkflowQuickCreate(b *strings.Builder) {
 	b.WriteString("- On a CLI or JSON parse error, exit with that error as the only output.\n\n")
 }
 
+func writeWorkflowConsult(b *strings.Builder) {
+	b.WriteString("**This is a consult.** Another agent working a ticket asked you one question; the per-turn message carries the ticket and the question. You advise, it decides and keeps the ticket.\n\n")
+	b.WriteString("- Your platform credential is read-only: `multica issue get/context/comment list` work, every write is refused. Change no code or files.\n")
+	b.WriteString("- Answer in your final message, short and concrete: a recommendation, the risks, what to check. If the question lacks what you need, say what is missing.\n\n")
+}
+
 // AutopilotIssueCommandsGuard is the run-only autopilot issue-command boundary,
 // shared verbatim by the runtime brief (writeWorkflowAutopilot) and the
 // per-turn prompt (daemon.buildAutopilotPrompt). Both land in the same context
@@ -970,6 +976,9 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n\n")
 		b.WriteString("**Delivering files here:** this surface is text-only — the run result carries no attachments. Describe what you produced; do not link its path.\n")
+	case kindConsult:
+		b.WriteString("This is a consult run. Your final assistant output is captured as your advice and handed to the asking agent; it also appears on the ticket's timeline. Do not comment, close or hand off.\n\n")
+		b.WriteString("**Delivering files here:** the advice is text-only. Quote the lines that matter instead of attaching files.\n")
 	case kindQuickCreate:
 		b.WriteString("This is a quick-create task. There is NO existing issue to comment on. Your final stdout is captured automatically, and the platform turns it into the user's success or `quick_create_failed` inbox item based on whether `multica issue create` succeeded. What to print in each case is stated once, under `## Workflow`.\n\n")
 		b.WriteString("**Delivering files here:** your stdout is text-only. A file that belongs to the new issue goes on the `multica issue create` call itself via `--attachment <path>`; never put its path in the description or in your stdout line.\n")
@@ -1084,6 +1093,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:
 		writeWorkflowAutopilot(&b)
+	case kindConsult:
+		writeWorkflowConsult(&b)
 	case kindIssue:
 		writeWorkflowIssue(&b, ctx)
 	}

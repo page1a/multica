@@ -116,7 +116,7 @@ func (q *Queries) DeletePendingGitHubInstallation(ctx context.Context, installat
 }
 
 const findGitHubPullRequestByURL = `-- name: FindGitHubPullRequestByURL :one
-SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source FROM github_pull_request
+SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source, approved_by, approved_at, approved_head_sha FROM github_pull_request
 WHERE workspace_id = $1
   AND lower(rtrim(html_url, '/')) = lower($2::text)
 ORDER BY pr_updated_at DESC
@@ -163,6 +163,9 @@ func (q *Queries) FindGitHubPullRequestByURL(ctx context.Context, arg FindGitHub
 		&i.SnapshotHeadSha,
 		&i.SnapshotFetchedAt,
 		&i.Source,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.ApprovedHeadSha,
 	)
 	return i, err
 }
@@ -190,7 +193,7 @@ func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID)
 }
 
 const getGitHubPullRequest = `-- name: GetGitHubPullRequest :one
-SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source FROM github_pull_request
+SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source, approved_by, approved_at, approved_head_sha FROM github_pull_request
 WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4
 `
 
@@ -239,12 +242,15 @@ func (q *Queries) GetGitHubPullRequest(ctx context.Context, arg GetGitHubPullReq
 		&i.SnapshotHeadSha,
 		&i.SnapshotFetchedAt,
 		&i.Source,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.ApprovedHeadSha,
 	)
 	return i, err
 }
 
 const getGitHubPullRequestInWorkspace = `-- name: GetGitHubPullRequestInWorkspace :one
-SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source FROM github_pull_request
+SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source, approved_by, approved_at, approved_head_sha FROM github_pull_request
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -286,6 +292,9 @@ func (q *Queries) GetGitHubPullRequestInWorkspace(ctx context.Context, arg GetGi
 		&i.SnapshotHeadSha,
 		&i.SnapshotFetchedAt,
 		&i.Source,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.ApprovedHeadSha,
 	)
 	return i, err
 }
@@ -574,6 +583,7 @@ SELECT
     pr.api_mergeable, pr.api_merge_state_status, pr.checks_rollup_state,
     pr.snapshot_head_sha, pr.snapshot_fetched_at,
     pr.created_at, pr.updated_at, pr.source,
+    pr.approved_by, pr.approved_at, pr.approved_head_sha,
     COALESCE(ipr.linked_by_type, 'system')::text AS linked_by_type,
     COALESCE(c.total, 0)::bigint   AS checks_total,
     COALESCE(c.passed, 0)::bigint  AS checks_passed,
@@ -617,6 +627,9 @@ type ListPullRequestsByIssueRow struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	Source              string             `json:"source"`
+	ApprovedBy          pgtype.Text        `json:"approved_by"`
+	ApprovedAt          pgtype.Timestamptz `json:"approved_at"`
+	ApprovedHeadSha     pgtype.Text        `json:"approved_head_sha"`
 	LinkedByType        string             `json:"linked_by_type"`
 	ChecksTotal         int64              `json:"checks_total"`
 	ChecksPassed        int64              `json:"checks_passed"`
@@ -674,6 +687,9 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Source,
+			&i.ApprovedBy,
+			&i.ApprovedAt,
+			&i.ApprovedHeadSha,
 			&i.LinkedByType,
 			&i.ChecksTotal,
 			&i.ChecksPassed,
@@ -689,6 +705,77 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const setGitHubPullRequestApproval = `-- name: SetGitHubPullRequestApproval :exec
+UPDATE github_pull_request
+SET approved_by = $2,
+    approved_at = $3,
+    approved_head_sha = $4,
+    updated_at = now()
+WHERE id = $1
+`
+
+type SetGitHubPullRequestApprovalParams struct {
+	ID              pgtype.UUID        `json:"id"`
+	ApprovedBy      pgtype.Text        `json:"approved_by"`
+	ApprovedAt      pgtype.Timestamptz `json:"approved_at"`
+	ApprovedHeadSha pgtype.Text        `json:"approved_head_sha"`
+}
+
+// DENE-1678: the approval GitHub reports for a PR, by row, with the head
+// commit it approved. A NULL approver clears it (the report read the reviews
+// and found no approval).
+func (q *Queries) SetGitHubPullRequestApproval(ctx context.Context, arg SetGitHubPullRequestApprovalParams) error {
+	_, err := q.db.Exec(ctx, setGitHubPullRequestApproval,
+		arg.ID,
+		arg.ApprovedBy,
+		arg.ApprovedAt,
+		arg.ApprovedHeadSha,
+	)
+	return err
+}
+
+const setGitHubPullRequestApprovalByNumber = `-- name: SetGitHubPullRequestApprovalByNumber :exec
+UPDATE github_pull_request
+SET approved_by = $2,
+    approved_at = $3,
+    approved_head_sha = $4,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND lower(repo_owner) = lower($5)
+  AND lower(repo_name) = lower($6)
+  AND pr_number = $7
+  AND ($2::text IS NOT NULL
+       OR approved_by = $8::text)
+`
+
+type SetGitHubPullRequestApprovalByNumberParams struct {
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ApprovedBy      pgtype.Text        `json:"approved_by"`
+	ApprovedAt      pgtype.Timestamptz `json:"approved_at"`
+	ApprovedHeadSha pgtype.Text        `json:"approved_head_sha"`
+	RepoOwner       string             `json:"repo_owner"`
+	RepoName        string             `json:"repo_name"`
+	PrNumber        int32              `json:"pr_number"`
+	DismissedBy     string             `json:"dismissed_by"`
+}
+
+// DENE-1678: the pull_request_review webhook's write, one bound workspace at
+// a time. An approval sets the approver and the head it approved; a
+// dismissed approval by the same reviewer clears it.
+func (q *Queries) SetGitHubPullRequestApprovalByNumber(ctx context.Context, arg SetGitHubPullRequestApprovalByNumberParams) error {
+	_, err := q.db.Exec(ctx, setGitHubPullRequestApprovalByNumber,
+		arg.WorkspaceID,
+		arg.ApprovedBy,
+		arg.ApprovedAt,
+		arg.ApprovedHeadSha,
+		arg.RepoOwner,
+		arg.RepoName,
+		arg.PrNumber,
+		arg.DismissedBy,
+	)
+	return err
 }
 
 const unlinkIssueFromPullRequest = `-- name: UnlinkIssueFromPullRequest :execrows
@@ -825,7 +912,7 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     END,
     updated_at = now()
 WHERE EXCLUDED.pr_updated_at >= github_pull_request.pr_updated_at
-RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source
+RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files, api_mergeable, api_merge_state_status, checks_rollup_state, snapshot_head_sha, snapshot_fetched_at, source, approved_by, approved_at, approved_head_sha
 `
 
 type UpsertGitHubPullRequestParams struct {
@@ -926,6 +1013,9 @@ func (q *Queries) UpsertGitHubPullRequest(ctx context.Context, arg UpsertGitHubP
 		&i.SnapshotHeadSha,
 		&i.SnapshotFetchedAt,
 		&i.Source,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.ApprovedHeadSha,
 	)
 	return i, err
 }

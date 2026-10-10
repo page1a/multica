@@ -32,6 +32,9 @@ const (
 	kindQuickCreate
 	// kindChat: interactive chat session, no issue.
 	kindChat
+	// kindConsult: a strong-tier seat answering one question about another
+	// run's ticket (DENE-1721). Read-only; the final output is the answer.
+	kindConsult
 )
 
 // classifyTask maps a TaskContextForEnv to the single taskKind the slim
@@ -46,6 +49,8 @@ func classifyTask(ctx TaskContextForEnv) taskKind {
 	switch {
 	case ctx.ChatSessionID != "":
 		return kindChat
+	case ctx.IsConsult:
+		return kindConsult
 	case ctx.QuickCreatePrompt != "":
 		return kindQuickCreate
 	case ctx.AutopilotRunID != "":

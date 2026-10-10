@@ -20,7 +20,8 @@ import enLayout from "../../locales/en/layout.json";
 
 const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIssues, layout: enLayout } };
 
-const mockViewport = vi.hoisted(() => ({ isMobile: false, isCompact: false }));
+const mockViewport = vi.hoisted(() => ({ isMobile: false, isCompact: false, isPhone: false }));
+const mockBackOrReplace = vi.hoisted(() => vi.fn());
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
 // eager editor per issue and catches stale editor reuse across issue switches.
@@ -38,6 +39,9 @@ vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => mockViewport.isMobile,
   // A phone is always below the compact breakpoint too.
   useIsCompact: () => mockViewport.isMobile || mockViewport.isCompact,
+}));
+vi.mock("../../layout/use-is-phone", () => ({
+  useIsPhone: () => mockViewport.isPhone,
 }));
 
 // useWorkspaceId() derives from useCurrentWorkspace (relative import inside
@@ -135,7 +139,7 @@ vi.mock("../../navigation", () => ({
   // the same "no deep link available" case ExecutionLogSection handles for a
   // leaf view rendered on its own.
   useOptionalNavigation: () => null,
-  useBackOrReplace: () => vi.fn(),
+  useBackOrReplace: () => mockBackOrReplace,
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
@@ -736,6 +740,8 @@ describe("IssueDetail (shared)", () => {
     readonlyContentRenders.length = 0;
     descriptionSelectionAction.current = undefined;
     mockViewport.isMobile = false;
+    mockViewport.isPhone = false;
+    mockBackOrReplace.mockReset();
     mockViewport.isCompact = false;
     // Default: issue loads successfully
     mockApiObj.getIssue.mockResolvedValue(mockIssue);
@@ -1219,6 +1225,33 @@ describe("IssueDetail (shared)", () => {
 
     expect(screen.queryByTestId("panel-group")).not.toBeInTheDocument();
     expect(screen.queryByText("Properties")).not.toBeInTheDocument();
+  });
+
+  it("gives a phone a way back even with no parent or project, falling back to the list", async () => {
+    mockViewport.isMobile = true;
+    mockViewport.isPhone = true;
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("Implement authentication")).toBeInTheDocument();
+    });
+
+    // This harness loads no chat namespace, so the label renders as its key.
+    fireEvent.click(screen.getByRole("button", { name: "page.back" }));
+    expect(mockBackOrReplace).toHaveBeenCalledWith("/test/issues");
+  });
+
+  it("keeps a narrow desktop window without a container free of a back button", async () => {
+    mockViewport.isMobile = true;
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("Implement authentication")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "page.back" })).not.toBeInTheDocument();
   });
 
   it("folds the properties panel into a drawer on a portrait tablet", async () => {

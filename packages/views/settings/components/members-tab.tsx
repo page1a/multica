@@ -24,6 +24,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AppLink, useOptionalNavigation } from "../../navigation";
 import type {
   Invitation,
+  MemberProjectRef,
   MemberRole,
   MemberWithUser,
   PurchaseWorkspaceSeatsRequest,
@@ -66,6 +67,11 @@ import {
   DropdownMenuItem,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@multica/ui/components/ui/popover";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -77,7 +83,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
 import { BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG } from "@multica/core/feature-flags";
-import { useCurrentWorkspace } from "@multica/core/paths";
+import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import {
   invitationListOptions,
   memberListOptions,
@@ -92,6 +98,7 @@ import {
   type RoleOption,
 } from "@multica/core/workspace/member-roles";
 import { api, errorCode } from "@multica/core/api";
+import { invalidateProjectMemberLists } from "@multica/core/projects";
 import { useLocale, useT } from "../../i18n";
 import {
   SettingsCard,
@@ -275,6 +282,7 @@ function MemberRow({
           ) : null}
         </div>
         <div className="truncate text-caption text-muted-foreground">{member.email}</div>
+        <MemberProjects member={member} />
         {error && (
           <div className="mt-1 flex items-start gap-1 text-caption text-destructive">
             <AlertCircle className="mt-px h-3 w-3 shrink-0" />
@@ -416,6 +424,89 @@ function MembersInvitePrompt({ onInvite }: { onInvite: () => void }) {
 
 /** Placeholder rows while the roster loads, so the section keeps its height
  *  instead of collapsing and then jumping. */
+// Up to this many project names show inline; more fold into "N projects".
+const INLINE_PROJECT_LIMIT = 2;
+
+/** The projects a member has joined (DENE-1706): who can see which project's
+ *  issues. The server only fills this for rows the viewer may manage. */
+function MemberProjects({ member }: { member: MemberWithUser }) {
+  const { t } = useT("settings");
+  const projects = member.projects ?? [];
+  // A redacted row (another member, non-owner viewer) has no role either;
+  // saying "no projects" there would be a claim we cannot back.
+  if (!member.role) return null;
+  if (projects.length === 0) {
+    // An owner sees every project without joining one.
+    if (member.role === "owner") return null;
+    return (
+      <div className="truncate text-caption text-muted-foreground">
+        {t(($) => $.members.no_projects)}
+      </div>
+    );
+  }
+  return <MemberProjectLinks name={member.name} projects={projects} />;
+}
+
+function MemberProjectLinks({
+  name,
+  projects,
+}: {
+  name: string;
+  projects: MemberProjectRef[];
+}) {
+  const { t } = useT("settings");
+  const wsPaths = useWorkspacePaths();
+  const link = (p: MemberProjectRef) => (
+    <AppLink
+      key={p.id}
+      href={wsPaths.projectDetail(p.id)}
+      className="truncate hover:text-foreground hover:underline"
+    >
+      {p.title}
+    </AppLink>
+  );
+  if (projects.length <= INLINE_PROJECT_LIMIT) {
+    return (
+      <div
+        className="flex min-w-0 flex-wrap items-center gap-x-1 text-caption text-muted-foreground"
+        aria-label={t(($) => $.members.projects_aria, { name })}
+      >
+        {/* Wraps rather than truncating: on a phone two titles share the
+            narrow column, and "Multic… · P…" names neither project. */}
+        {projects.map((p, i) => (
+          <span key={p.id} className="flex min-w-0 max-w-full items-center gap-1">
+            {link(p)}
+            {i < projects.length - 1 && <span aria-hidden="true">·</span>}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <Popover>
+      <PopoverTrigger
+        className="text-caption text-muted-foreground hover:text-foreground hover:underline [@media(pointer:coarse)]:py-2"
+        aria-label={t(($) => $.members.projects_aria, { name })}
+      >
+        {t(($) => $.members.projects_count, { count: projects.length })}
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-60 max-w-[calc(100vw-2rem)] p-1">
+        <div className="flex max-h-64 flex-col overflow-y-auto">
+          {projects.map((p) => (
+            <AppLink
+              key={p.id}
+              href={wsPaths.projectDetail(p.id)}
+              className="truncate rounded-md px-2 py-1.5 text-body hover:bg-accent [@media(pointer:coarse)]:py-2.5"
+            >
+              {p.title}
+            </AppLink>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function MemberRowSkeleton() {
   return (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -979,6 +1070,7 @@ export function MembersTab() {
         },
       );
       qc.invalidateQueries({ queryKey: key });
+      void invalidateProjectMemberLists(qc, wsId);
     } catch (e) {
       // Roll the row back to exactly what the list held before the patch —
       // re-deriving it from `member` would lose a concurrent update that
@@ -1006,6 +1098,7 @@ export function MembersTab() {
         try {
           await api.deleteMember(workspace.id, member.id);
           qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+          void invalidateProjectMemberLists(qc, wsId);
           toast.success(t(($) => $.members.toast_member_removed));
         } catch (e) {
           toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_member_remove_failed));

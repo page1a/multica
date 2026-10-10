@@ -19,7 +19,8 @@
  *   5. Coalesce ×N chip when `coalesced_count > 1`, except `task_completed` /
  *      `task_failed` which already bake the count into their phrase.
  */
-import { View } from "react-native";
+import { useState } from "react";
+import { Pressable, View } from "react-native";
 import Svg, { Line, Rect } from "react-native-svg";
 import type { IssuePriority, TimelineEntry } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
@@ -33,6 +34,43 @@ import { useIssueStatuses } from "@/lib/use-issue-statuses";
 import type { IssueStatusCatalog } from "@/lib/issue-status";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
+import { useT } from "@/lib/i18n";
+
+const CONSULT_ACTIONS = new Set(["consult_answered", "consult_failed"]);
+
+/**
+ * Tap to open the question and the answer of a consult (DENE-1721); web's
+ * `ConsultActivityRow` in issue-detail.tsx does the same with a chevron.
+ */
+function ConsultDetails({ entry }: { entry: TimelineEntry }) {
+  const details = (entry.details ?? {}) as Record<string, unknown>;
+  const text = (key: string) =>
+    typeof details[key] === "string" ? (details[key] as string) : "";
+  const failed = entry.action === "consult_failed";
+  const { t } = useT("issues");
+  return (
+    <View className="ml-10 mr-4 mt-1.5 gap-2 border-l border-border pl-3">
+      <View>
+        <Text className="text-xs font-medium text-muted-foreground">
+          {t("activity.consult_question")}
+        </Text>
+        <Text className="text-xs text-foreground" selectable>
+          {text("question")}
+        </Text>
+      </View>
+      <View>
+        <Text className="text-xs font-medium text-muted-foreground">
+          {failed
+            ? t("activity.consult_reason")
+            : t("activity.consult_answer")}
+        </Text>
+        <Text className="text-xs text-foreground" selectable>
+          {failed ? text("reason") : text("answer")}
+        </Text>
+      </View>
+    </View>
+  );
+}
 
 function CalendarGlyph({
   size = 14,
@@ -118,6 +156,8 @@ function LeadIcon({
 }
 
 export function ActivityRow({ entry }: { entry: TimelineEntry }) {
+  const isConsult = CONSULT_ACTIONS.has(entry.action ?? "");
+  const [open, setOpen] = useState(false);
   const { getName } = useActorLookup();
   const catalog = useIssueStatuses();
   const { colorScheme } = useColorScheme();
@@ -135,7 +175,7 @@ export function ActivityRow({ entry }: { entry: TimelineEntry }) {
     entry.action !== "task_completed" &&
     entry.action !== "task_failed";
 
-  return (
+  const row = (
     <View className="flex-row items-center px-4 gap-2">
       <View className="w-4 items-center justify-center shrink-0">
         <LeadIcon entry={entry} catalog={catalog} mutedFg={mutedFg} />
@@ -161,6 +201,20 @@ export function ActivityRow({ entry }: { entry: TimelineEntry }) {
       <Text className="text-xs text-muted-foreground shrink-0">
         {timeAgo(entry.created_at)}
       </Text>
+    </View>
+  );
+  if (!isConsult) return row;
+  return (
+    <View>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        hitSlop={8}
+      >
+        {row}
+      </Pressable>
+      {open ? <ConsultDetails entry={entry} /> : null}
     </View>
   );
 }

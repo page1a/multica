@@ -13,6 +13,7 @@ var (
 	markdownMarks = regexp.MustCompile("[#*`>~_]")
 	markdownLink  = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
 	titleSpace    = regexp.MustCompile(`[[:space:]]+`)
+	embedOnly     = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
 )
 
 // Derive mirrors the existing first-party deterministic title policy for
@@ -20,12 +21,25 @@ var (
 // code units, while preserving the same first-line, Markdown, whitespace, and
 // 30-character single-ellipsis behavior.
 func Derive(body string) string {
-	line := ""
+	// The first line with text wins; a line that is only a pasted image
+	// ("![image.png](…)") is skipped so a screenshot ahead of the question does
+	// not name the chat "image.png". An image-only body still falls back to it.
+	line, embed := "", ""
 	for _, candidate := range strings.Split(body, "\n") {
-		if strings.TrimSpace(candidate) != "" {
-			line = candidate
-			break
+		if strings.TrimSpace(candidate) == "" {
+			continue
 		}
+		if strings.TrimSpace(embedOnly.ReplaceAllString(candidate, "")) == "" {
+			if embed == "" {
+				embed = candidate
+			}
+			continue
+		}
+		line = candidate
+		break
+	}
+	if line == "" {
+		line = embed
 	}
 	line = markdownFence.ReplaceAllString(line, " ")
 	line = markdownMarks.ReplaceAllString(line, "")

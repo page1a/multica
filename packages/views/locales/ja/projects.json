@@ -246,7 +246,15 @@
     "toast_added": "メンバーを追加しました",
     "toast_add_failed": "メンバーを追加できませんでした",
     "toast_removed": "メンバーを削除しました",
-    "toast_remove_failed": "メンバーを削除できませんでした"
+    "toast_remove_failed": "メンバーを削除できませんでした",
+    "hint": "プロジェクトメンバーはこのプロジェクトのタスクを閲覧できます。",
+    "lead": "リード",
+    "roles": {
+      "owner": "オーナー",
+      "admin": "管理者",
+      "member": "メンバー",
+      "guest": "ゲスト"
+    }
   },
   "delete_dialog": {
     "title": "プロジェクトを削除",

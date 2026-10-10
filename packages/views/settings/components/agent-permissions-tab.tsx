@@ -39,11 +39,14 @@ import {
 
 type SpawnKey = keyof AgentSpawnPolicy;
 
-/** Blank means unlimited (0); junk keeps the previous count. */
-export function parseSpawnCount(text: string, previous: number): number {
-  if (text.trim() === "") return 0;
+/**
+ * Blank means unlimited (0); junk keeps the previous count. A required count
+ * has no unlimited: blank or below 1 keeps the previous one.
+ */
+export function parseSpawnCount(text: string, previous: number, required = false): number {
+  if (text.trim() === "") return required ? previous : 0;
   const parsed = Number.parseInt(text, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return previous;
+  if (!Number.isFinite(parsed) || parsed < (required ? 1 : 0)) return previous;
   return Math.min(parsed, 1000);
 }
 
@@ -73,7 +76,7 @@ export function AgentPermissionsTab() {
       },
     );
 
-  const spawnRows: { key: SpawnKey; label: string; description: string; perChat: boolean }[] = [
+  const spawnRows: { key: Exclude<SpawnKey, "consult">; label: string; description: string; perChat: boolean }[] = [
     {
       key: "chat_issue",
       label: t(($) => $.agent_permissions.chat_issue_label),
@@ -126,6 +129,33 @@ export function AgentPermissionsTab() {
             description={t(($) => $.agent_permissions.issue_chat_description)}
           >
             <Switch checked={false} disabled aria-label={t(($) => $.agent_permissions.issue_chat_label)} />
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection anchor="consult" title={t(($) => $.agent_permissions.consult_title)}>
+        <SettingsCard>
+          <SettingsRow
+            anchor="consult"
+            label={t(($) => $.agent_permissions.consult_label)}
+            description={t(($) => $.agent_permissions.consult_description)}
+            size="text"
+          >
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-end">
+              <CountInput
+                label={t(($) => $.agent_permissions.per_issue)}
+                value={policy?.consult?.per_issue ?? 3}
+                disabled={!canManage || !policy || !policy.consult?.enabled}
+                required
+                onCommit={(per_issue) => save("consult", { per_issue })}
+              />
+              <Switch
+                checked={policy?.consult?.enabled ?? false}
+                disabled={!canManage || !policy}
+                aria-label={`${t(($) => $.agent_permissions.consult_label)} · ${t(($) => $.agent_permissions.enabled)}`}
+                onCheckedChange={(enabled) => save("consult", { enabled })}
+              />
+            </div>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
@@ -210,11 +240,13 @@ function CountInput({
   label,
   value,
   disabled,
+  required = false,
   onCommit,
 }: {
   label: string;
   value: number;
   disabled: boolean;
+  required?: boolean;
   onCommit: (value: number) => void;
 }) {
   const { t } = useT("settings");
@@ -227,16 +259,16 @@ function CountInput({
       <Input
         type="number"
         inputMode="numeric"
-        min={0}
+        min={required ? 1 : 0}
         step={1}
         aria-label={label}
         value={draft}
-        placeholder={t(($) => $.agent_permissions.unlimited)}
+        placeholder={required ? undefined : t(($) => $.agent_permissions.unlimited)}
         disabled={disabled}
         className="w-20"
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {
-          const next = parseSpawnCount(draft, value);
+          const next = parseSpawnCount(draft, value, required);
           setDraft(next === 0 ? "" : String(next));
           if (next !== value) onCommit(next);
         }}

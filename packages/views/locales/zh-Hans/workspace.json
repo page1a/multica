@@ -78,7 +78,11 @@
       "pull_hint": "连通后立即生效，成员都能只读查看。",
       "pull_reason": "只有所有者或管理员能把别的工作区连进来",
       "pull_create": "连进来",
-      "pull_created": "已连通，成员现在就能在侧栏查看。"
+      "pull_created": "已连通，成员现在就能在侧栏查看。",
+      "managed_label": "允许看方托管任务和自动化",
+      "managed_hint_outgoing": "开启后，对方的智能体可以替发起人改这里的任务和自动化。",
+      "managed_hint_incoming": "开启后，这里的智能体可以替发起人改对方的任务和自动化。",
+      "managed_reason": "只有源方工作区的所有者能开关托管。"
     },
     "audit": {
       "title": "审计记录",
@@ -90,7 +94,10 @@
       "revoke": "断开了连通",
       "by_source": "源方",
       "by_viewer": "看方",
-      "someone": "有人"
+      "someone": "有人",
+      "set_managed_on": "开启了托管",
+      "set_managed_off": "关闭了托管",
+      "managed_write": "让 {{agent}} 代办了一次改动"
     },
     "panel": {
       "title": "连通工作区",
@@ -105,7 +112,8 @@
       "all_tasks": "全部连通任务",
       "show_all": "看全部",
       "no_tasks": "没有可显示的任务。",
-      "load_more": "加载更多"
+      "load_more": "加载更多",
+      "managed_from": "{{name}} 已开托管：可让智能体代办它的任务和自动化"
     }
   }
 }

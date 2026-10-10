@@ -518,3 +518,24 @@ export function useRegenerateChatQuickActions() {
     },
   });
 }
+
+/**
+ * Pin an issue to a chat's tickets or take one off (DENE-1719) — the same
+ * server write as `multica chat tickets add|remove`. Waits for the server: a
+ * pin names the issue by identifier, which only the server resolves. Other
+ * tabs refetch on `chat:tickets_changed`.
+ */
+export function useSetChatTicket() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+
+  return useMutation({
+    mutationFn: (data: { sessionId: string; issue: string; remove?: boolean }) =>
+      data.remove
+        ? api.removeChatTicket(data.sessionId, data.issue)
+        : api.addChatTicket(data.sessionId, data.issue),
+    onSettled: (_data, _err, vars) => {
+      qc.invalidateQueries({ queryKey: chatKeys.tickets(wsId, vars.sessionId) });
+    },
+  });
+}

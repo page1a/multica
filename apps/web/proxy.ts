@@ -101,8 +101,10 @@ export function proxy(req: NextRequest) {
     lastSlug &&
     !isOfficialMarketingHost(req.nextUrl.hostname)
   ) {
+    // The workspace root picks the landing page client-side: only the browser
+    // knows whether it is a phone (Chat) or not (Issues).
     const url = req.nextUrl.clone();
-    url.pathname = `/${lastSlug}/issues`;
+    url.pathname = `/${lastSlug}`;
     return NextResponse.redirect(url);
   }
 

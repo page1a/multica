@@ -160,9 +160,11 @@ SELECT
     pm.created_at,
     u.name AS user_name,
     u.email AS user_email,
-    u.avatar_url AS user_avatar_url
+    u.avatar_url AS user_avatar_url,
+    COALESCE(wm.role, '')::text AS workspace_role
 FROM project_member pm
 JOIN "user" u ON u.id = pm.member_id
+LEFT JOIN member wm ON wm.workspace_id = pm.workspace_id AND wm.user_id = pm.member_id
 WHERE pm.project_id = $1
 ORDER BY pm.created_at ASC
 `
@@ -177,6 +179,7 @@ type ListProjectMembersRow struct {
 	UserName      string             `json:"user_name"`
 	UserEmail     string             `json:"user_email"`
 	UserAvatarUrl pgtype.Text        `json:"user_avatar_url"`
+	WorkspaceRole string             `json:"workspace_role"`
 }
 
 func (q *Queries) ListProjectMembers(ctx context.Context, projectID pgtype.UUID) ([]ListProjectMembersRow, error) {
@@ -198,6 +201,7 @@ func (q *Queries) ListProjectMembers(ctx context.Context, projectID pgtype.UUID)
 			&i.UserName,
 			&i.UserEmail,
 			&i.UserAvatarUrl,
+			&i.WorkspaceRole,
 		); err != nil {
 			return nil, err
 		}
@@ -233,6 +237,47 @@ func (q *Queries) ListProjectMembershipsForUser(ctx context.Context, arg ListPro
 			return nil, err
 		}
 		items = append(items, project_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkspaceProjectMemberships = `-- name: ListWorkspaceProjectMemberships :many
+SELECT pm.member_id, p.id AS project_id, p.title, p.icon
+FROM project_member pm
+JOIN project p ON p.id = pm.project_id
+WHERE pm.workspace_id = $1
+ORDER BY p.title ASC, p.id ASC
+`
+
+type ListWorkspaceProjectMembershipsRow struct {
+	MemberID  pgtype.UUID `json:"member_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	Title     string      `json:"title"`
+	Icon      pgtype.Text `json:"icon"`
+}
+
+// Every person's projects in one workspace, for the roster's "projects" column.
+func (q *Queries) ListWorkspaceProjectMemberships(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceProjectMembershipsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceProjectMemberships, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceProjectMembershipsRow{}
+	for rows.Next() {
+		var i ListWorkspaceProjectMembershipsRow
+		if err := rows.Scan(
+			&i.MemberID,
+			&i.ProjectID,
+			&i.Title,
+			&i.Icon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

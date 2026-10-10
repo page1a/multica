@@ -79,9 +79,11 @@ SELECT tt.id,
        tt.expires_at,
        tt.created_at,
        a.kind AS agent_kind,
-       a.system_key AS agent_system_key
+       a.system_key AS agent_system_key,
+       COALESCE(q.context->>'type', '')::text AS task_kind
 FROM task_token tt
 JOIN agent a ON a.id = tt.agent_id
+LEFT JOIN agent_task_queue q ON q.id = tt.task_id
 WHERE tt.token_hash = $1 AND tt.expires_at > now()
 `
 
@@ -96,6 +98,7 @@ type GetTaskTokenActorByHashRow struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	AgentKind      string             `json:"agent_kind"`
 	AgentSystemKey pgtype.Text        `json:"agent_system_key"`
+	TaskKind       string             `json:"task_kind"`
 }
 
 // The one lookup the auth middleware performs for an `mat_` token, plus the
@@ -108,6 +111,10 @@ type GetTaskTokenActorByHashRow struct {
 // second query on every authenticated agent request to learn that would buy
 // nothing. The join is on the primary key of agent, and agent_id carries an
 // index of its own, so this is still a single index lookup per request.
+//
+// task_kind is the run's context.type (DENE-1721): a consult run answers one
+// question and may only read, so its scope is decided here as well. The task
+// join is on agent_task_queue's primary key.
 func (q *Queries) GetTaskTokenActorByHash(ctx context.Context, tokenHash string) (GetTaskTokenActorByHashRow, error) {
 	row := q.db.QueryRow(ctx, getTaskTokenActorByHash, tokenHash)
 	var i GetTaskTokenActorByHashRow
@@ -122,6 +129,7 @@ func (q *Queries) GetTaskTokenActorByHash(ctx context.Context, tokenHash string)
 		&i.CreatedAt,
 		&i.AgentKind,
 		&i.AgentSystemKey,
+		&i.TaskKind,
 	)
 	return i, err
 }
