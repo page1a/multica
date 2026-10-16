@@ -47,9 +47,7 @@ import (
 // state poll interval.
 const claimPollHintMinDelay = time.Second
 
-// ---------------------------------------------------------------------------
 // Daemon workspace ownership helpers
-// ---------------------------------------------------------------------------
 
 // requireDaemonWorkspaceAccess verifies the caller has access to the given workspace.
 // For daemon tokens (mdt_), compares the token's workspace ID directly.
@@ -190,9 +188,7 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 	return true
 }
 
-// ---------------------------------------------------------------------------
 // Daemon Registration & Heartbeat
-// ---------------------------------------------------------------------------
 
 type DaemonRegisterRequest struct {
 	WorkspaceID string `json:"workspace_id"`
@@ -2823,6 +2819,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
+		// Project workflow (MUL-7420): best-effort, like the status catalog
+		// below — a failure degrades to the workspace-wide status rules.
+		resp.ProjectWorkflow = h.claimProjectWorkflow(r.Context(), issue, task)
 
 		// Load every planned input as one chronological, de-duplicated set.
 		// The trigger is included here so the delivery receipt can only contain
@@ -4113,9 +4112,7 @@ func (h *Handler) ListPendingTasksByRuntime(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ---------------------------------------------------------------------------
 // Task Lifecycle (called by daemon)
-// ---------------------------------------------------------------------------
 
 // ExtendTaskPrepareLease keeps a dispatched task protected while the daemon is
 // resolving startup inputs and preparing the execution environment.
@@ -4490,46 +4487,18 @@ func (h *Handler) emitIssueExecutedOnFirstCompletion(r *http.Request, task *db.A
 	))
 }
 
-// reconcileCommentsOnCompletion closes the at-least-once gap for member
-// comments a completing run did NOT deliver (MUL-4195).
+// reconcileCommentsOnCompletion replays qualifying comments absent from this
+// run's delivered_comment_ids receipt. Planned/coalesced IDs do not prove the
+// provider received them, particularly with older daemons or deleted comments.
 //
-// The merge path (mergeCommentIntoPendingTask) folds a comment into a task only
-// while it is still PRE-CLAIM (queued/deferred). Those planned ids are not
-// proof of delivery: older daemons ignore structured coalesced fields, and a
-// referenced comment can be deleted before claim. Claim therefore records the
-// ids it actually embedded in delivered_comment_ids. Anything posted during
-// this run's lifetime that is NOT in that receipt must earn a follow-up.
+// Anchor at task creation and exclude the delivered set. A dispatch timestamp
+// would miss a comment whose pre-claim merge lost a race to claiming the task.
+// Replay chronologically through normal enqueue so comments coalesce into one
+// follow-up. That follow-up's later creation time and own receipt bound repetition.
 //
-// Anchor = created_at + delivered-set exclusion, NOT a dispatch/start timestamp
-// (MUL-4195 review round-3 must-fix). A timestamp anchor cannot tell a
-// delivered comment from an undelivered one, and there is a race it structurally
-// misses: a comment created while the task was still queued, but whose merge
-// lost the race to the daemon claiming the task (queued→dispatched) — the merge
-// then finds no pre-claim row (ErrNoRows), the enqueue path defers to reconcile,
-// yet the comment's created_at is BEFORE dispatched_at, so a dispatched_at
-// anchor would skip it and it would vanish. Anchoring on the task's own
-// created_at reaches back over the whole run, and excluding the delivered set
-// is what prevents re-firing comments the run actually received. Together
-// they catch the pre-dispatch merge-race comment, the
-// dispatch→start comment, and the during-run comment, while never double-firing
-// a delivered one.
-//
-// Scope + loop safety:
-//   - MEMBER comments keep their full routing. AGENT comments qualify through
-//     explicit mentions, or a worker-to-leader route when the input was already
-//     accepted and recorded in this run's plan. Timestamp-only
-//     implicit agent replies are excluded: completion must not invent a new
-//     conversation. Current invocation permissions and self-trigger guards
-//     still apply to every replay.
-//   - Only comments routing to THE AGENT THAT JUST RAN earn a follow-up here;
-//     an `@other-agent` comment is left to that agent's own creation-time
-//     trigger, so a completion never re-wakes an unrelated agent.
-//   - Every undelivered qualifying comment is replayed through the normal
-//     enqueue path in chronological order, so they coalesce into a SINGLE
-//     follow-up task (the first enqueues it, the rest merge in). Bounded to one
-//     run, and terminating: the follow-up's own created_at is later than all of
-//     these comments and its delivered set will contain them, so its completion
-//     finds nothing to re-schedule.
+// Preserve member routing and accepted explicit agent routes, current invocation
+// permissions, and self-trigger guards. Do not invent implicit agent conversation
+// routes or wake an unrelated agent from another agent's completion.
 func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.AgentTaskQueue) {
 	if task == nil || !task.IssueID.Valid || !task.AgentID.Valid || !task.CreatedAt.Valid {
 		return
@@ -5139,9 +5108,7 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
-// ---------------------------------------------------------------------------
 // Task Messages (live agent output)
-// ---------------------------------------------------------------------------
 
 type TaskMessageRequest struct {
 	// CallID is an opaque tool-call identity scoped to one backend execution.
