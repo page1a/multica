@@ -133,6 +133,11 @@ type ExecOptions struct {
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
 	ClaudeSettingsPath string
+	// CursorHookCommand is the argv of the multica hook relay (the daemon's own
+	// binary followed by CursorHookHelperArg). The cursor backend needs it, with
+	// EnableTaskSupplement, to accept additional messages; other providers
+	// ignore it.
+	CursorHookCommand []string
 	// piMcpExtensionPath is set by piBackend.Execute after it writes the
 	// temporary MCP extension. The daemon does not fill it.
 	piMcpExtensionPath string

@@ -2579,6 +2579,12 @@ describe("IssueDetail (shared)", () => {
 
       const nav = await screen.findByRole("navigation", { name: "Jump to comment thread" });
       expect(document.getElementById("comment-reply-1")).toBeNull();
+      expect(within(nav).queryByRole("button", { name: /: Reply inside resolved thread$/ })).toBeNull();
+      act(() => within(nav).getByRole("button", { name: "Resolved root (resolved)" }).focus());
+      fireEvent.click(
+        within(nav.parentElement!).getByRole("button", { name: "Show 1 reply" }),
+        { detail: 0 },
+      );
       fireEvent.click(within(nav).getByRole("button", { name: /: Reply inside resolved thread$/ }));
 
       await waitFor(() => {

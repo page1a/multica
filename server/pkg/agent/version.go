@@ -141,6 +141,10 @@ func SupportsTaskSupplement(provider, version string) bool {
 		// Grok Build 1.0.14 supports atomic delivery of in-turn interjections
 		// through its x.ai/interject ACP extension.
 		minimum = "1.0.14"
+	case "cursor":
+		// 2026.10.14 is the oldest build verified to forward postToolUse
+		// additional_context into the model turn in --print mode.
+		minimum = "2026.10.14"
 	default:
 		return false
 	}
