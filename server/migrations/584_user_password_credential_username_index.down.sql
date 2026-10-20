@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS user_password_credential_username_key;

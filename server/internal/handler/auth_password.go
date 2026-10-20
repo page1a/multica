@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -12,10 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -85,8 +90,7 @@ type PasswordLoginRequest struct {
 }
 
 func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
-	creds, ok := passwordAuthConfigured()
-	if !ok {
+	if _, ok := passwordAuthConfigured(); !ok {
 		writeError(w, http.StatusNotFound, "password login is not enabled")
 		return
 	}
@@ -108,15 +112,12 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userOK := secretEqual(username, creds.username)
-	passOK := secretEqual(password, creds.password)
-	if !userOK || !passOK {
-		writeError(w, http.StatusUnauthorized, "invalid username or password")
-		return
-	}
-
-	user, isNew, err := h.findOrCreateUser(r.Context(), creds.email)
+	user, isNew, err := h.authenticatePasswordUser(r.Context(), username, password)
 	if err != nil {
+		if errors.Is(err, errInvalidPasswordCreds) {
+			writeError(w, http.StatusUnauthorized, "invalid username or password")
+			return
+		}
 		if errors.Is(err, auth.ErrTemporarilyDisabledUser) {
 			writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
 			return
@@ -129,6 +130,7 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
+
 	if isNew {
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r)))
 	}
@@ -139,7 +141,7 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
 			return
 		}
-		slog.Warn("password login failed", append(logger.RequestAttrs(r), "error", err, "email", creds.email)...)
+		slog.Warn("password login failed", append(logger.RequestAttrs(r), "error", err, "email", user.Email)...)
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
@@ -159,4 +161,42 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 		Token: tokenString,
 		User:  h.userToResponse(user),
 	})
+}
+
+var errInvalidPasswordCreds = errors.New("invalid username or password")
+
+// authenticatePasswordUser checks the credential table first, then the single
+// env-var operator. A stored username always wins, so it cannot be shadowed by
+// MULTICA_PASSWORD_AUTH_USERNAME.
+func (h *Handler) authenticatePasswordUser(ctx context.Context, username, password string) (db.User, bool, error) {
+	rec, err := h.Queries.GetPasswordCredentialByUsername(ctx, username)
+	switch {
+	case err == nil:
+		if bcrypt.CompareHashAndPassword([]byte(rec.PasswordHash), []byte(password)) != nil {
+			return db.User{}, false, errInvalidPasswordCreds
+		}
+		user, err := h.Queries.GetUser(ctx, rec.UserID)
+		if err != nil {
+			return db.User{}, false, errInvalidPasswordCreds
+		}
+		if auth.IsTemporarilyDisabledUser(uuidToString(user.ID), user.Email) {
+			return db.User{}, false, auth.ErrTemporarilyDisabledUser
+		}
+		return user, false, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		// no stored account for this username; fall through
+	default:
+		// A missing table (migration not applied) must not take password login
+		// down with it. Anything else is a real database failure.
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
+			return db.User{}, false, err
+		}
+	}
+
+	creds, ok := passwordAuthConfigured()
+	if !ok || !secretEqual(username, creds.username) || !secretEqual(password, creds.password) {
+		return db.User{}, false, errInvalidPasswordCreds
+	}
+	return h.findOrCreateUser(ctx, creds.email)
 }

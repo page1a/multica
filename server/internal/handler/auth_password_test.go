@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func setPasswordAuthEnv(t *testing.T, username, password, email string) {
@@ -132,6 +136,79 @@ func TestPasswordLoginSuccessIssuesJWT(t *testing.T) {
 	w = postPasswordLogin(username, password)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PasswordLogin (existing user): expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswordLoginStoredCredential(t *testing.T) {
+	const (
+		email    = "stored-cred-test@multica.ai"
+		username = "stored-cred-user"
+		password = "stored-cred-secret"
+	)
+	setPasswordAuthEnv(t, "env-operator", "env-operator-secret", "env-operator@multica.ai")
+	ctx := context.Background()
+
+	userID := dbfx.User(t, username, email)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO user_password_credential (user_id, username, password_hash) VALUES ($1, $2, $3)`,
+		userID, username, string(hash)); err != nil {
+		t.Fatalf("insert credential: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM user_password_credential WHERE user_id = $1`, userID)
+	})
+
+	w := postPasswordLogin(username, password)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stored credential: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp LoginResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.User.Email != email {
+		t.Fatalf("stored credential: expected email %q, got %q", email, resp.User.Email)
+	}
+
+	w = postPasswordLogin(strings.ToUpper(username), password)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stored credential (case): expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = postPasswordLogin(username, "wrong-password")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("stored credential (wrong password): expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswordLoginStoredCredentialRejectsDanglingUser(t *testing.T) {
+	setPasswordAuthEnv(t, "env-operator", "env-operator-secret", "env-operator@multica.ai")
+	ctx := context.Background()
+
+	var userID pgtype.UUID
+	if err := userID.Scan("00000000-0000-4000-8000-0000000000d1"); err != nil {
+		t.Fatalf("scan uuid: %v", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte("does-not-matter"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO user_password_credential (user_id, username, password_hash) VALUES ($1, $2, $3)`,
+		userID, "dangling-cred-user", string(hash)); err != nil {
+		t.Fatalf("insert credential: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM user_password_credential WHERE user_id = $1`, userID)
+	})
+
+	w := postPasswordLogin("dangling-cred-user", "does-not-matter")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("dangling credential: expected 401, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
