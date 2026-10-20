@@ -110,6 +110,7 @@
   },
   "code_block": {
     "html_preview": "HTML プレビュー",
+    "close_preview": "閉じる",
     "copy_code": "コードをコピー",
     "show_preview": "プレビューを表示",
     "show_source": "ソースを表示",

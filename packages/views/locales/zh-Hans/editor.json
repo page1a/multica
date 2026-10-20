@@ -117,6 +117,7 @@
   },
   "code_block": {
     "html_preview": "HTML 预览",
+    "close_preview": "关闭",
     "copy_code": "复制代码",
     "show_preview": "显示预览",
     "show_source": "显示源码",

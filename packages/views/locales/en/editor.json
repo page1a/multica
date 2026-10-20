@@ -121,6 +121,7 @@
   },
   "code_block": {
     "html_preview": "HTML preview",
+    "close_preview": "Close",
     "copy_code": "Copy code",
     "show_preview": "Show preview",
     "show_source": "Show source",

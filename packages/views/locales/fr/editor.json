@@ -121,6 +121,7 @@
   },
   "code_block": {
     "html_preview": "Aperçu HTML",
+    "close_preview": "Fermer",
     "copy_code": "Copier le code",
     "show_preview": "Afficher l'aperçu",
     "show_source": "Afficher la source",

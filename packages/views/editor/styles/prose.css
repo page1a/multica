@@ -393,10 +393,16 @@
 }
 
 /* Table frame (RichTableFrame): the outer box carries the margin, and its
-   toolbar row takes the place of most of the top margin. The wrapper anchors
-   the resize handles, so they scroll with the columns. */
+   toolbar sits inside the top margin, so the margin is never shorter than the
+   toolbar (h-6). The bottom margin matches it, keeping the space even. The
+   wrapper anchors the resize handles, so they scroll with the columns. */
 .rich-text-editor .rich-table {
-  margin: 0.25rem 0 1rem;
+  margin: 1.5rem 0;
+}
+
+.rich-text-editor > .rich-table:last-child,
+.rich-text-editor > .table-node:last-child > .rich-table {
+  margin-bottom: 0;
 }
 
 .rich-text-editor .rich-table .tableWrapper {

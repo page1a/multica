@@ -6430,6 +6430,7 @@ var runtimeDisplayNameOverrides = map[string]string{
 	"qwen":       "Qwen Code",
 	"qwenpaw":    "QwenPaw",
 	"mcode":      "MiniMax Code",
+	"muse":       "Muse Code",
 	"zeroclaw":   "ZeroClaw",
 }
 
@@ -8991,14 +8992,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Usage:         usageEntries,
 		}, nil
 	case "cancelled":
-		// Server cancelled the task (e.g. issue reassignment, user cancel).
-		// handleTask's cancelledByPoll branch already discards this result,
-		// so this case is mainly defensive — and preserves the "cancelled"
-		// status string for the "agent finished" log line so operators can
-		// distinguish "task cancelled by server" from a real timeout.
+		// The daemon's own context was cancelled (server cancel or daemon
+		// shutdown): the parent context cancellation propagates here as
+		// context.Canceled and the fail callback runs. A user cancel or issue
+		// reassignment is discarded earlier by handleTask's cancelledByPoll
+		// branch, so this case is mainly defensive — and preserves the
+		// "cancelled" status string for the "agent finished" log line so
+		// operators can distinguish a server cancellation from a real timeout.
+		//
+		// Comment stays empty on purpose. reportTaskResult forwards it as the
+		// task's `error`, which the UI shows verbatim under "Technical
+		// details", so a sentence written here would reach the reader
+		// untranslated. The status alone already yields failure_reason
+		// "cancelled", whose label is localized in every shipped locale, and
+		// it says the same thing — an English sentence beside it would only
+		// be a worse copy of it.
 		return TaskResult{
 			Status:    "cancelled",
-			Comment:   "task cancelled by server",
 			SessionID: result.SessionID,
 			WorkDir:   env.WorkDir,
 			EnvRoot:   env.RootDir,
@@ -9771,8 +9781,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		waitForDrain()
 		// Idle watchdog cancels via agentCancel(), which propagates here as
 		// context.Canceled. Check this BEFORE the generic cancelled/timeout
-		// classifiers so a watchdog-induced stop isn't misreported as
-		// "task cancelled by server".
+		// classifiers so a watchdog-induced stop isn't misreported as a
+		// server cancellation.
 		if idleWatchdogFired.Load() {
 			// For a backend that publishes a terminal boundary, enter the
 			// hand-off without asking terminalObserved first. Reading a flag and
