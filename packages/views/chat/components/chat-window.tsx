@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
+import { useReducedMotion } from "@multica/core/appearance";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "../../issues/components/pickers/assignee-picker";
@@ -72,6 +73,7 @@ import { useChatInputFocus } from "./use-chat-input-focus";
 import { useChatOpenReveal } from "./use-chat-open-reveal";
 import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
+import { useChatAnnotations } from "./use-chat-annotations";
 import { ChatQueue } from "./chat-queue";
 import { ChatAppRequests } from "../../common/app-requests";
 import { EmptyState } from "./chat-empty-state";
@@ -260,6 +262,11 @@ export function ChatWindow() {
   // (server confirmed: zero usable agents) drives the disabled UI.
   const agentAvailability = useWorkspaceAgentAvailability();
   const noAgent = agentAvailability === "none";
+  const annotations = useChatAnnotations({
+    sessionId: activeSessionId,
+    agentName: activeAgent?.name,
+    enabled: !isSessionArchived && !isAgentArchived && !isAgentAccessRevoked && activeAgentRuntimeBound && !noAgent,
+  });
 
   // Presence drives both the avatar status dot (via ActorAvatar) and the
   // OfflineBanner / TaskStatusPill availability copy. `useAgentPresenceDetail`
@@ -734,6 +741,7 @@ export function ChatWindow() {
   const isExpanded = useChatStore((s) => s.isExpanded);
 
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
+  const reduceMotion = useReducedMotion();
   const { contentReady, markContentReady } = useChatOpenReveal(isOpen);
 
   const isVisible = isOpen && (isExpanded || boundsReady) && contentReady;
@@ -807,9 +815,12 @@ export function ChatWindow() {
     ? t(($) => $.window.restore_tooltip)
     : t(($) => $.window.expand_tooltip);
   const minimizeLabel = t(($) => $.window.minimize_tooltip);
+  const sizeTransition =
+    isDragging || reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.3, bounce: 0 };
 
   return (
     <motion.div
+      data-mc="chat-window"
       ref={windowRef}
       inert={!isOpen}
       aria-hidden={!isOpen}
@@ -821,8 +832,8 @@ export function ChatWindow() {
         ...motionSize,
       }}
       transition={{
-        width: isDragging ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 },
-        height: isDragging ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 },
+        width: sizeTransition,
+        height: sizeTransition,
         opacity: { duration: 0.15 },
       }}
     >
@@ -915,6 +926,7 @@ export function ChatWindow() {
             }
             quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
             onReady={markContentReady}
+            annotations={annotations}
           >
             <EmptyState
               agent={activeAgent}
@@ -1005,6 +1017,7 @@ export function ChatWindow() {
         }
         contextItems={contextItems}
         focusRequest={focusRequest}
+        annotations={annotations}
       />
     </motion.div>
   );
